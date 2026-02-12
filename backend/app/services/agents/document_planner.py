@@ -33,9 +33,11 @@ def get_document_planner_agent():
     global _agent
     if _agent is None:
         from pydantic_ai import Agent
+        from app.core.config import settings
+        from app.core.model_resolver import resolve_model
 
         _agent = Agent(
-            model="openai:gpt-4o-mini",
+            model=resolve_model(settings.default_model),
             output_type=ChunkPlan,
             instructions=(
                 "你是一个文档分析助手。根据文档的结构信息（标题层级、段落数量、估算字数），"

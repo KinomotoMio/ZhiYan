@@ -4,6 +4,7 @@
 """
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,6 @@ def _render_text_content(content: str) -> str:
             html_parts.append("<br>")
             continue
         # 无序列表
-        import re
         bullet_match = re.match(r'^[•\-*]\s+(.*)', line)
         if bullet_match:
             html_parts.append(f'<div style="padding-left:1.5em;">• {_escape(bullet_match.group(1))}</div>')

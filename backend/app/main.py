@@ -1,7 +1,11 @@
 """FastAPI 入口 — 知演后端"""
 
+import asyncio
 import logging
 import time
+import uuid
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,10 +16,49 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+async def _periodic_cleanup(interval_hours: float = 6):
+    """定期清理过期的临时上传文件"""
+    from app.services.document.source_store import cleanup_old_uploads
+
+    while True:
+        await asyncio.sleep(interval_hours * 3600)
+        try:
+            count = cleanup_old_uploads()
+            if count > 0:
+                logger.info("Cleaned up %d old upload directories", count)
+        except Exception as e:
+            logger.warning("Cleanup failed: %s", e)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    from app.core.config import reload_settings
+    from app.services.document.source_store import cleanup_old_uploads
+
+    reload_settings()
+    count = cleanup_old_uploads()
+    if count > 0:
+        logger.info("Startup cleanup: removed %d old upload dirs", count)
+
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
+
+    yield
+
+    # Shutdown
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
+
 app = FastAPI(
     title="知演 ZhiYan API",
     description="AI PPT 生成智能体后端",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -29,16 +72,29 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:8])
+    content_length = request.headers.get("content-length", "0")
+
     start = time.time()
     response = await call_next(request)
     duration = time.time() - start
-    logger.info(
-        "%s %s → %d (%.2fs)",
+
+    log_msg = "[%s] %s %s → %d (%.2fs, body=%sB)"
+    log_args = (
+        request_id,
         request.method,
         request.url.path,
         response.status_code,
         duration,
+        content_length,
     )
+
+    if duration > 5:
+        logger.warning("SLOW " + log_msg, *log_args)
+    else:
+        logger.info(log_msg, *log_args)
+
+    response.headers["X-Request-ID"] = request_id
     return response
 
 

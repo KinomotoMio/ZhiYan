@@ -51,7 +51,7 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
         size=len(file_bytes),
         status=SourceStatus.PARSING,
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": ""}
+    _sources[source_id] = {"meta": meta, "parsed_content": "", "cleaned_content": None}
 
     # 异步解析
     try:
@@ -86,7 +86,7 @@ async def add_url(url: str) -> SourceMeta:
         type=SourceType.URL,
         status=SourceStatus.PARSING,
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": ""}
+    _sources[source_id] = {"meta": meta, "parsed_content": "", "cleaned_content": None}
 
     try:
         # 下载内容
@@ -131,8 +131,14 @@ async def add_text(name: str, content: str) -> SourceMeta:
         status=SourceStatus.READY,
         previewSnippet=_snippet(content),
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": content}
+    _sources[source_id] = {"meta": meta, "parsed_content": content, "cleaned_content": None}
     return meta
+
+
+def set_cleaned_content(source_id: str, content: str) -> None:
+    """缓存清洗后的文档内容"""
+    if source_id in _sources:
+        _sources[source_id]["cleaned_content"] = content
 
 
 def get(source_id: str) -> dict | None:
@@ -156,11 +162,35 @@ def remove(source_id: str) -> bool:
     return True
 
 
-def get_combined_content(source_ids: list[str]) -> str:
-    """拼接指定来源的已解析内容"""
+def cleanup_old_uploads(max_age_hours: int = 24) -> int:
+    """删除超过 max_age_hours 的临时上传目录，返回清理数量"""
+    import time
+
+    count = 0
+    if not _UPLOAD_DIR.exists():
+        return count
+
+    now = time.time()
+    cutoff = now - max_age_hours * 3600
+
+    for entry in _UPLOAD_DIR.iterdir():
+        if entry.is_dir() and entry.stat().st_mtime < cutoff:
+            if entry.name in _sources:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            count += 1
+
+    return count
+
+
+def get_combined_content(source_ids: list[str], prefer_cleaned: bool = False) -> str:
+    """拼接指定来源内容。prefer_cleaned=True 时优先使用清洗版本"""
     parts: list[str] = []
     for sid in source_ids:
         entry = _sources.get(sid)
-        if entry and entry["parsed_content"]:
-            parts.append(entry["parsed_content"])
+        if entry:
+            if prefer_cleaned and entry.get("cleaned_content"):
+                parts.append(entry["cleaned_content"])
+            elif entry["parsed_content"]:
+                parts.append(entry["parsed_content"])
     return "\n\n---\n\n".join(parts)

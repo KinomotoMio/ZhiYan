@@ -1,4 +1,4 @@
-import type { Presentation } from "@/types/slide";
+import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -66,7 +66,7 @@ interface ChatRequest {
 }
 
 interface SlideUpdateEvent {
-  slides: Record<string, unknown>[];
+  slides: Slide[];
   modifications: Record<string, unknown>[];
 }
 
@@ -243,4 +243,148 @@ export async function getSourceContent(
   const res = await fetch(`${API_BASE}/api/v1/sources/${sourceId}/content`);
   if (!res.ok) throw new Error(`获取来源内容失败: ${res.statusText}`);
   return res.json();
+}
+
+// ---------- Settings ----------
+
+export interface AppSettings {
+  openai_api_key: string;
+  openai_base_url: string;
+  anthropic_api_key: string;
+  google_api_key: string;
+  deepseek_api_key: string;
+  openrouter_api_key: string;
+  default_model: string;
+  strong_model: string;
+  vision_model: string;
+  tts_model: string;
+  tts_voice: string;
+  has_openai_key: boolean;
+  has_anthropic_key: boolean;
+  has_google_key: boolean;
+  has_deepseek_key: boolean;
+  has_openrouter_key: boolean;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`);
+  if (!res.ok) throw new Error(`获取设置失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updateSettings(
+  data: Partial<Omit<AppSettings, "has_openai_key" | "has_anthropic_key" | "has_google_key" | "has_deepseek_key" | "has_openrouter_key">>
+): Promise<AppSettings> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`更新设置失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function validateApiKey(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string
+): Promise<{ valid: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/settings/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+  });
+  if (!res.ok) throw new Error(`验证失败: ${res.statusText}`);
+  return res.json();
+}
+
+// ---------- Generate Stream (SSE) ----------
+
+export interface ProgressEvent {
+  type: "progress";
+  stage: string;
+  step: number;
+  total_steps: number;
+  message: string;
+}
+
+export interface ResultEvent {
+  type: "result";
+  presentation: Presentation;
+}
+
+export function generatePresentationStream(
+  req: GenerateRequest,
+  onProgress: (event: ProgressEvent) => void,
+  onResult: (event: ResultEvent) => void,
+  onError: (err: Error) => void,
+  signal?: AbortSignal
+): void {
+  fetch(`${API_BASE}/api/v1/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(errBody.detail || `生成失败: ${res.statusText}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("无法读取响应流");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") return;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "progress") {
+                onProgress(parsed as ProgressEvent);
+              } else if (parsed.type === "result") {
+                onResult(parsed as ResultEvent);
+              } else if (parsed.type === "error") {
+                onError(new Error(parsed.message || "生成出错"));
+              }
+            } catch {
+              // 跳过
+            }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      onError(err instanceof Error ? err : new Error(String(err)));
+    });
+}
+
+// ---------- TTS ----------
+
+export async function synthesizeSpeech(
+  text: string,
+  voice?: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`TTS 失败: ${res.statusText}`);
+  return res.blob();
 }
