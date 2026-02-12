@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Presentation",
+  "description": "知演 Slide 数据模型 — single source of truth",
+  "type": "object",
+  "required": ["presentationId", "title", "slides"],
+  "properties": {
+    "presentationId": {
+      "type": "string",
+      "description": "演示文稿唯一标识"
+    },
+    "title": {
+      "type": "string",
+      "description": "演示文稿标题"
+    },
+    "theme": {
+      "$ref": "#/$defs/Theme"
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Slide"
+      }
+    }
+  },
+  "$defs": {
+    "Theme": {
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "headingFontFamily": { "type": "string" }
+      }
+    },
+    "Slide": {
+      "type": "object",
+      "required": ["slideId", "layoutType", "components"],
+      "properties": {
+        "slideId": {
+          "type": "string",
+          "description": "幻灯片唯一标识"
+        },
+        "layoutType": {
+          "type": "string",
+          "enum": [
+            "title-slide",
+            "title-content",
+            "title-content-image",
+            "two-column",
+            "image-full",
+            "section-header",
+            "blank"
+          ],
+          "description": "布局类型，对应模板中的 layout"
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Component"
+          }
+        },
+        "speakerNotes": {
+          "type": "string",
+          "description": "演讲者注释"
+        },
+        "templateSlotMapping": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "模板插槽名到组件 ID 的映射"
+        }
+      }
+    },
+    "Component": {
+      "type": "object",
+      "required": ["id", "type", "role", "position"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "组件唯一标识"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "image", "chart", "shape"],
+          "description": "组件类型"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["title", "subtitle", "body", "caption", "decoration", "illustration"],
+          "description": "组件在页面中的语义角色"
+        },
+        "content": {
+          "type": "string",
+          "description": "文本内容（text 类型）或图片 URL（image 类型）"
+        },
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "style": {
+          "$ref": "#/$defs/Style"
+        },
+        "chartData": {
+          "type": "object",
+          "description": "图表数据（chart 类型）"
+        }
+      }
+    },
+    "Position": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "description": "左边距百分比 (0-100)" },
+        "y": { "type": "number", "description": "上边距百分比 (0-100)" },
+        "width": { "type": "number", "description": "宽度百分比 (0-100)" },
+        "height": { "type": "number", "description": "高度百分比 (0-100)" }
+      }
+    },
+    "Style": {
+      "type": "object",
+      "properties": {
+        "fontSize": { "type": "number" },
+        "fontWeight": { "type": "string" },
+        "fontStyle": { "type": "string" },
+        "color": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "textAlign": { "type": "string", "enum": ["left", "center", "right"] },
+        "verticalAlign": { "type": "string", "enum": ["top", "middle", "bottom"] },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}
