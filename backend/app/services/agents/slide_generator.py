@@ -38,9 +38,10 @@ def get_slide_generator_agent():
     global _agent
     if _agent is None:
         from pydantic_ai import Agent
+        from app.core.config import settings
 
         _agent = Agent(
-            model="openai:gpt-4o",
+            model=settings.strong_model,
             output_type=SlideContent,
             instructions=(
                 "你是一个幻灯片内容撰写专家。根据大纲和源文档内容，生成单页幻灯片的内容。\n\n"

@@ -133,6 +133,28 @@ export async function chatStream(
   }
 }
 
+// ---------- Templates ----------
+
+export async function uploadTemplate(file: File): Promise<{ template_id: string; name: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/api/v1/templates/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "模板上传失败");
+  }
+  return res.json();
+}
+
+export async function listTemplates(): Promise<{ templates: Array<{ id: string; name: string; builtin?: boolean; colors?: Record<string, string> }> }> {
+  const res = await fetch(`${API_BASE}/api/v1/templates`);
+  if (!res.ok) throw new Error("获取模板列表失败");
+  return res.json();
+}
+
 // ---------- Skills ----------
 
 interface SkillMeta {

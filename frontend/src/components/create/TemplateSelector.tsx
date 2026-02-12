@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef } from "react";
-import { Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import { Upload, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useAppStore } from "@/lib/store";
+import { uploadTemplate } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface TemplateConfig {
@@ -50,14 +52,12 @@ function MiniPreview({ colors }: { colors: TemplateConfig["previewColors"] }) {
       className="aspect-[16/10] w-full rounded-sm overflow-hidden border border-border/50"
       style={{ backgroundColor: colors.bg }}
     >
-      {/* 模拟标题栏 */}
       <div className="px-2 pt-2">
         <div
           className="h-1.5 w-3/5 rounded-full"
           style={{ backgroundColor: colors.accent }}
         />
       </div>
-      {/* 模拟内容块 */}
       <div className="flex gap-1.5 px-2 pt-1.5">
         <div className="flex-1 space-y-1">
           <div
@@ -78,7 +78,6 @@ function MiniPreview({ colors }: { colors: TemplateConfig["previewColors"] }) {
           style={{ backgroundColor: colors.bar }}
         />
       </div>
-      {/* 模拟底部 */}
       <div className="px-2 pt-1.5">
         <div
           className="h-0.5 w-2/5 rounded-full opacity-40"
@@ -93,6 +92,42 @@ export default function TemplateSelector() {
   const { selectedTemplateId, setSelectedTemplateId, numPages, setNumPages } =
     useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedTemplates, setUploadedTemplates] = useState<TemplateConfig[]>([]);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith(".pptx")) {
+      toast.error("仅支持 .pptx 格式");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const result = await uploadTemplate(file);
+      const newTemplate: TemplateConfig = {
+        id: result.template_id,
+        name: result.name,
+        previewColors: {
+          bg: "#f8fafc",
+          accent: "#6366f1",
+          text: "#cbd5e1",
+          bar: "#6366f1",
+        },
+      };
+      setUploadedTemplates((prev) => [...prev, newTemplate]);
+      setSelectedTemplateId(result.template_id);
+      toast.success(`模板「${result.name}」导入成功`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "模板导入失败");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const allTemplates = [...TEMPLATES, ...uploadedTemplates];
 
   return (
     <div className="space-y-2">
@@ -122,23 +157,28 @@ export default function TemplateSelector() {
         {/* 导入模板入口 */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/30 p-2 transition-colors hover:border-primary/50 hover:bg-accent/30"
+          disabled={uploading}
+          className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/30 p-2 transition-colors hover:border-primary/50 hover:bg-accent/30 disabled:opacity-50"
         >
-          <Upload className="h-5 w-5 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground">导入模板</span>
+          {uploading ? (
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          ) : (
+            <Upload className="h-5 w-5 text-muted-foreground" />
+          )}
+          <span className="text-xs text-muted-foreground">
+            {uploading ? "导入中..." : "导入模板"}
+          </span>
         </button>
         <input
           ref={fileInputRef}
           type="file"
           accept=".pptx"
           className="hidden"
-          onChange={() => {
-            // TODO: 处理模板导入
-          }}
+          onChange={handleFileChange}
         />
 
         {/* 模板卡片 */}
-        {TEMPLATES.map((t) => {
+        {allTemplates.map((t) => {
           const isSelected = selectedTemplateId === t.id;
           return (
             <button

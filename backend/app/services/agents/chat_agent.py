@@ -33,9 +33,10 @@ def get_chat_agent():
     global _agent
     if _agent is None:
         from pydantic_ai import Agent, RunContext
+        from app.core.config import settings
 
         _agent = Agent(
-            model="openai:gpt-4o-mini",
+            model=settings.default_model,
             deps_type=ChatDeps,
             instructions=(
                 "你是知演（ZhiYan）的 AI 助手，帮助用户优化和调整演示文稿。\n"

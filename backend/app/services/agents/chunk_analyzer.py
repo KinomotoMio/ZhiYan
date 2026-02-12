@@ -27,9 +27,10 @@ def get_chunk_analyzer_agent():
     global _agent
     if _agent is None:
         from pydantic_ai import Agent
+        from app.core.config import settings
 
         _agent = Agent(
-            model="openai:gpt-4o-mini",
+            model=settings.default_model,
             output_type=ChunkAnalysis,
             instructions=(
                 "你是一个内容分析助手。分析给定的文档片段，提取核心要点，"

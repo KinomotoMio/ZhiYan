@@ -31,9 +31,10 @@ def get_outline_synthesizer_agent():
     global _agent
     if _agent is None:
         from pydantic_ai import Agent
+        from app.core.config import settings
 
         _agent = Agent(
-            model="openai:gpt-4o",
+            model=settings.strong_model,
             output_type=PresentationOutline,
             instructions=(
                 "你是一个演示文稿策划专家。根据各文档块的分析摘要，构建一个连贯的叙事大纲。\n\n"

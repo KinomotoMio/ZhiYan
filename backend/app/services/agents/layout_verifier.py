@@ -139,9 +139,10 @@ def _extract_title_from_slide(slide: Slide) -> str:
 def _get_aesthetic_verifier_agent():
     """延迟创建 LLM 审美评估 Agent"""
     from pydantic_ai import Agent
+    from app.core.config import settings
 
     return Agent(
-        model="openai:gpt-4o-mini",
+        model=settings.default_model,
         output_type=VerificationResult,
         instructions=(
             "你是一个演示文稿设计评审专家。评估幻灯片的视觉质量。\n"
