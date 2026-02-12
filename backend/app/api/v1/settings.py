@@ -3,7 +3,9 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.core.model_status import ModelStatus, build_model_status
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 logger = logging.getLogger(__name__)
@@ -48,6 +50,9 @@ class SettingsResponse(BaseModel):
     has_google_key: bool = False
     has_deepseek_key: bool = False
     has_openrouter_key: bool = False
+    default_model_status: ModelStatus = Field(default_factory=ModelStatus)
+    strong_model_status: ModelStatus = Field(default_factory=ModelStatus)
+    vision_model_status: ModelStatus = Field(default_factory=ModelStatus)
 
 
 class SettingsUpdate(BaseModel):
@@ -80,6 +85,10 @@ async def get_settings():
     """返回当前配置（API keys 脱敏显示）"""
     from app.core.config import settings
 
+    default_model_status = build_model_status(settings.default_model, settings)
+    strong_model_status = build_model_status(settings.strong_model, settings)
+    vision_model_status = build_model_status(settings.vision_model, settings)
+
     return SettingsResponse(
         openai_api_key=_mask_key(settings.openai_api_key),
         openai_base_url=settings.openai_base_url,
@@ -97,6 +106,9 @@ async def get_settings():
         has_google_key=bool(settings.google_api_key),
         has_deepseek_key=bool(settings.deepseek_api_key),
         has_openrouter_key=bool(settings.openrouter_api_key),
+        default_model_status=default_model_status,
+        strong_model_status=strong_model_status,
+        vision_model_status=vision_model_status,
     )
 
 

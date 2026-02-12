@@ -44,7 +44,7 @@ export default function CreateForm() {
   } = useAppStore();
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const { status: settingsStatus } = useSettingsStatus();
+  const { status: settingsStatus, message: settingsMessage } = useSettingsStatus();
 
   const readySources = sources.filter((s) => s.status === "ready");
   const selectedReadySources = readySources.filter((s) =>
@@ -157,7 +157,7 @@ export default function CreateForm() {
               {/* 状态提示 */}
               {settingsStatus === "unconfigured" ? (
                 <p className="text-center text-xs text-amber-600 dark:text-amber-400">
-                  请先在左下角设置中配置 API Key
+                  {settingsMessage || "默认模型未就绪，请先在左下角设置中调整模型/API 信息"}
                 </p>
               ) : (
                 <p className="text-center text-xs text-muted-foreground">

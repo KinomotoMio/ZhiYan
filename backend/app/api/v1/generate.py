@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.core.config import settings
+from app.core.model_status import build_model_status
 from app.models.slide import Presentation
 
 router = APIRouter()
@@ -36,20 +36,12 @@ class ErrorResponse(BaseModel):
 
 def _check_model_config():
     """检查当前模型配置是否有可用的 API Key"""
-    model = settings.default_model
-    if not model:
-        raise HTTPException(422, "请先在设置中选择默认模型")
+    from app.core.config import settings
 
-    provider = model.split(":")[0] if ":" in model else ""
-    key_map = {
-        "openai": settings.openai_api_key,
-        "anthropic": settings.anthropic_api_key,
-        "google-gla": settings.google_api_key,
-        "deepseek": settings.deepseek_api_key,
-        "openrouter": settings.openrouter_api_key,
-    }
-    if provider in key_map and not key_map[provider]:
-        raise HTTPException(422, f"模型 {model} 需要 {provider} API Key，请先在设置中配置")
+    model = settings.default_model
+    status = build_model_status(model, settings)
+    if not status.ready:
+        raise HTTPException(422, status.message)
 
 
 def _prepare_pipeline(req: GenerateRequest):
@@ -89,6 +81,7 @@ def _prepare_pipeline(req: GenerateRequest):
 async def generate_presentation(req: GenerateRequest):
     """生成演示文稿 — 调用 slide_pipeline"""
     _check_model_config()
+    from app.core.config import settings
     from app.services.pipeline.graph import ParseDocumentNode, slide_pipeline
 
     title, state = _prepare_pipeline(req)
@@ -126,6 +119,7 @@ async def generate_presentation(req: GenerateRequest):
 async def generate_presentation_stream(req: GenerateRequest):
     """SSE 流式生成 — 实时推送进度事件"""
     _check_model_config()
+    from app.core.config import settings
     from app.services.pipeline.graph import ParseDocumentNode, slide_pipeline
 
     title, state = _prepare_pipeline(req)

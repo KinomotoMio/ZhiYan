@@ -264,6 +264,16 @@ export interface AppSettings {
   has_google_key: boolean;
   has_deepseek_key: boolean;
   has_openrouter_key: boolean;
+  default_model_status: ModelStatus;
+  strong_model_status: ModelStatus;
+  vision_model_status: ModelStatus;
+}
+
+export interface ModelStatus {
+  model: string;
+  provider: string;
+  ready: boolean;
+  message: string;
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -273,7 +283,19 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(
-  data: Partial<Omit<AppSettings, "has_openai_key" | "has_anthropic_key" | "has_google_key" | "has_deepseek_key" | "has_openrouter_key">>
+  data: Partial<
+    Omit<
+      AppSettings,
+      | "has_openai_key"
+      | "has_anthropic_key"
+      | "has_google_key"
+      | "has_deepseek_key"
+      | "has_openrouter_key"
+      | "default_model_status"
+      | "strong_model_status"
+      | "vision_model_status"
+    >
+  >
 ): Promise<AppSettings> {
   const res = await fetch(`${API_BASE}/api/v1/settings`, {
     method: "PUT",
