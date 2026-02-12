@@ -18,6 +18,7 @@ interface AppState {
 
   // 编辑器 actions
   setPresentation: (p: Presentation) => void;
+  updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
   addChatMessage: (msg: ChatMessage) => void;
@@ -59,6 +60,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 编辑器 actions
   setPresentation: (p) => set({ presentation: p }),
+  updateSlides: (slides) =>
+    set((state) => {
+      if (!state.presentation) return {};
+      return {
+        presentation: { ...state.presentation, slides },
+        currentSlideIndex: Math.min(state.currentSlideIndex, slides.length - 1),
+      };
+    }),
   setCurrentSlideIndex: (i) => set({ currentSlideIndex: i }),
   setIsGenerating: (v) => set({ isGenerating: v }),
   addChatMessage: (msg) =>

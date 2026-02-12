@@ -11,8 +11,10 @@ import {
   Theater,
   Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
-import { chatStream } from "@/lib/api";
+import { chatStream, listSkills } from "@/lib/api";
+import type { Slide } from "@/types/slide";
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   return (
@@ -66,10 +68,17 @@ const QUICK_ACTIONS = [
 
 export default function FloatingChatPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const { chatMessages, addChatMessage, presentation, currentSlideIndex } =
-    useAppStore();
+  const {
+    chatMessages,
+    addChatMessage,
+    presentation,
+    currentSlideIndex,
+    updateSlides,
+  } = useAppStore();
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
+  const [skills, setSkills] = useState<{ name: string; description: string; command?: string }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgRef = useRef<string>("");
 
@@ -99,7 +108,6 @@ export default function FloatingChatPanel() {
     streamingMsgRef.current = "";
     const replyId = `msg-${Date.now()}-reply`;
 
-    // 先添加一个空的 assistant 消息
     addChatMessage({
       id: replyId,
       role: "assistant",
@@ -107,9 +115,17 @@ export default function FloatingChatPanel() {
       timestamp: Date.now(),
     });
 
+    // 构建对话历史（最近 20 条，不含当前空回复）
+    const currentMessages = useAppStore.getState().chatMessages;
+    const historyForApi = currentMessages
+      .filter((m) => m.id !== replyId && m.content.trim())
+      .slice(-20)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     await chatStream(
       {
         message: text,
+        messages: historyForApi,
         presentation_context: presentation
           ? { slides: presentation.slides, title: presentation.title }
           : undefined,
@@ -117,7 +133,6 @@ export default function FloatingChatPanel() {
       },
       (chunk) => {
         streamingMsgRef.current += chunk;
-        // 更新最后一条消息的内容
         useAppStore.setState((state) => ({
           chatMessages: state.chatMessages.map((msg) =>
             msg.id === replyId
@@ -139,11 +154,37 @@ export default function FloatingChatPanel() {
           ),
         }));
         setIsStreaming(false);
+      },
+      (slideUpdate) => {
+        // AI 修改了幻灯片，更新 store
+        updateSlides(slideUpdate.slides as unknown as Slide[]);
+        const modCount = slideUpdate.modifications.length;
+        toast.success(`AI 已修改 ${modCount} 处幻灯片内容`);
       }
     );
   };
 
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    if (value === "/") {
+      listSkills()
+        .then((res) => {
+          setSkills(res.skills);
+          setShowSkills(true);
+        })
+        .catch(() => setShowSkills(false));
+    } else if (!value.startsWith("/")) {
+      setShowSkills(false);
+    }
+  };
+
+  const handleSkillSelect = (command: string) => {
+    setInput(`/${command} `);
+    setShowSkills(false);
+  };
+
   const handleSend = () => {
+    setShowSkills(false);
     sendMessage(input);
     setInput("");
   };
@@ -157,7 +198,6 @@ export default function FloatingChatPanel() {
       {/* 面板 */}
       {isOpen && (
         <>
-          {/* 背景点击关闭 */}
           <div
             className="fixed inset-0 z-40"
             onClick={() => setIsOpen(false)}
@@ -199,13 +239,28 @@ export default function FloatingChatPanel() {
 
             {/* 输入框 */}
             <div className="border-t px-3 py-2">
+              {/* Skill 自动补全 */}
+              {showSkills && skills.length > 0 && (
+                <div className="mb-2 max-h-32 overflow-y-auto rounded-md border bg-background shadow-sm">
+                  {skills.map((skill) => (
+                    <button
+                      key={skill.name}
+                      onClick={() => handleSkillSelect(skill.command || skill.name)}
+                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-accent flex items-center gap-2"
+                    >
+                      <span className="font-medium">/{skill.command || skill.name}</span>
+                      <span className="text-muted-foreground truncate">{skill.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input
                   type="text"
                   className="flex-1 px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="输入消息或 /command..."
+                  placeholder="输入消息或 / 触发 Skill..."
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => handleInputChange(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSend()}
                   disabled={isStreaming}
                 />

@@ -53,17 +53,29 @@ export async function exportPdf(presentation: Presentation): Promise<Blob> {
 
 // ---------- Chat ----------
 
+interface ChatMessagePayload {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface ChatRequest {
   message: string;
+  messages?: ChatMessagePayload[];
   presentation_context?: Record<string, unknown>;
   current_slide_index?: number;
+}
+
+interface SlideUpdateEvent {
+  slides: Record<string, unknown>[];
+  modifications: Record<string, unknown>[];
 }
 
 export async function chatStream(
   req: ChatRequest,
   onChunk: (text: string) => void,
   onDone: () => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onSlideUpdate?: (update: SlideUpdateEvent) => void
 ): Promise<void> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
@@ -101,6 +113,13 @@ export async function chatStream(
             const parsed = JSON.parse(data);
             if (parsed.type === "text" && parsed.content) {
               onChunk(parsed.content);
+            } else if (parsed.type === "slide_update" && onSlideUpdate) {
+              onSlideUpdate({
+                slides: parsed.slides,
+                modifications: parsed.modifications,
+              });
+            } else if (parsed.type === "error") {
+              onError?.(new Error(parsed.content));
             }
           } catch {
             // 跳过无法解析的行

@@ -318,9 +318,15 @@ class VerifySlidesNode(BaseNode[PipelineState, None, list[Slide]]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> End[list[Slide]]:
-        from app.services.agents.layout_verifier import verify_programmatic
+        from app.services.agents.layout_verifier import verify_programmatic, run_aesthetic_verification
 
         issues = verify_programmatic(ctx.state.slides)
+
+        # 可选：LLM 审美评估
+        aesthetic_result = await run_aesthetic_verification(ctx.state.slides)
+        if aesthetic_result and aesthetic_result.issues:
+            issues.extend(aesthetic_result.issues)
+
         ctx.state.verification_issues = [i.model_dump() for i in issues]
 
         if issues:
