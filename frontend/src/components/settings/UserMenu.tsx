@@ -19,7 +19,7 @@ interface UserMenuProps {
 
 export default function UserMenu({ compact }: UserMenuProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { status, refresh } = useSettingsStatus();
+  const { status, message, refresh } = useSettingsStatus();
   const needsSetup = status === "unconfigured";
 
   const handleSettingsClose = (open: boolean) => {
@@ -64,7 +64,7 @@ export default function UserMenu({ compact }: UserMenuProps) {
                 <p className="truncate text-sm font-medium">未登录用户</p>
                 {needsSetup && (
                   <p className="truncate text-xs text-amber-600 dark:text-amber-400">
-                    API Key 未配置
+                    {message || "默认模型未就绪"}
                   </p>
                 )}
               </div>

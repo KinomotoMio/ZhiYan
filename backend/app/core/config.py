@@ -49,16 +49,21 @@ settings = Settings()
 
 def reload_settings(overrides: dict | None = None) -> None:
     """从 JSON 持久化文件加载用户设置，合并到全局 settings"""
-    global settings
     from app.core.settings_store import load_user_settings
 
     stored = load_user_settings()
     if overrides:
         stored.update(overrides)
 
+    next_settings = Settings(**stored) if stored else Settings()
+    for field_name in type(next_settings).model_fields:
+        setattr(settings, field_name, getattr(next_settings, field_name))
+
     if stored:
-        settings = Settings(**stored)
-        logger.info("Settings reloaded with %d overrides", len(stored))
+        logger.info(
+            "Settings reloaded with %d overrides (object_id=%s)",
+            len(stored),
+            id(settings),
+        )
     else:
-        settings = Settings()
-        logger.info("Settings reloaded from defaults")
+        logger.info("Settings reloaded from defaults (object_id=%s)", id(settings))
