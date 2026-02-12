@@ -6,6 +6,7 @@ import { uploadSource, fetchUrlSource, deleteSource } from "@/lib/api";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
+import UserMenu from "@/components/settings/UserMenu";
 import { cn } from "@/lib/utils";
 import type { SourceMeta } from "@/types/source";
 
@@ -230,6 +231,11 @@ export default function SourcePanel() {
             onFilesSelected={handleUploadFiles}
             onUrlSubmit={handleUrlSubmit}
           />
+        </div>
+
+        {/* 用户菜单 */}
+        <div className="border-t border-border px-2 py-2">
+          <UserMenu />
         </div>
       </div>
 

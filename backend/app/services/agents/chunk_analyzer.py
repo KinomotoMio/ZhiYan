@@ -28,10 +28,12 @@ def get_chunk_analyzer_agent():
     if _agent is None:
         from pydantic_ai import Agent
         from app.core.config import settings
+        from app.core.model_resolver import resolve_model
 
         _agent = Agent(
-            model=settings.default_model,
+            model=resolve_model(settings.default_model),
             output_type=ChunkAnalysis,
+            retries=2,
             instructions=(
                 "你是一个内容分析助手。分析给定的文档片段，提取核心要点，"
                 "评估其重要性，并建议应该生成多少页幻灯片来展示这些内容。\n"

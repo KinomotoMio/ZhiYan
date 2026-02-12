@@ -1,36 +1,30 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { exportPptx, exportPdf } from "@/lib/api";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import SlidePreview from "@/components/slides/SlidePreview";
 import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
+import UserMenu from "@/components/settings/UserMenu";
 
 export default function EditorPage() {
   const router = useRouter();
   const { presentation, currentSlideIndex, setCurrentSlideIndex } =
     useAppStore();
   const [showReveal, setShowReveal] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭导出菜单
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
-        setShowExportMenu(false);
-      }
-    };
-    if (showExportMenu) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showExportMenu]);
 
   if (!presentation) {
     return (
@@ -53,14 +47,12 @@ export default function EditorPage() {
   const handleExport = async (format: "pptx" | "pdf") => {
     if (!presentation || exporting) return;
     setExporting(true);
-    setShowExportMenu(false);
 
     try {
       const blob = format === "pptx"
         ? await exportPptx(presentation)
         : await exportPdf(presentation);
 
-      // 触发下载
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -110,33 +102,26 @@ export default function EditorPage() {
           <span className="font-medium text-sm">{presentation.title}</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* 导出下拉菜单 */}
-          <div className="relative" ref={exportMenuRef}>
-            <button
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              disabled={exporting}
-              className="flex items-center gap-1.5 px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
-            >
-              {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {exporting ? "正在导出..." : "导出"}
-            </button>
-            {showExportMenu && (
-              <div className="absolute right-0 top-full mt-1 w-40 border rounded-md bg-background shadow-lg z-10">
-                <button
-                  onClick={() => handleExport("pptx")}
-                  className="w-full px-3 py-2 text-sm text-left hover:bg-muted"
-                >
-                  导出 PPTX
-                </button>
-                <button
-                  onClick={() => handleExport("pdf")}
-                  className="w-full px-3 py-2 text-sm text-left hover:bg-muted border-t"
-                >
-                  导出 PDF
-                </button>
-              </div>
-            )}
-          </div>
+          <UserMenu compact />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
+              >
+                {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {exporting ? "正在导出..." : "导出"}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleExport("pptx")}>
+                导出 PPTX
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport("pdf")}>
+                导出 PDF
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <button
             onClick={() => setShowReveal(true)}
             className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90"

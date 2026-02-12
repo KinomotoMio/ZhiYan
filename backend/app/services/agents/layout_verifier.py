@@ -1,6 +1,7 @@
-"""Layout Verifier Agent — 布局检查 + 审美评估
+"""Layout Verifier Agent — 布局检查 + 多模态审美评估
 
 程序化检查优先，LLM 审美评估作为补充。
+支持 vision：有截图时用 BinaryContent 发送图片给多模态 LLM，否则回退到文本摘要。
 """
 
 import logging
@@ -10,6 +11,9 @@ from pydantic import BaseModel, Field
 from app.models.slide import Slide
 
 logger = logging.getLogger(__name__)
+
+# 延迟初始化 Agent 缓存（settings_store.invalidate_agents() 会 reset 此值）
+_agent = None
 
 
 class VerificationIssue(BaseModel):
@@ -111,10 +115,23 @@ def verify_programmatic(slides: list[Slide]) -> list[VerificationIssue]:
     return issues
 
 
-async def run_aesthetic_verification(slides: list[Slide]) -> VerificationResult | None:
-    """可选的 LLM 审美评估（仅在有 API key 时运行）"""
+async def run_aesthetic_verification(
+    slides: list[Slide],
+    presentation_dict: dict | None = None,
+) -> VerificationResult | None:
+    """LLM 审美评估 — 优先使用截图多模态，回退到文本摘要"""
     try:
         agent = _get_aesthetic_verifier_agent()
+
+        # 尝试截图 → 多模态评估
+        if presentation_dict is not None:
+            try:
+                result = await _run_vision_verification(agent, slides, presentation_dict)
+                return result
+            except Exception as e:
+                logger.warning("Vision verification failed, falling back to text: %s", e)
+
+        # 回退：文本摘要评估
         slides_summary = "\n".join(
             f"- 第{i+1}页 [{s.layout_type.value}]: "
             f"{_extract_title_from_slide(s)} ({len(s.components)} 个组件)"
@@ -129,6 +146,33 @@ async def run_aesthetic_verification(slides: list[Slide]) -> VerificationResult 
         return None
 
 
+async def _run_vision_verification(
+    agent, slides: list[Slide], presentation_dict: dict
+) -> VerificationResult:
+    """使用截图 + BinaryContent 进行多模态审美评估"""
+    from pydantic_ai import BinaryContent
+
+    from app.services.export.slide_screenshot import capture_slide_screenshots
+
+    screenshots = await capture_slide_screenshots(presentation_dict)
+    if not screenshots:
+        raise ValueError("No screenshots captured")
+
+    logger.info("Captured %d slide screenshots for vision verification", len(screenshots))
+
+    # 构建多模态 prompt：文字 + 图片交替
+    user_prompt: list[str | BinaryContent] = [
+        f"请评估以下演示文稿（共 {len(screenshots)} 页）的视觉设计质量。"
+        f"以下是每页渲染后的截图：",
+    ]
+    for i, ss in enumerate(screenshots):
+        user_prompt.append(f"第 {i + 1} 页 (ID: {ss.slide_id}):")
+        user_prompt.append(BinaryContent(data=ss.png_bytes, media_type="image/png"))
+
+    result = await agent.run(user_prompt)
+    return result.output
+
+
 def _extract_title_from_slide(slide: Slide) -> str:
     for comp in slide.components:
         if comp.role.value == "title" and comp.content:
@@ -137,16 +181,23 @@ def _extract_title_from_slide(slide: Slide) -> str:
 
 
 def _get_aesthetic_verifier_agent():
-    """延迟创建 LLM 审美评估 Agent"""
+    """延迟创建 LLM 审美评估 Agent（使用 vision_model）"""
+    global _agent
+    if _agent is not None:
+        return _agent
+
     from pydantic_ai import Agent
     from app.core.config import settings
+    from app.core.model_resolver import resolve_model
 
-    return Agent(
-        model=settings.default_model,
+    _agent = Agent(
+        model=resolve_model(settings.vision_model),
         output_type=VerificationResult,
         instructions=(
             "你是一个演示文稿设计评审专家。评估幻灯片的视觉质量。\n"
-            "检查维度：配色协调性、信息密度合理性、视觉层级清晰度。\n"
+            "检查维度：配色协调性、信息密度合理性、视觉层级清晰度、留白是否充足、排版整洁度。\n"
+            "如果收到截图，请基于实际视觉效果进行评估。\n"
             "给出 0-100 的评分和具体改进建议。"
         ),
     )
+    return _agent

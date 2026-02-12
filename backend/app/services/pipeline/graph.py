@@ -6,7 +6,10 @@
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
@@ -36,6 +39,13 @@ class PipelineState:
     slides: list[Slide] = field(default_factory=list)
     verification_issues: list[dict] = field(default_factory=list)
 
+    # 进度回调（可选）
+    progress_callback: Callable[..., Any] | None = None
+
+    def report_progress(self, stage: str, step: int, total_steps: int, message: str) -> None:
+        if self.progress_callback:
+            self.progress_callback(stage, step, total_steps, message)
+
 
 @dataclass
 class ParseDocumentNode(BaseNode[PipelineState]):
@@ -43,7 +53,8 @@ class ParseDocumentNode(BaseNode[PipelineState]):
 
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "PlanChunksNode":
+    ) -> "CleanDocumentNode":
+        ctx.state.report_progress("parse", 1, 7, "解析文档...")
         from app.services.document.parser import estimate_tokens
 
         content = ctx.state.raw_content
@@ -66,7 +77,89 @@ class ParseDocumentNode(BaseNode[PipelineState]):
             "ParseDocument: %d chars, ~%d tokens, %d headings",
             len(content), token_count, heading_count,
         )
+        return CleanDocumentNode()
+
+
+@dataclass
+class CleanDocumentNode(BaseNode[PipelineState]):
+    """清洗文档格式 — 修复 MarkItDown 解析残留，带缓存"""
+
+    async def run(
+        self, ctx: GraphRunContext[PipelineState, None]
+    ) -> "PlanChunksNode":
+        ctx.state.report_progress("clean", 2, 7, "优化文档格式...")
+        from app.services.agents.document_cleaner import clean_document
+        from app.services.document import source_store
+
+        t0 = time.monotonic()
+        source_count = len(ctx.state.source_ids) if ctx.state.source_ids else 0
+        logger.info("CleanDocument: starting LLM cleaning (%d sources)", source_count)
+
+        if ctx.state.source_ids:
+            any_cleaned = False
+            for sid in ctx.state.source_ids:
+                entry = source_store.get(sid)
+                if entry and not entry.get("cleaned_content"):
+                    cleaned = await clean_document(entry["parsed_content"])
+                    source_store.set_cleaned_content(sid, cleaned)
+                    any_cleaned = True
+
+            has_cleaned = any_cleaned or any(
+                (source_store.get(s) or {}).get("cleaned_content")
+                for s in ctx.state.source_ids
+            )
+            if has_cleaned:
+                ctx.state.raw_content = source_store.get_combined_content(
+                    ctx.state.source_ids, prefer_cleaned=True
+                )
+        else:
+            ctx.state.raw_content = await clean_document(ctx.state.raw_content)
+
+        elapsed = time.monotonic() - t0
+        logger.info(
+            "CleanDocument: done in %.1fs, content length %d chars",
+            elapsed, len(ctx.state.raw_content),
+        )
         return PlanChunksNode()
+
+
+def _merge_small_chunks(
+    chunks: list[dict], min_tokens: int = 100, max_chunks: int = 30
+) -> list[dict]:
+    """合并碎片 chunk：先合并过小的，再限制总数"""
+    if len(chunks) <= 1:
+        return chunks
+
+    # Phase 1: token < min_tokens 的合并到前一个
+    merged = [chunks[0].copy()]
+    for chunk in chunks[1:]:
+        if merged[-1]["estimated_tokens"] < min_tokens:
+            merged[-1]["content"] += "\n\n" + chunk["content"]
+            merged[-1]["estimated_tokens"] += chunk["estimated_tokens"]
+        else:
+            merged.append(chunk.copy())
+
+    # Phase 2: 超 max_chunks 时，贪心合并最小的
+    while len(merged) > max_chunks:
+        min_idx = min(range(len(merged)), key=lambda i: merged[i]["estimated_tokens"])
+        # 选择相邻的目标来合并
+        if min_idx > 0:
+            target = min_idx - 1
+        elif len(merged) > 1:
+            target = 1
+        else:
+            break
+        merge_from = min(min_idx, target)
+        merge_to = max(min_idx, target)
+        merged[merge_from]["content"] += "\n\n" + merged[merge_to]["content"]
+        merged[merge_from]["estimated_tokens"] += merged[merge_to]["estimated_tokens"]
+        merged.pop(merge_to)
+
+    # 重新编号
+    for i, c in enumerate(merged):
+        c["chunk_id"] = f"chunk-{i}"
+
+    return merged
 
 
 @dataclass
@@ -76,6 +169,7 @@ class PlanChunksNode(BaseNode[PipelineState]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> "AnalyzeChunksNode":
+        ctx.state.report_progress("chunk", 3, 7, "规划分块策略...")
         from app.services.document.parser import split_by_headings
 
         content = ctx.state.raw_content
@@ -108,8 +202,9 @@ class PlanChunksNode(BaseNode[PipelineState]):
                 "estimated_tokens": metadata.get("estimated_tokens", 0),
             }]
 
+        chunks = _merge_small_chunks(chunks)
         ctx.state.chunks = chunks
-        logger.info("PlanChunks: %d chunks generated", len(chunks))
+        logger.info("PlanChunks: %d chunks generated (after merge)", len(chunks))
         return AnalyzeChunksNode()
 
 
@@ -120,34 +215,38 @@ class AnalyzeChunksNode(BaseNode[PipelineState]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> "SynthesizeOutlineNode":
+        ctx.state.report_progress("analyze", 4, 7, "分析文档内容...")
+        t0 = time.monotonic()
+        logger.info("AnalyzeChunks: starting analysis for %d chunks", len(ctx.state.chunks))
         topic = ctx.state.topic
+        semaphore = asyncio.Semaphore(10)
 
         async def analyze_one(chunk: dict) -> dict:
-            prompt = (
-                f"演示文稿主题：{topic}\n\n"
-                f"请分析以下文档片段（ID: {chunk['chunk_id']}）：\n\n"
-                f"{chunk['content'][:3000]}"
-            )
-            try:
-                from app.services.agents.chunk_analyzer import chunk_analyzer_agent
+            async with semaphore:
+                prompt = (
+                    f"演示文稿主题：{topic}\n\n"
+                    f"请分析以下文档片段（ID: {chunk['chunk_id']}）：\n\n"
+                    f"{chunk['content'][:3000]}"
+                )
+                try:
+                    from app.services.agents.chunk_analyzer import chunk_analyzer_agent
 
-                result = await chunk_analyzer_agent.run(prompt)
-                analysis = result.output.model_dump()
-                analysis["chunk_id"] = chunk["chunk_id"]
-                return analysis
-            except Exception as e:
-                logger.warning("Chunk %s analysis failed: %s", chunk["chunk_id"], e)
-                # 回退：从原文提取简单要点
-                content = chunk.get("content", "")
-                lines = [l.strip() for l in content.split("\n") if l.strip() and not l.startswith("#")]
-                key_points = lines[:3] if lines else [chunk.get("heading", "内容要点")]
-                return {
-                    "chunk_id": chunk["chunk_id"],
-                    "key_points": key_points,
-                    "suggested_slide_count": 1,
-                    "data_elements": [],
-                    "importance": 0.5,
-                }
+                    result = await chunk_analyzer_agent.run(prompt)
+                    analysis = result.output.model_dump()
+                    analysis["chunk_id"] = chunk["chunk_id"]
+                    return analysis
+                except Exception as e:
+                    logger.warning("Chunk %s analysis failed: %s", chunk["chunk_id"], e)
+                    content = chunk.get("content", "")
+                    lines = [l.strip() for l in content.split("\n") if l.strip() and not l.startswith("#")]
+                    key_points = lines[:3] if lines else [chunk.get("heading", "内容要点")]
+                    return {
+                        "chunk_id": chunk["chunk_id"],
+                        "key_points": key_points,
+                        "suggested_slide_count": 1,
+                        "data_elements": [],
+                        "importance": 0.5,
+                    }
 
         # 并行分析所有块，捕获整体错误
         try:
@@ -166,7 +265,8 @@ class AnalyzeChunksNode(BaseNode[PipelineState]):
                 }
                 for chunk in ctx.state.chunks
             ]
-        logger.info("AnalyzeChunks: %d chunks analyzed", len(ctx.state.chunk_analyses))
+        elapsed = time.monotonic() - t0
+        logger.info("AnalyzeChunks: %d chunks analyzed in %.1fs", len(ctx.state.chunk_analyses), elapsed)
         return SynthesizeOutlineNode()
 
 
@@ -177,6 +277,9 @@ class SynthesizeOutlineNode(BaseNode[PipelineState]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> "GenerateSlidesNode":
+        ctx.state.report_progress("outline", 5, 7, "生成大纲...")
+        t0 = time.monotonic()
+        logger.info("SynthesizeOutline: starting outline generation")
         # 构建分析摘要
         analyses_text = "\n".join(
             f"- [{a['chunk_id']}] 要点: {', '.join(a.get('key_points', [])[:3])}; "
@@ -202,9 +305,10 @@ class SynthesizeOutlineNode(BaseNode[PipelineState]):
             logger.warning("Outline synthesis failed: %s, using fallback", e)
             ctx.state.outline = self._fallback_outline(ctx.state)
 
+        elapsed = time.monotonic() - t0
         logger.info(
-            "SynthesizeOutline: %d items",
-            len(ctx.state.outline.get("items", [])),
+            "SynthesizeOutline: %d items in %.1fs",
+            len(ctx.state.outline.get("items", [])), elapsed,
         )
         return GenerateSlidesNode()
 
@@ -253,6 +357,9 @@ class GenerateSlidesNode(BaseNode[PipelineState]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> "VerifySlidesNode":
+        ctx.state.report_progress("generate", 6, 7, "生成幻灯片...")
+        t0 = time.monotonic()
+        logger.info("GenerateSlides: starting slide generation")
         from app.services.pipeline.layout import build_slide_from_content
 
         outline_items = ctx.state.outline.get("items", [])
@@ -305,9 +412,14 @@ class GenerateSlidesNode(BaseNode[PipelineState]):
                     speaker_notes="",
                 )
             slides.append(slide)
+            ctx.state.report_progress(
+                "generate", 6, 7,
+                f"生成第 {len(slides)}/{len(outline_items)} 页...",
+            )
 
         ctx.state.slides = slides
-        logger.info("GenerateSlides: %d slides created", len(slides))
+        elapsed = time.monotonic() - t0
+        logger.info("GenerateSlides: %d slides created in %.1fs", len(slides), elapsed)
         return VerifySlidesNode()
 
 
@@ -318,25 +430,36 @@ class VerifySlidesNode(BaseNode[PipelineState, None, list[Slide]]):
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> End[list[Slide]]:
+        ctx.state.report_progress("verify", 7, 7, "验证布局质量...")
+        t0 = time.monotonic()
+        logger.info("VerifySlides: starting verification")
         from app.services.agents.layout_verifier import verify_programmatic, run_aesthetic_verification
 
         issues = verify_programmatic(ctx.state.slides)
 
-        # 可选：LLM 审美评估
-        aesthetic_result = await run_aesthetic_verification(ctx.state.slides)
+        # 可选：LLM 审美评估（传入 presentation_dict 以启用截图多模态）
+        presentation_dict = {
+            "title": ctx.state.topic or "演示文稿",
+            "slides": [s.model_dump(by_alias=True) for s in ctx.state.slides],
+        }
+        aesthetic_result = await run_aesthetic_verification(
+            ctx.state.slides, presentation_dict=presentation_dict
+        )
         if aesthetic_result and aesthetic_result.issues:
             issues.extend(aesthetic_result.issues)
 
         ctx.state.verification_issues = [i.model_dump() for i in issues]
 
+        elapsed = time.monotonic() - t0
         if issues:
             logger.info(
-                "VerifySlides: %d issues found (%d errors)",
+                "VerifySlides: %d issues found (%d errors) in %.1fs",
                 len(issues),
                 sum(1 for i in issues if i.severity == "error"),
+                elapsed,
             )
         else:
-            logger.info("VerifySlides: all checks passed")
+            logger.info("VerifySlides: all checks passed in %.1fs", elapsed)
 
         return End(ctx.state.slides)
 
@@ -345,6 +468,7 @@ class VerifySlidesNode(BaseNode[PipelineState, None, list[Slide]]):
 slide_pipeline = Graph(
     nodes=[
         ParseDocumentNode,
+        CleanDocumentNode,
         PlanChunksNode,
         AnalyzeChunksNode,
         SynthesizeOutlineNode,

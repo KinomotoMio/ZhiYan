@@ -81,6 +81,14 @@ export default function FloatingChatPanel() {
   const [skills, setSkills] = useState<{ name: string; description: string; command?: string }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgRef = useRef<string>("");
+  const abortRef = useRef<AbortController | null>(null);
+
+  // 卸载时取消正在进行的请求
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -157,7 +165,7 @@ export default function FloatingChatPanel() {
       },
       (slideUpdate) => {
         // AI 修改了幻灯片，更新 store
-        updateSlides(slideUpdate.slides as unknown as Slide[]);
+        updateSlides(slideUpdate.slides);
         const modCount = slideUpdate.modifications.length;
         toast.success(`AI 已修改 ${modCount} 处幻灯片内容`);
       }
