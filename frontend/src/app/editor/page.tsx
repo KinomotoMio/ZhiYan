@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { exportPptx, exportPdf } from "@/lib/api";
 import SlidePreview from "@/components/slides/SlidePreview";
@@ -67,9 +69,10 @@ export default function EditorPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      toast.success(`${format.toUpperCase()} 导出成功`);
     } catch (err) {
       console.error("导出失败:", err);
-      alert(`导出失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      toast.error(`导出失败: ${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setExporting(false);
     }
@@ -112,9 +115,10 @@ export default function EditorPage() {
             <button
               onClick={() => setShowExportMenu(!showExportMenu)}
               disabled={exporting}
-              className="px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
             >
-              {exporting ? "导出中..." : "导出"}
+              {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {exporting ? "正在导出..." : "导出"}
             </button>
             {showExportMenu && (
               <div className="absolute right-0 top-full mt-1 w-40 border rounded-md bg-background shadow-lg z-10">

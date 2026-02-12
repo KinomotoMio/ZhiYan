@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2 } from "lucide-react";
+import { X } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { SourceMeta } from "@/types/source";
 import { getSourceContent } from "@/lib/api";
 
@@ -67,11 +68,14 @@ export default function SourcePreviewModal({
           {error ? (
             <p className="text-sm text-red-500">{error}</p>
           ) : content === null ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">
-                加载中...
-              </span>
+            <div className="space-y-3 py-4">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
             </div>
           ) : (
             <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">

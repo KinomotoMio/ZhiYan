@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { generatePresentation } from "@/lib/api";
 import TemplateSelector from "./TemplateSelector";
@@ -64,6 +66,9 @@ export default function CreateForm() {
       router.push("/editor");
     } catch (err) {
       console.error("生成失败:", err);
+      toast.error(
+        err instanceof Error ? err.message : "生成失败，请稍后重试"
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -116,9 +121,10 @@ export default function CreateForm() {
             <button
               onClick={handleGenerate}
               disabled={!canGenerate || isGenerating}
-              className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-medium text-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-medium text-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
             >
-              {isGenerating ? "生成中..." : "开始生成"}
+              {isGenerating && <Loader2 className="h-5 w-5 animate-spin" />}
+              {isGenerating ? "AI 正在生成..." : "开始生成"}
             </button>
 
             {/* 状态提示 */}
