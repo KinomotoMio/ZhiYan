@@ -28,7 +28,7 @@ import {
   type ModelStatus,
 } from "@/lib/api";
 
-type ModelRoleField = "default_model" | "strong_model" | "vision_model";
+type ModelRoleField = "default_model" | "strong_model" | "vision_model" | "fast_model";
 type KnownProvider = "openai" | "anthropic" | "google-gla" | "deepseek" | "openrouter";
 type DraftProvider = KnownProvider | "custom";
 
@@ -58,6 +58,7 @@ const MODEL_ROLE_CONFIG = [
   { field: "default_model", label: "默认模型", hint: "用于主要文本生成链路" },
   { field: "strong_model", label: "高级模型", hint: "用于高质量结构化生成" },
   { field: "vision_model", label: "多模态模型", hint: "用于视觉审美评估（需图片能力）" },
+  { field: "fast_model", label: "快速模型", hint: "用于文档清洗、分块分析等简单任务，建议选非 thinking 模型" },
 ] as const;
 
 const MODEL_SUGGESTIONS: Record<KnownProvider, string[]> = {
@@ -93,6 +94,7 @@ const EMPTY_MODEL_DRAFTS: Record<ModelRoleField, ModelDraft> = {
   default_model: { provider: "openrouter", customProvider: "", modelName: "moonshotai/kimi-k2.5" },
   strong_model: { provider: "openrouter", customProvider: "", modelName: "moonshotai/kimi-k2.5" },
   vision_model: { provider: "openrouter", customProvider: "", modelName: "moonshotai/kimi-k2.5" },
+  fast_model: { provider: "openrouter", customProvider: "", modelName: "deepseek/deepseek-chat-v3-0324" },
 };
 
 function isKnownProvider(value: string): value is KnownProvider {
@@ -309,6 +311,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
       default_model: composeModelValue(modelDrafts.default_model),
       strong_model: composeModelValue(modelDrafts.strong_model),
       vision_model: composeModelValue(modelDrafts.vision_model),
+      fast_model: composeModelValue(modelDrafts.fast_model),
     }),
     [modelDrafts]
   );
@@ -318,6 +321,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
       default_model: buildDraftStatus(modelValues.default_model, providerStatus),
       strong_model: buildDraftStatus(modelValues.strong_model, providerStatus),
       vision_model: buildDraftStatus(modelValues.vision_model, providerStatus),
+      fast_model: buildDraftStatus(modelValues.fast_model || modelValues.default_model, providerStatus),
     }),
     [modelValues, providerStatus]
   );
@@ -351,6 +355,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
           default_model: parseModelDraft(settings.default_model),
           strong_model: parseModelDraft(settings.strong_model),
           vision_model: parseModelDraft(settings.vision_model),
+          fast_model: parseModelDraft(settings.fast_model),
         });
       })
       .catch(() => toast.error("加载设置失败"))
@@ -380,6 +385,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         default_model: modelValues.default_model,
         strong_model: modelValues.strong_model,
         vision_model: modelValues.vision_model,
+        fast_model: modelValues.fast_model,
         ...(openaiKey && { openai_api_key: openaiKey }),
         ...(anthropicKey && { anthropic_api_key: anthropicKey }),
         ...(googleKey && { google_api_key: googleKey }),
@@ -398,6 +404,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         default_model: parseModelDraft(response.default_model),
         strong_model: parseModelDraft(response.strong_model),
         vision_model: parseModelDraft(response.vision_model),
+        fast_model: parseModelDraft(response.fast_model),
       });
 
       toast.success("设置已保存");
@@ -407,6 +414,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         response.default_model_status,
         response.strong_model_status,
         response.vision_model_status,
+        response.fast_model_status,
       ].filter((status) => !status.ready);
       if (warnings.length > 0) {
         toast("设置已保存，但有模型尚未就绪", {

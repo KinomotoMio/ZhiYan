@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { generatePresentationStream, type ProgressEvent } from "@/lib/api";
+import { generatePresentationStream, type ProgressEvent, type OutlineReadyEvent } from "@/lib/api";
 import TemplateSelector from "./TemplateSelector";
 import GenerationProgress from "./GenerationProgress";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
@@ -41,6 +41,9 @@ export default function CreateForm() {
     isGenerating,
     setIsGenerating,
     setPresentation,
+    initSkeletonPresentation,
+    updateSlideAtIndex,
+    finishGeneration: storeFinishGeneration,
   } = useAppStore();
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -57,10 +60,19 @@ export default function CreateForm() {
     (selectedReadySources.length > 0 || topic.trim().length > 0) &&
     !hasUploadingOrParsing;
 
+  const [navigated, setNavigated] = useState(false);
+
+  const cleanupGeneration = () => {
+    setIsGenerating(false);
+    setProgress(null);
+    abortRef.current = null;
+  };
+
   const handleGenerate = () => {
     if (!canGenerate) return;
     setIsGenerating(true);
     setProgress(null);
+    setNavigated(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -73,18 +85,31 @@ export default function CreateForm() {
         template_id: selectedTemplateId,
         num_pages: numPages,
       },
-      (evt) => setProgress(evt),
-      (evt) => {
-        setPresentation(evt.presentation);
-        setIsGenerating(false);
-        setProgress(null);
-        router.push("/editor");
-      },
-      (err) => {
-        console.error("生成失败:", err);
-        toast.error(err.message || "生成失败，请稍后重试");
-        setIsGenerating(false);
-        setProgress(null);
+      {
+        onProgress: (evt) => setProgress(evt),
+        onOutlineReady: (evt) => {
+          // outline 完成 → 创建 skeleton slides → 跳转 editor
+          initSkeletonPresentation(topic || evt.topic, evt.items);
+          if (!navigated) {
+            setNavigated(true);
+            router.push("/editor");
+          }
+        },
+        onSlideReady: (slide, index) => {
+          updateSlideAtIndex(index, slide);
+        },
+        onResult: (evt) => {
+          // 最终校对覆盖
+          setPresentation(evt.presentation);
+          storeFinishGeneration();
+        },
+        onError: (err) => {
+          console.error("生成失败:", err);
+          toast.error(err.message || "生成失败，请稍后重试");
+        },
+        onDone: () => {
+          cleanupGeneration();
+        },
       },
       controller.signal
     );
@@ -92,8 +117,8 @@ export default function CreateForm() {
 
   const handleCancel = () => {
     abortRef.current?.abort();
-    setIsGenerating(false);
-    setProgress(null);
+    storeFinishGeneration();
+    cleanupGeneration();
     toast.info("已取消生成");
   };
 

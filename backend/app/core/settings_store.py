@@ -46,7 +46,6 @@ def invalidate_agents() -> None:
     from app.services.agents import chat_agent
     from app.services.agents import layout_verifier
     from app.services.agents import document_planner
-    from app.services.agents import document_cleaner
 
     for mod in [
         chunk_analyzer,
@@ -55,7 +54,6 @@ def invalidate_agents() -> None:
         chat_agent,
         layout_verifier,
         document_planner,
-        document_cleaner,
     ]:
         mod._agent = None
 

@@ -56,7 +56,7 @@ export default function SourcePreviewModal({
           </h3>
           <button
             onClick={onClose}
-            className="shrink-0 rounded-md p-1 hover:bg-muted"
+            className="rounded-md p-1 hover:bg-muted"
             aria-label="关闭"
           >
             <X className="h-4 w-4" />

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     default_model: str = "openai:gpt-4o-mini"
     strong_model: str = "openai:gpt-4o"
     vision_model: str = "openai:gpt-4o-mini"
+    fast_model: str = ""  # 用于清洗/分块分析等简单任务，空值时回退到 default_model
 
     # 路径
     project_root: Path = Path(__file__).resolve().parents[3]
@@ -32,7 +33,13 @@ class Settings(BaseSettings):
     max_document_tokens: int = 100_000
 
     # 生成超时（秒）
-    generate_timeout_seconds: int = 120
+    generate_timeout_seconds: int = 300
+    sse_heartbeat_seconds: float = 10.0
+
+    # 日志
+    log_level: str = "INFO"
+    log_format: str = "text"  # text | json
+    log_sse_debug: bool = False
 
     # TTS
     tts_model: str = "tts-1"

@@ -3,6 +3,12 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 
+export interface OutlineItem {
+  slide_number: number;
+  title: string;
+  suggested_layout_category: string;
+}
+
 interface AppState {
   // 编辑器状态
   presentation: Presentation | null;
@@ -24,6 +30,11 @@ interface AppState {
   setIsGenerating: (v: boolean) => void;
   addChatMessage: (msg: ChatMessage) => void;
   getCurrentSlide: () => Slide | null;
+
+  // 渐进式生成 actions
+  initSkeletonPresentation: (title: string, outlineItems: OutlineItem[]) => void;
+  updateSlideAtIndex: (index: number, slide: Slide) => void;
+  finishGeneration: () => void;
 
   // 创建视图 actions
   addSource: (source: SourceMeta) => void;
@@ -80,6 +91,38 @@ export const useAppStore = create<AppState>()(
         const { presentation, currentSlideIndex } = get();
         return presentation?.slides[currentSlideIndex] ?? null;
       },
+
+      // 渐进式生成 actions
+      initSkeletonPresentation: (title, outlineItems) => {
+        const skeletonSlides: Slide[] = outlineItems.map((item) => ({
+          slideId: `slide-${item.slide_number}`,
+          layoutType: "blank" as Slide["layoutType"],
+          layoutId: undefined,
+          contentData: { title: item.title, _loading: true },
+          components: [],
+        }));
+        set({
+          presentation: {
+            presentationId: `pres-skeleton`,
+            title,
+            slides: skeletonSlides,
+          },
+          currentSlideIndex: 0,
+          isGenerating: true,
+        });
+      },
+
+      updateSlideAtIndex: (index, slide) =>
+        set((state) => {
+          if (!state.presentation) return {};
+          const slides = [...state.presentation.slides];
+          if (index >= 0 && index < slides.length) {
+            slides[index] = slide;
+          }
+          return { presentation: { ...state.presentation, slides } };
+        }),
+
+      finishGeneration: () => set({ isGenerating: false }),
 
       // 创建视图 actions
       addSource: (source) =>

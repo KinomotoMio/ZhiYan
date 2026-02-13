@@ -3,6 +3,9 @@
 import { useRef, useState, useEffect } from "react";
 import { ImageIcon, BarChart3 } from "lucide-react";
 import type { Slide, Component as SlideComponent } from "@/types/slide";
+import { getLayoutComponent } from "@/lib/template-registry";
+
+// ---------- 旧版 Component 渲染器（向后兼容） ----------
 
 function RenderComponent({
   comp,
@@ -36,7 +39,6 @@ function RenderComponent({
       return (
         <div style={{ ...posStyle, ...textStyle, overflow: "hidden" }}>
           {lines.map((line, i) => {
-            // 无序列表：• - * 开头
             const unorderedMatch = line.match(/^([•\-*])\s+(.*)/);
             if (unorderedMatch) {
               return (
@@ -46,7 +48,6 @@ function RenderComponent({
                 </div>
               );
             }
-            // 有序列表：1. 2. 等
             const orderedMatch = line.match(/^(\d+)[.)]\s+(.*)/);
             if (orderedMatch) {
               return (
@@ -56,7 +57,6 @@ function RenderComponent({
                 </div>
               );
             }
-            // 嵌套列表（以空格/tab 开头 + 列表符号）
             const nestedMatch = line.match(/^(\s{2,}|\t+)([•\-*]|\d+[.)])\s+(.*)/);
             if (nestedMatch) {
               return (
@@ -104,6 +104,55 @@ function RenderComponent({
   }
 }
 
+// ---------- Skeleton 加载态渲染器 ----------
+
+function RenderSkeletonSlide({ slide }: { slide: Slide }) {
+  const title = (slide.contentData as Record<string, unknown>)?.title as string | undefined;
+  return (
+    <div
+      style={{ width: 1280, height: 720, transformOrigin: "top left" }}
+      className="bg-white flex flex-col items-center justify-center p-16"
+    >
+      {title && (
+        <h2 className="text-4xl font-bold text-gray-800 mb-8 text-center">{title}</h2>
+      )}
+      <div className="w-full max-w-3xl space-y-5">
+        <div className="h-5 bg-gray-200 rounded-md animate-pulse w-full" />
+        <div className="h-5 bg-gray-200 rounded-md animate-pulse w-5/6" />
+        <div className="h-5 bg-gray-200 rounded-md animate-pulse w-4/6" />
+        <div className="h-5 bg-gray-200 rounded-md animate-pulse w-full" />
+        <div className="h-5 bg-gray-200 rounded-md animate-pulse w-3/5" />
+      </div>
+    </div>
+  );
+}
+
+// ---------- 新版 Layout 渲染器 ----------
+
+function RenderLayoutSlide({ slide }: { slide: Slide }) {
+  const layoutId = slide.layoutId || slide.layoutType;
+  const LayoutComponent = getLayoutComponent(layoutId);
+
+  if (!LayoutComponent || !slide.contentData) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        width: 1280,
+        height: 720,
+        transformOrigin: "top left",
+      }}
+      className="bg-[var(--background-color,#ffffff)]"
+    >
+      <LayoutComponent data={slide.contentData as Record<string, unknown>} />
+    </div>
+  );
+}
+
+// ---------- SlidePreview 主组件 ----------
+
 interface SlidePreviewProps {
   slide: Slide;
   className?: string;
@@ -120,18 +169,26 @@ export default function SlidePreview({
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
 
+  // 判断是否为 skeleton 加载态
+  const isSkeleton = !!(slide.contentData as Record<string, unknown> | undefined)?._loading;
+  // 判断是否使用新版 layout 渲染
+  const useNewLayout = !isSkeleton && !!(slide.layoutId && slide.contentData);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        // 基于标准 PPT 宽度 960px 计算缩放比
         const containerWidth = entry.contentRect.width;
-        setScale(containerWidth / 960);
+        if (useNewLayout || isSkeleton) {
+          setScale(containerWidth / 1280);
+        } else {
+          setScale(containerWidth / 960);
+        }
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [useNewLayout, isSkeleton]);
 
   return (
     <div
@@ -142,9 +199,33 @@ export default function SlidePreview({
       } ${className}`}
       style={{ aspectRatio: "16 / 9" }}
     >
-      {slide.components.map((comp) => (
-        <RenderComponent key={comp.id} comp={comp} scale={scale} />
-      ))}
+      {isSkeleton ? (
+        <div
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: "top left",
+            width: 1280,
+            height: 720,
+          }}
+        >
+          <RenderSkeletonSlide slide={slide} />
+        </div>
+      ) : useNewLayout ? (
+        <div
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: "top left",
+            width: 1280,
+            height: 720,
+          }}
+        >
+          <RenderLayoutSlide slide={slide} />
+        </div>
+      ) : (
+        slide.components.map((comp) => (
+          <RenderComponent key={comp.id} comp={comp} scale={scale} />
+        ))
+      )}
     </div>
   );
 }

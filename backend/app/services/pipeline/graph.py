@@ -1,10 +1,15 @@
-"""pydantic-graph 编排 — 文档→分析→大纲→生成→验证
+"""pydantic-graph 编排 — 文档→大纲→布局选择→并行生成→验证
 
-使用 pydantic-graph Original API (BaseNode)。
-状态通过 PipelineState 在节点间共享。
+6-step Pipeline:
+  ParseDocument → GenerateOutline → SelectLayouts
+  → GenerateSlides(并行) → ResolveAssets → VerifySlides(End)
+
+文档清洗已替换为解析时的轻量正则规范化（normalize_markdown）。
+GenerateSpeakerNotes 已移至用户手动触发（按钮 / API），类定义保留供调用。
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -16,6 +21,8 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from app.models.slide import Slide
 
 logger = logging.getLogger(__name__)
+
+TOTAL_STEPS = 6
 
 
 @dataclass
@@ -31,9 +38,9 @@ class PipelineState:
 
     # 中间结果
     document_metadata: dict = field(default_factory=dict)
-    chunks: list[dict] = field(default_factory=list)
-    chunk_analyses: list[dict] = field(default_factory=list)
     outline: dict = field(default_factory=dict)
+    layout_selections: list[dict] = field(default_factory=list)
+    slide_contents: list[dict] = field(default_factory=list)
 
     # 输出
     slides: list[Slide] = field(default_factory=list)
@@ -41,11 +48,15 @@ class PipelineState:
 
     # 进度回调（可选）
     progress_callback: Callable[..., Any] | None = None
+    # 单页完成回调（渐进式 UX）
+    slide_callback: Callable[[dict], None] | None = None
 
     def report_progress(self, stage: str, step: int, total_steps: int, message: str) -> None:
         if self.progress_callback:
             self.progress_callback(stage, step, total_steps, message)
 
+
+# ---------- Step 1: ParseDocument ----------
 
 @dataclass
 class ParseDocumentNode(BaseNode[PipelineState]):
@@ -53,426 +64,462 @@ class ParseDocumentNode(BaseNode[PipelineState]):
 
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "CleanDocumentNode":
-        ctx.state.report_progress("parse", 1, 7, "解析文档...")
+    ) -> "GenerateOutlineNode":
+        ctx.state.report_progress("parse", 1, TOTAL_STEPS, "解析文档...")
         from app.services.document.parser import estimate_tokens
 
         content = ctx.state.raw_content
         token_count = estimate_tokens(content)
-        # 统计标题数量
         heading_count = sum(
             1 for line in content.split("\n") if line.startswith("#")
-        )
-        paragraph_count = len(
-            [p for p in content.split("\n\n") if p.strip()]
         )
 
         ctx.state.document_metadata = {
             "char_count": len(content),
             "estimated_tokens": token_count,
             "heading_count": heading_count,
-            "paragraph_count": paragraph_count,
         }
-        logger.info(
-            "ParseDocument: %d chars, ~%d tokens, %d headings",
-            len(content), token_count, heading_count,
-        )
-        return CleanDocumentNode()
-
-
-@dataclass
-class CleanDocumentNode(BaseNode[PipelineState]):
-    """清洗文档格式 — 修复 MarkItDown 解析残留，带缓存"""
-
-    async def run(
-        self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "PlanChunksNode":
-        ctx.state.report_progress("clean", 2, 7, "优化文档格式...")
-        from app.services.agents.document_cleaner import clean_document
-        from app.services.document import source_store
-
-        t0 = time.monotonic()
-        source_count = len(ctx.state.source_ids) if ctx.state.source_ids else 0
-        logger.info("CleanDocument: starting LLM cleaning (%d sources)", source_count)
 
         if ctx.state.source_ids:
-            any_cleaned = False
-            for sid in ctx.state.source_ids:
-                entry = source_store.get(sid)
-                if entry and not entry.get("cleaned_content"):
-                    cleaned = await clean_document(entry["parsed_content"])
-                    source_store.set_cleaned_content(sid, cleaned)
-                    any_cleaned = True
+            from app.services.document.source_store import get_combined_content
 
-            has_cleaned = any_cleaned or any(
-                (source_store.get(s) or {}).get("cleaned_content")
-                for s in ctx.state.source_ids
-            )
-            if has_cleaned:
-                ctx.state.raw_content = source_store.get_combined_content(
-                    ctx.state.source_ids, prefer_cleaned=True
-                )
-        else:
-            ctx.state.raw_content = await clean_document(ctx.state.raw_content)
+            combined = get_combined_content(ctx.state.source_ids)
+            if combined:
+                ctx.state.raw_content = combined
 
-        elapsed = time.monotonic() - t0
         logger.info(
-            "CleanDocument: done in %.1fs, content length %d chars",
-            elapsed, len(ctx.state.raw_content),
+            "ParseDocument: %d chars, ~%d tokens, %d headings",
+            len(ctx.state.raw_content), token_count, heading_count,
         )
-        return PlanChunksNode()
+        return GenerateOutlineNode()
 
 
-def _merge_small_chunks(
-    chunks: list[dict], min_tokens: int = 100, max_chunks: int = 30
-) -> list[dict]:
-    """合并碎片 chunk：先合并过小的，再限制总数"""
-    if len(chunks) <= 1:
-        return chunks
-
-    # Phase 1: token < min_tokens 的合并到前一个
-    merged = [chunks[0].copy()]
-    for chunk in chunks[1:]:
-        if merged[-1]["estimated_tokens"] < min_tokens:
-            merged[-1]["content"] += "\n\n" + chunk["content"]
-            merged[-1]["estimated_tokens"] += chunk["estimated_tokens"]
-        else:
-            merged.append(chunk.copy())
-
-    # Phase 2: 超 max_chunks 时，贪心合并最小的
-    while len(merged) > max_chunks:
-        min_idx = min(range(len(merged)), key=lambda i: merged[i]["estimated_tokens"])
-        # 选择相邻的目标来合并
-        if min_idx > 0:
-            target = min_idx - 1
-        elif len(merged) > 1:
-            target = 1
-        else:
-            break
-        merge_from = min(min_idx, target)
-        merge_to = max(min_idx, target)
-        merged[merge_from]["content"] += "\n\n" + merged[merge_to]["content"]
-        merged[merge_from]["estimated_tokens"] += merged[merge_to]["estimated_tokens"]
-        merged.pop(merge_to)
-
-    # 重新编号
-    for i, c in enumerate(merged):
-        c["chunk_id"] = f"chunk-{i}"
-
-    return merged
-
+# ---------- Step 2: GenerateOutline ----------
 
 @dataclass
-class PlanChunksNode(BaseNode[PipelineState]):
-    """规划分块策略 — 优先使用标题分块，回退到段落分块"""
+class GenerateOutlineNode(BaseNode[PipelineState]):
+    """生成演示文稿大纲 — 直接从文档内容生成，不再逐块分析"""
 
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "AnalyzeChunksNode":
-        ctx.state.report_progress("chunk", 3, 7, "规划分块策略...")
-        from app.services.document.parser import split_by_headings
+    ) -> "SelectLayoutsNode":
+        ctx.state.report_progress("outline", 2, TOTAL_STEPS, "生成大纲...")
+        t0 = time.monotonic()
+        logger.info("GenerateOutline: starting")
+
+        from app.services.document.parser import estimate_tokens
 
         content = ctx.state.raw_content
-        metadata = ctx.state.document_metadata
+        token_count = estimate_tokens(content)
 
-        # 有标题结构 → 按标题分块
-        if metadata.get("heading_count", 0) > 0:
-            chunks = split_by_headings(content)
+        # 构建 prompt
+        if ctx.state.source_ids:
+            from app.services.document.source_store import get_layer12_summaries
+
+            summaries = get_layer12_summaries(ctx.state.source_ids)
+            if summaries:
+                content_section = f"文档摘要:\n{summaries}\n\n"
+            else:
+                content_section = ""
+
+            if token_count <= 8000:
+                content_section += f"文档全文:\n{content}"
+            else:
+                content_section += f"文档内容（前 8000 字符）:\n{content[:12000]}"
         else:
-            # 无标题 → 按双换行分段
-            paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-            if not paragraphs:
-                paragraphs = [content]
-            chunks = [
-                {
-                    "chunk_id": f"chunk-{i}",
-                    "heading": "",
-                    "content": p,
-                    "estimated_tokens": len(p) // 2,
-                }
-                for i, p in enumerate(paragraphs)
-            ]
-
-        # 如果块太少（短文本），确保至少有一个
-        if not chunks:
-            chunks = [{
-                "chunk_id": "chunk-0",
-                "heading": ctx.state.topic or "内容",
-                "content": content,
-                "estimated_tokens": metadata.get("estimated_tokens", 0),
-            }]
-
-        chunks = _merge_small_chunks(chunks)
-        ctx.state.chunks = chunks
-        logger.info("PlanChunks: %d chunks generated (after merge)", len(chunks))
-        return AnalyzeChunksNode()
-
-
-@dataclass
-class AnalyzeChunksNode(BaseNode[PipelineState]):
-    """分析各块内容 — 并行调用 chunk_analyzer_agent"""
-
-    async def run(
-        self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "SynthesizeOutlineNode":
-        ctx.state.report_progress("analyze", 4, 7, "分析文档内容...")
-        t0 = time.monotonic()
-        logger.info("AnalyzeChunks: starting analysis for %d chunks", len(ctx.state.chunks))
-        topic = ctx.state.topic
-        semaphore = asyncio.Semaphore(10)
-
-        async def analyze_one(chunk: dict) -> dict:
-            async with semaphore:
-                prompt = (
-                    f"演示文稿主题：{topic}\n\n"
-                    f"请分析以下文档片段（ID: {chunk['chunk_id']}）：\n\n"
-                    f"{chunk['content'][:3000]}"
-                )
-                try:
-                    from app.services.agents.chunk_analyzer import chunk_analyzer_agent
-
-                    result = await chunk_analyzer_agent.run(prompt)
-                    analysis = result.output.model_dump()
-                    analysis["chunk_id"] = chunk["chunk_id"]
-                    return analysis
-                except Exception as e:
-                    logger.warning("Chunk %s analysis failed: %s", chunk["chunk_id"], e)
-                    content = chunk.get("content", "")
-                    lines = [l.strip() for l in content.split("\n") if l.strip() and not l.startswith("#")]
-                    key_points = lines[:3] if lines else [chunk.get("heading", "内容要点")]
-                    return {
-                        "chunk_id": chunk["chunk_id"],
-                        "key_points": key_points,
-                        "suggested_slide_count": 1,
-                        "data_elements": [],
-                        "importance": 0.5,
-                    }
-
-        # 并行分析所有块，捕获整体错误
-        try:
-            ctx.state.chunk_analyses = list(await asyncio.gather(
-                *(analyze_one(chunk) for chunk in ctx.state.chunks)
-            ))
-        except Exception as e:
-            logger.warning("AnalyzeChunks gather failed: %s, using fallback", e)
-            ctx.state.chunk_analyses = [
-                {
-                    "chunk_id": chunk["chunk_id"],
-                    "key_points": [chunk.get("heading", "") or chunk["content"][:50]],
-                    "suggested_slide_count": 1,
-                    "data_elements": [],
-                    "importance": 0.5,
-                }
-                for chunk in ctx.state.chunks
-            ]
-        elapsed = time.monotonic() - t0
-        logger.info("AnalyzeChunks: %d chunks analyzed in %.1fs", len(ctx.state.chunk_analyses), elapsed)
-        return SynthesizeOutlineNode()
-
-
-@dataclass
-class SynthesizeOutlineNode(BaseNode[PipelineState]):
-    """综合生成大纲 — 调用 outline_synthesizer_agent"""
-
-    async def run(
-        self, ctx: GraphRunContext[PipelineState, None]
-    ) -> "GenerateSlidesNode":
-        ctx.state.report_progress("outline", 5, 7, "生成大纲...")
-        t0 = time.monotonic()
-        logger.info("SynthesizeOutline: starting outline generation")
-        # 构建分析摘要
-        analyses_text = "\n".join(
-            f"- [{a['chunk_id']}] 要点: {', '.join(a.get('key_points', [])[:3])}; "
-            f"重要度: {a.get('importance', 0.5):.1f}; "
-            f"建议页数: {a.get('suggested_slide_count', 1)}"
-            for a in ctx.state.chunk_analyses
-        )
+            content_section = f"内容:\n{content[:12000]}"
 
         prompt = (
             f"演示文稿主题：{ctx.state.topic or '综合演示'}\n"
             f"目标页数：{ctx.state.num_pages} 页\n\n"
-            f"文档分析摘要：\n{analyses_text}\n\n"
-            f"请据此生成一个 {ctx.state.num_pages} 页的演示文稿大纲。"
-            f"第 1 页必须是 title-slide，最后一页是 section-header（致谢页）。"
+            f"{content_section}\n\n"
+            f"请生成一个 {ctx.state.num_pages} 页的演示文稿大纲。"
         )
 
         try:
             from app.services.agents.outline_synthesizer import outline_synthesizer_agent
 
             result = await outline_synthesizer_agent.run(prompt)
+            usage = result.usage()
+            if usage.requests > 1:
+                logger.warning(
+                    "GenerateOutline required %d LLM requests",
+                    usage.requests,
+                )
             ctx.state.outline = result.output.model_dump()
         except Exception as e:
-            logger.warning("Outline synthesis failed: %s, using fallback", e)
+            logger.warning("Outline generation failed: %s, using fallback", e)
             ctx.state.outline = self._fallback_outline(ctx.state)
 
         elapsed = time.monotonic() - t0
+        outline_items = ctx.state.outline.get("items", [])
         logger.info(
-            "SynthesizeOutline: %d items in %.1fs",
-            len(ctx.state.outline.get("items", [])), elapsed,
+            "GenerateOutline: %d items in %.1fs",
+            len(outline_items), elapsed,
         )
-        return GenerateSlidesNode()
+
+        # 发送 outline_ready 事件（渐进式 UX）
+        ctx.state.report_progress(
+            "outline", 2, TOTAL_STEPS,
+            json.dumps({
+                "type": "outline_ready",
+                "topic": ctx.state.topic,
+                "items": [
+                    {
+                        "slide_number": item["slide_number"],
+                        "title": item["title"],
+                        "suggested_layout_category": item.get("suggested_layout_category", "bullets"),
+                    }
+                    for item in outline_items
+                ],
+            }),
+        )
+
+        return SelectLayoutsNode()
 
     @staticmethod
     def _fallback_outline(state: "PipelineState") -> dict:
-        """Agent 调用失败时的回退大纲"""
         items = [
             {
                 "slide_number": 1,
                 "title": state.topic or "演示文稿",
-                "layout_type": "title-slide",
+                "content_brief": "演示文稿标题页",
                 "key_points": [],
-                "source_chunk_ids": [],
+                "source_references": [],
+                "suggested_layout_category": "intro",
             }
         ]
-        # 内容页
         for i in range(2, state.num_pages):
-            chunk_idx = min(i - 2, len(state.chunk_analyses) - 1)
-            analysis = (
-                state.chunk_analyses[chunk_idx]
-                if state.chunk_analyses
-                else {"key_points": ["要点"], "chunk_id": "chunk-0"}
-            )
             items.append({
                 "slide_number": i,
                 "title": f"第 {i} 节",
-                "layout_type": "title-content",
-                "key_points": analysis.get("key_points", [])[:3],
-                "source_chunk_ids": [analysis.get("chunk_id", "chunk-0")],
+                "content_brief": "内容页",
+                "key_points": ["要点"],
+                "source_references": [],
+                "suggested_layout_category": "bullets",
             })
-        # 结尾页
         items.append({
             "slide_number": state.num_pages,
             "title": "谢谢",
-            "layout_type": "section-header",
+            "content_brief": "致谢结束页",
             "key_points": [],
-            "source_chunk_ids": [],
+            "source_references": [],
+            "suggested_layout_category": "thankyou",
         })
         return {"narrative_arc": "自动生成的演示大纲", "items": items}
 
 
+# ---------- Step 3: SelectLayouts ----------
+
+@dataclass
+class SelectLayoutsNode(BaseNode[PipelineState]):
+    """为每页选择具体的 layout_id"""
+
+    async def run(
+        self, ctx: GraphRunContext[PipelineState, None]
+    ) -> "GenerateSlidesNode":
+        ctx.state.report_progress("layout", 3, TOTAL_STEPS, "选择布局...")
+        t0 = time.monotonic()
+        logger.info("SelectLayouts: starting")
+
+        from app.models.layout_registry import get_layout_catalog, get_layout_ids
+
+        outline_items = ctx.state.outline.get("items", [])
+        valid_ids = set(get_layout_ids())
+
+        items_text = "\n".join(
+            f"- 第{item['slide_number']}页: {item['title']} "
+            f"(类别: {item.get('suggested_layout_category', 'bullets')}, "
+            f"要点: {', '.join(item.get('key_points', [])[:3])})"
+            for item in outline_items
+        )
+        prompt = (
+            f"可用布局列表:\n{get_layout_catalog()}\n\n"
+            f"大纲:\n{items_text}\n\n"
+            f"请为每页选择最合适的 layout_id。"
+        )
+
+        try:
+            from app.services.agents.layout_selector import layout_selector_agent
+
+            result = await layout_selector_agent.run(prompt)
+            selections = result.output.model_dump()["slides"]
+
+            for sel in selections:
+                if sel["layout_id"] not in valid_ids:
+                    item = next(
+                        (it for it in outline_items if it["slide_number"] == sel["slide_number"]),
+                        None,
+                    )
+                    sel["layout_id"] = self._category_to_layout(
+                        item.get("suggested_layout_category", "bullets") if item else "bullets"
+                    )
+
+            ctx.state.layout_selections = selections
+        except Exception as e:
+            logger.warning("Layout selection failed: %s, using category mapping", e)
+            ctx.state.layout_selections = [
+                {
+                    "slide_number": item["slide_number"],
+                    "layout_id": self._category_to_layout(
+                        item.get("suggested_layout_category", "bullets")
+                    ),
+                    "reason": "fallback",
+                }
+                for item in outline_items
+            ]
+
+        elapsed = time.monotonic() - t0
+        logger.info("SelectLayouts: %d layouts selected in %.1fs", len(ctx.state.layout_selections), elapsed)
+        return GenerateSlidesNode()
+
+    @staticmethod
+    def _category_to_layout(category: str) -> str:
+        mapping = {
+            "intro": "intro-slide",
+            "section": "section-header",
+            "bullets": "bullet-with-icons",
+            "metrics": "metrics-slide",
+            "comparison": "two-column-compare",
+            "chart": "chart-with-bullets",
+            "table": "table-info",
+            "timeline": "timeline",
+            "quote": "quote-slide",
+            "image": "image-and-description",
+            "challenge": "challenge-outcome",
+            "thankyou": "thank-you",
+        }
+        return mapping.get(category, "bullet-with-icons")
+
+
+# ---------- Step 4: GenerateSlides (并行) ----------
+
 @dataclass
 class GenerateSlidesNode(BaseNode[PipelineState]):
-    """按大纲逐页生成 Slide — 调用 slide_generator_agent + layout 映射"""
+    """按 layout schema 并行生成每页结构化内容"""
+
+    async def run(
+        self, ctx: GraphRunContext[PipelineState, None]
+    ) -> "ResolveAssetsNode":
+        ctx.state.report_progress("generate", 4, TOTAL_STEPS, "生成幻灯片...")
+        t0 = time.monotonic()
+        logger.info("GenerateSlides: starting parallel generation")
+
+        from app.services.agents.slide_generator import generate_slide_content
+
+        outline_items = ctx.state.outline.get("items", [])
+        layout_map = {
+            sel["slide_number"]: sel["layout_id"]
+            for sel in ctx.state.layout_selections
+        }
+
+        semaphore = asyncio.Semaphore(5)
+        results: list[dict] = [{}] * len(outline_items)
+
+        async def generate_one(idx: int, item: dict) -> None:
+            async with semaphore:
+                slide_num = item["slide_number"]
+                layout_id = layout_map.get(slide_num, "bullet-with-icons")
+
+                source_content = ""
+                if item.get("source_references"):
+                    from app.services.document.source_store import get_combined_content
+
+                    source_content = get_combined_content(
+                        item["source_references"]
+                    )
+                if not source_content:
+                    source_content = ctx.state.raw_content[:2000]
+
+                try:
+                    content_data = await generate_slide_content(
+                        layout_id=layout_id,
+                        slide_number=slide_num,
+                        title=item["title"],
+                        content_brief=item.get("content_brief", ""),
+                        key_points=item.get("key_points", []),
+                        source_content=source_content,
+                    )
+                    results[idx] = {
+                        "slide_number": slide_num,
+                        "layout_id": layout_id,
+                        "content_data": content_data,
+                    }
+                except Exception as e:
+                    logger.warning("Slide %d generation failed: %s", slide_num, e)
+                    results[idx] = {
+                        "slide_number": slide_num,
+                        "layout_id": layout_id,
+                        "content_data": self._fallback_content(item, layout_id),
+                    }
+
+                # 构建 Slide 对象并通过 slide_callback 推送
+                slide = Slide(
+                    slideId=f"slide-{slide_num}",
+                    layoutType=results[idx].get("layout_id", "bullet-with-icons"),
+                    layoutId=results[idx].get("layout_id", "bullet-with-icons"),
+                    contentData=results[idx].get("content_data", {}),
+                    components=[],
+                )
+                if ctx.state.slide_callback:
+                    ctx.state.slide_callback({
+                        "type": "slide_ready",
+                        "slide_index": idx,
+                        "slide": json.loads(slide.model_dump_json(by_alias=True)),
+                    })
+
+                ctx.state.report_progress(
+                    "generate", 4, TOTAL_STEPS,
+                    f"生成第 {idx + 1}/{len(outline_items)} 页...",
+                )
+
+        await asyncio.gather(
+            *(generate_one(i, item) for i, item in enumerate(outline_items))
+        )
+
+        ctx.state.slide_contents = results
+        elapsed = time.monotonic() - t0
+        logger.info("GenerateSlides: %d slides in %.1fs", len(results), elapsed)
+        return ResolveAssetsNode()
+
+    @staticmethod
+    def _fallback_content(item: dict, layout_id: str) -> dict:
+        title = item.get("title", "幻灯片")
+        points = item.get("key_points", ["内容生成中"])
+
+        if layout_id == "intro-slide":
+            return {"title": title, "subtitle": "由知演 AI 智能生成"}
+        if layout_id == "thank-you":
+            return {"title": "谢谢", "subtitle": "感谢您的关注"}
+        if layout_id == "section-header":
+            return {"title": title}
+        if layout_id == "quote-slide":
+            return {"quote": points[0] if points else title}
+
+        return {
+            "title": title,
+            "items": [
+                {"icon": {"query": "star"}, "title": p[:25], "description": p}
+                for p in points[:4]
+            ],
+        }
+
+
+# ---------- Step 5: ResolveAssets ----------
+
+@dataclass
+class ResolveAssetsNode(BaseNode[PipelineState]):
+    """解析图片/图标资源（MVP 阶段保持占位）"""
 
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> "VerifySlidesNode":
-        ctx.state.report_progress("generate", 6, 7, "生成幻灯片...")
-        t0 = time.monotonic()
-        logger.info("GenerateSlides: starting slide generation")
-        from app.services.pipeline.layout import build_slide_from_content
-
-        outline_items = ctx.state.outline.get("items", [])
-        # 构建 chunk_id → content 映射
-        chunk_map = {c["chunk_id"]: c["content"] for c in ctx.state.chunks}
+        ctx.state.report_progress("assets", 5, TOTAL_STEPS, "处理资源...")
+        logger.info("ResolveAssets: MVP pass-through (%d slides)", len(ctx.state.slide_contents))
 
         slides: list[Slide] = []
-        for item in outline_items:
-            slide_num = item["slide_number"]
-            layout = item.get("layout_type", "title-content")
-
-            # 收集关联源内容
-            source_chunks = [
-                chunk_map.get(cid, "")
-                for cid in item.get("source_chunk_ids", [])
-            ]
-            source_content = "\n".join(source_chunks)[:2000]
-
-            prompt = (
-                f"幻灯片 #{slide_num}，布局: {layout}\n"
-                f"标题方向: {item['title']}\n"
-                f"核心要点: {', '.join(item.get('key_points', []))}\n\n"
-                f"关联源文档片段:\n{source_content[:1500]}\n\n"
-                f"请生成这一页幻灯片的内容。"
+        for sc in ctx.state.slide_contents:
+            slide = Slide(
+                slideId=f"slide-{sc['slide_number']}",
+                layoutType=sc.get("layout_id", "bullet-with-icons"),
+                layoutId=sc.get("layout_id", "bullet-with-icons"),
+                contentData=sc.get("content_data", {}),
+                components=[],
             )
-
-            try:
-                from app.services.agents.slide_generator import slide_generator_agent
-
-                result = await slide_generator_agent.run(prompt)
-                content = result.output
-                slide = build_slide_from_content(
-                    slide_number=slide_num,
-                    title=content.title,
-                    layout_type=content.layout_type.value,
-                    body_text=content.body_text,
-                    speaker_notes=content.speaker_notes,
-                    needs_image=content.needs_image,
-                    image_description=content.image_description,
-                )
-            except Exception as e:
-                logger.warning("Slide %d generation failed: %s", slide_num, e)
-                slide = build_slide_from_content(
-                    slide_number=slide_num,
-                    title=item["title"],
-                    layout_type=layout,
-                    body_text="\n".join(
-                        f"• {p}" for p in item.get("key_points", ["内容生成中"])
-                    ),
-                    speaker_notes="",
-                )
             slides.append(slide)
-            ctx.state.report_progress(
-                "generate", 6, 7,
-                f"生成第 {len(slides)}/{len(outline_items)} 页...",
-            )
 
         ctx.state.slides = slides
-        elapsed = time.monotonic() - t0
-        logger.info("GenerateSlides: %d slides created in %.1fs", len(slides), elapsed)
         return VerifySlidesNode()
 
 
+# ---------- Step 6: VerifySlides (终止节点) ----------
+
 @dataclass
 class VerifySlidesNode(BaseNode[PipelineState, None, list[Slide]]):
-    """验证布局质量 — 程序化检查"""
+    """验证布局质量 — 基于结构化数据的检查"""
 
     async def run(
         self, ctx: GraphRunContext[PipelineState, None]
     ) -> End[list[Slide]]:
-        ctx.state.report_progress("verify", 7, 7, "验证布局质量...")
+        ctx.state.report_progress("verify", 6, TOTAL_STEPS, "验证布局质量...")
         t0 = time.monotonic()
         logger.info("VerifySlides: starting verification")
-        from app.services.agents.layout_verifier import verify_programmatic, run_aesthetic_verification
 
-        issues = verify_programmatic(ctx.state.slides)
+        issues = []
+        for slide in ctx.state.slides:
+            content = slide.content_data or {}
+            if not content:
+                issues.append({
+                    "slide_id": slide.slide_id,
+                    "severity": "error",
+                    "category": "content",
+                    "message": f"幻灯片 {slide.slide_id} 缺少内容数据",
+                    "suggestion": "重新生成该页内容",
+                })
 
-        # 可选：LLM 审美评估（传入 presentation_dict 以启用截图多模态）
-        presentation_dict = {
-            "title": ctx.state.topic or "演示文稿",
-            "slides": [s.model_dump(by_alias=True) for s in ctx.state.slides],
-        }
-        aesthetic_result = await run_aesthetic_verification(
-            ctx.state.slides, presentation_dict=presentation_dict
-        )
-        if aesthetic_result and aesthetic_result.issues:
-            issues.extend(aesthetic_result.issues)
-
-        ctx.state.verification_issues = [i.model_dump() for i in issues]
-
+        ctx.state.verification_issues = issues
         elapsed = time.monotonic() - t0
-        if issues:
-            logger.info(
-                "VerifySlides: %d issues found (%d errors) in %.1fs",
-                len(issues),
-                sum(1 for i in issues if i.severity == "error"),
-                elapsed,
-            )
-        else:
-            logger.info("VerifySlides: all checks passed in %.1fs", elapsed)
-
+        logger.info(
+            "VerifySlides: %d issues found in %.1fs",
+            len(issues), elapsed,
+        )
         return End(ctx.state.slides)
 
 
-# 注册所有节点
+# ========== 以下节点已从 Pipeline 移除，保留类定义供 API 独立调用 ==========
+
+
+@dataclass
+class GenerateSpeakerNotesNode(BaseNode[PipelineState]):
+    """批量生成演讲者注释 — 已从 pipeline 移除，改为用户手动触发"""
+
+    async def run(
+        self, ctx: GraphRunContext[PipelineState, None]
+    ) -> End[list[Slide]]:
+        t0 = time.monotonic()
+        logger.info("GenerateSpeakerNotes: starting")
+
+        slides = ctx.state.slides
+        if not slides:
+            return End(slides)
+
+        slides_summary = "\n".join(
+            f"- 第{i+1}页 [{s.layout_id}]: "
+            f"{(s.content_data or {}).get('title', '无标题')}"
+            for i, s in enumerate(slides)
+        )
+        prompt = (
+            f"演示文稿主题: {ctx.state.topic}\n\n"
+            f"幻灯片列表:\n{slides_summary}\n\n"
+            f"请为每页生成演讲者注释。"
+        )
+
+        try:
+            from app.services.agents.speaker_notes_generator import speaker_notes_generator_agent
+
+            result = await speaker_notes_generator_agent.run(prompt)
+            notes_map = {
+                n.slide_number: n.notes
+                for n in result.output.notes
+            }
+            for i, slide in enumerate(slides):
+                slide.speaker_notes = notes_map.get(i + 1, "")
+        except Exception as e:
+            logger.warning("Speaker notes generation failed: %s", e)
+
+        elapsed = time.monotonic() - t0
+        logger.info("GenerateSpeakerNotes: done in %.1fs", elapsed)
+        return End(slides)
+
+
+# 注册活跃节点（GenerateSpeakerNotesNode 已移除）
 slide_pipeline = Graph(
     nodes=[
         ParseDocumentNode,
-        CleanDocumentNode,
-        PlanChunksNode,
-        AnalyzeChunksNode,
-        SynthesizeOutlineNode,
+        GenerateOutlineNode,
+        SelectLayoutsNode,
         GenerateSlidesNode,
+        ResolveAssetsNode,
         VerifySlidesNode,
     ],
     name="slide_pipeline",
