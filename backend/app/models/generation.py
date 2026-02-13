@@ -77,6 +77,11 @@ class StageResult(BaseModel):
     ended_at: str | None = None
     duration_ms: int | None = None
     error: str | None = None
+    error_code: str | None = None
+    retriable: bool | None = None
+    timeout_seconds: float | None = None
+    provider_model: str | None = None
+    provider: str | None = None
 
 
 class GenerationEvent(BaseModel):

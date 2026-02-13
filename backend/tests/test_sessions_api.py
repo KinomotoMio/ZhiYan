@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -135,3 +137,61 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     )
     assert create_auto.status_code == 200
     assert create_auto.json()["session_id"]
+
+
+def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-repair"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "修复测试"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    bad_presentation = {
+        "presentationId": "pres-bad",
+        "title": "坏结构演示稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "two-column-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "核心框架",
+                    "items": [
+                        {"title": "要点一", "description": "描述一"},
+                        {"title": "要点二", "description": "描述二"},
+                        {"title": "要点三", "description": "描述三"},
+                    ],
+                },
+                "components": [],
+            }
+        ],
+    }
+    asyncio.run(store.save_presentation(session_id=session_id, payload=bad_presentation))
+
+    latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
+    assert latest.status_code == 200
+    body = latest.json()
+    repaired_content = body["presentation"]["slides"][0]["contentData"]
+    assert "left" in repaired_content
+    assert "right" in repaired_content
+    assert isinstance(repaired_content["left"]["items"], list)
+    assert isinstance(repaired_content["right"]["items"], list)
+
+    with sqlite3.connect(store._db_path) as conn:  # noqa: SLF001
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM session_presentations
+            WHERE session_id=?
+            ORDER BY version_no DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+    assert row is not None
+    persisted = json.loads(row[0])
+    persisted_content = persisted["slides"][0]["contentData"]
+    assert "left" in persisted_content
+    assert "right" in persisted_content

@@ -302,6 +302,31 @@ export type EventType =
   | "job_cancelled"
   | "heartbeat";
 
+export type GenerationErrorCode =
+  | "STAGE_TIMEOUT"
+  | "PROVIDER_TIMEOUT"
+  | "PROVIDER_NETWORK"
+  | "PROVIDER_RATE_LIMIT"
+  | "CANCELLED"
+  | "UNKNOWN";
+
+export interface GenerationEventPayload {
+  step?: number;
+  total_steps?: number;
+  duration_ms?: number;
+  stage_timeout_seconds?: number;
+  started_at?: string;
+  error?: string;
+  error_code?: GenerationErrorCode;
+  error_message?: string;
+  retriable?: boolean;
+  timeout_seconds?: number | null;
+  provider_model?: string | null;
+  provider?: string | null;
+  stage?: string | null;
+  [k: string]: unknown;
+}
+
 export interface CreateJobRequest {
   content?: string;
   topic?: string;
@@ -349,7 +374,7 @@ export interface GenerationEvent {
   ts: string;
   stage: StageStatus | null;
   message: string | null;
-  payload: Record<string, unknown>;
+  payload: GenerationEventPayload;
 }
 
 export async function createJob(req: CreateJobRequest): Promise<CreateJobResponse> {

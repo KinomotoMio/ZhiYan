@@ -6,7 +6,10 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from uuid import uuid4
+
+import httpx
 
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
@@ -25,6 +28,27 @@ from app.services.pipeline.graph import (
 )
 
 logger = logging.getLogger(__name__)
+
+ERROR_STAGE_TIMEOUT = "STAGE_TIMEOUT"
+ERROR_PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
+ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
+ERROR_CANCELLED = "CANCELLED"
+ERROR_UNKNOWN = "UNKNOWN"
+
+
+class StageTimeoutError(TimeoutError):
+    def __init__(self, stage: StageStatus, timeout_seconds: float):
+        self.stage = stage
+        self.timeout_seconds = timeout_seconds
+        super().__init__(f"{stage.value} timed out after {timeout_seconds:.1f}s")
+
+
+@dataclass(frozen=True)
+class ClassifiedError:
+    error_code: str
+    error_message: str
+    retriable: bool
 
 
 class GenerationRunner:
@@ -123,6 +147,7 @@ class GenerationRunner:
                 payload=payload,
             )
 
+        job_started_monotonic = time.monotonic()
         try:
             await self._ensure_not_cancelled(job)
 
@@ -316,8 +341,15 @@ class GenerationRunner:
             await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
             return
         except Exception as e:
+            failed_stage = job.current_stage
+            classified = self._classify_generation_error(
+                e,
+                stage=failed_stage,
+                timeout_seconds=None,
+            )
+            elapsed_ms = int((time.monotonic() - job_started_monotonic) * 1000)
             job.status = JobStatus.FAILED
-            job.error = f"{type(e).__name__}: {e}"
+            job.error = f"[{classified.error_code}] {classified.error_message}"
             job.current_stage = None
             job.updated_at = now_iso()
             await self._store.save_job(job)
@@ -331,11 +363,22 @@ class GenerationRunner:
                 job,
                 EventType.JOB_FAILED,
                 message="任务失败",
-                payload={"error": job.error},
+                payload=self._build_error_payload(
+                    classified=classified,
+                    stage=failed_stage,
+                    timeout_seconds=e.timeout_seconds if isinstance(e, StageTimeoutError) else None,
+                ),
             )
             logger.exception(
                 "generation job failed",
-                extra={"job_id": job.job_id, "stage": job.current_stage, "error_type": type(e).__name__},
+                extra={
+                    "job_id": job.job_id,
+                    "stage": failed_stage.value if failed_stage else None,
+                    "error_type": type(e).__name__,
+                    "error_code": classified.error_code,
+                    "retriable": classified.retriable,
+                    "elapsed_ms": elapsed_ms,
+                },
             )
 
     async def _run_stage(
@@ -355,11 +398,22 @@ class GenerationRunner:
         job.updated_at = now_iso()
         await self._store.save_job(job)
 
-        await self._emit_event(job, EventType.STAGE_STARTED, stage=stage, message=f"{stage.value} 阶段开始")
+        await self._emit_event(
+            job,
+            EventType.STAGE_STARTED,
+            stage=stage,
+            message=f"{stage.value} 阶段开始",
+            payload={
+                "stage_timeout_seconds": timeout,
+                "started_at": start_ts,
+            },
+        )
 
         try:
             await asyncio.wait_for(stage_coro, timeout=timeout)
         except asyncio.TimeoutError as e:
+            timeout_exc = StageTimeoutError(stage=stage, timeout_seconds=timeout)
+            classified = self._classify_generation_error(timeout_exc, stage=stage, timeout_seconds=timeout)
             duration_ms = int((time.monotonic() - t0) * 1000)
             job.stage_results.append(
                 StageResult(
@@ -368,7 +422,12 @@ class GenerationRunner:
                     started_at=start_ts,
                     ended_at=now_iso(),
                     duration_ms=duration_ms,
-                    error=f"timeout after {timeout}s",
+                    error=classified.error_message,
+                    error_code=classified.error_code,
+                    retriable=classified.retriable,
+                    timeout_seconds=timeout,
+                    provider_model=self._model_for_stage(stage),
+                    provider=self._provider_for_stage(stage),
                 )
             )
             await self._store.save_job(job)
@@ -377,10 +436,26 @@ class GenerationRunner:
                 EventType.STAGE_FAILED,
                 stage=stage,
                 message=f"{stage.value} 阶段超时",
-                payload={"error": str(e), "timeout": timeout},
+                payload=self._build_error_payload(
+                    classified=classified,
+                    stage=stage,
+                    timeout_seconds=timeout,
+                ),
             )
-            raise TimeoutError(f"Stage {stage.value} timed out after {timeout}s")
+            logger.warning(
+                "generation stage failed",
+                extra={
+                    "job_id": job.job_id,
+                    "stage": stage.value,
+                    "error_type": type(e).__name__,
+                    "error_code": classified.error_code,
+                    "retriable": classified.retriable,
+                    "elapsed_ms": duration_ms,
+                },
+            )
+            raise timeout_exc from e
         except Exception as e:
+            classified = self._classify_generation_error(e, stage=stage, timeout_seconds=timeout)
             duration_ms = int((time.monotonic() - t0) * 1000)
             job.stage_results.append(
                 StageResult(
@@ -389,7 +464,12 @@ class GenerationRunner:
                     started_at=start_ts,
                     ended_at=now_iso(),
                     duration_ms=duration_ms,
-                    error=str(e),
+                    error=classified.error_message,
+                    error_code=classified.error_code,
+                    retriable=classified.retriable,
+                    timeout_seconds=timeout if classified.error_code == ERROR_STAGE_TIMEOUT else None,
+                    provider_model=self._model_for_stage(stage),
+                    provider=self._provider_for_stage(stage),
                 )
             )
             await self._store.save_job(job)
@@ -398,7 +478,22 @@ class GenerationRunner:
                 EventType.STAGE_FAILED,
                 stage=stage,
                 message=f"{stage.value} 阶段失败",
-                payload={"error": f"{type(e).__name__}: {e}"},
+                payload=self._build_error_payload(
+                    classified=classified,
+                    stage=stage,
+                    timeout_seconds=timeout,
+                ),
+            )
+            logger.warning(
+                "generation stage failed",
+                extra={
+                    "job_id": job.job_id,
+                    "stage": stage.value,
+                    "error_type": type(e).__name__,
+                    "error_code": classified.error_code,
+                    "retriable": classified.retriable,
+                    "elapsed_ms": duration_ms,
+                },
             )
             raise
 
@@ -421,6 +516,119 @@ class GenerationRunner:
             message=f"{stage.value} 阶段完成",
             payload={"duration_ms": duration_ms},
         )
+
+    def _classify_generation_error(
+        self,
+        error: Exception,
+        stage: StageStatus | None,
+        timeout_seconds: float | None,
+    ) -> ClassifiedError:
+        if isinstance(error, StageTimeoutError):
+            return ClassifiedError(
+                error_code=ERROR_STAGE_TIMEOUT,
+                error_message=f"{error.stage.value} timed out after {error.timeout_seconds:.1f}s",
+                retriable=True,
+            )
+
+        if isinstance(error, asyncio.CancelledError):
+            return ClassifiedError(
+                error_code=ERROR_CANCELLED,
+                error_message="generation cancelled by user",
+                retriable=False,
+            )
+
+        if self._is_provider_rate_limited(error):
+            return ClassifiedError(
+                error_code=ERROR_PROVIDER_RATE_LIMIT,
+                error_message="provider rate limited the request",
+                retriable=True,
+            )
+
+        if isinstance(error, httpx.TimeoutException):
+            return ClassifiedError(
+                error_code=ERROR_PROVIDER_TIMEOUT,
+                error_message="provider request timed out",
+                retriable=True,
+            )
+
+        if isinstance(error, (httpx.ConnectError, httpx.NetworkError, httpx.ReadError, httpx.WriteError)):
+            return ClassifiedError(
+                error_code=ERROR_PROVIDER_NETWORK,
+                error_message="provider network connection failed",
+                retriable=True,
+            )
+
+        error_name = type(error).__name__.lower()
+        error_text = str(error).lower()
+        if "timeout" in error_name or "timed out" in error_text:
+            if stage and timeout_seconds and "after" in error_text:
+                return ClassifiedError(
+                    error_code=ERROR_STAGE_TIMEOUT,
+                    error_message=f"{stage.value} timed out after {timeout_seconds:.1f}s",
+                    retriable=True,
+                )
+            return ClassifiedError(
+                error_code=ERROR_PROVIDER_TIMEOUT,
+                error_message="provider request timed out",
+                retriable=True,
+            )
+
+        return ClassifiedError(
+            error_code=ERROR_UNKNOWN,
+            error_message=f"{type(error).__name__}: {error}",
+            retriable=False,
+        )
+
+    def _build_error_payload(
+        self,
+        *,
+        classified: ClassifiedError,
+        stage: StageStatus | None,
+        timeout_seconds: float | None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "error": classified.error_message,
+            "error_code": classified.error_code,
+            "error_message": classified.error_message,
+            "retriable": classified.retriable,
+            "timeout_seconds": timeout_seconds if classified.error_code == ERROR_STAGE_TIMEOUT else None,
+            "provider_model": self._model_for_stage(stage),
+            "provider": self._provider_for_stage(stage),
+            "stage": stage.value if stage else None,
+        }
+        return payload
+
+    @staticmethod
+    def _provider_for_stage(stage: StageStatus | None) -> str | None:
+        model = GenerationRunner._model_for_stage(stage)
+        if not model:
+            return None
+        provider, sep, _ = model.partition(":")
+        return provider if sep else None
+
+    @staticmethod
+    def _model_for_stage(stage: StageStatus | None) -> str | None:
+        if stage in {StageStatus.OUTLINE, StageStatus.SLIDES, StageStatus.FIX}:
+            return settings.strong_model
+        if stage == StageStatus.LAYOUT:
+            return settings.fast_model or settings.default_model
+        if stage == StageStatus.VERIFY:
+            return settings.vision_model
+        return None
+
+    @staticmethod
+    def _is_provider_rate_limited(error: Exception) -> bool:
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int) and status_code == 429:
+            return True
+
+        response = getattr(error, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int) and response_status == 429:
+            return True
+
+        msg = str(error).lower()
+        return "rate limit" in msg or "status code: 429" in msg or "http 429" in msg
 
     async def _sync_state_to_job(self, job: GenerationJob, state: PipelineState) -> None:
         job.document_metadata = state.document_metadata

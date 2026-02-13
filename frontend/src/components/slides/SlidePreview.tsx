@@ -4,6 +4,8 @@ import { useRef, useState, useEffect } from "react";
 import { ImageIcon, BarChart3 } from "lucide-react";
 import type { Slide, Component as SlideComponent } from "@/types/slide";
 import { getLayoutComponent } from "@/lib/template-registry";
+import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import LayoutErrorFallback from "@/components/slides/LayoutErrorFallback";
 
 // ---------- 旧版 Component 渲染器（向后兼容） ----------
 
@@ -131,10 +133,25 @@ function RenderSkeletonSlide({ slide }: { slide: Slide }) {
 
 function RenderLayoutSlide({ slide }: { slide: Slide }) {
   const layoutId = slide.layoutId || slide.layoutType;
-  const LayoutComponent = getLayoutComponent(layoutId);
+  if (!layoutId) {
+    return <LayoutErrorFallback layoutId="unknown" reason="缺少 layoutId" />;
+  }
 
-  if (!LayoutComponent || !slide.contentData) {
-    return null;
+  const LayoutComponent = getLayoutComponent(layoutId);
+  if (!LayoutComponent) {
+    return <LayoutErrorFallback layoutId={layoutId} reason="未注册的布局组件" />;
+  }
+
+  if (!slide.contentData || typeof slide.contentData !== "object") {
+    return <LayoutErrorFallback layoutId={layoutId} reason="缺少 contentData" />;
+  }
+
+  const normalized = normalizeLayoutData(
+    layoutId,
+    slide.contentData as Record<string, unknown>
+  );
+  if (!normalized.recoverable) {
+    return <LayoutErrorFallback layoutId={layoutId} reason={normalized.reason} />;
   }
 
   return (
@@ -146,7 +163,8 @@ function RenderLayoutSlide({ slide }: { slide: Slide }) {
       }}
       className="bg-[var(--background-color,#ffffff)]"
     >
-      <LayoutComponent data={slide.contentData as Record<string, unknown>} />
+      {/* eslint-disable-next-line react-hooks/static-components */}
+      <LayoutComponent data={normalized.data} />
     </div>
   );
 }

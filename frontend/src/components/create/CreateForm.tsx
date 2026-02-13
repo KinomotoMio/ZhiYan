@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -11,6 +11,7 @@ import {
   createJob,
   runJob,
   subscribeJobEvents,
+  type GenerationErrorCode,
   type GenerationEvent,
 } from "@/lib/api";
 import type { Presentation, Slide } from "@/types/slide";
@@ -36,6 +37,24 @@ const EXAMPLE_PROMPTS = [
     text: "创建一个关于 B2B 软件解决方案的销售演示文稿",
   },
 ];
+
+const CONNECTION_STALE_THRESHOLD_MS = 25_000;
+const SLOW_STAGE_THRESHOLD_MS = 45_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
+
+function asErrorCode(value: unknown): GenerationErrorCode | null {
+  if (
+    value === "STAGE_TIMEOUT" ||
+    value === "PROVIDER_TIMEOUT" ||
+    value === "PROVIDER_NETWORK" ||
+    value === "PROVIDER_RATE_LIMIT" ||
+    value === "CANCELLED" ||
+    value === "UNKNOWN"
+  ) {
+    return value;
+  }
+  return null;
+}
 
 export default function CreateForm() {
   const router = useRouter();
@@ -70,7 +89,13 @@ export default function CreateForm() {
     readySlides: number;
     totalSlides: number;
     error: string | null;
+    errorCode: GenerationErrorCode | null;
+    timeoutSeconds: number | null;
   } | null>(null);
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [lastProgressAt, setLastProgressAt] = useState<number | null>(null);
+  const [connectionStale, setConnectionStale] = useState(false);
+  const [slowStageWarning, setSlowStageWarning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const navigatedRef = useRef(false);
   const cancellingRef = useRef(false);
@@ -91,7 +116,28 @@ export default function CreateForm() {
     setIsGenerating(false);
     abortRef.current = null;
     cancellingRef.current = false;
+    setConnectionStale(false);
+    setSlowStageWarning(false);
   };
+
+  useEffect(() => {
+    if (!isGenerating || jobStatus !== "running") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      const stale =
+        typeof lastEventAt === "number" &&
+        now - lastEventAt > CONNECTION_STALE_THRESHOLD_MS;
+      const slow =
+        typeof lastProgressAt === "number" &&
+        !!currentStage &&
+        now - lastProgressAt > SLOW_STAGE_THRESHOLD_MS;
+      setConnectionStale(stale);
+      setSlowStageWarning(slow);
+    }, WATCHDOG_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [currentStage, isGenerating, jobStatus, lastEventAt, lastProgressAt]);
 
   const updateFromEvent = (evt: GenerationEvent, currentJobId: string) => {
     if (evt.stage) {
@@ -103,6 +149,10 @@ export default function CreateForm() {
     }
 
     if (evt.type === "stage_progress" || evt.type === "stage_started") {
+      if (evt.type === "stage_progress") {
+        setLastProgressAt(Date.now());
+        setSlowStageWarning(false);
+      }
       setProgress((prev) => ({
         stage: evt.stage ?? prev?.stage ?? null,
         step:
@@ -117,6 +167,25 @@ export default function CreateForm() {
         readySlides: prev?.readySlides ?? 0,
         totalSlides: prev?.totalSlides ?? numPages,
         error: prev?.error ?? null,
+        errorCode: prev?.errorCode ?? null,
+        timeoutSeconds: prev?.timeoutSeconds ?? null,
+      }));
+      return;
+    }
+
+    if (evt.type === "layout_ready") {
+      setLastProgressAt(Date.now());
+      setSlowStageWarning(false);
+      setProgress((prev) => ({
+        stage: "layout",
+        step: prev?.step ?? 3,
+        totalSteps: prev?.totalSteps ?? 7,
+        message: evt.message || "布局已就绪",
+        readySlides: prev?.readySlides ?? 0,
+        totalSlides: prev?.totalSlides ?? numPages,
+        error: prev?.error ?? null,
+        errorCode: prev?.errorCode ?? null,
+        timeoutSeconds: prev?.timeoutSeconds ?? null,
       }));
       return;
     }
@@ -137,6 +206,8 @@ export default function CreateForm() {
       const title = typeof payload.topic === "string" ? payload.topic : topic || "新演示文稿";
 
       if (items.length > 0) {
+        setLastProgressAt(Date.now());
+        setSlowStageWarning(false);
         initSkeletonPresentation(title, items);
         setProgress((prev) => ({
           stage: "outline",
@@ -146,6 +217,8 @@ export default function CreateForm() {
           readySlides: 0,
           totalSlides: items.length,
           error: null,
+          errorCode: null,
+          timeoutSeconds: null,
         }));
         if (!navigatedRef.current) {
           navigatedRef.current = true;
@@ -171,6 +244,8 @@ export default function CreateForm() {
       const index = Number(payload.slide_index ?? -1);
       const slide = payload.slide as Slide | undefined;
       if (index >= 0 && slide) {
+        setLastProgressAt(Date.now());
+        setSlowStageWarning(false);
         updateSlideAtIndex(index, slide);
         setProgress((prev) => ({
           stage: "slides",
@@ -180,6 +255,8 @@ export default function CreateForm() {
           readySlides: Math.max(prev?.readySlides ?? 0, index + 1),
           totalSlides: prev?.totalSlides ?? numPages,
           error: prev?.error ?? null,
+          errorCode: prev?.errorCode ?? null,
+          timeoutSeconds: prev?.timeoutSeconds ?? null,
         }));
       }
       return;
@@ -187,9 +264,14 @@ export default function CreateForm() {
 
     if (evt.type === "stage_failed") {
       const payload = evt.payload as Record<string, unknown>;
+      const errorCode = asErrorCode(payload.error_code);
+      const timeoutSeconds =
+        typeof payload.timeout_seconds === "number" ? payload.timeout_seconds : null;
       const message =
-        typeof payload.error === "string"
-          ? payload.error
+        typeof payload.error_message === "string"
+          ? payload.error_message
+          : typeof payload.error === "string"
+            ? payload.error
           : evt.message || "阶段失败";
       setProgress((prev) => ({
         stage: evt.stage ?? prev?.stage ?? null,
@@ -199,6 +281,8 @@ export default function CreateForm() {
         readySlides: prev?.readySlides ?? 0,
         totalSlides: prev?.totalSlides ?? numPages,
         error: message,
+        errorCode,
+        timeoutSeconds,
       }));
       return;
     }
@@ -226,9 +310,14 @@ export default function CreateForm() {
 
     if (evt.type === "job_failed") {
       const payload = evt.payload as Record<string, unknown>;
+      const errorCode = asErrorCode(payload.error_code);
+      const timeoutSeconds =
+        typeof payload.timeout_seconds === "number" ? payload.timeout_seconds : null;
       const message =
-        typeof payload.error === "string"
-          ? payload.error
+        typeof payload.error_message === "string"
+          ? payload.error_message
+          : typeof payload.error === "string"
+            ? payload.error
           : evt.message || "任务失败";
       updateJobState({
         jobId: currentJobId,
@@ -243,6 +332,8 @@ export default function CreateForm() {
         readySlides: prev?.readySlides ?? 0,
         totalSlides: prev?.totalSlides ?? numPages,
         error: message,
+        errorCode,
+        timeoutSeconds,
       }));
       toast.error(message);
       storeFinishGeneration();
@@ -274,7 +365,14 @@ export default function CreateForm() {
       readySlides: 0,
       totalSlides: numPages,
       error: null,
+      errorCode: null,
+      timeoutSeconds: null,
     });
+    const now = Date.now();
+    setLastEventAt(now);
+    setLastProgressAt(now);
+    setConnectionStale(false);
+    setSlowStageWarning(false);
     navigatedRef.current = false;
 
     const controller = new AbortController();
@@ -306,6 +404,8 @@ export default function CreateForm() {
         created.job_id,
         {
           onEvent: (evt) => {
+            setLastEventAt(Date.now());
+            setConnectionStale(false);
             updateFromEvent(evt, created.job_id);
           },
           onError: (err) => {
@@ -357,6 +457,9 @@ export default function CreateForm() {
           progress={progress}
           jobStatus={jobStatus}
           currentStage={currentStage}
+          lastEventAt={lastEventAt}
+          connectionStale={connectionStale}
+          slowStageWarning={slowStageWarning}
           failedSlideIndices={failedSlideIndices}
           issues={issues}
           onCancel={() => {
