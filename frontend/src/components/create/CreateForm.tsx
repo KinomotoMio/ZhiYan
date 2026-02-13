@@ -14,6 +14,7 @@ import {
   type GenerationErrorCode,
   type GenerationEvent,
 } from "@/lib/api";
+import { canShowContinueEditorEntry, getSessionEditorPath } from "@/lib/routes";
 import type { Presentation, Slide } from "@/types/slide";
 import TemplateSelector from "./TemplateSelector";
 import GenerationProgress from "./GenerationProgress";
@@ -139,7 +140,11 @@ export default function CreateForm() {
     return () => window.clearInterval(timer);
   }, [currentStage, isGenerating, jobStatus, lastEventAt, lastProgressAt]);
 
-  const updateFromEvent = (evt: GenerationEvent, currentJobId: string) => {
+  const updateFromEvent = (
+    evt: GenerationEvent,
+    currentJobId: string,
+    targetSessionId: string | null
+  ) => {
     if (evt.stage) {
       updateJobState({
         jobId: currentJobId,
@@ -222,7 +227,11 @@ export default function CreateForm() {
         }));
         if (!navigatedRef.current) {
           navigatedRef.current = true;
-          router.push("/editor");
+          if (targetSessionId) {
+            router.push(getSessionEditorPath(targetSessionId));
+          } else {
+            router.push("/editor");
+          }
         }
       }
 
@@ -391,6 +400,8 @@ export default function CreateForm() {
       if (created.session_id) {
         setCurrentSessionId(created.session_id);
       }
+      const eventSessionId =
+        created.session_id ?? currentSessionId ?? useAppStore.getState().currentSessionId;
 
       updateJobState({
         jobId: created.job_id,
@@ -406,7 +417,7 @@ export default function CreateForm() {
           onEvent: (evt) => {
             setLastEventAt(Date.now());
             setConnectionStale(false);
-            updateFromEvent(evt, created.job_id);
+            updateFromEvent(evt, created.job_id, eventSessionId);
           },
           onError: (err) => {
             console.error("生成失败:", err);
@@ -523,6 +534,17 @@ export default function CreateForm() {
                 {isGenerating && <Loader2 className="h-5 w-5 animate-spin" />}
                 {isGenerating ? "AI 正在生成..." : "开始生成"}
               </button>
+              {canShowContinueEditorEntry(currentSessionId, isGenerating) && (
+                <button
+                  onClick={() => {
+                    if (!currentSessionId) return;
+                    router.push(getSessionEditorPath(currentSessionId));
+                  }}
+                  className="w-full py-2 rounded-lg border border-input text-sm font-medium hover:bg-accent transition-colors"
+                >
+                  继续编辑当前结果
+                </button>
+              )}
 
               {/* 状态提示 */}
               {settingsStatus === "unconfigured" ? (

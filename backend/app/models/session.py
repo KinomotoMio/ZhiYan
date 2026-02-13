@@ -35,6 +35,11 @@ class SnapshotMeta(BaseModel):
     created_at: str
 
 
+class LatestPresentationWriteRequest(BaseModel):
+    presentation: dict
+    source: str | None = "editor"
+
+
 class SessionDetail(BaseModel):
     session: SessionSummary
     sources: list[SourceMeta] = Field(default_factory=list)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 DEFAULT_LEFT_HEADING = "要点 A"
@@ -183,6 +184,15 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
 
 
 def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any] | None:
+    if isinstance(raw, str):
+        items = _extract_text_items_from_text(raw)
+        if not items:
+            return None
+        return {
+            "heading": fallback_heading,
+            "items": items,
+        }
+
     if not isinstance(raw, dict):
         return None
 
@@ -211,9 +221,7 @@ def _extract_text_items(raw: Any) -> list[str]:
     items: list[str] = []
     for item in raw:
         if isinstance(item, str):
-            text = item.strip()
-            if text:
-                items.append(text)
+            items.extend(_extract_text_items_from_text(item))
             continue
 
         if not isinstance(item, dict):
@@ -239,6 +247,51 @@ def _extract_text_items(raw: Any) -> list[str]:
             items.append(text)
 
     return items
+
+
+def _extract_text_items_from_text(text: str) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    items: list[str] = []
+    for line in lines:
+        if line.startswith("|"):
+            cells = [_clean_markdown_text(cell) for cell in line.strip("|").split("|")]
+            for cell in cells:
+                if _should_keep_cell(cell):
+                    items.append(cell)
+            continue
+
+        cleaned = _clean_markdown_text(line)
+        if _should_keep_cell(cleaned):
+            items.append(cleaned)
+
+    deduped: list[str] = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _clean_markdown_text(raw: str) -> str:
+    text = raw.strip()
+    text = re.sub(r"^\s*[-*•]+\s*", "", text)
+    text = re.sub(r"^\s*\d+[.)]\s*", "", text)
+    text = text.strip("| ")
+    text = text.replace("**", "").replace("__", "").replace("`", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _should_keep_cell(text: str) -> bool:
+    if not text:
+        return False
+    if re.fullmatch(r"[-:]+", text):
+        return False
+    if text in {"栏目", "新增内容"}:
+        return False
+    return True
 
 
 def _normalize_icon(raw: Any) -> dict[str, str] | None:

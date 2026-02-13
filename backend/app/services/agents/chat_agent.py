@@ -29,11 +29,30 @@ class ChatDeps:
 
 
 _agent = None
+DEFAULT_COMPARE_LEFT_HEADING = "要点 A"
+DEFAULT_COMPARE_RIGHT_HEADING = "要点 B"
+DEFAULT_COMPARE_FILLER = "内容生成中"
 
 
 def _is_new_format(slide: dict) -> bool:
     """判断 slide 是否使用新版 contentData 格式"""
     return bool(slide.get("contentData") and slide.get("layoutId"))
+
+
+def _is_scalar_field(value) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _sanitize_items(items: list[str], *, fallback: str) -> list[str]:
+    cleaned: list[str] = []
+    for raw in items:
+        text = str(raw).strip()
+        if not text:
+            continue
+        cleaned.append(text[:80])
+    if not cleaned:
+        return [fallback]
+    return cleaned[:8]
 
 
 def get_chat_agent():
@@ -45,7 +64,7 @@ def get_chat_agent():
         from app.core.model_resolver import resolve_model
 
         _agent = Agent(
-            model=resolve_model(settings.default_model),
+            model=resolve_model(settings.strong_model),
             deps_type=ChatDeps,
             instructions=(
                 "你是知演（ZhiYan）的 AI 助手，帮助用户优化和调整演示文稿。\n"
@@ -57,6 +76,8 @@ def get_chat_agent():
                 "- 用户说「当前页」指 current_slide_index 对应的那页\n"
                 "- 修改标题不超过 15 字\n"
                 "- 正文要点每条不超过 20 字，最多 5 条\n"
+                "- 不要把对象/列表字段（如 left/right/items/metrics）整体改成纯文本\n"
+                "- two-column-compare 布局请优先使用双栏工具修改 left/right 的 heading/items\n"
                 "- 回复简洁，修改后说明做了什么改动\n"
                 "- 回复使用中文，专业术语保留英文"
             ),
@@ -103,6 +124,12 @@ def get_chat_agent():
 
             if _is_new_format(slide):
                 if field_path in slide["contentData"]:
+                    existing = slide["contentData"][field_path]
+                    if not _is_scalar_field(existing):
+                        return (
+                            f"第 {slide_index + 1} 页字段 '{field_path}' 为结构化内容，"
+                            "不能直接用文本覆盖。请改用更细粒度字段或其他修改工具。"
+                        )
                     slide["contentData"][field_path] = new_value
                     deps.modifications.append(SlideModification(
                         slide_index=slide_index,
@@ -136,6 +163,73 @@ def get_chat_agent():
                 data={"new_notes": new_notes},
             ))
             return f"已更新第 {slide_index + 1} 页演讲者注释"
+
+        @_agent.tool
+        async def update_two_column_compare(
+            ctx: RunContext[ChatDeps],
+            slide_index: int,
+            left_items: list[str] | None = None,
+            right_items: list[str] | None = None,
+            left_heading: str | None = None,
+            right_heading: str | None = None,
+        ) -> str:
+            """更新 two-column-compare 幻灯片的双栏标题与要点。"""
+            deps = ctx.deps
+            if slide_index < 0 or slide_index >= len(deps.slides):
+                return f"错误：幻灯片索引 {slide_index} 超出范围（共 {len(deps.slides)} 页）"
+
+            slide = deps.slides[slide_index]
+            if not _is_new_format(slide):
+                return f"第 {slide_index + 1} 页不是 contentData 结构，无法更新双栏内容"
+
+            if slide.get("layoutId") != "two-column-compare":
+                return f"第 {slide_index + 1} 页布局不是 two-column-compare"
+
+            content = slide.setdefault("contentData", {})
+            left_raw = content.get("left")
+            right_raw = content.get("right")
+            left = left_raw if isinstance(left_raw, dict) else {}
+            right = right_raw if isinstance(right_raw, dict) else {}
+
+            left_title = (left_heading or str(left.get("heading") or left.get("title") or "")).strip()
+            right_title = (right_heading or str(right.get("heading") or right.get("title") or "")).strip()
+
+            next_left_items = (
+                _sanitize_items(left_items, fallback=DEFAULT_COMPARE_FILLER)
+                if left_items is not None
+                else _sanitize_items([str(x) for x in left.get("items", [])], fallback=DEFAULT_COMPARE_FILLER)
+            )
+            next_right_items = (
+                _sanitize_items(right_items, fallback=DEFAULT_COMPARE_FILLER)
+                if right_items is not None
+                else _sanitize_items([str(x) for x in right.get("items", [])], fallback=DEFAULT_COMPARE_FILLER)
+            )
+
+            content["left"] = {
+                "heading": left_title or DEFAULT_COMPARE_LEFT_HEADING,
+                "items": next_left_items,
+            }
+            content["right"] = {
+                "heading": right_title or DEFAULT_COMPARE_RIGHT_HEADING,
+                "items": next_right_items,
+            }
+
+            deps.modifications.append(
+                SlideModification(
+                    slide_index=slide_index,
+                    action="update_two_column_compare",
+                    data={
+                        "left_heading": content["left"]["heading"],
+                        "right_heading": content["right"]["heading"],
+                        "left_items_count": len(next_left_items),
+                        "right_items_count": len(next_right_items),
+                    },
+                )
+            )
+            return (
+                f"已更新第 {slide_index + 1} 页双栏内容："
+                f"左栏 {len(next_left_items)} 条，右栏 {len(next_right_items)} 条"
+            )
 
         @_agent.tool
         async def delete_slide(ctx: RunContext[ChatDeps], slide_index: int) -> str:
@@ -174,6 +268,16 @@ def get_chat_agent():
                 for key in ("items", "metrics", "bullets", "events", "steps"):
                     if cd.get(key) and isinstance(cd[key], list):
                         info_parts.append(f"  [{key}] {len(cd[key])} 项")
+                if isinstance(cd.get("left"), dict):
+                    left_heading = cd["left"].get("heading") or cd["left"].get("title") or "左栏"
+                    left_items = cd["left"].get("items")
+                    if isinstance(left_items, list):
+                        info_parts.append(f"  [{left_heading}] {len(left_items)} 项")
+                if isinstance(cd.get("right"), dict):
+                    right_heading = cd["right"].get("heading") or cd["right"].get("title") or "右栏"
+                    right_items = cd["right"].get("items")
+                    if isinstance(right_items, list):
+                        info_parts.append(f"  [{right_heading}] {len(right_items)} 项")
             else:
                 for comp in slide.get("components", []):
                     info_parts.append(f"  [{comp.get('role', '?')}] {(comp.get('content', '') or '')[:80]}")

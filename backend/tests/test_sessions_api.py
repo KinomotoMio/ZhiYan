@@ -139,6 +139,47 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert create_auto.json()["session_id"]
 
 
+def test_put_latest_presentation_workspace_isolation(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    h1 = {"X-Workspace-Id": "ws-a"}
+    h2 = {"X-Workspace-Id": "ws-b"}
+
+    created = client.post("/api/v1/sessions", headers=h1, json={"title": "latest"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-1",
+        "title": "测试稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "bullet-with-icons",
+                "layoutId": "bullet-with-icons",
+                "contentData": {"title": "测试", "items": []},
+                "components": [],
+            }
+        ],
+    }
+
+    ok = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=h1,
+        json={"presentation": presentation, "source": "chat"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["is_snapshot"] is False
+
+    denied = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=h2,
+        json={"presentation": presentation, "source": "chat"},
+    )
+    assert denied.status_code == 404
+
+
 def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):
     store = _install_temp_session_store(monkeypatch, tmp_path)
 
