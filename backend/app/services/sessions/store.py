@@ -128,8 +128,71 @@ class SessionStore:
 
                 CREATE INDEX IF NOT EXISTS idx_presentation_session_version
                 ON session_presentations(session_id, version_no DESC);
+
+                CREATE TABLE IF NOT EXISTS workspace_sources (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    file_category TEXT,
+                    size INTEGER,
+                    status TEXT NOT NULL,
+                    preview_snippet TEXT,
+                    storage_path TEXT,
+                    parsed_content TEXT,
+                    metadata_json TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_wsources_workspace
+                ON workspace_sources(workspace_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS session_source_links (
+                    session_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    linked_at TEXT NOT NULL,
+                    PRIMARY KEY(session_id, source_id),
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY(source_id) REFERENCES workspace_sources(id) ON DELETE CASCADE
+                );
                 """
             )
+
+            # Migrate data from session_sources -> workspace_sources + session_source_links
+            has_old_data = conn.execute(
+                "SELECT COUNT(*) as cnt FROM session_sources"
+            ).fetchone()["cnt"]
+            has_new_data = conn.execute(
+                "SELECT COUNT(*) as cnt FROM workspace_sources"
+            ).fetchone()["cnt"]
+            if has_old_data > 0 and has_new_data == 0:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_sources(
+                        id, workspace_id, source_type, name, file_category, size,
+                        status, preview_snippet, storage_path, parsed_content,
+                        metadata_json, error, created_at, updated_at
+                    )
+                    SELECT
+                        ss.id, s.workspace_id, ss.source_type, ss.name, ss.file_category, ss.size,
+                        ss.status, ss.preview_snippet, ss.storage_path, ss.parsed_content,
+                        ss.metadata_json, ss.error, ss.created_at, ss.updated_at
+                    FROM session_sources ss
+                    JOIN sessions s ON s.id = ss.session_id
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO session_source_links(session_id, source_id, linked_at)
+                    SELECT session_id, id, created_at
+                    FROM session_sources
+                    """
+                )
+                logger.info("migrated session_sources -> workspace_sources + session_source_links")
+
             conn.commit()
 
     async def ensure_workspace(self, workspace_id: str) -> None:
@@ -194,8 +257,9 @@ class SessionStore:
             rows = conn.execute(
                 f"""
                 SELECT s.*,
-                  (SELECT COUNT(*) FROM session_sources ss WHERE ss.session_id=s.id) AS source_count,
-                  (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count
+                  (SELECT COUNT(*) FROM session_source_links sl WHERE sl.session_id=s.id) AS source_count,
+                  (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count,
+                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation
                 FROM sessions s
                 WHERE {where}
                 ORDER BY s.is_pinned DESC, s.updated_at DESC
@@ -218,8 +282,9 @@ class SessionStore:
             row = conn.execute(
                 """
                 SELECT s.*,
-                  (SELECT COUNT(*) FROM session_sources ss WHERE ss.session_id=s.id) AS source_count,
-                  (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count
+                  (SELECT COUNT(*) FROM session_source_links sl WHERE sl.session_id=s.id) AS source_count,
+                  (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count,
+                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation
                 FROM sessions s
                 WHERE s.id = ? AND s.workspace_id = ? AND s.archived_at IS NULL
                 """,
@@ -381,6 +446,39 @@ class SessionStore:
         now: str,
     ) -> None:
         with self._connect() as conn:
+            # Look up workspace_id from session
+            row = conn.execute(
+                "SELECT workspace_id FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            workspace_id = row["workspace_id"] if row else "unknown"
+
+            # Insert into workspace_sources
+            conn.execute(
+                """
+                INSERT INTO workspace_sources(
+                    id, workspace_id, source_type, name, file_category, size, status,
+                    preview_snippet, storage_path, parsed_content, metadata_json,
+                    error, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id,
+                    workspace_id,
+                    source_type,
+                    name,
+                    file_category,
+                    size,
+                    status,
+                    preview_snippet,
+                    storage_path,
+                    parsed_content,
+                    json.dumps(metadata, ensure_ascii=False),
+                    error,
+                    now,
+                    now,
+                ),
+            )
+            # Also write to legacy session_sources for backward compat
             conn.execute(
                 """
                 INSERT INTO session_sources(
@@ -406,6 +504,14 @@ class SessionStore:
                     now,
                 ),
             )
+            # Create link
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO session_source_links(session_id, source_id, linked_at)
+                VALUES(?, ?, ?)
+                """,
+                (session_id, source_id, now),
+            )
             conn.execute(
                 "UPDATE sessions SET updated_at=? WHERE id=?",
                 (now, session_id),
@@ -421,11 +527,8 @@ class SessionStore:
     def _get_source_sync(self, session_id: str, source_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
-                """
-                SELECT * FROM session_sources
-                WHERE id=? AND session_id=?
-                """,
-                (source_id, session_id),
+                "SELECT * FROM workspace_sources WHERE id=?",
+                (source_id,),
             ).fetchone()
         if not row:
             return None
@@ -447,9 +550,11 @@ class SessionStore:
                 return []
             rows = conn.execute(
                 """
-                SELECT * FROM session_sources
-                WHERE session_id=?
-                ORDER BY created_at DESC
+                SELECT ws.*
+                FROM workspace_sources ws
+                JOIN session_source_links sl ON sl.source_id = ws.id
+                WHERE sl.session_id=?
+                ORDER BY ws.created_at DESC
                 """,
                 (session_id,),
             ).fetchall()
@@ -471,18 +576,18 @@ class SessionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT ss.parsed_content
-                FROM session_sources ss
-                JOIN sessions s ON s.id = ss.session_id
-                WHERE ss.id=? AND ss.session_id=? AND s.workspace_id=? AND s.archived_at IS NULL
+                SELECT ws.parsed_content
+                FROM workspace_sources ws
+                WHERE ws.id=?
                 """,
-                (source_id, session_id, workspace_id),
+                (source_id,),
             ).fetchone()
         return None if row is None else (row["parsed_content"] or "")
 
     async def delete_source(
         self, workspace_id: str, session_id: str, source_id: str
     ) -> bool:
+        """Unlink a source from a session (does not delete the workspace source)."""
         async with self._write_lock:
             return await asyncio.to_thread(
                 self._delete_source_sync, workspace_id, session_id, source_id
@@ -492,17 +597,17 @@ class SessionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT ss.storage_path
-                FROM session_sources ss
-                JOIN sessions s ON s.id=ss.session_id
-                WHERE ss.id=? AND ss.session_id=? AND s.workspace_id=? AND s.archived_at IS NULL
+                SELECT 1
+                FROM session_source_links sl
+                JOIN sessions s ON s.id=sl.session_id
+                WHERE sl.source_id=? AND sl.session_id=? AND s.workspace_id=? AND s.archived_at IS NULL
                 """,
                 (source_id, session_id, workspace_id),
             ).fetchone()
             if not row:
                 return False
             conn.execute(
-                "DELETE FROM session_sources WHERE id=? AND session_id=?",
+                "DELETE FROM session_source_links WHERE source_id=? AND session_id=?",
                 (source_id, session_id),
             )
             conn.execute(
@@ -510,43 +615,230 @@ class SessionStore:
                 (_now_iso(), session_id),
             )
             conn.commit()
-        storage_path = row["storage_path"]
-        if storage_path:
-            path = Path(storage_path)
-            # Files are stored under data/uploads/<source_id>/filename, delete the whole source folder.
-            target = path.parent if path.name else path
-            with suppress(Exception):
-                if target.exists():
-                    shutil.rmtree(target, ignore_errors=True)
         return True
 
     async def get_combined_source_content(
         self, workspace_id: str, session_id: str, source_ids: list[str]
     ) -> str:
         return await asyncio.to_thread(
-            self._get_combined_source_content_sync, workspace_id, session_id, source_ids
+            self._get_combined_source_content_sync, workspace_id, source_ids
         )
 
     def _get_combined_source_content_sync(
-        self, workspace_id: str, session_id: str, source_ids: list[str]
+        self, workspace_id: str, source_ids: list[str]
     ) -> str:
         if not source_ids:
             return ""
         placeholders = ",".join("?" for _ in source_ids)
-        params: list[object] = [session_id, workspace_id, *source_ids]
+        params: list[object] = [workspace_id, *source_ids]
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT ss.id, ss.parsed_content
-                FROM session_sources ss
-                JOIN sessions s ON s.id=ss.session_id
-                WHERE ss.session_id=? AND s.workspace_id=? AND ss.id IN ({placeholders})
+                SELECT ws.id, ws.parsed_content
+                FROM workspace_sources ws
+                WHERE ws.workspace_id=? AND ws.id IN ({placeholders})
                 """,
                 tuple(params),
             ).fetchall()
         row_map = {row["id"]: (row["parsed_content"] or "") for row in rows}
         parts = [row_map[sid] for sid in source_ids if row_map.get(sid)]
         return "\n\n---\n\n".join(parts)
+
+    # ---- Workspace-level source methods ----
+
+    async def create_workspace_source(
+        self,
+        *,
+        workspace_id: str,
+        source_type: str,
+        name: str,
+        file_category: str | None,
+        size: int | None,
+        status: str,
+        preview_snippet: str | None,
+        storage_path: str | None,
+        parsed_content: str | None,
+        metadata: dict | None = None,
+        error: str | None = None,
+        source_id: str | None = None,
+    ) -> dict:
+        sid = source_id or str(uuid4())
+        now = _now_iso()
+        async with self._write_lock:
+            await asyncio.to_thread(
+                self._create_workspace_source_sync,
+                sid, workspace_id, source_type, name, file_category, size,
+                status, preview_snippet, storage_path, parsed_content,
+                metadata or {}, error, now,
+            )
+        return await self.get_workspace_source(workspace_id, sid)
+
+    def _create_workspace_source_sync(
+        self,
+        source_id: str,
+        workspace_id: str,
+        source_type: str,
+        name: str,
+        file_category: str | None,
+        size: int | None,
+        status: str,
+        preview_snippet: str | None,
+        storage_path: str | None,
+        parsed_content: str | None,
+        metadata: dict,
+        error: str | None,
+        now: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_sources(
+                    id, workspace_id, source_type, name, file_category, size, status,
+                    preview_snippet, storage_path, parsed_content, metadata_json,
+                    error, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_id, workspace_id, source_type, name, file_category, size,
+                    status, preview_snippet, storage_path, parsed_content,
+                    json.dumps(metadata, ensure_ascii=False), error, now, now,
+                ),
+            )
+            conn.commit()
+
+    async def get_workspace_source(self, workspace_id: str, source_id: str) -> dict:
+        row = await asyncio.to_thread(
+            self._get_workspace_source_sync, workspace_id, source_id
+        )
+        if row is None:
+            raise ValueError("来源不存在")
+        return row
+
+    def _get_workspace_source_sync(self, workspace_id: str, source_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM workspace_sources WHERE id=? AND workspace_id=?",
+                (source_id, workspace_id),
+            ).fetchone()
+        if not row:
+            return None
+        return self._row_to_source_meta(row)
+
+    async def get_workspace_source_content(self, workspace_id: str, source_id: str) -> str:
+        content = await asyncio.to_thread(
+            self._get_workspace_source_content_sync, workspace_id, source_id
+        )
+        if content is None:
+            raise ValueError("来源不存在")
+        return content
+
+    def _get_workspace_source_content_sync(self, workspace_id: str, source_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT parsed_content FROM workspace_sources WHERE id=? AND workspace_id=?",
+                (source_id, workspace_id),
+            ).fetchone()
+        return None if row is None else (row["parsed_content"] or "")
+
+    async def list_workspace_sources(
+        self, workspace_id: str, q: str = "", limit: int = 100, offset: int = 0
+    ) -> list[dict]:
+        return await asyncio.to_thread(
+            self._list_workspace_sources_sync, workspace_id, q, limit, offset
+        )
+
+    def _list_workspace_sources_sync(
+        self, workspace_id: str, q: str, limit: int, offset: int
+    ) -> list[dict]:
+        where = "workspace_id = ?"
+        params: list[object] = [workspace_id]
+        if q.strip():
+            where += " AND name LIKE ?"
+            params.append(f"%{q.strip()}%")
+        params.extend([limit, offset])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM workspace_sources
+                WHERE {where}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [self._row_to_source_meta(row) for row in rows]
+
+    async def delete_workspace_source(self, workspace_id: str, source_id: str) -> bool:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._delete_workspace_source_sync, workspace_id, source_id
+            )
+
+    def _delete_workspace_source_sync(self, workspace_id: str, source_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT storage_path FROM workspace_sources WHERE id=? AND workspace_id=?",
+                (source_id, workspace_id),
+            ).fetchone()
+            if not row:
+                return False
+            # CASCADE will delete session_source_links
+            conn.execute(
+                "DELETE FROM workspace_sources WHERE id=? AND workspace_id=?",
+                (source_id, workspace_id),
+            )
+            conn.commit()
+        storage_path = row["storage_path"]
+        if storage_path:
+            path = Path(storage_path)
+            target = path.parent if path.name else path
+            with suppress(Exception):
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+        return True
+
+    async def link_source_to_session(self, session_id: str, source_id: str) -> None:
+        now = _now_iso()
+        async with self._write_lock:
+            await asyncio.to_thread(
+                self._link_source_to_session_sync, session_id, source_id, now
+            )
+
+    def _link_source_to_session_sync(self, session_id: str, source_id: str, now: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO session_source_links(session_id, source_id, linked_at)
+                VALUES(?, ?, ?)
+                """,
+                (session_id, source_id, now),
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at=? WHERE id=?",
+                (now, session_id),
+            )
+            conn.commit()
+
+    async def unlink_source_from_session(self, session_id: str, source_id: str) -> bool:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._unlink_source_from_session_sync, session_id, source_id
+            )
+
+    def _unlink_source_from_session_sync(self, session_id: str, source_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM session_source_links WHERE session_id=? AND source_id=?",
+                (session_id, source_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            conn.execute(
+                "UPDATE sessions SET updated_at=? WHERE id=?",
+                (_now_iso(), session_id),
+            )
+            conn.commit()
+        return True
 
     async def add_chat_message(
         self,
@@ -886,6 +1178,7 @@ class SessionStore:
             "last_opened_at": row["last_opened_at"],
             "source_count": int(row["source_count"] or 0),
             "chat_count": int(row["chat_count"] or 0),
+            "has_presentation": bool(row["has_presentation"]),
         }
 
     @staticmethod

@@ -44,6 +44,7 @@ export interface SessionSummary {
   last_opened_at: string | null;
   source_count: number;
   chat_count: number;
+  has_presentation: boolean;
 }
 
 export interface ChatRecord {
@@ -285,6 +286,98 @@ export async function getSessionSourceContent(
   });
   if (!res.ok) throw new Error(`获取来源内容失败: ${res.statusText}`);
   return res.json();
+}
+
+// ---------- Workspace Sources ----------
+
+export async function listWorkspaceSources(params?: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<SourceMeta[]> {
+  const search = new URLSearchParams();
+  if (params?.q) search.set("q", params.q);
+  if (typeof params?.limit === "number") search.set("limit", String(params.limit));
+  if (typeof params?.offset === "number") search.set("offset", String(params.offset));
+
+  const query = search.toString();
+  const url = `${API_BASE}/api/v1/workspace/sources${query ? `?${query}` : ""}`;
+  const res = await fetch(url, { headers: withWorkspaceHeaders() });
+  if (!res.ok) throw new Error(`获取素材库列表失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function uploadWorkspaceSource(
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<SourceMeta> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/api/v1/workspace/sources/upload`);
+    xhr.setRequestHeader("X-Workspace-Id", getWorkspaceId());
+
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        reject(new Error(`上传失败: ${xhr.statusText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("网络错误"));
+
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
+export async function fetchWorkspaceUrlSource(url: string): Promise<SourceMeta> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/url`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(`URL 抓取失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getWorkspaceSourceContent(sourceId: string): Promise<{ content: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/${sourceId}/content`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) throw new Error(`获取来源内容失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function deleteWorkspaceSource(sourceId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/${sourceId}`, {
+    method: "DELETE",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) throw new Error(`删除来源失败: ${res.statusText}`);
+}
+
+export async function linkSourcesToSession(sessionId: string, sourceIds: string[]): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/link`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ source_ids: sourceIds }),
+  });
+  if (!res.ok) throw new Error(`关联来源失败: ${res.statusText}`);
+}
+
+export async function unlinkSourceFromSession(sessionId: string, sourceId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/${sourceId}/link`, {
+    method: "DELETE",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) throw new Error(`取消关联失败: ${res.statusText}`);
 }
 
 // ---------- Generation v2 ----------

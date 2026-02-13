@@ -68,6 +68,7 @@ export default function CreateForm() {
     numPages,
     currentSessionId,
     setCurrentSessionId,
+    sessions,
     isGenerating,
     setIsGenerating,
     setPresentation,
@@ -82,6 +83,9 @@ export default function CreateForm() {
     issues,
     failedSlideIndices,
   } = useAppStore();
+
+  const currentSessionHasPresentation =
+    sessions.find((s) => s.id === currentSessionId)?.has_presentation ?? false;
   const [progress, setProgress] = useState<{
     stage: string | null;
     step: number;
@@ -534,7 +538,7 @@ export default function CreateForm() {
                 {isGenerating && <Loader2 className="h-5 w-5 animate-spin" />}
                 {isGenerating ? "AI 正在生成..." : "开始生成"}
               </button>
-              {canShowContinueEditorEntry(currentSessionId, isGenerating) && (
+              {canShowContinueEditorEntry(currentSessionId, isGenerating, currentSessionHasPresentation) && (
                 <button
                   onClick={() => {
                     if (!currentSessionId) return;

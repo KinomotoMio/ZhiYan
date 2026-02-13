@@ -2,26 +2,35 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MessageSquare, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Ellipsis, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
   appendSessionChat,
   createSession,
   createSessionSnapshot,
-  deleteSessionSource,
   fetchSessionUrlSource,
   getSessionDetail,
   getWorkspaceId,
   listSessions,
   removeSession,
+  unlinkSourceFromSession,
   updateSession,
   uploadSessionSource,
 } from "@/lib/api";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
+import SessionSwitcher from "./SessionSwitcher";
+import RenameDialog from "./RenameDialog";
+import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import UserMenu from "@/components/settings/UserMenu";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { getSessionEditorPath } from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
@@ -36,17 +45,6 @@ function isUrl(text: string): boolean {
   } catch {
     return false;
   }
-}
-
-function formatUpdatedAt(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function readLegacyStore() {
@@ -80,10 +78,8 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
 export default function SourcePanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const defaultTab = searchParams.get("tab") === "sessions" ? "sessions" : "sources";
   const preferredSessionId = searchParams.get("session");
   const {
-    workspaceId,
     setWorkspaceId,
     sessions,
     setSessions,
@@ -103,11 +99,12 @@ export default function SourcePanel() {
     deselectAllSources,
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<"sources" | "sessions">(defaultTab);
   const [sessionQuery, setSessionQuery] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const bootstrappedRef = useRef(false);
 
   const readySources = sources.filter((s) => s.status === "ready");
@@ -116,6 +113,9 @@ export default function SourcePanel() {
   ).length;
   const allSelected =
     readySources.length > 0 && selectedCount === readySources.length;
+
+  const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const currentSessionTitle = currentSession?.title || "未命名会话";
 
   const refreshSessions = useCallback(
     async (q = "") => {
@@ -142,11 +142,17 @@ export default function SourcePanel() {
           presentation: detail.latest_presentation?.presentation ?? null,
         });
         resetJobState();
+
+        // Auto-redirect to editor if session already has a presentation
+        if (detail.latest_presentation) {
+          router.push(getSessionEditorPath(sessionId));
+          return;
+        }
       } finally {
         setLoadingSession(false);
       }
     },
-    [resetJobState, setCurrentSessionId, setSessionData, upsertSession]
+    [resetJobState, router, setCurrentSessionId, setSessionData, upsertSession]
   );
 
   const createAndOpenSession = useCallback(
@@ -159,12 +165,7 @@ export default function SourcePanel() {
     [loadSession, upsertSession]
   );
 
-  useEffect(() => {
-    if (searchParams.get("tab") === "sessions") {
-      setActiveTab("sessions");
-    }
-  }, [searchParams]);
-
+  // Bootstrap: load workspace + sessions on mount
   useEffect(() => {
     if (bootstrappedRef.current) return;
     bootstrappedRef.current = true;
@@ -240,6 +241,7 @@ export default function SourcePanel() {
     };
   }, [createAndOpenSession, currentSessionId, loadSession, preferredSessionId, refreshSessions, setWorkspaceId]);
 
+  // Debounced session search
   useEffect(() => {
     const timer = window.setTimeout(() => {
       refreshSessions(sessionQuery).catch((err) => {
@@ -314,7 +316,7 @@ export default function SourcePanel() {
     async (id: string) => {
       if (!currentSessionId) return;
       removeSource(id);
-      deleteSessionSource(currentSessionId, id).catch(() => {});
+      unlinkSourceFromSession(currentSessionId, id).catch(() => {});
       refreshSessions(sessionQuery).catch(() => {});
     },
     [currentSessionId, refreshSessions, removeSource, sessionQuery]
@@ -332,7 +334,6 @@ export default function SourcePanel() {
     const id = await createAndOpenSession("未命名会话");
     await refreshSessions(sessionQuery);
     setCurrentSessionId(id);
-    setActiveTab("sources");
   }, [createAndOpenSession, refreshSessions, sessionQuery, setCurrentSessionId]);
 
   const handleOpenSessionResult = useCallback(
@@ -343,49 +344,41 @@ export default function SourcePanel() {
     [router, setCurrentSessionId]
   );
 
-  const handleRenameSession = useCallback(
-    async (sessionId: string, oldTitle: string) => {
-      const nextTitle = window.prompt("输入新的会话名称", oldTitle)?.trim();
-      if (!nextTitle || nextTitle === oldTitle) return;
-      const updated = await updateSession(sessionId, { title: nextTitle });
+  const handleRenameConfirm = useCallback(
+    async (newTitle: string) => {
+      if (!renameTarget) return;
+      const updated = await updateSession(renameTarget.id, { title: newTitle });
       upsertSession(updated);
     },
-    [upsertSession]
+    [renameTarget, upsertSession]
   );
 
-  const handleDeleteSession = useCallback(
-    async (sessionId: string) => {
-      if (!window.confirm("确认删除该会话？会话将被归档。")) return;
-      await removeSession(sessionId);
-      removeSessionEntry(sessionId);
-      const next = await refreshSessions("");
-      if (next.length > 0) {
-        const fallback = next[0].id;
-        await loadSession(fallback);
-      } else {
-        await handleCreateSession();
-      }
-    },
-    [handleCreateSession, loadSession, refreshSessions, removeSessionEntry]
-  );
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    await removeSession(deleteTarget.id);
+    removeSessionEntry(deleteTarget.id);
+    const next = await refreshSessions("");
+    if (next.length > 0) {
+      await loadSession(next[0].id);
+    } else {
+      await handleCreateSession();
+    }
+  }, [deleteTarget, handleCreateSession, loadSession, refreshSessions, removeSessionEntry]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (activeTab !== "sources") return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(true);
-  }, [activeTab]);
+  }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (activeTab !== "sources") return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-  }, [activeTab]);
+  }, []);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      if (activeTab !== "sources") return;
       e.preventDefault();
       e.stopPropagation();
       setIsDragOver(false);
@@ -401,12 +394,11 @@ export default function SourcePanel() {
         void handleUrlSubmit(text);
       }
     },
-    [activeTab, handleUploadFiles, handleUrlSubmit]
+    [handleUploadFiles, handleUrlSubmit]
   );
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      if (activeTab !== "sources") return;
       const files = Array.from(e.clipboardData.files);
       if (files.length > 0) {
         void handleUploadFiles(files);
@@ -419,7 +411,7 @@ export default function SourcePanel() {
         void handleUrlSubmit(text);
       }
     },
-    [activeTab, handleUploadFiles, handleUrlSubmit]
+    [handleUploadFiles, handleUrlSubmit]
   );
 
   return (
@@ -441,183 +433,164 @@ export default function SourcePanel() {
           </div>
         )}
 
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as "sources" | "sessions")}
-          className="flex min-h-0 flex-1 flex-col gap-0"
-        >
-          <div className="border-b border-border px-4 py-3">
-            <TabsList className="grid w-full grid-cols-2" aria-label="切换素材和会话视图">
-              <TabsTrigger value="sources">素材</TabsTrigger>
-              <TabsTrigger value="sessions">会话</TabsTrigger>
-            </TabsList>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {workspaceId}
-            </p>
-          </div>
+        {/* SessionHeader: switcher + actions */}
+        <div className="flex items-center gap-1 border-b border-border px-3 py-2.5">
+          <SessionSwitcher
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            currentSessionTitle={currentSessionTitle}
+            sessionQuery={sessionQuery}
+            onSessionQueryChange={setSessionQuery}
+            onSelectSession={(id) => {
+              void loadSession(id);
+            }}
+            onCreateSession={() => {
+              void handleCreateSession();
+            }}
+            loadingSession={loadingSession}
+          />
 
-          <TabsContent value="sources" className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
-            <div className="border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                {readySources.length > 0 && (
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={handleToggleAll}
-                    className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-primary"
-                    aria-label="全选来源"
-                  />
-                )}
-                <h2 className="text-sm font-semibold">会话素材</h2>
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {currentSessionId
-                  ? loadingSession
-                    ? "加载会话中..."
-                    : readySources.length > 0
-                      ? `已选择 ${selectedCount}/${readySources.length} 个来源`
-                      : `已添加 ${sources.length} 个来源`
-                  : "正在初始化会话..."}
-              </p>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-3 py-2">
-              {sources.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-muted-foreground">
-                  <p>当前会话还没有素材</p>
-                  <p className="mt-1 text-xs">上传文档、粘贴网址，即可开始生成</p>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {sources.map((source) => (
-                    <SourceItem
-                      key={source.id}
-                      source={source}
-                      isSelected={selectedSourceIds.includes(source.id)}
-                      onToggleSelect={toggleSourceSelection}
-                      onRemove={handleRemoveSource}
-                      onPreview={setPreviewSource}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-border px-3 py-3">
-              <AddSourceArea
-                onFilesSelected={(files) => {
-                  void handleUploadFiles(files);
-                }}
-                onUrlSubmit={(url) => {
-                  void handleUrlSubmit(url);
-                }}
-              />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="sessions" className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
-            <div className="space-y-2 border-b border-border px-3 py-3">
+          {/* More actions menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <button
-                onClick={() => {
-                  void handleCreateSession();
-                }}
-                className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="会话操作"
               >
-                <Plus className="h-4 w-4" />
-                新建会话
+                <Ellipsis className="h-4 w-4" />
               </button>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <input
-                  value={sessionQuery}
-                  onChange={(e) => setSessionQuery(e.target.value)}
-                  placeholder="搜索会话"
-                  className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() =>
+                  setRenameTarget({
+                    id: currentSessionId || "",
+                    title: currentSessionTitle,
+                  })
+                }
+                disabled={!currentSessionId}
+              >
+                <Pencil className="h-4 w-4" />
+                重命名
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (currentSessionId) {
+                    handleOpenSessionResult(currentSessionId);
+                  }
+                }}
+                disabled={!currentSessionId}
+              >
+                <ExternalLink className="h-4 w-4" />
+                编辑结果
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() =>
+                  setDeleteTarget({
+                    id: currentSessionId || "",
+                    title: currentSessionTitle,
+                  })
+                }
+                disabled={!currentSessionId}
+              >
+                <Trash2 className="h-4 w-4" />
+                删除会话
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+        </div>
+
+        {/* Source stats bar */}
+        <div className="border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2">
+            {readySources.length > 0 && (
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={handleToggleAll}
+                className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-primary"
+                aria-label="全选来源"
+              />
+            )}
+            <h2 className="text-sm font-semibold">会话素材</h2>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {currentSessionId
+              ? loadingSession
+                ? "加载会话中..."
+                : readySources.length > 0
+                  ? `已选择 ${selectedCount}/${readySources.length} 个来源`
+                  : `已添加 ${sources.length} 个来源`
+              : "正在初始化会话..."}
+          </p>
+        </div>
+
+        {/* Source list (scrollable) */}
+        <div className="flex-1 overflow-y-auto px-3 py-2">
+          {sources.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-muted-foreground">
+              <p>当前会话还没有素材</p>
+              <p className="mt-1 text-xs">上传文档、粘贴网址，即可开始生成</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {sources.map((source) => (
+                <SourceItem
+                  key={source.id}
+                  source={source}
+                  isSelected={selectedSourceIds.includes(source.id)}
+                  onToggleSelect={toggleSourceSelection}
+                  onRemove={handleRemoveSource}
+                  onPreview={setPreviewSource}
                 />
-              </div>
+              ))}
             </div>
+          )}
+        </div>
 
-            <div className="flex-1 overflow-y-auto px-2 py-2">
-              {sessions.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  暂无会话
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {sessions.map((session) => {
-                    const active = session.id === currentSessionId;
-                    return (
-                      <div
-                        key={session.id}
-                        className={cn(
-                          "rounded-md border px-2 py-2",
-                          active
-                            ? "border-primary/50 bg-primary/5"
-                            : "border-transparent hover:border-border hover:bg-accent/40"
-                        )}
-                      >
-                        <button
-                          onClick={() => {
-                            void loadSession(session.id);
-                            setActiveTab("sources");
-                          }}
-                          className="w-full text-left"
-                        >
-                          <p className="truncate text-sm font-medium">{session.title || "未命名会话"}</p>
-                          <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                            <span className="inline-flex items-center gap-1">
-                              <MessageSquare className="h-3.5 w-3.5" />
-                              {session.chat_count} 对话 · {session.source_count} 素材
-                            </span>
-                            <span>{formatUpdatedAt(session.updated_at)}</span>
-                          </div>
-                        </button>
-                        <div className="mt-2 flex justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              handleOpenSessionResult(session.id);
-                            }}
-                            className="rounded px-2 py-1 text-xs border border-input text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          >
-                            打开结果
-                          </button>
-                          <button
-                            onClick={() => {
-                              void handleRenameSession(session.id, session.title);
-                            }}
-                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                            aria-label="重命名会话"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              void handleDeleteSession(session.id);
-                            }}
-                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            aria-label="删除会话"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+        {/* Add source area */}
+        <div className="border-t border-border px-3 py-3">
+          <AddSourceArea
+            onFilesSelected={(files) => {
+              void handleUploadFiles(files);
+            }}
+            onUrlSubmit={(url) => {
+              void handleUrlSubmit(url);
+            }}
+          />
+        </div>
 
+        {/* User menu */}
         <div className="border-t border-border px-2 py-2">
           <UserMenu />
         </div>
       </div>
 
-      {previewSource && currentSessionId && (
+      {/* Dialogs */}
+      <RenameDialog
+        open={renameTarget !== null}
+        currentTitle={renameTarget?.title || ""}
+        onConfirm={(newTitle) => {
+          void handleRenameConfirm(newTitle);
+        }}
+        onClose={() => setRenameTarget(null)}
+      />
+
+      <DeleteConfirmDialog
+        open={deleteTarget !== null}
+        sessionTitle={deleteTarget?.title || ""}
+        onConfirm={() => {
+          void handleDeleteConfirm();
+        }}
+        onClose={() => setDeleteTarget(null)}
+      />
+
+      {previewSource && (
         <SourcePreviewModal
           source={previewSource}
-          sessionId={currentSessionId}
           onClose={() => setPreviewSource(null)}
         />
       )}
