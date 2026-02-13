@@ -1,0 +1,224 @@
+export interface LayoutNormalizeResult {
+  data: Record<string, unknown>;
+  recoverable: boolean;
+  changed: boolean;
+  reason: string | null;
+}
+
+const DEFAULT_LEFT_HEADING = "要点 A";
+const DEFAULT_RIGHT_HEADING = "要点 B";
+const DEFAULT_FILLER = "内容生成中";
+
+type RecordLike = Record<string, unknown>;
+
+function isRecordLike(value: unknown): value is RecordLike {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asText(value: unknown, fallback = ""): string {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text) return text;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return fallback;
+}
+
+function normalizeIcon(value: unknown): RecordLike | null {
+  if (isRecordLike(value)) {
+    const query = asText(value.query);
+    if (query) return { query };
+  }
+  if (typeof value === "string" && value.trim()) return { query: value.trim() };
+  return null;
+}
+
+function extractTextItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      const text = item.trim();
+      if (text) items.push(text);
+      continue;
+    }
+    if (!isRecordLike(item)) continue;
+    let text =
+      asText(item.text) ||
+      asText(item.title) ||
+      asText(item.label) ||
+      asText(item.description);
+    if (!text) {
+      const challenge = asText(item.challenge);
+      const outcome = asText(item.outcome);
+      text = challenge && outcome ? `${challenge} / ${outcome}` : challenge || outcome;
+    }
+    if (text) items.push(text);
+  }
+  return items;
+}
+
+function splitTwoColumns(items: string[]): [string[], string[]] {
+  const midpoint = Math.max(1, Math.ceil(items.length / 2));
+  const left = items.slice(0, midpoint);
+  const right = items.slice(midpoint);
+  return [
+    left.length > 0 ? left : [DEFAULT_FILLER],
+    right.length > 0 ? right : [DEFAULT_FILLER],
+  ];
+}
+
+function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLike | null {
+  if (!isRecordLike(raw)) return null;
+  const heading = asText(raw.heading) || asText(raw.title) || fallbackHeading;
+  const items = extractTextItems(raw.items);
+  const column: RecordLike = {
+    heading,
+    items: items.length > 0 ? items : [DEFAULT_FILLER],
+  };
+  const icon = normalizeIcon(raw.icon);
+  if (icon) column.icon = icon;
+  return column;
+}
+
+function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "对比分析");
+
+  let left = normalizeCompareColumn(data.left, DEFAULT_LEFT_HEADING);
+  let right = normalizeCompareColumn(data.right, DEFAULT_RIGHT_HEADING);
+  if (!left && !right) {
+    left = normalizeCompareColumn(data.challenge, DEFAULT_LEFT_HEADING);
+    right = normalizeCompareColumn(data.outcome, DEFAULT_RIGHT_HEADING);
+  }
+
+  if (!left && !right) {
+    const items = extractTextItems(data.items);
+    if (items.length === 0) {
+      return { data, recoverable: false, changed: false, reason: "missing two-column data" };
+    }
+    const [leftItems, rightItems] = splitTwoColumns(items);
+    const repaired: RecordLike = {
+      title,
+      left: { heading: DEFAULT_LEFT_HEADING, items: leftItems },
+      right: { heading: DEFAULT_RIGHT_HEADING, items: rightItems },
+    };
+    return { data: repaired, recoverable: true, changed: true, reason: "repair from items" };
+  }
+
+  const repaired: RecordLike = {
+    title,
+    left: left ?? { heading: DEFAULT_LEFT_HEADING, items: [DEFAULT_FILLER] },
+    right: right ?? { heading: DEFAULT_RIGHT_HEADING, items: [DEFAULT_FILLER] },
+  };
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize compare shape" : null };
+}
+
+function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
+  const headers = extractTextItems(data.headers).length > 0
+    ? extractTextItems(data.headers)
+    : extractTextItems(data.columns);
+
+  const rowsRaw = data.rows;
+  const rows: string[][] = [];
+  if (Array.isArray(rowsRaw)) {
+    for (const row of rowsRaw) {
+      if (Array.isArray(row)) {
+        rows.push(row.map((cell) => asText(cell)));
+      } else if (isRecordLike(row)) {
+        const currentHeaders = headers.length > 0
+          ? headers
+          : Object.keys(row).map((key) => asText(key)).filter(Boolean);
+        if (currentHeaders.length > 0) {
+          rows.push(currentHeaders.map((header) => asText(row[header])));
+        }
+      }
+    }
+  }
+
+  const resolvedHeaders = headers.length > 0
+    ? headers
+    : (rows[0] ? rows[0].map((_, i) => `列${i + 1}`) : []);
+  if (resolvedHeaders.length === 0 || rows.length === 0) {
+    return { data, recoverable: false, changed: false, reason: "invalid table shape" };
+  }
+
+  const normalizedRows = rows.map((row) => {
+    if (row.length < resolvedHeaders.length) {
+      return [...row, ...Array.from({ length: resolvedHeaders.length - row.length }, () => "")];
+    }
+    return row.slice(0, resolvedHeaders.length);
+  });
+
+  const repaired: RecordLike = {
+    title: asText(data.title, "信息表"),
+    headers: resolvedHeaders,
+    rows: normalizedRows,
+  };
+  const caption = asText(data.caption);
+  if (caption) repaired.caption = caption;
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize table shape" : null };
+}
+
+function extractSideItems(side: unknown): string[] {
+  if (!isRecordLike(side)) return [];
+  return extractTextItems(side.items);
+}
+
+function normalizeChallengeOutcome(data: RecordLike): LayoutNormalizeResult {
+  const pairs: Array<{ challenge: string; outcome: string }> = [];
+  const rawItems = data.items;
+  if (Array.isArray(rawItems)) {
+    for (const row of rawItems) {
+      if (isRecordLike(row)) {
+        const challenge = asText(row.challenge);
+        const outcome = asText(row.outcome);
+        if (challenge || outcome) {
+          pairs.push({
+            challenge: challenge || DEFAULT_FILLER,
+            outcome: outcome || "待补充",
+          });
+        }
+      } else if (typeof row === "string" && row.trim()) {
+        pairs.push({ challenge: row.trim(), outcome: "待补充" });
+      }
+    }
+  }
+
+  if (pairs.length === 0) {
+    const challenges = extractSideItems(data.challenge);
+    const outcomes = extractSideItems(data.outcome);
+    const count = Math.max(challenges.length, outcomes.length);
+    for (let i = 0; i < count; i += 1) {
+      pairs.push({
+        challenge: challenges[i] || DEFAULT_FILLER,
+        outcome: outcomes[i] || "待补充",
+      });
+    }
+  }
+
+  if (pairs.length === 0) {
+    return { data, recoverable: false, changed: false, reason: "invalid challenge-outcome shape" };
+  }
+
+  const repaired: RecordLike = {
+    title: asText(data.title, "问题与方案"),
+    items: pairs,
+  };
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize challenge shape" : null };
+}
+
+export function normalizeLayoutData(layoutId: string, data: Record<string, unknown>): LayoutNormalizeResult {
+  if (layoutId === "two-column-compare") {
+    return normalizeTwoColumnCompare(data);
+  }
+  if (layoutId === "table-info") {
+    return normalizeTableInfo(data);
+  }
+  if (layoutId === "challenge-outcome") {
+    return normalizeChallengeOutcome(data);
+  }
+  return { data, recoverable: true, changed: false, reason: null };
+}

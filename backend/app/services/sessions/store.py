@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 from uuid import uuid4
+
+from app.services.presentations import normalize_presentation_payload
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -725,9 +730,10 @@ class SessionStore:
     async def get_latest_presentation(
         self, workspace_id: str, session_id: str
     ) -> dict | None:
-        return await asyncio.to_thread(
-            self._get_latest_presentation_sync, workspace_id, session_id
-        )
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_presentation_sync, workspace_id, session_id
+            )
 
     def _get_latest_presentation_sync(
         self, workspace_id: str, session_id: str
@@ -752,16 +758,60 @@ class SessionStore:
                 """,
                 (session_id,),
             ).fetchone()
-        if not row:
-            return None
-        return {
-            "id": row["id"],
-            "version_no": row["version_no"],
-            "is_snapshot": bool(row["is_snapshot"]),
-            "snapshot_label": row["snapshot_label"],
-            "created_at": row["created_at"],
-            "presentation": json.loads(row["payload_json"]),
-        }
+            if not row:
+                return None
+
+            payload = json.loads(row["payload_json"])
+            normalized_payload, changed, repair_report = normalize_presentation_payload(payload)
+            if changed:
+                normalized_json = json.dumps(normalized_payload, ensure_ascii=False)
+                self._update_presentation_payload_sync(conn, row["id"], normalized_json)
+                logger.info(
+                    "presentation_payload_repaired",
+                    extra={
+                        "session_id": session_id,
+                        "presentation_id": row["id"],
+                        "repair_applied": True,
+                        "repaired_slide_count": repair_report["repaired_slide_count"],
+                        "repair_types": ",".join(repair_report["repair_types"]),
+                        "invalid_slide_count": repair_report["invalid_slide_count"],
+                    },
+                )
+            elif repair_report["invalid_slide_count"] > 0:
+                logger.warning(
+                    "presentation_payload_contains_unrecoverable_slides",
+                    extra={
+                        "session_id": session_id,
+                        "presentation_id": row["id"],
+                        "repair_applied": False,
+                        "invalid_slide_count": repair_report["invalid_slide_count"],
+                    },
+                )
+
+            return {
+                "id": row["id"],
+                "version_no": row["version_no"],
+                "is_snapshot": bool(row["is_snapshot"]),
+                "snapshot_label": row["snapshot_label"],
+                "created_at": row["created_at"],
+                "presentation": normalized_payload,
+            }
+
+    @staticmethod
+    def _update_presentation_payload_sync(
+        conn: sqlite3.Connection,
+        presentation_id: str,
+        payload_json: str,
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE session_presentations
+            SET payload_json=?
+            WHERE id=?
+            """,
+            (payload_json, presentation_id),
+        )
+        conn.commit()
 
     async def create_snapshot(
         self,

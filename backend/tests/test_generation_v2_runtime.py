@@ -1,5 +1,8 @@
 import asyncio
 
+import httpx
+
+from app.core.config import settings
 from app.models.generation import (
     EventType,
     GenerationEvent,
@@ -11,7 +14,7 @@ from app.models.generation import (
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
-from app.services.pipeline.graph import PipelineState
+from app.services.pipeline.graph import PipelineState, stage_generate_slides
 
 
 def _build_job(job_id: str = "job-test") -> GenerationJob:
@@ -101,9 +104,151 @@ def test_stage_timeout_emits_stage_failed_event(tmp_path):
         assert reloaded.stage_results
         assert reloaded.stage_results[-1].stage == StageStatus.OUTLINE
         assert reloaded.stage_results[-1].status == "failed"
+        assert reloaded.stage_results[-1].error_code == "STAGE_TIMEOUT"
+        assert reloaded.stage_results[-1].retriable is True
 
         events = await store.list_events(job.job_id)
-        assert any(e.type == EventType.STAGE_FAILED for e in events)
+        failed_events = [e for e in events if e.type == EventType.STAGE_FAILED]
+        assert failed_events
+        payload = failed_events[-1].payload
+        assert payload["error_code"] == "STAGE_TIMEOUT"
+        assert payload["timeout_seconds"] == 0.01
+        assert payload["stage"] == "outline"
+        started_events = [e for e in events if e.type == EventType.STAGE_STARTED]
+        assert started_events
+        assert started_events[-1].payload["stage_timeout_seconds"] == 0.01
+        assert isinstance(started_events[-1].payload["started_at"], str)
+
+    asyncio.run(_case())
+
+
+def test_outline_provider_timeout_classification(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-provider-timeout")
+        await store.create_job(job)
+
+        from app.services.generation import runner as runner_mod
+
+        async def fail_outline(state, progress=None):  # noqa: ARG001
+            raise httpx.TimeoutException("provider timeout")
+
+        monkeypatch.setattr(runner_mod, "stage_generate_outline", fail_outline)
+        await runner._run_job(job.job_id, from_stage=StageStatus.OUTLINE)  # noqa: SLF001
+
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.status == JobStatus.FAILED
+
+        events = await store.list_events(job.job_id)
+        job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+        assert job_failed
+        assert job_failed[-1].payload["error_code"] == "PROVIDER_TIMEOUT"
+
+    asyncio.run(_case())
+
+
+def test_outline_provider_network_classification(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-provider-network")
+        await store.create_job(job)
+
+        from app.services.generation import runner as runner_mod
+
+        async def fail_outline(state, progress=None):  # noqa: ARG001
+            raise httpx.ConnectError("dns failed")
+
+        monkeypatch.setattr(runner_mod, "stage_generate_outline", fail_outline)
+        await runner._run_job(job.job_id, from_stage=StageStatus.OUTLINE)  # noqa: SLF001
+
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.status == JobStatus.FAILED
+
+        events = await store.list_events(job.job_id)
+        job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+        assert job_failed
+        assert job_failed[-1].payload["error_code"] == "PROVIDER_NETWORK"
+
+    asyncio.run(_case())
+
+
+def test_no_fallback_on_outline_timeout(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-outline-timeout")
+        await store.create_job(job)
+
+        from app.services.generation import runner as runner_mod
+
+        async def slow_outline(state, progress=None):  # noqa: ARG001
+            await asyncio.sleep(0.05)
+
+        monkeypatch.setattr(settings, "outline_timeout_seconds", 0.01)
+        monkeypatch.setattr(runner_mod, "stage_generate_outline", slow_outline)
+        await runner._run_job(job.job_id, from_stage=StageStatus.OUTLINE)  # noqa: SLF001
+
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.status == JobStatus.FAILED
+
+        events = await store.list_events(job.job_id)
+        stage_started_stages = [
+            evt.stage.value
+            for evt in events
+            if evt.type == EventType.STAGE_STARTED and evt.stage is not None
+        ]
+        assert stage_started_stages == ["outline"]
+        job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+        assert job_failed
+        assert job_failed[-1].payload["error_code"] == "STAGE_TIMEOUT"
+
+    asyncio.run(_case())
+
+
+def test_two_column_compare_fallback_shape_on_slide_generation_error(monkeypatch):
+    async def _case():
+        from app.services.agents import slide_generator
+
+        async def always_fail(**kwargs):  # noqa: ARG001
+            raise RuntimeError("mock slide generation failure")
+
+        monkeypatch.setattr(slide_generator, "generate_slide_content", always_fail)
+
+        state = PipelineState(
+            raw_content="测试内容",
+            topic="测试主题",
+            num_pages=3,
+            job_id="job-fallback-shape",
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "对比页",
+                        "key_points": ["要点一", "要点二", "要点三", "要点四"],
+                    }
+                ]
+            },
+            layout_selections=[{"slide_number": 1, "layout_id": "two-column-compare"}],
+        )
+
+        await stage_generate_slides(state, per_slide_timeout=0.2)
+        assert state.slide_contents
+        content = state.slide_contents[0]["content_data"]
+        assert isinstance(content, dict)
+        assert "left" in content
+        assert "right" in content
+        assert isinstance(content["left"], dict)
+        assert isinstance(content["right"], dict)
+        assert isinstance(content["left"].get("items"), list)
+        assert isinstance(content["right"].get("items"), list)
 
     asyncio.run(_case())
 

@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import type { GenerationErrorCode } from "@/lib/api";
 
 interface GenerationProgressProps {
   progress: {
@@ -12,19 +14,50 @@ interface GenerationProgressProps {
     readySlides: number;
     totalSlides: number;
     error: string | null;
+    errorCode: GenerationErrorCode | null;
+    timeoutSeconds: number | null;
   } | null;
   jobStatus: string | null;
   currentStage: string | null;
+  lastEventAt: number | null;
+  connectionStale: boolean;
+  slowStageWarning: boolean;
   failedSlideIndices: number[];
   issues: Array<Record<string, unknown>>;
   onCancel: () => void;
   onRetry?: () => void;
 }
 
+function resolveErrorMessage(
+  errorCode: GenerationErrorCode | null,
+  fallback: string | null,
+  timeoutSeconds: number | null
+): string | null {
+  if (errorCode === "STAGE_TIMEOUT") {
+    return `大纲生成超时（${Math.round(timeoutSeconds ?? 90)}秒）`;
+  }
+  if (errorCode === "PROVIDER_NETWORK") {
+    return "网络或供应商连接异常";
+  }
+  if (errorCode === "PROVIDER_TIMEOUT") {
+    return "模型响应超时";
+  }
+  if (errorCode === "PROVIDER_RATE_LIMIT") {
+    return "请求频率受限，请稍后重试";
+  }
+  if (errorCode === "CANCELLED") {
+    return "任务已取消";
+  }
+  return fallback;
+}
+
 export default function GenerationProgress({
   progress,
   jobStatus,
   currentStage,
+  lastEventAt,
+  connectionStale,
+  slowStageWarning,
   failedSlideIndices,
   issues,
   onCancel,
@@ -54,6 +87,22 @@ export default function GenerationProgress({
 
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
   const canRetry = jobStatus === "failed" || jobStatus === "cancelled";
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const secondsSinceLastEvent =
+    typeof lastEventAt === "number" ? Math.max(0, Math.floor((nowTs - lastEventAt) / 1000)) : null;
+  const resolvedError = resolveErrorMessage(
+    progress?.errorCode ?? null,
+    progress?.error ?? null,
+    progress?.timeoutSeconds ?? null
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
@@ -79,9 +128,26 @@ export default function GenerationProgress({
               : "页面 0/0"}
           </span>
         </div>
-        {(progress?.error || failedSlideIndices.length > 0 || errorCount > 0) && (
+        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between">
+            <span>连接状态</span>
+            <span className={connectionStale ? "text-amber-600" : "text-emerald-600"}>
+              {connectionStale ? "可能中断" : "活跃"}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between">
+            <span>最近事件</span>
+            <span>{secondsSinceLastEvent === null ? "--" : `${secondsSinceLastEvent} 秒前`}</span>
+          </div>
+        </div>
+        {slowStageWarning && jobStatus === "running" && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            {progress?.error || "存在失败页或验证问题"}
+            模型响应较慢，可取消后重试
+          </div>
+        )}
+        {(resolvedError || failedSlideIndices.length > 0 || errorCount > 0) && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            {resolvedError || "存在失败页或验证问题"}
             {(failedSlideIndices.length > 0 || errorCount > 0) && (
               <div className="mt-1">
                 失败页: {failedSlideIndices.length}，error 级问题: {errorCount}

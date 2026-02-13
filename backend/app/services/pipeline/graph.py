@@ -70,7 +70,9 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
 
 
 async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
+    from app.core.config import settings
     from app.services.document.parser import estimate_tokens
+    from app.services.agents.outline_synthesizer import outline_synthesizer_agent
 
     if progress:
         await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
@@ -101,10 +103,21 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
     )
 
-    try:
-        from app.core.config import settings
-        from app.services.agents.outline_synthesizer import outline_synthesizer_agent
+    model = settings.strong_model
+    provider = model.split(":", 1)[0] if ":" in model else None
+    logger.info(
+        "Outline call start",
+        extra={
+            "job_id": state.job_id,
+            "stage": "outline",
+            "model": model,
+            "provider": provider,
+            "estimated_tokens": token_count,
+            "timeout_seconds": settings.outline_timeout_seconds,
+        },
+    )
 
+    try:
         result = await outline_synthesizer_agent.run(prompt)
         usage = result.usage()
         state.outline = result.output.model_dump()
@@ -122,11 +135,11 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
         )
     except Exception as e:
         logger.warning(
-            "Outline generation failed: %s, using fallback",
+            "Outline generation failed: %s",
             e,
             extra={"job_id": state.job_id, "stage": "outline", "error_type": type(e).__name__},
         )
-        state.outline = _fallback_outline(state)
+        raise
 
     outline_items = state.outline.get("items", [])
     logger.info(
@@ -260,6 +273,9 @@ async def stage_generate_slides(
                         "job_id": state.job_id,
                         "stage": "slides",
                         "slide_index": idx,
+                        "layout_id": layout_id,
+                        "fallback": True,
+                        "fallback_reason": "slide_timeout",
                         "error_type": "timeout",
                     },
                 )
@@ -278,6 +294,9 @@ async def stage_generate_slides(
                         "job_id": state.job_id,
                         "stage": "slides",
                         "slide_index": idx,
+                        "layout_id": layout_id,
+                        "fallback": True,
+                        "fallback_reason": "slide_exception",
                         "error_type": type(e).__name__,
                     },
                 )
@@ -401,7 +420,20 @@ async def stage_fix_slides_once(
                 stage="fix",
             )
             content_data = await asyncio.wait_for(coro, timeout=per_slide_timeout)
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Slide %d fix generation failed, using fallback",
+                slide_num,
+                extra={
+                    "job_id": state.job_id,
+                    "stage": "fix",
+                    "slide_index": idx,
+                    "layout_id": layout_id,
+                    "fallback": True,
+                    "fallback_reason": "fix_exception",
+                    "error_type": type(e).__name__,
+                },
+            )
             content_data = _fallback_content(item, layout_id)
 
         if idx < len(state.slide_contents):
@@ -491,17 +523,130 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
 
     if layout_id == "intro-slide":
         return {"title": title, "subtitle": "由知演 AI 智能生成"}
-    if layout_id == "thank-you":
+    if layout_id in {"thank-you", "thankyou"}:
         return {"title": "谢谢", "subtitle": "感谢您的关注"}
     if layout_id == "section-header":
         return {"title": title}
+    if layout_id == "bullet-with-icons":
+        items = points[:4] if points else ["内容生成中"]
+        while len(items) < 3:
+            items.append("内容生成中")
+        return {
+            "title": title,
+            "items": [
+                {"icon": {"query": "star"}, "title": p[:25], "description": p}
+                for p in items
+            ],
+        }
+    if layout_id == "numbered-bullets":
+        items = points[:5] if points else ["内容生成中"]
+        while len(items) < 3:
+            items.append("内容生成中")
+        return {
+            "title": title,
+            "items": [{"title": f"要点 {i + 1}", "description": p} for i, p in enumerate(items)],
+        }
+    if layout_id == "metrics-slide":
+        metrics = points[:3] if points else ["内容生成中", "内容生成中"]
+        if len(metrics) < 2:
+            metrics.append("内容生成中")
+        return {
+            "title": title,
+            "metrics": [
+                {"value": f"{(i + 1) * 10}%", "label": f"指标 {i + 1}", "description": p}
+                for i, p in enumerate(metrics)
+            ],
+        }
+    if layout_id == "metrics-with-image":
+        metrics = points[:3] if points else ["内容生成中", "内容生成中"]
+        if len(metrics) < 2:
+            metrics.append("内容生成中")
+        return {
+            "title": title,
+            "metrics": [
+                {"value": f"{(i + 1) * 10}%", "label": f"指标 {i + 1}", "description": p}
+                for i, p in enumerate(metrics)
+            ],
+            "image": {"prompt": "modern office presentation setting"},
+        }
+    if layout_id == "chart-with-bullets":
+        bullets = points[:4] if points else ["内容生成中", "内容生成中"]
+        while len(bullets) < 2:
+            bullets.append("内容生成中")
+        return {
+            "title": title,
+            "chart": {
+                "chartType": "bar",
+                "labels": ["A", "B", "C"],
+                "datasets": [{"label": "指标", "data": [60, 75, 90], "color": "#3b82f6"}],
+            },
+            "bullets": [{"text": text} for text in bullets],
+        }
+    if layout_id == "table-info":
+        rows = [[f"项{i + 1}", points[i] if i < len(points) else "内容生成中"] for i in range(3)]
+        return {
+            "title": title,
+            "headers": ["主题", "说明"],
+            "rows": rows,
+            "caption": "自动回退生成内容",
+        }
+    if layout_id == "two-column-compare":
+        candidates = points[:6] if points else ["内容生成中", "内容生成中"]
+        if len(candidates) < 2:
+            candidates.append("内容生成中")
+        mid = max(1, (len(candidates) + 1) // 2)
+        left_items = candidates[:mid] or ["内容生成中"]
+        right_items = candidates[mid:] or ["内容生成中"]
+        return {
+            "title": title,
+            "left": {"heading": "要点 A", "items": left_items, "icon": {"query": "layers"}},
+            "right": {"heading": "要点 B", "items": right_items, "icon": {"query": "target"}},
+        }
+    if layout_id == "image-and-description":
+        return {
+            "title": title,
+            "image": {"prompt": "business presentation illustration"},
+            "description": points[0] if points else "内容生成中",
+            "bullets": points[:3],
+        }
+    if layout_id == "timeline":
+        events = points[:4] if points else ["内容生成中", "内容生成中", "内容生成中"]
+        while len(events) < 3:
+            events.append("内容生成中")
+        return {
+            "title": title,
+            "events": [
+                {"date": f"阶段 {i + 1}", "title": event, "description": "自动回退生成"}
+                for i, event in enumerate(events)
+            ],
+        }
     if layout_id == "quote-slide":
         return {"quote": points[0] if points else title}
+    if layout_id == "bullet-icons-only":
+        labels = points[:6] if points else ["能力 1", "能力 2", "能力 3", "能力 4"]
+        while len(labels) < 4:
+            labels.append(f"能力 {len(labels) + 1}")
+        return {
+            "title": title,
+            "items": [{"icon": {"query": "sparkles"}, "label": label[:20]} for label in labels],
+        }
+    if layout_id == "challenge-outcome":
+        pairs = points[:4] if points else ["内容生成中", "内容生成中"]
+        while len(pairs) < 2:
+            pairs.append("内容生成中")
+        return {
+            "title": title,
+            "items": [{"challenge": text, "outcome": "建议下一步行动"} for text in pairs],
+        }
 
+    # Unknown layout falls back to a known-safe bullet schema.
+    fallback_items = points[:4] if points else ["内容生成中", "内容生成中", "内容生成中"]
+    while len(fallback_items) < 3:
+        fallback_items.append("内容生成中")
     return {
         "title": title,
         "items": [
             {"icon": {"query": "star"}, "title": p[:25], "description": p}
-            for p in points[:4]
+            for p in fallback_items
         ],
     }
