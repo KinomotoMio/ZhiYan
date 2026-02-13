@@ -34,6 +34,13 @@ class Settings(BaseSettings):
 
     # 生成超时（秒）
     generate_timeout_seconds: int = 300
+    job_timeout_seconds: int = 1800
+    outline_timeout_seconds: int = 90
+    layout_timeout_seconds: int = 45
+    per_slide_timeout_seconds: int = 75
+    verify_timeout_seconds: int = 90
+    max_fix_passes: int = 1
+    enable_vision_verification: bool = True
     sse_heartbeat_seconds: float = 10.0
 
     # 日志

@@ -14,6 +14,11 @@ interface AppState {
   presentation: Presentation | null;
   currentSlideIndex: number;
   isGenerating: boolean;
+  jobId: string | null;
+  jobStatus: string | null;
+  currentStage: string | null;
+  issues: Array<Record<string, unknown>>;
+  failedSlideIndices: number[];
   chatMessages: ChatMessage[];
 
   // 创建视图状态
@@ -28,6 +33,14 @@ interface AppState {
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
+  updateJobState: (patch: {
+    jobId?: string | null;
+    jobStatus?: string | null;
+    currentStage?: string | null;
+    issues?: Array<Record<string, unknown>>;
+    failedSlideIndices?: number[];
+  }) => void;
+  resetJobState: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   getCurrentSlide: () => Slide | null;
 
@@ -63,6 +76,11 @@ export const useAppStore = create<AppState>()(
       presentation: null,
       currentSlideIndex: 0,
       isGenerating: false,
+      jobId: null,
+      jobStatus: null,
+      currentStage: null,
+      issues: [],
+      failedSlideIndices: [],
       chatMessages: [],
 
       // 创建视图状态
@@ -84,6 +102,22 @@ export const useAppStore = create<AppState>()(
         }),
       setCurrentSlideIndex: (i) => set({ currentSlideIndex: i }),
       setIsGenerating: (v) => set({ isGenerating: v }),
+      updateJobState: (patch) =>
+        set((state) => ({
+          jobId: patch.jobId ?? state.jobId,
+          jobStatus: patch.jobStatus ?? state.jobStatus,
+          currentStage: patch.currentStage ?? state.currentStage,
+          issues: patch.issues ?? state.issues,
+          failedSlideIndices: patch.failedSlideIndices ?? state.failedSlideIndices,
+        })),
+      resetJobState: () =>
+        set({
+          jobId: null,
+          jobStatus: null,
+          currentStage: null,
+          issues: [],
+          failedSlideIndices: [],
+        }),
       addChatMessage: (msg) =>
         set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
 

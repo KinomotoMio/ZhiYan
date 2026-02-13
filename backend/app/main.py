@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
+from app.api.v2.router import api_v2_router
 from app.core.config import settings
 from app.core.logging_setup import setup_logging
 
@@ -137,6 +138,7 @@ async def value_error_handler(request: Request, exc: ValueError):
 
 
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_v2_router, prefix="/api/v2")
 
 
 @app.get("/health")

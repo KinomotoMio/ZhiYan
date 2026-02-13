@@ -2,16 +2,18 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies and run the development server:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
+```
+
+Build and start in production mode:
+
+```bash
+pnpm build
+pnpm start
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

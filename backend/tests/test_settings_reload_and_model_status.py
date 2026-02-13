@@ -15,6 +15,7 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
                 "strong_model": "openrouter:moonshotai/kimi-k2.5",
                 "vision_model": "openrouter:moonshotai/kimi-k2.5",
                 "openrouter_api_key": "sk-or-test",
+                "enable_vision_verification": False,
             }
         ),
         encoding="utf-8",
@@ -30,6 +31,7 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
     assert id(executor.settings) == before_id
     assert config.settings.default_model == "openrouter:moonshotai/kimi-k2.5"
     assert executor.settings.default_model == "openrouter:moonshotai/kimi-k2.5"
+    assert config.settings.enable_vision_verification is False
 
 
 def test_build_model_status_for_known_and_unknown_providers():

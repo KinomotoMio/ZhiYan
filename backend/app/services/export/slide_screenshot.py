@@ -39,11 +39,12 @@ async def capture_slide_screenshots(
         raise RuntimeError(
             "Playwright 未安装。请运行: uv add playwright && uv run playwright install chromium"
         )
+    from app.services.export.playwright_runtime import launch_chromium_with_auto_install
 
     results: list[SlideScreenshot] = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        browser = await launch_chromium_with_auto_install(p)
         page = await browser.new_page(viewport={"width": 1280, "height": 720})
 
         for slide_data in slides:

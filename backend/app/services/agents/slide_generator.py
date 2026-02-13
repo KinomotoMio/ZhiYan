@@ -5,6 +5,7 @@
 """
 
 import logging
+import time
 
 from pydantic import BaseModel
 
@@ -59,6 +60,8 @@ async def generate_slide_content(
     content_brief: str,
     key_points: list[str],
     source_content: str,
+    job_id: str | None = None,
+    stage: str = "slides",
 ) -> dict:
     """为单页幻灯片生成结构化内容
 
@@ -88,6 +91,9 @@ async def generate_slide_content(
         f"源文档内容:\n{source_content[:3000]}"
     )
 
+    from app.core.config import settings
+
+    t0 = time.monotonic()
     result = await agent.run(prompt)
     usage = result.usage()
     if usage.requests > 1:
@@ -95,6 +101,20 @@ async def generate_slide_content(
             "Slide %d (layout=%s) required %d LLM requests (retries occurred)",
             slide_number, layout_id, usage.requests,
         )
+    logger.info(
+        "slide_generation_call",
+        extra={
+            "event": "slide_generation_call",
+            "job_id": job_id,
+            "stage": stage,
+            "slide_index": max(0, slide_number - 1),
+            "model": settings.strong_model,
+            "provider": settings.strong_model.split(":", 1)[0],
+            "attempt": usage.requests,
+            "token_usage": str(usage),
+            "elapsed_ms": int((time.monotonic() - t0) * 1000),
+        },
+    )
     return result.output.model_dump()
 
 

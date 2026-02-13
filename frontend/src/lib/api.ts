@@ -3,30 +3,212 @@ import type { SourceMeta } from "@/types/source";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// ---------- Generate ----------
+// ---------- Generation v2 ----------
 
-interface GenerateRequest {
+export type GenerationMode = "auto" | "review_outline";
+export type JobStatus =
+  | "pending"
+  | "running"
+  | "waiting_outline_review"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export type StageStatus =
+  | "parse"
+  | "outline"
+  | "layout"
+  | "slides"
+  | "assets"
+  | "verify"
+  | "fix"
+  | "complete";
+export type EventType =
+  | "job_started"
+  | "stage_started"
+  | "stage_progress"
+  | "outline_ready"
+  | "layout_ready"
+  | "slide_ready"
+  | "stage_failed"
+  | "job_completed"
+  | "job_failed"
+  | "job_cancelled"
+  | "heartbeat";
+
+export interface CreateJobRequest {
   content?: string;
   topic?: string;
   source_ids?: string[];
   template_id?: string;
   num_pages?: number;
+  mode?: GenerationMode;
 }
 
-interface GenerateResponse {
-  presentation: Presentation;
+export interface CreateJobResponse {
+  job_id: string;
+  status: JobStatus;
+  created_at: string;
+  event_stream_url: string;
 }
 
-export async function generatePresentation(
-  req: GenerateRequest
-): Promise<GenerateResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/generate`, {
+export interface GenerationIssue {
+  slide_id?: string;
+  severity?: string;
+  category?: string;
+  message?: string;
+  suggestion?: string;
+  [k: string]: unknown;
+}
+
+export interface GenerationJob {
+  job_id: string;
+  status: JobStatus;
+  current_stage: StageStatus | null;
+  outline: Record<string, unknown>;
+  layouts: Array<Record<string, unknown>>;
+  slides: Slide[];
+  issues: GenerationIssue[];
+  failed_slide_indices: number[];
+  error: string | null;
+  [k: string]: unknown;
+}
+
+export interface GenerationEvent {
+  seq: number;
+  type: EventType;
+  job_id: string;
+  ts: string;
+  stage: StageStatus | null;
+  message: string | null;
+  payload: Record<string, unknown>;
+}
+
+export async function createJob(req: CreateJobRequest): Promise<CreateJobResponse> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+    body: JSON.stringify({
+      content: req.content ?? "",
+      topic: req.topic ?? "",
+      source_ids: req.source_ids ?? [],
+      template_id: req.template_id ?? null,
+      num_pages: req.num_pages ?? 5,
+      mode: req.mode ?? "auto",
+    }),
   });
-  if (!res.ok) throw new Error(`生成失败: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `创建任务失败: ${res.statusText}`);
+  }
   return res.json();
+}
+
+export async function getJob(jobId: string): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}`);
+  if (!res.ok) throw new Error(`获取任务失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function runJob(jobId: string): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/run`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `运行任务失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function acceptOutline(
+  jobId: string,
+  outline?: Record<string, unknown>
+): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/outline/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outline: outline ?? null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `确认大纲失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function cancelJob(
+  jobId: string
+): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `取消任务失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export interface JobEventCallbacks {
+  onEvent?: (event: GenerationEvent) => void;
+  onDone?: () => void;
+  onError?: (err: Error) => void;
+}
+
+export async function subscribeJobEvents(
+  jobId: string,
+  callbacks: JobEventCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  const { onEvent, onDone, onError } = callbacks;
+  try {
+    const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/events`, {
+      method: "GET",
+      signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `订阅任务事件失败: ${res.statusText}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("无法读取任务事件流");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") {
+          onDone?.();
+          return;
+        }
+        try {
+          const parsed = JSON.parse(data) as GenerationEvent;
+          onEvent?.(parsed);
+        } catch {
+          // ignore invalid line
+        }
+      }
+    }
+
+    onDone?.();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      onDone?.();
+      return;
+    }
+    onError?.(err instanceof Error ? err : new Error(String(err)));
+  }
 }
 
 // ---------- Export ----------
@@ -260,6 +442,7 @@ export interface AppSettings {
   fast_model: string;
   tts_model: string;
   tts_voice: string;
+  enable_vision_verification: boolean;
   has_openai_key: boolean;
   has_anthropic_key: boolean;
   has_google_key: boolean;
@@ -321,151 +504,6 @@ export async function validateApiKey(
   });
   if (!res.ok) throw new Error(`验证失败: ${res.statusText}`);
   return res.json();
-}
-
-// ---------- Generate Stream (SSE) ----------
-
-export interface ProgressEvent {
-  type: "progress";
-  stage: string;
-  step: number;
-  total_steps: number;
-  message: string;
-  run_id: string;
-}
-
-export interface ResultEvent {
-  type: "result";
-  presentation: Presentation;
-  run_id: string;
-}
-
-export interface OutlineReadyEvent {
-  type: "outline_ready";
-  topic: string;
-  items: Array<{
-    slide_number: number;
-    title: string;
-    suggested_layout_category: string;
-  }>;
-  run_id: string;
-}
-
-export interface SlideReadyEvent {
-  type: "slide_ready";
-  slide_index: number;
-  slide: Slide;
-  run_id: string;
-}
-
-interface ErrorEvent {
-  type: "error";
-  message: string;
-  run_id?: string;
-  error_type?: string;
-}
-
-export interface StreamCallbacks {
-  onProgress: (event: ProgressEvent) => void;
-  onOutlineReady?: (event: OutlineReadyEvent) => void;
-  onSlideReady?: (slide: Slide, index: number) => void;
-  onResult: (event: ResultEvent) => void;
-  onError: (err: Error) => void;
-  onDone: () => void;
-}
-
-export function generatePresentationStream(
-  req: GenerateRequest,
-  callbacks: StreamCallbacks,
-  signal?: AbortSignal
-): void {
-  const { onProgress, onOutlineReady, onSlideReady, onResult, onError, onDone } = callbacks;
-  let doneCalled = false;
-  let terminalReceived = false;
-
-  const finish = () => {
-    if (doneCalled) return;
-    doneCalled = true;
-    onDone();
-  };
-
-  const emitError = (message: string, runId?: string) => {
-    const msg = runId ? `${message} (run_id: ${runId})` : message;
-    onError(new Error(msg));
-  };
-
-  fetch(`${API_BASE}/api/v1/generate/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-    signal,
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errBody.detail || `生成失败: ${res.statusText}`);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("无法读取响应流");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") {
-              if (!terminalReceived) {
-                emitError("生成流结束但未返回结果");
-              }
-              return;
-            }
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "progress") {
-                onProgress(parsed as ProgressEvent);
-              } else if (parsed.type === "outline_ready") {
-                onOutlineReady?.(parsed as OutlineReadyEvent);
-              } else if (parsed.type === "slide_ready") {
-                const evt = parsed as SlideReadyEvent;
-                onSlideReady?.(evt.slide, evt.slide_index);
-              } else if (parsed.type === "result") {
-                terminalReceived = true;
-                onResult(parsed as ResultEvent);
-              } else if (parsed.type === "error") {
-                terminalReceived = true;
-                const errorEvent = parsed as ErrorEvent;
-                emitError(errorEvent.message || "生成出错", errorEvent.run_id);
-              }
-            } catch {
-              // 跳过
-            }
-          }
-        }
-      }
-
-      if (!terminalReceived) {
-        emitError("生成流结束但未返回结果");
-      }
-    })
-    .catch((err) => {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return;
-      }
-      onError(err instanceof Error ? err : new Error(String(err)));
-    })
-    .finally(() => {
-      finish();
-    });
 }
 
 // ---------- TTS ----------
