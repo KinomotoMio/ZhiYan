@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { MessageSquare, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
@@ -22,6 +23,7 @@ import AddSourceArea from "./AddSourceArea";
 import UserMenu from "@/components/settings/UserMenu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { getSessionEditorPath } from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
 import type { Presentation } from "@/types/slide";
 
@@ -76,6 +78,10 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
 }
 
 export default function SourcePanel() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const defaultTab = searchParams.get("tab") === "sessions" ? "sessions" : "sources";
+  const preferredSessionId = searchParams.get("session");
   const {
     workspaceId,
     setWorkspaceId,
@@ -97,7 +103,7 @@ export default function SourcePanel() {
     deselectAllSources,
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<"sources" | "sessions">("sources");
+  const [activeTab, setActiveTab] = useState<"sources" | "sessions">(defaultTab);
   const [sessionQuery, setSessionQuery] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
@@ -154,6 +160,12 @@ export default function SourcePanel() {
   );
 
   useEffect(() => {
+    if (searchParams.get("tab") === "sessions") {
+      setActiveTab("sessions");
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     if (bootstrappedRef.current) return;
     bootstrappedRef.current = true;
 
@@ -208,7 +220,9 @@ export default function SourcePanel() {
       }
 
       const preferred =
-        currentSessionId && items.some((item) => item.id === currentSessionId)
+        preferredSessionId && items.some((item) => item.id === preferredSessionId)
+          ? preferredSessionId
+          : currentSessionId && items.some((item) => item.id === currentSessionId)
           ? currentSessionId
           : items[0]?.id;
 
@@ -224,7 +238,7 @@ export default function SourcePanel() {
     return () => {
       cancelled = true;
     };
-  }, [createAndOpenSession, currentSessionId, loadSession, refreshSessions, setWorkspaceId]);
+  }, [createAndOpenSession, currentSessionId, loadSession, preferredSessionId, refreshSessions, setWorkspaceId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -320,6 +334,14 @@ export default function SourcePanel() {
     setCurrentSessionId(id);
     setActiveTab("sources");
   }, [createAndOpenSession, refreshSessions, sessionQuery, setCurrentSessionId]);
+
+  const handleOpenSessionResult = useCallback(
+    (sessionId: string) => {
+      setCurrentSessionId(sessionId);
+      router.push(getSessionEditorPath(sessionId));
+    },
+    [router, setCurrentSessionId]
+  );
 
   const handleRenameSession = useCallback(
     async (sessionId: string, oldTitle: string) => {
@@ -551,6 +573,14 @@ export default function SourcePanel() {
                           </div>
                         </button>
                         <div className="mt-2 flex justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              handleOpenSessionResult(session.id);
+                            }}
+                            className="rounded px-2 py-1 text-xs border border-input text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            打开结果
+                          </button>
                           <button
                             onClick={() => {
                               void handleRenameSession(session.id, session.title);

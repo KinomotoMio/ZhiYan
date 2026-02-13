@@ -24,6 +24,57 @@ function asText(value: unknown, fallback = ""): string {
   return fallback;
 }
 
+function extractTextItemsFromText(rawText: string): string[] {
+  const lines = rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const items: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("|")) {
+      const cells = line
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((cell) => cleanMarkdownText(cell));
+      for (const cell of cells) {
+        if (shouldKeepCell(cell)) {
+          items.push(cell);
+        }
+      }
+      continue;
+    }
+
+    const cleaned = cleanMarkdownText(line);
+    if (shouldKeepCell(cleaned)) {
+      items.push(cleaned);
+    }
+  }
+
+  return Array.from(new Set(items));
+}
+
+function cleanMarkdownText(raw: string): string {
+  return raw
+    .replace(/^\s*[-*•]+\s*/, "")
+    .replace(/^\s*\d+[.)]\s*/, "")
+    .replace(/^\|+|\|+$/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shouldKeepCell(text: string): boolean {
+  if (!text) return false;
+  if (/^[-:]+$/.test(text)) return false;
+  if (text === "栏目" || text === "新增内容") return false;
+  return true;
+}
+
 function normalizeIcon(value: unknown): RecordLike | null {
   if (isRecordLike(value)) {
     const query = asText(value.query);
@@ -38,8 +89,7 @@ function extractTextItems(value: unknown): string[] {
   const items: string[] = [];
   for (const item of value) {
     if (typeof item === "string") {
-      const text = item.trim();
-      if (text) items.push(text);
+      items.push(...extractTextItemsFromText(item));
       continue;
     }
     if (!isRecordLike(item)) continue;
@@ -69,6 +119,14 @@ function splitTwoColumns(items: string[]): [string[], string[]] {
 }
 
 function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLike | null {
+  if (typeof raw === "string" && raw.trim()) {
+    const items = extractTextItemsFromText(raw);
+    if (items.length === 0) return null;
+    return {
+      heading: fallbackHeading,
+      items,
+    };
+  }
   if (!isRecordLike(raw)) return null;
   const heading = asText(raw.heading) || asText(raw.title) || fallbackHeading;
   const items = extractTextItems(raw.items);

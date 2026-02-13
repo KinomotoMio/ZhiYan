@@ -104,3 +104,30 @@ def test_unrecoverable_slide_reported_without_modification():
     assert changed is False
     assert normalized["slides"][0]["contentData"] == payload["slides"][0]["contentData"]
     assert report["invalid_slide_count"] == 1
+
+
+def test_normalize_two_column_compare_from_string_columns():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-5",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "比较维度",
+                    "left": "**左栏**\n- 要点一\n- 要点二",
+                    "right": "| 栏目 | 新增内容 |\n|---|---|\n| 方法 | 细化步骤 |",
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "two-column-compare-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["left"]["heading"] == "要点 A"
+    assert isinstance(content["left"]["items"], list)
+    assert len(content["left"]["items"]) >= 1
+    assert content["right"]["heading"] == "要点 B"
+    assert isinstance(content["right"]["items"], list)
+    assert len(content["right"]["items"]) >= 1

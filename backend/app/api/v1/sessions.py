@@ -11,7 +11,13 @@ import httpx
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from app.models.session import ChatRecord, SessionDetail, SessionSummary, SnapshotMeta
+from app.models.session import (
+    ChatRecord,
+    LatestPresentationWriteRequest,
+    SessionDetail,
+    SessionSummary,
+    SnapshotMeta,
+)
 from app.models.source import SourceMeta
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
@@ -351,6 +357,24 @@ async def get_latest_presentation(session_id: str, request: Request):
     if not latest:
         raise HTTPException(status_code=404, detail="当前会话暂无演示稿")
     return latest
+
+
+@router.put("/{session_id}/presentations/latest", response_model=SnapshotMeta)
+async def save_latest_presentation(
+    session_id: str,
+    req: LatestPresentationWriteRequest,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    saved = await session_store.save_presentation(
+        session_id=sid,
+        payload=req.presentation,
+        is_snapshot=False,
+        snapshot_label=None,
+    )
+    return SnapshotMeta.model_validate(saved)
 
 
 @router.post("/{session_id}/snapshots", response_model=SnapshotMeta)

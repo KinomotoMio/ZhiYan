@@ -39,3 +39,21 @@ test("unrecoverable layout data renders fallback card", () => {
   const html = renderToStaticMarkup(<SlidePreview slide={brokenSlide} />);
   assert.match(html, /该页数据异常，可重新生成/);
 });
+
+test("two-column-compare string columns are repaired", () => {
+  const brokenByChatSlide: Slide = {
+    slideId: "slide-3",
+    layoutType: "two-column-compare",
+    layoutId: "two-column-compare",
+    contentData: {
+      title: "比较维度",
+      left: "**左栏**\n- 要点一\n- 要点二",
+      right: "| 栏目 | 新增内容 |\n|---|---|\n| 方法 | 细化步骤 |",
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={brokenByChatSlide} />);
+  assert.doesNotMatch(html, /该页数据异常，可重新生成/);
+  assert.match(html, /比较维度|要点 A|要点 B/);
+});

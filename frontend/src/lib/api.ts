@@ -186,6 +186,23 @@ export async function createSessionSnapshot(
   return res.json();
 }
 
+export async function saveLatestSessionPresentation(
+  sessionId: string,
+  presentation: Presentation,
+  source: "chat" | "editor" = "chat"
+): Promise<SnapshotMeta> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
+    method: "PUT",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ presentation, source }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `保存会话演示稿失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 // ---------- Session Sources ----------
 
 export async function listSessionSources(sessionId: string): Promise<SourceMeta[]> {
@@ -549,6 +566,7 @@ interface ChatRequest {
   messages?: ChatMessagePayload[];
   presentation_context?: Record<string, unknown>;
   current_slide_index?: number;
+  action_hint?: ChatActionHint;
 }
 
 interface SlideUpdateEvent {
@@ -556,12 +574,26 @@ interface SlideUpdateEvent {
   modifications: Record<string, unknown>[];
 }
 
+export type ChatActionHint =
+  | "refresh_layout"
+  | "simplify"
+  | "add_detail"
+  | "enrich_visual"
+  | "change_theme"
+  | "free_text";
+
+export interface ChatNoOpEvent {
+  code: "NO_TOOL_MODIFICATION";
+  reason: string;
+}
+
 export async function chatStream(
   req: ChatRequest,
   onChunk: (text: string) => void,
   onDone: () => void,
   onError?: (err: Error) => void,
-  onSlideUpdate?: (update: SlideUpdateEvent) => void
+  onSlideUpdate?: (update: SlideUpdateEvent) => void,
+  onNoOp?: (event: ChatNoOpEvent) => void
 ): Promise<void> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
@@ -603,6 +635,11 @@ export async function chatStream(
               onSlideUpdate({
                 slides: parsed.slides,
                 modifications: parsed.modifications,
+              });
+            } else if (parsed.type === "no_op" && onNoOp) {
+              onNoOp({
+                code: parsed.code || "NO_TOOL_MODIFICATION",
+                reason: parsed.reason || "本次请求未产生可执行修改",
               });
             } else if (parsed.type === "error") {
               onError?.(new Error(parsed.content));
