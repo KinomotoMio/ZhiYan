@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # 路径
     project_root: Path = Path(__file__).resolve().parents[3]
     skills_dir: Path = Path(__file__).resolve().parents[3] / "skills"
+    db_path: Path = Path(__file__).resolve().parents[3] / "data" / "zhiyan.db"
+    uploads_dir: Path = Path(__file__).resolve().parents[3] / "data" / "uploads"
 
     # 文件大小 / 页数限制
     max_upload_size_mb: int = 50

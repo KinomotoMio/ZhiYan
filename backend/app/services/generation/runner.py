@@ -278,6 +278,17 @@ class GenerationRunner:
             job.current_stage = StageStatus.COMPLETE
             job.updated_at = now_iso()
             await self._store.save_job(job)
+            if job.request.session_id:
+                from app.services.sessions import session_store
+                await session_store.save_presentation(
+                    session_id=job.request.session_id,
+                    payload=job.presentation,
+                    is_snapshot=False,
+                )
+                await session_store.update_generation_job_status(
+                    job.job_id,
+                    JobStatus.COMPLETED.value,
+                )
 
             await self._emit_event(
                 job,
@@ -296,6 +307,12 @@ class GenerationRunner:
             job.current_stage = None
             job.updated_at = now_iso()
             await self._store.save_job(job)
+            if job.request.session_id:
+                from app.services.sessions import session_store
+                await session_store.update_generation_job_status(
+                    job.job_id,
+                    JobStatus.CANCELLED.value,
+                )
             await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
             return
         except Exception as e:
@@ -304,6 +321,12 @@ class GenerationRunner:
             job.current_stage = None
             job.updated_at = now_iso()
             await self._store.save_job(job)
+            if job.request.session_id:
+                from app.services.sessions import session_store
+                await session_store.update_generation_job_status(
+                    job.job_id,
+                    JobStatus.FAILED.value,
+                )
             await self._emit_event(
                 job,
                 EventType.JOB_FAILED,

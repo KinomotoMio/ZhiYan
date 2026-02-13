@@ -62,6 +62,7 @@ TERMINAL_EVENTS = {
 class GenerationRequestData(BaseModel):
     topic: str = ""
     content: str = ""
+    session_id: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     template_id: str | None = None
     num_pages: int = 5
@@ -119,6 +120,7 @@ class GenerationJob(BaseModel):
 
 class CreateJobResponse(BaseModel):
     job_id: str
+    session_id: str | None = None
     status: JobStatus
     created_at: str
     event_stream_url: str
@@ -137,6 +139,7 @@ class JobActionResponse(BaseModel):
 class CreateJobRequest(BaseModel):
     topic: str = ""
     content: str = ""
+    session_id: str | None = None
     source_ids: list[str] = Field(default_factory=list)
     template_id: str | None = None
     num_pages: int = 5

@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
-import { exportPptx, exportPdf } from "@/lib/api";
+import { exportPptx, exportPdf, getLatestSessionPresentation } from "@/lib/api";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,16 +22,40 @@ import UserMenu from "@/components/settings/UserMenu";
 
 export default function EditorPage() {
   const router = useRouter();
-  const { presentation, currentSlideIndex, setCurrentSlideIndex, isGenerating } =
+  const {
+    presentation,
+    currentSlideIndex,
+    currentSessionId,
+    setPresentation,
+    setCurrentSlideIndex,
+    isGenerating,
+  } =
     useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [hydrating, setHydrating] = useState(false);
+  const slides = presentation?.slides ?? [];
 
-  if (!presentation) {
+  useEffect(() => {
+    if (presentation || !currentSessionId || hydrating) return;
+    setHydrating(true);
+    getLatestSessionPresentation(currentSessionId)
+      .then((latest) => {
+        if (latest?.presentation) {
+          setPresentation(latest.presentation);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setHydrating(false));
+  }, [currentSessionId, hydrating, presentation, setPresentation]);
+
+  if (!presentation || hydrating) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
-          <p className="text-muted-foreground">尚未生成演示文稿</p>
+          <p className="text-muted-foreground">
+            {hydrating ? "正在加载会话内容..." : "尚未生成演示文稿"}
+          </p>
           <button
             onClick={() => router.push("/")}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
@@ -44,6 +68,11 @@ export default function EditorPage() {
   }
 
   const currentSlide = presentation.slides[currentSlideIndex];
+  const loadedCount = slides.filter(
+    (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
+  ).length;
+  const totalCount = slides.length;
+  const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
 
   const handleExport = async (format: "pptx" | "pdf") => {
     if (!presentation || exporting) return;
@@ -88,17 +117,6 @@ export default function EditorPage() {
       </div>
     );
   }
-
-  // 统计已加载的 slides 数量（渐进式生成进度）
-  const loadedCount = useMemo(
-    () =>
-      presentation.slides.filter(
-        (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
-      ).length,
-    [presentation.slides]
-  );
-  const totalCount = presentation.slides.length;
-  const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
 
   return (
     <div className="h-screen flex flex-col">
