@@ -5,7 +5,8 @@
   "google_api_key": "",
   "deepseek_api_key": "sk-748edcb495cf4984a988f70d5457a421",
   "openrouter_api_key": "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",
-  "default_model": "openrouter:moonshotai/kimi-k2.5",
+  "default_model": "deepseek:deepseek-chat",
   "strong_model": "openrouter:moonshotai/kimi-k2.5",
-  "vision_model": "openrouter:moonshotai/kimi-k2.5"
+  "vision_model": "openrouter:moonshotai/kimi-k2.5",
+  "fast_model": "deepseek:deepseek-chat"
 }

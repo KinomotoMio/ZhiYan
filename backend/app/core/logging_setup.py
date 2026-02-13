@@ -15,6 +15,7 @@ class JsonFormatter(logging.Formatter):
 
     _EXTRA_KEYS = (
         "event",
+        "job_id",
         "request_id",
         "run_id",
         "method",
@@ -26,6 +27,11 @@ class JsonFormatter(logging.Formatter):
         "step",
         "total_steps",
         "error_type",
+        "slide_index",
+        "model",
+        "provider",
+        "attempt",
+        "token_usage",
     )
 
     def format(self, record: logging.LogRecord) -> str:

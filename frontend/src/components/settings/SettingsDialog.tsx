@@ -302,6 +302,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const [googleKey, setGoogleKey] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
+  const [enableVisionVerification, setEnableVisionVerification] = useState(true);
 
   const [modelDrafts, setModelDrafts] =
     useState<Record<ModelRoleField, ModelDraft>>(EMPTY_MODEL_DRAFTS);
@@ -344,6 +345,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         setGoogleKey(unmask(settings.google_api_key));
         setDeepseekKey(unmask(settings.deepseek_api_key));
         setOpenrouterKey(unmask(settings.openrouter_api_key));
+        setEnableVisionVerification(settings.enable_vision_verification);
         setProviderStatus({
           has_openai_key: settings.has_openai_key,
           has_anthropic_key: settings.has_anthropic_key,
@@ -386,6 +388,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         strong_model: modelValues.strong_model,
         vision_model: modelValues.vision_model,
         fast_model: modelValues.fast_model,
+        enable_vision_verification: enableVisionVerification,
         ...(openaiKey && { openai_api_key: openaiKey }),
         ...(anthropicKey && { anthropic_api_key: anthropicKey }),
         ...(googleKey && { google_api_key: googleKey }),
@@ -406,6 +409,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         vision_model: parseModelDraft(response.vision_model),
         fast_model: parseModelDraft(response.fast_model),
       });
+      setEnableVisionVerification(response.enable_vision_verification);
 
       toast.success("设置已保存");
       window.dispatchEvent(new Event("settings:updated"));
@@ -594,6 +598,22 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                   );
                 })}
               </Tabs>
+
+              <div className="rounded-lg border p-4 space-y-2">
+                <p className="text-sm font-medium">生成验证</p>
+                <label className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-muted-foreground">启用视觉验证（截图审美评估）</span>
+                  <input
+                    type="checkbox"
+                    checked={enableVisionVerification}
+                    onChange={(e) => setEnableVisionVerification(e.target.checked)}
+                    className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
+                  />
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  关闭后将跳过 Playwright 截图验证，仅保留程序化与文本评估。
+                </p>
+              </div>
 
               <button
                 type="button"

@@ -5,7 +5,15 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { generatePresentationStream, type ProgressEvent, type OutlineReadyEvent } from "@/lib/api";
+import {
+  acceptOutline,
+  cancelJob,
+  createJob,
+  runJob,
+  subscribeJobEvents,
+  type GenerationEvent,
+} from "@/lib/api";
+import type { Presentation, Slide } from "@/types/slide";
 import TemplateSelector from "./TemplateSelector";
 import GenerationProgress from "./GenerationProgress";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
@@ -44,9 +52,26 @@ export default function CreateForm() {
     initSkeletonPresentation,
     updateSlideAtIndex,
     finishGeneration: storeFinishGeneration,
+    updateJobState,
+    resetJobState,
+    jobId,
+    jobStatus,
+    currentStage,
+    issues,
+    failedSlideIndices,
   } = useAppStore();
-  const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const [progress, setProgress] = useState<{
+    stage: string | null;
+    step: number;
+    totalSteps: number;
+    message: string;
+    readySlides: number;
+    totalSlides: number;
+    error: string | null;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const navigatedRef = useRef(false);
+  const cancellingRef = useRef(false);
   const { status: settingsStatus, message: settingsMessage } = useSettingsStatus();
 
   const readySources = sources.filter((s) => s.status === "ready");
@@ -60,72 +85,281 @@ export default function CreateForm() {
     (selectedReadySources.length > 0 || topic.trim().length > 0) &&
     !hasUploadingOrParsing;
 
-  const [navigated, setNavigated] = useState(false);
-
   const cleanupGeneration = () => {
     setIsGenerating(false);
-    setProgress(null);
     abortRef.current = null;
+    cancellingRef.current = false;
   };
 
-  const handleGenerate = () => {
+  const updateFromEvent = (evt: GenerationEvent, currentJobId: string) => {
+    if (evt.stage) {
+      updateJobState({
+        jobId: currentJobId,
+        jobStatus: "running",
+        currentStage: evt.stage,
+      });
+    }
+
+    if (evt.type === "stage_progress" || evt.type === "stage_started") {
+      setProgress((prev) => ({
+        stage: evt.stage ?? prev?.stage ?? null,
+        step:
+          typeof evt.payload.step === "number"
+            ? evt.payload.step
+            : prev?.step ?? 0,
+        totalSteps:
+          typeof evt.payload.total_steps === "number"
+            ? evt.payload.total_steps
+            : prev?.totalSteps ?? 7,
+        message: evt.message || prev?.message || "处理中...",
+        readySlides: prev?.readySlides ?? 0,
+        totalSlides: prev?.totalSlides ?? numPages,
+        error: prev?.error ?? null,
+      }));
+      return;
+    }
+
+    if (evt.type === "outline_ready") {
+      const payload = evt.payload as Record<string, unknown>;
+      const rawItems = Array.isArray(payload.items) ? payload.items : [];
+      const items = rawItems
+        .map((item) => {
+          const obj = item as Record<string, unknown>;
+          return {
+            slide_number: Number(obj.slide_number ?? 0),
+            title: String(obj.title ?? "未命名页面"),
+            suggested_layout_category: String(obj.suggested_layout_category ?? "bullets"),
+          };
+        })
+        .filter((item) => item.slide_number > 0);
+      const title = typeof payload.topic === "string" ? payload.topic : topic || "新演示文稿";
+
+      if (items.length > 0) {
+        initSkeletonPresentation(title, items);
+        setProgress((prev) => ({
+          stage: "outline",
+          step: 2,
+          totalSteps: prev?.totalSteps ?? 7,
+          message: evt.message || "大纲已生成",
+          readySlides: 0,
+          totalSlides: items.length,
+          error: null,
+        }));
+        if (!navigatedRef.current) {
+          navigatedRef.current = true;
+          router.push("/editor");
+        }
+      }
+
+      if (payload.requires_accept === true) {
+        void (async () => {
+          try {
+            await acceptOutline(currentJobId);
+            await runJob(currentJobId);
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "确认大纲失败");
+          }
+        })();
+      }
+      return;
+    }
+
+    if (evt.type === "slide_ready") {
+      const payload = evt.payload as Record<string, unknown>;
+      const index = Number(payload.slide_index ?? -1);
+      const slide = payload.slide as Slide | undefined;
+      if (index >= 0 && slide) {
+        updateSlideAtIndex(index, slide);
+        setProgress((prev) => ({
+          stage: "slides",
+          step: prev?.step ?? 4,
+          totalSteps: prev?.totalSteps ?? 7,
+          message: evt.message || `第 ${index + 1} 页已生成`,
+          readySlides: Math.max(prev?.readySlides ?? 0, index + 1),
+          totalSlides: prev?.totalSlides ?? numPages,
+          error: prev?.error ?? null,
+        }));
+      }
+      return;
+    }
+
+    if (evt.type === "stage_failed") {
+      const payload = evt.payload as Record<string, unknown>;
+      const message =
+        typeof payload.error === "string"
+          ? payload.error
+          : evt.message || "阶段失败";
+      setProgress((prev) => ({
+        stage: evt.stage ?? prev?.stage ?? null,
+        step: prev?.step ?? 0,
+        totalSteps: prev?.totalSteps ?? 7,
+        message: prev?.message ?? "处理中...",
+        readySlides: prev?.readySlides ?? 0,
+        totalSlides: prev?.totalSlides ?? numPages,
+        error: message,
+      }));
+      return;
+    }
+
+    if (evt.type === "job_completed") {
+      const payload = evt.payload as Record<string, unknown>;
+      const presentation = payload.presentation as Presentation | undefined;
+      if (presentation) {
+        setPresentation(presentation);
+      }
+      updateJobState({
+        jobId: currentJobId,
+        jobStatus: "completed",
+        currentStage: "complete",
+        issues: Array.isArray(payload.issues)
+          ? (payload.issues as Array<Record<string, unknown>>)
+          : [],
+        failedSlideIndices: Array.isArray(payload.failed_slide_indices)
+          ? (payload.failed_slide_indices as number[])
+          : [],
+      });
+      storeFinishGeneration();
+      return;
+    }
+
+    if (evt.type === "job_failed") {
+      const payload = evt.payload as Record<string, unknown>;
+      const message =
+        typeof payload.error === "string"
+          ? payload.error
+          : evt.message || "任务失败";
+      updateJobState({
+        jobId: currentJobId,
+        jobStatus: "failed",
+        currentStage: null,
+      });
+      setProgress((prev) => ({
+        stage: prev?.stage ?? null,
+        step: prev?.step ?? 0,
+        totalSteps: prev?.totalSteps ?? 7,
+        message: prev?.message ?? "处理中...",
+        readySlides: prev?.readySlides ?? 0,
+        totalSlides: prev?.totalSlides ?? numPages,
+        error: message,
+      }));
+      toast.error(message);
+      storeFinishGeneration();
+      return;
+    }
+
+    if (evt.type === "job_cancelled") {
+      updateJobState({
+        jobId: currentJobId,
+        jobStatus: "cancelled",
+        currentStage: null,
+      });
+      if (!cancellingRef.current) {
+        toast.info("任务已取消");
+      }
+      storeFinishGeneration();
+    }
+  };
+
+  const handleGenerate = async () => {
     if (!canGenerate) return;
+    resetJobState();
     setIsGenerating(true);
-    setProgress(null);
-    setNavigated(false);
+    setProgress({
+      stage: null,
+      step: 0,
+      totalSteps: 7,
+      message: "创建任务中...",
+      readySlides: 0,
+      totalSlides: numPages,
+      error: null,
+    });
+    navigatedRef.current = false;
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    generatePresentationStream(
-      {
+    try {
+      const created = await createJob({
         content: "",
         topic,
         source_ids: selectedReadySources.map((s) => s.id),
         template_id: selectedTemplateId,
         num_pages: numPages,
-      },
-      {
-        onProgress: (evt) => setProgress(evt),
-        onOutlineReady: (evt) => {
-          // outline 完成 → 创建 skeleton slides → 跳转 editor
-          initSkeletonPresentation(topic || evt.topic, evt.items);
-          if (!navigated) {
-            setNavigated(true);
-            router.push("/editor");
-          }
+        mode: "auto",
+      });
+
+      updateJobState({
+        jobId: created.job_id,
+        jobStatus: created.status,
+        currentStage: null,
+        issues: [],
+        failedSlideIndices: [],
+      });
+
+      await subscribeJobEvents(
+        created.job_id,
+        {
+          onEvent: (evt) => {
+            updateFromEvent(evt, created.job_id);
+          },
+          onError: (err) => {
+            console.error("生成失败:", err);
+            toast.error(err.message || "生成失败，请稍后重试");
+            updateJobState({
+              jobId: created.job_id,
+              jobStatus: "failed",
+              currentStage: null,
+            });
+            storeFinishGeneration();
+          },
+          onDone: () => {
+            cleanupGeneration();
+          },
         },
-        onSlideReady: (slide, index) => {
-          updateSlideAtIndex(index, slide);
-        },
-        onResult: (evt) => {
-          // 最终校对覆盖
-          setPresentation(evt.presentation);
-          storeFinishGeneration();
-        },
-        onError: (err) => {
-          console.error("生成失败:", err);
-          toast.error(err.message || "生成失败，请稍后重试");
-        },
-        onDone: () => {
-          cleanupGeneration();
-        },
-      },
-      controller.signal
-    );
+        controller.signal
+      );
+    } catch (err) {
+      console.error("创建任务失败:", err);
+      toast.error(err instanceof Error ? err.message : "创建任务失败");
+      updateJobState({ jobStatus: "failed", currentStage: null });
+      storeFinishGeneration();
+      cleanupGeneration();
+    }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    cancellingRef.current = true;
+    const currentJobId = jobId;
+    if (currentJobId) {
+      try {
+        await cancelJob(currentJobId);
+      } catch (err) {
+        console.warn("取消任务失败:", err);
+      }
+    }
     abortRef.current?.abort();
     storeFinishGeneration();
     cleanupGeneration();
+    updateJobState({ jobStatus: "cancelled", currentStage: null });
     toast.info("已取消生成");
   };
 
   return (
     <>
       {isGenerating && (
-        <GenerationProgress progress={progress} onCancel={handleCancel} />
+        <GenerationProgress
+          progress={progress}
+          jobStatus={jobStatus}
+          currentStage={currentStage}
+          failedSlideIndices={failedSlideIndices}
+          issues={issues}
+          onCancel={() => {
+            void handleCancel();
+          }}
+          onRetry={() => {
+            void handleGenerate();
+          }}
+        />
       )}
       <div className="flex flex-1 items-center justify-center p-8">
         <div className="w-full max-w-xl space-y-8">
@@ -171,7 +405,9 @@ export default function CreateForm() {
             {/* 生成按钮 */}
             <div className="space-y-2">
               <button
-                onClick={handleGenerate}
+                onClick={() => {
+                  void handleGenerate();
+                }}
                 disabled={!canGenerate || isGenerating}
                 className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-medium text-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >

@@ -24,6 +24,7 @@ _ALLOWED_FIELDS = {
     "fast_model",
     "tts_model",
     "tts_voice",
+    "enable_vision_verification",
 }
 
 
@@ -47,6 +48,7 @@ class SettingsResponse(BaseModel):
     fast_model: str = ""
     tts_model: str = ""
     tts_voice: str = ""
+    enable_vision_verification: bool = True
     has_openai_key: bool = False
     has_anthropic_key: bool = False
     has_google_key: bool = False
@@ -71,6 +73,7 @@ class SettingsUpdate(BaseModel):
     fast_model: str | None = None
     tts_model: str | None = None
     tts_voice: str | None = None
+    enable_vision_verification: bool | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -109,6 +112,7 @@ async def get_settings():
         fast_model=settings.fast_model,
         tts_model=settings.tts_model,
         tts_voice=settings.tts_voice,
+        enable_vision_verification=settings.enable_vision_verification,
         has_openai_key=bool(settings.openai_api_key),
         has_anthropic_key=bool(settings.anthropic_api_key),
         has_google_key=bool(settings.google_api_key),

@@ -2,10 +2,9 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import chat, export, generate, settings, skills, sources, templates, tts
+from app.api.v1 import chat, export, settings, skills, sources, templates, tts
 
 api_router = APIRouter()
-api_router.include_router(generate.router, tags=["generate"])
 api_router.include_router(export.router, tags=["export"])
 api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(skills.router, tags=["skills"])

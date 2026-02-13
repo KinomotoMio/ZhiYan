@@ -39,3 +39,9 @@ htmlcov/
 
 # Build artifacts
 *.pptx.tmp
+
+# Runtime data
+data/jobs/
+
+# Reference materials
+ref/

@@ -56,5 +56,7 @@ def invalidate_agents() -> None:
         document_planner,
     ]:
         mod._agent = None
+    slide_generator.invalidate_cache()
+    slide_generator._legacy_agent = None
 
     logger.info("All agent caches invalidated")
