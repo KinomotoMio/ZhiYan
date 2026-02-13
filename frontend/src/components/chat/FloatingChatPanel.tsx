@@ -14,7 +14,6 @@ import {
 import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import { chatStream, listSkills } from "@/lib/api";
-import type { Slide } from "@/types/slide";
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   return (
@@ -73,6 +72,7 @@ export default function FloatingChatPanel() {
     addChatMessage,
     presentation,
     currentSlideIndex,
+    currentSessionId,
     updateSlides,
   } = useAppStore();
   const [input, setInput] = useState("");
@@ -81,14 +81,7 @@ export default function FloatingChatPanel() {
   const [skills, setSkills] = useState<{ name: string; description: string; command?: string }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgRef = useRef<string>("");
-  const abortRef = useRef<AbortController | null>(null);
-
-  // 卸载时取消正在进行的请求
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
+  const messageSeqRef = useRef(1);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -104,23 +97,29 @@ export default function FloatingChatPanel() {
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isStreaming) return;
+    if (!currentSessionId) {
+      toast.error("请先创建或选择会话");
+      return;
+    }
 
+    const userSeq = messageSeqRef.current++;
     addChatMessage({
-      id: `msg-${Date.now()}`,
+      id: `msg-${userSeq}`,
       role: "user",
       content: text,
-      timestamp: Date.now(),
+      timestamp: userSeq,
     });
 
     setIsStreaming(true);
     streamingMsgRef.current = "";
-    const replyId = `msg-${Date.now()}-reply`;
+    const replySeq = messageSeqRef.current++;
+    const replyId = `msg-${replySeq}-reply`;
 
     addChatMessage({
       id: replyId,
       role: "assistant",
       content: "",
-      timestamp: Date.now(),
+      timestamp: replySeq,
     });
 
     // 构建对话历史（最近 20 条，不含当前空回复）
@@ -133,6 +132,7 @@ export default function FloatingChatPanel() {
     await chatStream(
       {
         message: text,
+        session_id: currentSessionId,
         messages: historyForApi,
         presentation_context: presentation
           ? { slides: presentation.slides, title: presentation.title }

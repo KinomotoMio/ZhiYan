@@ -4,15 +4,17 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SourceMeta } from "@/types/source";
-import { getSourceContent } from "@/lib/api";
+import { getSessionSourceContent } from "@/lib/api";
 
 interface SourcePreviewModalProps {
   source: SourceMeta;
+  sessionId: string;
   onClose: () => void;
 }
 
 export default function SourcePreviewModal({
   source,
+  sessionId,
   onClose,
 }: SourcePreviewModalProps) {
   const [content, setContent] = useState<string | null>(null);
@@ -20,7 +22,7 @@ export default function SourcePreviewModal({
 
   useEffect(() => {
     let cancelled = false;
-    getSourceContent(source.id)
+    getSessionSourceContent(sessionId, source.id)
       .then((res) => {
         if (!cancelled) setContent(res.content);
       })
@@ -30,7 +32,7 @@ export default function SourcePreviewModal({
     return () => {
       cancelled = true;
     };
-  }, [source.id]);
+  }, [sessionId, source.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

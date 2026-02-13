@@ -4,9 +4,12 @@ import copy
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from app.services.sessions import session_store
+from app.services.sessions.workspace import get_workspace_id_from_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -20,12 +23,13 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     messages: list[ChatMessage] = []
+    session_id: str | None = None
     presentation_context: dict | None = None
     current_slide_index: int = 0
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     """流式对话 — SSE 响应，支持幻灯片修改"""
     from app.services.agents.chat_agent import chat_agent, ChatDeps
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
@@ -65,6 +69,8 @@ async def chat(req: ChatRequest):
             message_history.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         else:
             message_history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+    workspace_id = get_workspace_id_from_request(request)
+    assistant_chunks: list[str] = []
 
     async def event_stream():
         try:
@@ -74,6 +80,7 @@ async def chat(req: ChatRequest):
                 message_history=message_history,
             ) as result:
                 async for chunk in result.stream_text():
+                    assistant_chunks.append(chunk)
                     data = json.dumps({"type": "text", "content": chunk}, ensure_ascii=False)
                     yield f"data: {data}\n\n"
 
@@ -85,6 +92,25 @@ async def chat(req: ChatRequest):
                     "modifications": [m.model_dump() for m in deps.modifications],
                 }, ensure_ascii=False)
                 yield f"data: {mod_data}\n\n"
+
+            if req.session_id:
+                try:
+                    await session_store.add_chat_message(
+                        workspace_id=workspace_id,
+                        session_id=req.session_id,
+                        role="user",
+                        content=req.message,
+                    )
+                    assistant_text = "".join(assistant_chunks).strip()
+                    if assistant_text:
+                        await session_store.add_chat_message(
+                            workspace_id=workspace_id,
+                            session_id=req.session_id,
+                            role="assistant",
+                            content=assistant_text,
+                        )
+                except Exception as e:
+                    logger.warning("persist chat message failed: %s", e)
 
         except Exception as e:
             logger.error("Chat stream error: %s", e)

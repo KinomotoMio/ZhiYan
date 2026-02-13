@@ -46,6 +46,8 @@ export default function CreateForm() {
     setTopic,
     selectedTemplateId,
     numPages,
+    currentSessionId,
+    setCurrentSessionId,
     isGenerating,
     setIsGenerating,
     setPresentation,
@@ -282,11 +284,15 @@ export default function CreateForm() {
       const created = await createJob({
         content: "",
         topic,
+        session_id: currentSessionId ?? undefined,
         source_ids: selectedReadySources.map((s) => s.id),
         template_id: selectedTemplateId,
         num_pages: numPages,
         mode: "auto",
       });
+      if (created.session_id) {
+        setCurrentSessionId(created.session_id);
+      }
 
       updateJobState({
         jobId: created.job_id,

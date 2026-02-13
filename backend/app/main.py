@@ -40,8 +40,10 @@ async def lifespan(app: FastAPI):
     # Startup
     from app.core.config import reload_settings
     from app.services.document.source_store import cleanup_old_uploads
+    from app.services.sessions import session_store
 
     reload_settings()
+    await session_store.init()
     count = cleanup_old_uploads()
     if count > 0:
         logger.info("Startup cleanup: removed %d old upload dirs", count)

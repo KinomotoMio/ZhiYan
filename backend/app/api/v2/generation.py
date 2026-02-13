@@ -8,7 +8,7 @@ import logging
 from contextlib import suppress
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
@@ -27,18 +27,40 @@ from app.models.generation import (
     now_iso,
 )
 from app.services.generation import event_bus, generation_runner, job_store
+from app.services.sessions import session_store
+from app.services.sessions.workspace import get_workspace_id_from_request
 
 router = APIRouter(prefix="/generation", tags=["generation-v2"])
 logger = logging.getLogger(__name__)
 
 
 @router.post("/jobs", response_model=CreateJobResponse)
-async def create_generation_job(req: CreateJobRequest):
+async def create_generation_job(req: CreateJobRequest, request: Request):
     from app.services.document.source_store import get_combined_content
 
+    workspace_id = get_workspace_id_from_request(request)
+    await session_store.ensure_workspace(workspace_id)
+
     combined = req.content
+    session_id = req.session_id
+    if not session_id:
+        title_seed = req.topic[:30] if req.topic else "未命名会话"
+        created_session = await session_store.create_session(workspace_id, title_seed)
+        session_id = created_session["id"]
+
+    try:
+        await session_store.get_session(workspace_id, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
     if req.source_ids:
-        source_content = get_combined_content(req.source_ids)
+        source_content = await session_store.get_combined_source_content(
+            workspace_id,
+            session_id,
+            req.source_ids,
+        )
+        if not source_content:
+            source_content = get_combined_content(req.source_ids)
         combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
 
     if not combined and not req.topic:
@@ -54,6 +76,7 @@ async def create_generation_job(req: CreateJobRequest):
         request=GenerationRequestData(
             topic=req.topic,
             content=req.content,
+            session_id=session_id,
             source_ids=req.source_ids,
             template_id=req.template_id,
             num_pages=max(3, min(req.num_pages, settings.max_slide_pages)),
@@ -64,10 +87,12 @@ async def create_generation_job(req: CreateJobRequest):
     )
 
     await job_store.create_job(job)
+    await session_store.save_generation_job(job.job_id, session_id, job.status.value)
     await generation_runner.start_job(job_id)
 
     return CreateJobResponse(
         job_id=job.job_id,
+        session_id=session_id,
         status=job.status,
         created_at=job.created_at,
         event_stream_url=f"/api/v2/generation/jobs/{job.job_id}/events",
