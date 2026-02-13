@@ -2,9 +2,12 @@
 
 PydanticAI tools 允许 agent 在对话中修改幻灯片内容。
 修改通过 RunContext deps 中的 presentation state 实现。
+
+支持两种 slide 格式：
+- 新版：layoutId + contentData（优先通过 contentData 修改标题/内容）
+- 旧版：components 列表（通过 role 查找组件修改）
 """
 
-import json
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
@@ -13,7 +16,7 @@ from pydantic import BaseModel
 class SlideModification(BaseModel):
     """单次幻灯片修改记录"""
     slide_index: int
-    action: str  # "update_title" | "update_body" | "add_slide" | "delete_slide"
+    action: str  # "update_title" | "update_body" | "update_content_data" | "add_slide" | "delete_slide"
     data: dict
 
 
@@ -26,6 +29,11 @@ class ChatDeps:
 
 
 _agent = None
+
+
+def _is_new_format(slide: dict) -> bool:
+    """判断 slide 是否使用新版 contentData 格式"""
+    return bool(slide.get("contentData") and slide.get("layoutId"))
 
 
 def get_chat_agent():
@@ -61,6 +69,16 @@ def get_chat_agent():
             if slide_index < 0 or slide_index >= len(deps.slides):
                 return f"错误：幻灯片索引 {slide_index} 超出范围（共 {len(deps.slides)} 页）"
             slide = deps.slides[slide_index]
+
+            if _is_new_format(slide):
+                slide["contentData"]["title"] = new_title
+                deps.modifications.append(SlideModification(
+                    slide_index=slide_index,
+                    action="update_title",
+                    data={"new_title": new_title},
+                ))
+                return f"已将第 {slide_index + 1} 页标题修改为「{new_title}」"
+
             for comp in slide.get("components", []):
                 if comp.get("role") == "title":
                     comp["content"] = new_title
@@ -73,22 +91,37 @@ def get_chat_agent():
             return f"第 {slide_index + 1} 页没有标题组件"
 
         @_agent.tool
-        async def modify_slide_body(ctx: RunContext[ChatDeps], slide_index: int, new_body: str) -> str:
-            """修改指定幻灯片的正文内容。new_body 用换行分隔要点，如 '• 要点1\\n• 要点2'。"""
+        async def modify_slide_content(ctx: RunContext[ChatDeps], slide_index: int, field_path: str, new_value: str) -> str:
+            """修改幻灯片 contentData 中的任意字段。
+            field_path 为顶层字段名（如 'subtitle', 'description', 'quote'）。
+            对于旧版幻灯片，field_path 用 'body' 修改正文组件。
+            """
             deps = ctx.deps
             if slide_index < 0 or slide_index >= len(deps.slides):
                 return f"错误：幻灯片索引 {slide_index} 超出范围（共 {len(deps.slides)} 页）"
             slide = deps.slides[slide_index]
+
+            if _is_new_format(slide):
+                if field_path in slide["contentData"]:
+                    slide["contentData"][field_path] = new_value
+                    deps.modifications.append(SlideModification(
+                        slide_index=slide_index,
+                        action="update_content_data",
+                        data={"field": field_path, "value": new_value},
+                    ))
+                    return f"已更新第 {slide_index + 1} 页的 {field_path}"
+                return f"第 {slide_index + 1} 页的 contentData 中没有字段 '{field_path}'"
+
             for comp in slide.get("components", []):
-                if comp.get("role") == "body":
-                    comp["content"] = new_body
+                if comp.get("role") == field_path or (field_path == "body" and comp.get("role") == "body"):
+                    comp["content"] = new_value
                     deps.modifications.append(SlideModification(
                         slide_index=slide_index,
                         action="update_body",
-                        data={"new_body": new_body},
+                        data={"new_body": new_value},
                     ))
                     return f"已更新第 {slide_index + 1} 页正文内容"
-            return f"第 {slide_index + 1} 页没有正文组件"
+            return f"第 {slide_index + 1} 页没有 '{field_path}' 组件"
 
         @_agent.tool
         async def modify_slide_speaker_notes(ctx: RunContext[ChatDeps], slide_index: int, new_notes: str) -> str:
@@ -127,9 +160,24 @@ def get_chat_agent():
             if slide_index < 0 or slide_index >= len(deps.slides):
                 return f"错误：幻灯片索引 {slide_index} 超出范围"
             slide = deps.slides[slide_index]
-            info_parts = [f"第 {slide_index + 1} 页 (布局: {slide.get('layoutType', 'unknown')})"]
-            for comp in slide.get("components", []):
-                info_parts.append(f"  [{comp.get('role', '?')}] {(comp.get('content', '') or '')[:80]}")
+
+            layout = slide.get("layoutId") or slide.get("layoutType", "unknown")
+            info_parts = [f"第 {slide_index + 1} 页 (布局: {layout})"]
+
+            if _is_new_format(slide):
+                cd = slide["contentData"]
+                if cd.get("title"):
+                    info_parts.append(f"  [标题] {cd['title']}")
+                for key in ("subtitle", "description", "quote"):
+                    if cd.get(key):
+                        info_parts.append(f"  [{key}] {str(cd[key])[:80]}")
+                for key in ("items", "metrics", "bullets", "events", "steps"):
+                    if cd.get(key) and isinstance(cd[key], list):
+                        info_parts.append(f"  [{key}] {len(cd[key])} 项")
+            else:
+                for comp in slide.get("components", []):
+                    info_parts.append(f"  [{comp.get('role', '?')}] {(comp.get('content', '') or '')[:80]}")
+
             if slide.get("speakerNotes"):
                 info_parts.append(f"  [演讲者注释] {slide['speakerNotes'][:80]}")
             return "\n".join(info_parts)

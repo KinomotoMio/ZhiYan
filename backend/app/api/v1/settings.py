@@ -21,6 +21,7 @@ _ALLOWED_FIELDS = {
     "default_model",
     "strong_model",
     "vision_model",
+    "fast_model",
     "tts_model",
     "tts_voice",
 }
@@ -43,6 +44,7 @@ class SettingsResponse(BaseModel):
     default_model: str = ""
     strong_model: str = ""
     vision_model: str = ""
+    fast_model: str = ""
     tts_model: str = ""
     tts_voice: str = ""
     has_openai_key: bool = False
@@ -53,6 +55,7 @@ class SettingsResponse(BaseModel):
     default_model_status: ModelStatus = Field(default_factory=ModelStatus)
     strong_model_status: ModelStatus = Field(default_factory=ModelStatus)
     vision_model_status: ModelStatus = Field(default_factory=ModelStatus)
+    fast_model_status: ModelStatus = Field(default_factory=ModelStatus)
 
 
 class SettingsUpdate(BaseModel):
@@ -65,6 +68,7 @@ class SettingsUpdate(BaseModel):
     default_model: str | None = None
     strong_model: str | None = None
     vision_model: str | None = None
+    fast_model: str | None = None
     tts_model: str | None = None
     tts_voice: str | None = None
 
@@ -88,6 +92,9 @@ async def get_settings():
     default_model_status = build_model_status(settings.default_model, settings)
     strong_model_status = build_model_status(settings.strong_model, settings)
     vision_model_status = build_model_status(settings.vision_model, settings)
+    fast_model_status = build_model_status(
+        settings.fast_model or settings.default_model, settings
+    )
 
     return SettingsResponse(
         openai_api_key=_mask_key(settings.openai_api_key),
@@ -99,6 +106,7 @@ async def get_settings():
         default_model=settings.default_model,
         strong_model=settings.strong_model,
         vision_model=settings.vision_model,
+        fast_model=settings.fast_model,
         tts_model=settings.tts_model,
         tts_voice=settings.tts_voice,
         has_openai_key=bool(settings.openai_api_key),
@@ -109,6 +117,7 @@ async def get_settings():
         default_model_status=default_model_status,
         strong_model_status=strong_model_status,
         vision_model_status=vision_model_status,
+        fast_model_status=fast_model_status,
     )
 
 

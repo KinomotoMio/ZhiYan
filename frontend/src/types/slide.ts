@@ -17,7 +17,22 @@ export type LayoutType =
   | "two-column"
   | "image-full"
   | "section-header"
-  | "blank";
+  | "blank"
+  // 新版 layout IDs
+  | "intro-slide"
+  | "bullet-with-icons"
+  | "numbered-bullets"
+  | "metrics-slide"
+  | "metrics-with-image"
+  | "chart-with-bullets"
+  | "table-info"
+  | "two-column-compare"
+  | "image-and-description"
+  | "timeline"
+  | "quote-slide"
+  | "bullet-icons-only"
+  | "challenge-outcome"
+  | "thank-you";
 
 export interface Position {
   x: number;
@@ -50,6 +65,11 @@ export interface Component {
 export interface Slide {
   slideId: string;
   layoutType: LayoutType;
+  // 新增：具体 layout ID（对应 template-registry 中的布局）
+  layoutId?: string;
+  // 新增：结构化内容数据（按 layout schema 生成的 JSON）
+  contentData?: Record<string, unknown>;
+  // 保留 components 用于向后兼容
   components: Component[];
   speakerNotes?: string;
   templateSlotMapping?: Record<string, string>;

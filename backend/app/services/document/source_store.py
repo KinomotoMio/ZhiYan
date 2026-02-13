@@ -1,6 +1,13 @@
-"""来源存储 — 内存 + 临时目录的素材管理"""
+"""来源存储 — 内存 + 临时目录的素材管理
+
+支持 3 层文档模型：
+  Layer 1: 身份（id, title, source_type, metadata）
+  Layer 2: 摘要（description, key_topics, structure_outline）
+  Layer 3: 原始内容（raw_content / parsed_content，已自动规范化）
+"""
 
 import asyncio
+import logging
 import shutil
 import tempfile
 import uuid
@@ -8,6 +15,7 @@ from pathlib import Path
 
 import httpx
 
+from app.models.document import DocumentLayer
 from app.models.source import (
     FileCategory,
     SourceMeta,
@@ -15,13 +23,14 @@ from app.models.source import (
     SourceType,
     detect_file_category,
 )
-from app.services.document.parser import parse_document
+
+logger = logging.getLogger(__name__)
 
 # 临时上传目录
 _UPLOAD_DIR = Path(tempfile.gettempdir()) / "zhiyan_uploads"
 _UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 内存存储：source_id → {meta, parsed_content}
+# 内存存储：source_id → {meta, parsed_content, document_layer}
 _sources: dict[str, dict] = {}
 
 
@@ -31,6 +40,32 @@ def _snippet(text: str, max_len: int = 200) -> str:
     if len(text) <= max_len:
         return text
     return text[:max_len] + "..."
+
+
+async def _generate_meta_background(source_id: str, content: str, file_name: str) -> None:
+    """后台生成文档元数据（Layer 1+2），不阻塞上传响应"""
+    try:
+        from app.services.agents.document_meta_generator import generate_document_meta
+
+        meta_result = await generate_document_meta(content, file_name)
+        entry = _sources.get(source_id)
+        if entry and entry.get("document_layer"):
+            layer: DocumentLayer = entry["document_layer"]
+            layer.title = meta_result.title
+            layer.description = meta_result.description
+            layer.key_topics = meta_result.key_topics
+            layer.structure_outline = meta_result.structure_outline
+            # 更新 SourceMeta 的 name 为 AI 生成的标题
+            if entry["meta"].name == file_name:
+                entry["meta"].preview_snippet = _snippet(
+                    f"{meta_result.title} — {meta_result.description}"
+                )
+            logger.info(
+                "Document meta generated for %s: title=%s, topics=%s",
+                source_id, meta_result.title, meta_result.key_topics,
+            )
+    except Exception as e:
+        logger.warning("Background meta generation failed for %s: %s", source_id, e)
 
 
 async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
@@ -51,16 +86,37 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
         size=len(file_bytes),
         status=SourceStatus.PARSING,
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": "", "cleaned_content": None}
+    _sources[source_id] = {
+        "meta": meta,
+        "parsed_content": "",
+        "document_layer": None,
+    }
 
-    # 异步解析
+    # 异步解析（_sync_parse 内部自动执行正则规范化）
     try:
-        content = await asyncio.to_thread(
-            lambda: _sync_parse(file_path)
-        )
+        content = await asyncio.to_thread(lambda: _sync_parse(file_path))
         meta.status = SourceStatus.READY
         meta.preview_snippet = _snippet(content)
         _sources[source_id]["parsed_content"] = content
+
+        # 创建 DocumentLayer
+        from app.services.document.parser import estimate_tokens
+
+        layer = DocumentLayer(
+            id=source_id,
+            title=filename,
+            source_type=category.value if category else "unknown",
+            file_name=filename,
+            metadata={
+                "size": len(file_bytes),
+                "estimated_tokens": estimate_tokens(content),
+            },
+            raw_content=content,
+        )
+        _sources[source_id]["document_layer"] = layer
+
+        # 后台生成 AI 元数据（不阻塞返回）
+        asyncio.create_task(_generate_meta_background(source_id, content, filename))
     except Exception as e:
         meta.status = SourceStatus.ERROR
         meta.error = str(e)
@@ -69,12 +125,14 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
 
 
 def _sync_parse(file_path: Path) -> str:
-    """同步调用 MarkItDown 解析"""
+    """同步调用 MarkItDown 解析 + 正则规范化"""
     from markitdown import MarkItDown
+
+    from app.services.document.parser import normalize_markdown
 
     converter = MarkItDown()
     result = converter.convert(str(file_path))
-    return result.text_content
+    return normalize_markdown(result.text_content)
 
 
 async def add_url(url: str) -> SourceMeta:
@@ -86,19 +144,20 @@ async def add_url(url: str) -> SourceMeta:
         type=SourceType.URL,
         status=SourceStatus.PARSING,
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": "", "cleaned_content": None}
+    _sources[source_id] = {
+        "meta": meta,
+        "parsed_content": "",
+        "document_layer": None,
+    }
 
     try:
-        # 下载内容
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
             resp = await client.get(url)
             resp.raise_for_status()
 
-        # 保存到临时文件后用 MarkItDown 解析
         file_dir = _UPLOAD_DIR / source_id
         file_dir.mkdir(parents=True, exist_ok=True)
 
-        # 从 URL 推断文件名
         from urllib.parse import urlparse
 
         path = urlparse(url).path
@@ -112,6 +171,24 @@ async def add_url(url: str) -> SourceMeta:
         meta.status = SourceStatus.READY
         meta.preview_snippet = _snippet(content)
         _sources[source_id]["parsed_content"] = content
+
+        # 创建 DocumentLayer
+        from app.services.document.parser import estimate_tokens
+
+        layer = DocumentLayer(
+            id=source_id,
+            title=url,
+            source_type="url",
+            file_name=filename,
+            metadata={
+                "size": len(resp.content),
+                "estimated_tokens": estimate_tokens(content),
+            },
+            raw_content=content,
+        )
+        _sources[source_id]["document_layer"] = layer
+
+        asyncio.create_task(_generate_meta_background(source_id, content, filename))
     except Exception as e:
         meta.status = SourceStatus.ERROR
         meta.error = str(e)
@@ -131,19 +208,61 @@ async def add_text(name: str, content: str) -> SourceMeta:
         status=SourceStatus.READY,
         previewSnippet=_snippet(content),
     )
-    _sources[source_id] = {"meta": meta, "parsed_content": content, "cleaned_content": None}
+
+    from app.services.document.parser import estimate_tokens
+
+    layer = DocumentLayer(
+        id=source_id,
+        title=name,
+        source_type="text",
+        file_name=name,
+        metadata={
+            "size": len(content.encode("utf-8")),
+            "estimated_tokens": estimate_tokens(content),
+        },
+        raw_content=content,
+    )
+    _sources[source_id] = {
+        "meta": meta,
+        "parsed_content": content,
+        "document_layer": layer,
+    }
+
+    asyncio.create_task(_generate_meta_background(source_id, content, name))
     return meta
-
-
-def set_cleaned_content(source_id: str, content: str) -> None:
-    """缓存清洗后的文档内容"""
-    if source_id in _sources:
-        _sources[source_id]["cleaned_content"] = content
 
 
 def get(source_id: str) -> dict | None:
     """获取来源完整数据"""
     return _sources.get(source_id)
+
+
+def get_document_layer(source_id: str) -> DocumentLayer | None:
+    """获取文档 3 层模型"""
+    entry = _sources.get(source_id)
+    if entry:
+        return entry.get("document_layer")
+    return None
+
+
+def get_document_layers(source_ids: list[str]) -> list[DocumentLayer]:
+    """批量获取文档 3 层模型"""
+    layers = []
+    for sid in source_ids:
+        layer = get_document_layer(sid)
+        if layer:
+            layers.append(layer)
+    return layers
+
+
+def get_layer12_summaries(source_ids: list[str]) -> str:
+    """获取指定来源的 Layer 1+2 摘要文本（供 Outline Agent 使用）"""
+    summaries = []
+    for sid in source_ids:
+        layer = get_document_layer(sid)
+        if layer:
+            summaries.append(layer.get_layer12_summary())
+    return "\n\n".join(summaries)
 
 
 def list_all() -> list[SourceMeta]:
@@ -183,14 +302,11 @@ def cleanup_old_uploads(max_age_hours: int = 24) -> int:
     return count
 
 
-def get_combined_content(source_ids: list[str], prefer_cleaned: bool = False) -> str:
-    """拼接指定来源内容。prefer_cleaned=True 时优先使用清洗版本"""
+def get_combined_content(source_ids: list[str]) -> str:
+    """拼接指定来源的已规范化内容"""
     parts: list[str] = []
     for sid in source_ids:
         entry = _sources.get(sid)
-        if entry:
-            if prefer_cleaned and entry.get("cleaned_content"):
-                parts.append(entry["cleaned_content"])
-            elif entry["parsed_content"]:
-                parts.append(entry["parsed_content"])
+        if entry and entry["parsed_content"]:
+            parts.append(entry["parsed_content"])
     return "\n\n---\n\n".join(parts)

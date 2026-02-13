@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
 import { exportPptx, exportPdf } from "@/lib/api";
 import {
@@ -21,7 +22,7 @@ import UserMenu from "@/components/settings/UserMenu";
 
 export default function EditorPage() {
   const router = useRouter();
-  const { presentation, currentSlideIndex, setCurrentSlideIndex } =
+  const { presentation, currentSlideIndex, setCurrentSlideIndex, isGenerating } =
     useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -88,8 +89,26 @@ export default function EditorPage() {
     );
   }
 
+  // 统计已加载的 slides 数量（渐进式生成进度）
+  const loadedCount = useMemo(
+    () =>
+      presentation.slides.filter(
+        (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
+      ).length,
+    [presentation.slides]
+  );
+  const totalCount = presentation.slides.length;
+  const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
+
   return (
     <div className="h-screen flex flex-col">
+      {/* 生成中进度条 */}
+      {isGenerating && (
+        <div className="shrink-0">
+          <Progress value={genPct} className="h-1 rounded-none" />
+        </div>
+      )}
+
       {/* 顶部栏 */}
       <header className="h-12 border-b flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
@@ -100,13 +119,19 @@ export default function EditorPage() {
             &larr; 返回
           </button>
           <span className="font-medium text-sm">{presentation.title}</span>
+          {isGenerating && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              生成中 ({loadedCount}/{totalCount})
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <UserMenu compact />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                disabled={exporting}
+                disabled={exporting || isGenerating}
                 className="flex items-center gap-1.5 px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
               >
                 {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -124,7 +149,8 @@ export default function EditorPage() {
           </DropdownMenu>
           <button
             onClick={() => setShowReveal(true)}
-            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            disabled={isGenerating}
+            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
           >
             演示
           </button>

@@ -16,7 +16,7 @@ class ChunkAnalysis(BaseModel):
     data_elements: list[str] = Field(
         default_factory=list, description="可视化的数据元素（表格、数字等）"
     )
-    importance: float = Field(ge=0, le=1, description="内容重要度评分")
+    importance: float = Field(description="内容重要度评分（0-1）")
 
 
 _agent = None
@@ -31,9 +31,9 @@ def get_chunk_analyzer_agent():
         from app.core.model_resolver import resolve_model
 
         _agent = Agent(
-            model=resolve_model(settings.default_model),
+            model=resolve_model(settings.fast_model or settings.default_model),
             output_type=ChunkAnalysis,
-            retries=2,
+            retries=1,  # 从 2 降到 1，减少不必要的 LLM 重试
             instructions=(
                 "你是一个内容分析助手。分析给定的文档片段，提取核心要点，"
                 "评估其重要性，并建议应该生成多少页幻灯片来展示这些内容。\n"

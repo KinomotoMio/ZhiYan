@@ -257,6 +257,7 @@ export interface AppSettings {
   default_model: string;
   strong_model: string;
   vision_model: string;
+  fast_model: string;
   tts_model: string;
   tts_voice: string;
   has_openai_key: boolean;
@@ -267,6 +268,7 @@ export interface AppSettings {
   default_model_status: ModelStatus;
   strong_model_status: ModelStatus;
   vision_model_status: ModelStatus;
+  fast_model_status: ModelStatus;
 }
 
 export interface ModelStatus {
@@ -294,6 +296,7 @@ export async function updateSettings(
       | "default_model_status"
       | "strong_model_status"
       | "vision_model_status"
+      | "fast_model_status"
     >
   >
 ): Promise<AppSettings> {
@@ -328,20 +331,69 @@ export interface ProgressEvent {
   step: number;
   total_steps: number;
   message: string;
+  run_id: string;
 }
 
 export interface ResultEvent {
   type: "result";
   presentation: Presentation;
+  run_id: string;
+}
+
+export interface OutlineReadyEvent {
+  type: "outline_ready";
+  topic: string;
+  items: Array<{
+    slide_number: number;
+    title: string;
+    suggested_layout_category: string;
+  }>;
+  run_id: string;
+}
+
+export interface SlideReadyEvent {
+  type: "slide_ready";
+  slide_index: number;
+  slide: Slide;
+  run_id: string;
+}
+
+interface ErrorEvent {
+  type: "error";
+  message: string;
+  run_id?: string;
+  error_type?: string;
+}
+
+export interface StreamCallbacks {
+  onProgress: (event: ProgressEvent) => void;
+  onOutlineReady?: (event: OutlineReadyEvent) => void;
+  onSlideReady?: (slide: Slide, index: number) => void;
+  onResult: (event: ResultEvent) => void;
+  onError: (err: Error) => void;
+  onDone: () => void;
 }
 
 export function generatePresentationStream(
   req: GenerateRequest,
-  onProgress: (event: ProgressEvent) => void,
-  onResult: (event: ResultEvent) => void,
-  onError: (err: Error) => void,
+  callbacks: StreamCallbacks,
   signal?: AbortSignal
 ): void {
+  const { onProgress, onOutlineReady, onSlideReady, onResult, onError, onDone } = callbacks;
+  let doneCalled = false;
+  let terminalReceived = false;
+
+  const finish = () => {
+    if (doneCalled) return;
+    doneCalled = true;
+    onDone();
+  };
+
+  const emitError = (message: string, runId?: string) => {
+    const msg = runId ? `${message} (run_id: ${runId})` : message;
+    onError(new Error(msg));
+  };
+
   fetch(`${API_BASE}/api/v1/generate/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -371,15 +423,28 @@ export function generatePresentationStream(
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6).trim();
-            if (data === "[DONE]") return;
+            if (data === "[DONE]") {
+              if (!terminalReceived) {
+                emitError("生成流结束但未返回结果");
+              }
+              return;
+            }
             try {
               const parsed = JSON.parse(data);
               if (parsed.type === "progress") {
                 onProgress(parsed as ProgressEvent);
+              } else if (parsed.type === "outline_ready") {
+                onOutlineReady?.(parsed as OutlineReadyEvent);
+              } else if (parsed.type === "slide_ready") {
+                const evt = parsed as SlideReadyEvent;
+                onSlideReady?.(evt.slide, evt.slide_index);
               } else if (parsed.type === "result") {
+                terminalReceived = true;
                 onResult(parsed as ResultEvent);
               } else if (parsed.type === "error") {
-                onError(new Error(parsed.message || "生成出错"));
+                terminalReceived = true;
+                const errorEvent = parsed as ErrorEvent;
+                emitError(errorEvent.message || "生成出错", errorEvent.run_id);
               }
             } catch {
               // 跳过
@@ -387,10 +452,19 @@ export function generatePresentationStream(
           }
         }
       }
+
+      if (!terminalReceived) {
+        emitError("生成流结束但未返回结果");
+      }
     })
     .catch((err) => {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
       onError(err instanceof Error ? err : new Error(String(err)));
+    })
+    .finally(() => {
+      finish();
     });
 }
 

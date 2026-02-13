@@ -1,5 +1,6 @@
-"""文档解析 — MarkItDown 封装 + 分块逻辑"""
+"""文档解析 — MarkItDown 封装 + 正则规范化 + 分块逻辑"""
 
+import re
 from pathlib import Path
 
 from markitdown import MarkItDown
@@ -9,9 +10,46 @@ _converter = MarkItDown()
 
 
 async def parse_document(file_path: str | Path) -> str:
-    """将文档转换为 Markdown 文本"""
+    """将文档转换为 Markdown 文本，自动执行轻量规范化"""
     result = _converter.convert(str(file_path))
-    return result.text_content
+    return normalize_markdown(result.text_content)
+
+
+def normalize_markdown(text: str) -> str:
+    """轻量正则规范化 MarkItDown 输出，修复常见格式问题（<10ms）
+
+    处理：
+    - 移除空图片占位 [image]、![]()
+    - 移除孤立页码行（如 - 12 -）
+    - 合并重复分隔线 ---
+    - 合并段内断行（非句末换行 + 中文/小写字母续行 → 合并）
+    - 收拢连续空行为最多两个
+    - 去除行尾空白
+    """
+    # 移除空图片占位
+    text = re.sub(r"!\[[^\]]*\]\(\s*\)", "", text)
+    text = re.sub(r"^\[image\]\s*$", "", text, flags=re.MULTILINE)
+
+    # 移除孤立页码行（如 "- 12 -"、"— 3 —"、"- Page 5 -"）
+    text = re.sub(r"^[-—]\s*(?:Page\s*)?\d+\s*[-—]\s*$", "", text, flags=re.MULTILINE | re.IGNORECASE)
+
+    # 合并重复分隔线（连续多个 --- 合并为一个）
+    text = re.sub(r"(?:^-{3,}\s*$\n?){2,}", "---\n", text, flags=re.MULTILINE)
+
+    # 合并段内断行：行尾非句末标点 + 下一行以中文或小写字母开头 → 合并
+    text = re.sub(
+        r"([^\n.!?。！？\s])\n([a-z\u4e00-\u9fff])",
+        r"\1\2",
+        text,
+    )
+
+    # 去除行尾空白
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+
+    # 收拢连续空行为最多两个
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+
+    return text.strip()
 
 
 def estimate_tokens(text: str) -> int:

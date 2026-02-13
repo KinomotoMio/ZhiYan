@@ -2,6 +2,10 @@
 
 程序化检查优先，LLM 审美评估作为补充。
 支持 vision：有截图时用 BinaryContent 发送图片给多模态 LLM，否则回退到文本摘要。
+
+支持两种 Slide 格式：
+- 新版：layoutId + contentData（模板系统，检查内容合理性）
+- 旧版：components 列表（检查位置越界、重叠、密度）
 """
 
 import logging
@@ -12,14 +16,13 @@ from app.models.slide import Slide
 
 logger = logging.getLogger(__name__)
 
-# 延迟初始化 Agent 缓存（settings_store.invalidate_agents() 会 reset 此值）
 _agent = None
 
 
 class VerificationIssue(BaseModel):
     slide_id: str
     severity: str = Field(description="error | warning | info")
-    category: str = Field(description="bounds | overlap | density | aesthetic")
+    category: str = Field(description="bounds | overlap | density | content | aesthetic")
     message: str
     suggestion: str
 
@@ -48,71 +51,127 @@ def _compute_overlap(
     return inter_area / smaller
 
 
+def _verify_content_data(slide: Slide) -> list[VerificationIssue]:
+    """新版 contentData slide 的内容合理性检查"""
+    issues: list[VerificationIssue] = []
+    data = slide.content_data or {}
+    sid = slide.slide_id
+
+    # 标题长度检查
+    title = data.get("title", "")
+    if isinstance(title, str) and len(title) > 40:
+        issues.append(VerificationIssue(
+            slide_id=sid,
+            severity="warning",
+            category="content",
+            message=f"标题过长（{len(title)} 字）",
+            suggestion="精简标题至 40 字以内",
+        ))
+
+    # 列表项数量检查
+    for key in ("items", "metrics", "bullets", "events", "steps", "features"):
+        items = data.get(key)
+        if isinstance(items, list) and len(items) > 6:
+            issues.append(VerificationIssue(
+                slide_id=sid,
+                severity="warning",
+                category="content",
+                message=f"'{key}' 项目过多（{len(items)} 条）",
+                suggestion="精简至 6 条以内，或拆分为两页",
+            ))
+
+    # 表格行数检查
+    rows = data.get("rows")
+    if isinstance(rows, list) and len(rows) > 8:
+        issues.append(VerificationIssue(
+            slide_id=sid,
+            severity="warning",
+            category="content",
+            message=f"表格行数过多（{len(rows)} 行）",
+            suggestion="精简至 8 行以内",
+        ))
+
+    return issues
+
+
+def _verify_components(slide: Slide) -> list[VerificationIssue]:
+    """旧版 components slide 的位置检查"""
+    issues: list[VerificationIssue] = []
+    components = slide.components
+    sid = slide.slide_id
+
+    for comp in components:
+        pos = comp.position
+        if pos.x + pos.width > 105:
+            issues.append(VerificationIssue(
+                slide_id=sid,
+                severity="error",
+                category="bounds",
+                message=f"组件 {comp.id} 水平越界 (x={pos.x}, w={pos.width})",
+                suggestion="减小宽度或左移组件",
+            ))
+        if pos.y + pos.height > 105:
+            issues.append(VerificationIssue(
+                slide_id=sid,
+                severity="error",
+                category="bounds",
+                message=f"组件 {comp.id} 垂直越界 (y={pos.y}, h={pos.height})",
+                suggestion="减小高度或上移组件",
+            ))
+
+        if comp.type.value == "text" and comp.role.value == "body" and comp.content:
+            lines = [line for line in comp.content.split("\n") if line.strip()]
+            if len(lines) > 6:
+                issues.append(VerificationIssue(
+                    slide_id=sid,
+                    severity="warning",
+                    category="density",
+                    message=f"组件 {comp.id} 要点过多（{len(lines)} 条）",
+                    suggestion="精简至 6 条以内，或拆分为两页",
+                ))
+
+    for i in range(len(components)):
+        for j in range(i + 1, len(components)):
+            ci, cj = components[i], components[j]
+            overlap = _compute_overlap(
+                ci.position.x, ci.position.y, ci.position.width, ci.position.height,
+                cj.position.x, cj.position.y, cj.position.width, cj.position.height,
+            )
+            if overlap > 0.3:
+                issues.append(VerificationIssue(
+                    slide_id=sid,
+                    severity="warning",
+                    category="overlap",
+                    message=f"组件 {ci.id} 与 {cj.id} 重叠 {overlap:.0%}",
+                    suggestion="调整组件位置避免重叠",
+                ))
+
+    return issues
+
+
 def verify_programmatic(slides: list[Slide]) -> list[VerificationIssue]:
-    """程序化检查：越界、重叠、文字密度等确定性规则"""
+    """程序化检查：根据 slide 类型分派不同检查逻辑"""
     issues: list[VerificationIssue] = []
 
     for slide in slides:
-        components = slide.components
-
-        for comp in components:
-            pos = comp.position
-            # 越界检查
-            if pos.x + pos.width > 105:  # 5% 容差
-                issues.append(
-                    VerificationIssue(
-                        slide_id=slide.slide_id,
-                        severity="error",
-                        category="bounds",
-                        message=f"组件 {comp.id} 水平越界 (x={pos.x}, w={pos.width})",
-                        suggestion="减小宽度或左移组件",
-                    )
-                )
-            if pos.y + pos.height > 105:
-                issues.append(
-                    VerificationIssue(
-                        slide_id=slide.slide_id,
-                        severity="error",
-                        category="bounds",
-                        message=f"组件 {comp.id} 垂直越界 (y={pos.y}, h={pos.height})",
-                        suggestion="减小高度或上移组件",
-                    )
-                )
-
-            # 文字密度检查
-            if comp.type.value == "text" and comp.role.value == "body" and comp.content:
-                lines = [l for l in comp.content.split("\n") if l.strip()]
-                if len(lines) > 6:
-                    issues.append(
-                        VerificationIssue(
-                            slide_id=slide.slide_id,
-                            severity="warning",
-                            category="density",
-                            message=f"组件 {comp.id} 要点过多（{len(lines)} 条）",
-                            suggestion="精简至 6 条以内，或拆分为两页",
-                        )
-                    )
-
-        # 重叠检测：检查同一页所有组件对
-        for i in range(len(components)):
-            for j in range(i + 1, len(components)):
-                ci, cj = components[i], components[j]
-                overlap = _compute_overlap(
-                    ci.position.x, ci.position.y, ci.position.width, ci.position.height,
-                    cj.position.x, cj.position.y, cj.position.width, cj.position.height,
-                )
-                if overlap > 0.3:  # 重叠面积 > 30% 告警
-                    issues.append(
-                        VerificationIssue(
-                            slide_id=slide.slide_id,
-                            severity="warning",
-                            category="overlap",
-                            message=f"组件 {ci.id} 与 {cj.id} 重叠 {overlap:.0%}",
-                            suggestion="调整组件位置避免重叠",
-                        )
-                    )
+        if slide.content_data and slide.layout_id:
+            issues.extend(_verify_content_data(slide))
+        else:
+            issues.extend(_verify_components(slide))
 
     return issues
+
+
+def _extract_title_from_slide(slide: Slide) -> str:
+    """从 slide 提取标题（兼容新旧格式）"""
+    if slide.content_data:
+        title = slide.content_data.get("title")
+        if isinstance(title, str) and title:
+            return title
+    for comp in slide.components:
+        if comp.role.value == "title" and comp.content:
+            return comp.content
+    return "(无标题)"
 
 
 async def run_aesthetic_verification(
@@ -123,7 +182,6 @@ async def run_aesthetic_verification(
     try:
         agent = _get_aesthetic_verifier_agent()
 
-        # 尝试截图 → 多模态评估
         if presentation_dict is not None:
             try:
                 result = await _run_vision_verification(agent, slides, presentation_dict)
@@ -131,11 +189,11 @@ async def run_aesthetic_verification(
             except Exception as e:
                 logger.warning("Vision verification failed, falling back to text: %s", e)
 
-        # 回退：文本摘要评估
         slides_summary = "\n".join(
-            f"- 第{i+1}页 [{s.layout_type.value}]: "
-            f"{_extract_title_from_slide(s)} ({len(s.components)} 个组件)"
-            for i, s in enumerate(slides)
+            f"- 第{i+1}页 [{slide.layout_id or slide.layout_type}]: "
+            f"{_extract_title_from_slide(slide)}"
+            f"{' (' + str(len(slide.components)) + ' 个组件)' if slide.components else ''}"
+            for i, slide in enumerate(slides)
         )
         result = await agent.run(
             f"请评估以下演示文稿的设计质量：\n{slides_summary}"
@@ -160,7 +218,6 @@ async def _run_vision_verification(
 
     logger.info("Captured %d slide screenshots for vision verification", len(screenshots))
 
-    # 构建多模态 prompt：文字 + 图片交替
     user_prompt: list[str | BinaryContent] = [
         f"请评估以下演示文稿（共 {len(screenshots)} 页）的视觉设计质量。"
         f"以下是每页渲染后的截图：",
@@ -173,13 +230,6 @@ async def _run_vision_verification(
     return result.output
 
 
-def _extract_title_from_slide(slide: Slide) -> str:
-    for comp in slide.components:
-        if comp.role.value == "title" and comp.content:
-            return comp.content
-    return "(无标题)"
-
-
 def _get_aesthetic_verifier_agent():
     """延迟创建 LLM 审美评估 Agent（使用 vision_model）"""
     global _agent
@@ -187,6 +237,7 @@ def _get_aesthetic_verifier_agent():
         return _agent
 
     from pydantic_ai import Agent
+
     from app.core.config import settings
     from app.core.model_resolver import resolve_model
 

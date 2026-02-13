@@ -1,4 +1,8 @@
-"""Slide 数据模型 — 与 shared/schemas/slide.schema.json 保持同步"""
+"""Slide 数据模型 — 与 shared/schemas/slide.schema.json 保持同步
+
+新增 layout_id + content_data 字段用于结构化渲染。
+保留 components 字段用于向后兼容。
+"""
 
 from enum import Enum
 
@@ -22,6 +26,7 @@ class ComponentRole(str, Enum):
 
 
 class LayoutType(str, Enum):
+    # 旧版 layout type（向后兼容）
     TITLE_SLIDE = "title-slide"
     TITLE_CONTENT = "title-content"
     TITLE_CONTENT_IMAGE = "title-content-image"
@@ -29,6 +34,21 @@ class LayoutType(str, Enum):
     IMAGE_FULL = "image-full"
     SECTION_HEADER = "section-header"
     BLANK = "blank"
+    # 新版 layout IDs（与 layout_registry 一致）
+    INTRO_SLIDE = "intro-slide"
+    BULLET_WITH_ICONS = "bullet-with-icons"
+    NUMBERED_BULLETS = "numbered-bullets"
+    METRICS_SLIDE = "metrics-slide"
+    METRICS_WITH_IMAGE = "metrics-with-image"
+    CHART_WITH_BULLETS = "chart-with-bullets"
+    TABLE_INFO = "table-info"
+    TWO_COLUMN_COMPARE = "two-column-compare"
+    IMAGE_AND_DESCRIPTION = "image-and-description"
+    TIMELINE = "timeline"
+    QUOTE_SLIDE = "quote-slide"
+    BULLET_ICONS_ONLY = "bullet-icons-only"
+    CHALLENGE_OUTCOME = "challenge-outcome"
+    THANK_YOU = "thank-you"
 
 
 class TextAlign(str, Enum):
@@ -77,8 +97,17 @@ class Component(BaseModel):
 
 class Slide(BaseModel):
     slide_id: str = Field(alias="slideId")
-    layout_type: LayoutType = Field(alias="layoutType")
-    components: list[Component]
+    layout_type: str = Field(alias="layoutType")
+
+    # 新增：具体 layout ID（对应 template-registry 中的布局）
+    layout_id: str | None = Field(None, alias="layoutId")
+
+    # 新增：结构化内容数据（按 layout schema 生成的 JSON）
+    content_data: dict | None = Field(None, alias="contentData")
+
+    # 保留 components 用于向后兼容 / fallback 渲染
+    components: list[Component] = Field(default_factory=list)
+
     speaker_notes: str | None = Field(None, alias="speakerNotes")
     template_slot_mapping: dict[str, str] | None = Field(
         None, alias="templateSlotMapping"

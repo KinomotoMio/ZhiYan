@@ -13,6 +13,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.logging_setup import setup_logging
+
+setup_logging(settings.log_level, settings.log_format)
 
 logger = logging.getLogger(__name__)
 
@@ -74,25 +77,40 @@ app.add_middleware(
 async def log_requests(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:8])
     content_length = request.headers.get("content-length", "0")
+    request.state.request_id = request_id
 
     start = time.time()
-    response = await call_next(request)
-    duration = time.time() - start
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((time.time() - start) * 1000)
+        logger.exception(
+            "request_error",
+            extra={
+                "event": "request_error",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "duration_ms": duration_ms,
+                "body_bytes": content_length,
+            },
+        )
+        raise
 
-    log_msg = "[%s] %s %s → %d (%.2fs, body=%sB)"
-    log_args = (
-        request_id,
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration,
-        content_length,
+    duration_ms = int((time.time() - start) * 1000)
+    log_method = logger.warning if duration_ms > 5000 else logger.info
+    log_method(
+        "request_complete",
+        extra={
+            "event": "request_complete",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+            "body_bytes": content_length,
+        },
     )
-
-    if duration > 5:
-        logger.warning("SLOW " + log_msg, *log_args)
-    else:
-        logger.info(log_msg, *log_args)
 
     response.headers["X-Request-ID"] = request_id
     return response
