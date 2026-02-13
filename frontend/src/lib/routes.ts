@@ -4,7 +4,8 @@ export function getSessionEditorPath(sessionId: string): string {
 
 export function canShowContinueEditorEntry(
   currentSessionId: string | null,
-  isGenerating: boolean
+  isGenerating: boolean,
+  hasPresentation: boolean
 ): boolean {
-  return Boolean(currentSessionId) && !isGenerating;
+  return Boolean(currentSessionId) && !isGenerating && hasPresentation;
 }

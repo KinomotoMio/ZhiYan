@@ -316,6 +316,31 @@ async def delete_session_source(session_id: str, source_id: str, request: Reques
     return {"ok": True}
 
 
+class LinkSourcesRequest(BaseModel):
+    source_ids: list[str]
+
+
+@router.post("/{session_id}/sources/link")
+async def link_sources_to_session(session_id: str, req: LinkSourcesRequest, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    for source_id in req.source_ids:
+        await session_store.link_source_to_session(sid, source_id)
+    return {"ok": True}
+
+
+@router.delete("/{session_id}/sources/{source_id}/link")
+async def unlink_source_from_session(session_id: str, source_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    removed = await session_store.unlink_source_from_session(sid, source_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="来源关联不存在")
+    return {"ok": True}
+
+
 @router.get("/{session_id}/chat", response_model=list[ChatRecord])
 async def list_session_chat(session_id: str, request: Request):
     workspace_id = get_workspace_id_from_request(request)

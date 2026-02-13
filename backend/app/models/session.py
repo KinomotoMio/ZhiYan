@@ -17,6 +17,7 @@ class SessionSummary(BaseModel):
     last_opened_at: str | None = None
     source_count: int = 0
     chat_count: int = 0
+    has_presentation: bool = False
 
 
 class ChatRecord(BaseModel):
