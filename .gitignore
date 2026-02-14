@@ -40,8 +40,8 @@ htmlcov/
 # Build artifacts
 *.pptx.tmp
 
-# Runtime data
-data/jobs/
+# Runtime data (contains DB, uploads, API keys in settings.json)
+data/
 
 # Reference materials
 ref/
