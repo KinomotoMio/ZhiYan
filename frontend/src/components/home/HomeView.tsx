@@ -207,8 +207,8 @@ export default function HomeView() {
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-teal-200/40 blur-3xl" />
 
-        <section className="grid gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-start">
-          <article className="min-w-0 rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl lg:p-7">
+        <section className="grid gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
+          <article className="h-full min-w-0 rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl lg:p-7">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-slate-600">欢迎回来</p>
@@ -248,7 +248,7 @@ export default function HomeView() {
               </button>
             </div>
 
-            <div className="mt-5 grid gap-2">
+            <div className="mt-5 grid grid-cols-3 gap-2">
               <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                   <Presentation className="h-4 w-4 text-emerald-600" />
@@ -348,7 +348,7 @@ export default function HomeView() {
             </section>
           </article>
 
-          <aside className="flex min-h-[460px] min-w-0 flex-col rounded-3xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)]">
+          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)]">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <FileText className="h-4 w-4 text-cyan-600" />
               最近成果预览
