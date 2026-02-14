@@ -25,15 +25,14 @@ export default function LegacyEditorPage() {
   return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="text-center space-y-4">
-        <p className="text-muted-foreground">未选择会话，请先从创建页进入会话。</p>
+        <p className="text-muted-foreground">未选择会话，请先从主页进入会话。</p>
         <button
           onClick={() => router.push("/")}
           className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
         >
-          返回创建页
+          返回主页
         </button>
       </div>
     </div>
   );
 }
-

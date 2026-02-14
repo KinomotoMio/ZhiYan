@@ -478,32 +478,6 @@ class SessionStore:
                     now,
                 ),
             )
-            # Also write to legacy session_sources for backward compat
-            conn.execute(
-                """
-                INSERT INTO session_sources(
-                    id, session_id, source_type, name, file_category, size, status,
-                    preview_snippet, storage_path, parsed_content, metadata_json,
-                    error, created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_id,
-                    session_id,
-                    source_type,
-                    name,
-                    file_category,
-                    size,
-                    status,
-                    preview_snippet,
-                    storage_path,
-                    parsed_content,
-                    json.dumps(metadata, ensure_ascii=False),
-                    error,
-                    now,
-                    now,
-                ),
-            )
             # Create link
             conn.execute(
                 """
@@ -553,10 +527,11 @@ class SessionStore:
                 SELECT ws.*
                 FROM workspace_sources ws
                 JOIN session_source_links sl ON sl.source_id = ws.id
-                WHERE sl.session_id=?
+                JOIN sessions s ON s.id = sl.session_id
+                WHERE sl.session_id=? AND s.workspace_id=? AND ws.workspace_id=?
                 ORDER BY ws.created_at DESC
                 """,
-                (session_id,),
+                (session_id, workspace_id, workspace_id),
             ).fetchall()
         return [self._row_to_source_meta(row) for row in rows]
 
@@ -578,9 +553,12 @@ class SessionStore:
                 """
                 SELECT ws.parsed_content
                 FROM workspace_sources ws
-                WHERE ws.id=?
+                JOIN session_source_links sl ON sl.source_id = ws.id
+                JOIN sessions s ON s.id = sl.session_id
+                WHERE ws.id=? AND sl.session_id=? AND s.workspace_id=? AND ws.workspace_id=?
+                  AND s.archived_at IS NULL
                 """,
-                (source_id,),
+                (source_id, session_id, workspace_id, workspace_id),
             ).fetchone()
         return None if row is None else (row["parsed_content"] or "")
 
@@ -797,15 +775,62 @@ class SessionStore:
                     shutil.rmtree(target, ignore_errors=True)
         return True
 
-    async def link_source_to_session(self, session_id: str, source_id: str) -> None:
+    async def link_source_to_session(
+        self,
+        *,
+        session_id: str,
+        source_id: str,
+        workspace_id: str,
+    ) -> None:
         now = _now_iso()
         async with self._write_lock:
             await asyncio.to_thread(
-                self._link_source_to_session_sync, session_id, source_id, now
+                self._link_source_to_session_sync,
+                session_id,
+                source_id,
+                workspace_id,
+                now,
             )
 
-    def _link_source_to_session_sync(self, session_id: str, source_id: str, now: str) -> None:
+    def _link_source_to_session_sync(
+        self,
+        session_id: str,
+        source_id: str,
+        workspace_id: str,
+        now: str,
+    ) -> None:
         with self._connect() as conn:
+            session_row = conn.execute(
+                """
+                SELECT workspace_id
+                FROM sessions
+                WHERE id=? AND archived_at IS NULL
+                """,
+                (session_id,),
+            ).fetchone()
+            if not session_row:
+                raise ValueError("会话不存在")
+
+            source_row = conn.execute(
+                """
+                SELECT workspace_id
+                FROM workspace_sources
+                WHERE id=?
+                """,
+                (source_id,),
+            ).fetchone()
+            if not source_row:
+                raise ValueError("来源不存在")
+
+            session_workspace_id = str(session_row["workspace_id"])
+            source_workspace_id = str(source_row["workspace_id"])
+            if session_workspace_id != workspace_id:
+                raise PermissionError("会话不属于当前工作区")
+            if source_workspace_id != workspace_id:
+                raise PermissionError("来源不属于当前工作区")
+            if session_workspace_id != source_workspace_id:
+                raise PermissionError("来源与会话不在同一工作区")
+
             conn.execute(
                 """
                 INSERT OR IGNORE INTO session_source_links(session_id, source_id, linked_at)

@@ -22,6 +22,11 @@ class UrlRequest(BaseModel):
     url: str
 
 
+class TextRequest(BaseModel):
+    name: str
+    content: str
+
+
 def _snippet(text: str, max_len: int = 200) -> str:
     content = text.strip()
     if len(content) <= max_len:
@@ -151,6 +156,27 @@ async def add_workspace_url_source(req: UrlRequest, request: Request):
             error=str(e),
             source_id=source_id,
         )
+    return SourceMeta.model_validate(meta)
+
+
+@router.post("/text", response_model=SourceMeta)
+async def add_workspace_text_source(req: TextRequest, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    await session_store.ensure_workspace(workspace_id)
+    from app.services.document.parser import estimate_tokens
+
+    meta = await session_store.create_workspace_source(
+        workspace_id=workspace_id,
+        source_type="text",
+        name=req.name,
+        file_category="text",
+        size=len(req.content.encode("utf-8")),
+        status="ready",
+        preview_snippet=_snippet(req.content),
+        storage_path=None,
+        parsed_content=req.content,
+        metadata={"estimated_tokens": estimate_tokens(req.content)},
+    )
     return SourceMeta.model_validate(meta)
 
 

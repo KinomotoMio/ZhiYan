@@ -11,6 +11,7 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     import app.services.sessions as sessions_pkg
     from app.api.v1 import chat as chat_api
     from app.api.v1 import sessions as sessions_api
+    from app.api.v1 import workspace_sources as workspace_sources_api
     from app.api.v2 import generation as generation_api
     from app.services.sessions.store import SessionStore
 
@@ -20,6 +21,7 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions_pkg, "session_store", store)
     monkeypatch.setattr(sessions_api, "session_store", store)
     monkeypatch.setattr(chat_api, "session_store", store)
+    monkeypatch.setattr(workspace_sources_api, "session_store", store)
     monkeypatch.setattr(generation_api, "session_store", store)
     return store
 
@@ -92,12 +94,18 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     session_id = created.json()["id"]
 
     source_resp = client.post(
-        f"/api/v1/sessions/{session_id}/sources/text",
+        "/api/v1/workspace/sources/text",
         headers=h1,
         json={"name": "素材", "content": "测试内容"},
     )
     assert source_resp.status_code == 200
     source_id = source_resp.json()["id"]
+    link_resp = client.post(
+        f"/api/v1/sessions/{session_id}/sources/link",
+        headers=h1,
+        json={"source_ids": [source_id]},
+    )
+    assert link_resp.status_code == 200
 
     create_ok = client.post(
         "/api/v2/generation/jobs",
@@ -137,6 +145,92 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     )
     assert create_auto.status_code == 200
     assert create_auto.json()["session_id"]
+
+    presentation = {
+        "presentationId": "pres-ready",
+        "title": "已有稿件",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "bullet-with-icons",
+                "layoutId": "bullet-with-icons",
+                "contentData": {"title": "测试", "items": []},
+                "components": [],
+            }
+        ],
+    }
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=h1,
+        json={"presentation": presentation, "source": "chat"},
+    )
+    assert saved.status_code == 200
+
+    create_conflict = client.post(
+        "/api/v2/generation/jobs",
+        headers=h1,
+        json={
+            "topic": "禁止在已有稿件会话生成",
+            "session_id": session_id,
+            "source_ids": [source_id],
+            "num_pages": 3,
+            "mode": "auto",
+        },
+    )
+    assert create_conflict.status_code == 409
+
+
+def test_workspace_source_link_acl_and_content_acl(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    h1 = {"X-Workspace-Id": "ws-a"}
+    h2 = {"X-Workspace-Id": "ws-b"}
+
+    sess_a = client.post("/api/v1/sessions", headers=h1, json={"title": "A"}).json()["id"]
+    sess_b = client.post("/api/v1/sessions", headers=h2, json={"title": "B"}).json()["id"]
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=h1,
+        json={"name": "跨空间素材", "content": "only ws-a can use"},
+    )
+    assert source_resp.status_code == 200
+    source_id = source_resp.json()["id"]
+
+    denied_link = client.post(
+        f"/api/v1/sessions/{sess_b}/sources/link",
+        headers=h2,
+        json={"source_ids": [source_id]},
+    )
+    assert denied_link.status_code == 409
+
+    fake_link = client.post(
+        f"/api/v1/sessions/{sess_b}/sources/link",
+        headers=h2,
+        json={"source_ids": ["src-does-not-exist"]},
+    )
+    assert fake_link.status_code == 404
+
+    link_ok = client.post(
+        f"/api/v1/sessions/{sess_a}/sources/link",
+        headers=h1,
+        json={"source_ids": [source_id]},
+    )
+    assert link_ok.status_code == 200
+
+    content_ok = client.get(
+        f"/api/v1/sessions/{sess_a}/sources/{source_id}/content",
+        headers=h1,
+    )
+    assert content_ok.status_code == 200
+    assert "only ws-a can use" in content_ok.json()["content"]
+
+    content_denied = client.get(
+        f"/api/v1/sessions/{sess_b}/sources/{source_id}/content",
+        headers=h2,
+    )
+    assert content_denied.status_code == 404
 
 
 def test_put_latest_presentation_workspace_isolation(monkeypatch, tmp_path):
