@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -20,11 +20,80 @@ import {
   type SessionSummary,
 } from "@/lib/api";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
+import SessionListDialog from "@/components/home/SessionListDialog";
 import UserMenu from "@/components/settings/UserMenu";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
 import { useAppStore } from "@/lib/store";
 import { getSessionEditorPath } from "@/lib/routes";
 import type { Presentation as PresentationModel } from "@/types/slide";
+
+const DESKTOP_BREAKPOINT = 1024;
+const MOBILE_PREVIEW_COUNT = 2;
+const MIN_PREVIEW_COUNT = 1;
+const MAX_PREVIEW_COUNT = 3;
+const PREVIEW_ITEM_GAP_PX = 6;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function distributePreviewRows({
+  totalRows,
+  resultTotal,
+  draftTotal,
+}: {
+  totalRows: number;
+  resultTotal: number;
+  draftTotal: number;
+}): { resultCount: number; draftCount: number } {
+  const hasResult = resultTotal > 0;
+  const hasDraft = draftTotal > 0;
+
+  if (!hasResult && !hasDraft) {
+    return { resultCount: MIN_PREVIEW_COUNT, draftCount: MIN_PREVIEW_COUNT };
+  }
+
+  let resultCount = hasResult ? MIN_PREVIEW_COUNT : 0;
+  let draftCount = hasDraft ? MIN_PREVIEW_COUNT : 0;
+  let remaining = Math.max(0, totalRows - resultCount - draftCount);
+
+  while (remaining > 0) {
+    const resultCanGrow =
+      hasResult &&
+      resultCount < MAX_PREVIEW_COUNT &&
+      resultCount < Math.min(resultTotal, MAX_PREVIEW_COUNT);
+    const draftCanGrow =
+      hasDraft &&
+      draftCount < MAX_PREVIEW_COUNT &&
+      draftCount < Math.min(draftTotal, MAX_PREVIEW_COUNT);
+
+    if (!resultCanGrow && !draftCanGrow) break;
+
+    if (resultCanGrow && !draftCanGrow) {
+      resultCount += 1;
+      remaining -= 1;
+      continue;
+    }
+
+    if (draftCanGrow && !resultCanGrow) {
+      draftCount += 1;
+      remaining -= 1;
+      continue;
+    }
+
+    const resultRemaining = Math.max(0, resultTotal - resultCount);
+    const draftRemaining = Math.max(0, draftTotal - draftCount);
+
+    if (draftRemaining >= resultRemaining) {
+      draftCount += 1;
+    } else {
+      resultCount += 1;
+    }
+    remaining -= 1;
+  }
+
+  return { resultCount, draftCount };
+}
 
 function formatUpdatedAt(iso: string): string {
   const date = new Date(iso);
@@ -52,6 +121,15 @@ export default function HomeView() {
   const setCurrentSessionId = useAppStore((store) => store.setCurrentSessionId);
   const setWorkspaceId = useAppStore((store) => store.setWorkspaceId);
 
+  const leftCardRef = useRef<HTMLElement | null>(null);
+  const fixedAreaRef = useRef<HTMLDivElement | null>(null);
+  const listAreaRef = useRef<HTMLDivElement | null>(null);
+  const resultSectionRef = useRef<HTMLElement | null>(null);
+  const resultSectionHeaderRef = useRef<HTMLDivElement | null>(null);
+  const draftSectionRef = useRef<HTMLElement | null>(null);
+  const draftSectionHeaderRef = useRef<HTMLDivElement | null>(null);
+  const itemProbeRef = useRef<HTMLDivElement | null>(null);
+
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [workspaceSourceCount, setWorkspaceSourceCount] = useState(0);
   const [resultFileNames, setResultFileNames] = useState<Record<string, string>>({});
@@ -59,6 +137,12 @@ export default function HomeView() {
     useState<PresentationModel | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
   const [isPreviewHovered, setIsPreviewHovered] = useState(false);
+  const [resultPreviewCount, setResultPreviewCount] =
+    useState(MOBILE_PREVIEW_COUNT);
+  const [draftPreviewCount, setDraftPreviewCount] =
+    useState(MOBILE_PREVIEW_COUNT);
+  const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
+  const [isDraftDialogOpen, setIsDraftDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const { status: settingsStatus, message: settingsMessage } = useSettingsStatus();
@@ -104,8 +188,126 @@ export default function HomeView() {
     [sessions]
   );
 
-  const resultListSessions = useMemo(() => resultSessions.slice(0, 4), [resultSessions]);
-  const draftListSessions = useMemo(() => draftSessions.slice(0, 4), [draftSessions]);
+  useEffect(() => {
+    const computePreviewCount = () => {
+      if (typeof window === "undefined") return;
+
+      if (window.innerWidth < DESKTOP_BREAKPOINT) {
+        setResultPreviewCount(MOBILE_PREVIEW_COUNT);
+        setDraftPreviewCount(MOBILE_PREVIEW_COUNT);
+        return;
+      }
+
+      const listAreaEl = listAreaRef.current;
+      const resultSectionEl = resultSectionRef.current;
+      const draftSectionEl = draftSectionRef.current;
+      const resultHeaderEl = resultSectionHeaderRef.current;
+      const draftHeaderEl = draftSectionHeaderRef.current;
+      const probeEl = itemProbeRef.current;
+      if (
+        !listAreaEl ||
+        !resultSectionEl ||
+        !draftSectionEl ||
+        !resultHeaderEl ||
+        !draftHeaderEl ||
+        !probeEl
+      ) {
+        setResultPreviewCount(MOBILE_PREVIEW_COUNT);
+        setDraftPreviewCount(MOBILE_PREVIEW_COUNT);
+        return;
+      }
+
+      const listAreaHeight = listAreaEl.clientHeight;
+      const resultSectionStyles = window.getComputedStyle(resultSectionEl);
+      const draftSectionStyles = window.getComputedStyle(draftSectionEl);
+      const listAreaStyles = window.getComputedStyle(listAreaEl);
+      const listAreaGap = Number.parseFloat(listAreaStyles.rowGap || "0");
+      const resultSectionPadding =
+        Number.parseFloat(resultSectionStyles.paddingTop || "0") +
+        Number.parseFloat(resultSectionStyles.paddingBottom || "0");
+      const draftSectionPadding =
+        Number.parseFloat(draftSectionStyles.paddingTop || "0") +
+        Number.parseFloat(draftSectionStyles.paddingBottom || "0");
+      const resultHeaderHeight = resultHeaderEl.offsetHeight;
+      const draftHeaderHeight = draftHeaderEl.offsetHeight;
+      const rowHeight = probeEl.offsetHeight || 62;
+
+      const rowsAvailableHeight = Math.max(
+        0,
+        listAreaHeight -
+          listAreaGap -
+          resultSectionPadding -
+          draftSectionPadding -
+          resultHeaderHeight -
+          draftHeaderHeight
+      );
+      const fitRows = Math.floor(
+        (rowsAvailableHeight + PREVIEW_ITEM_GAP_PX) /
+          (rowHeight + PREVIEW_ITEM_GAP_PX)
+      );
+
+      const hasResult = resultSessions.length > 0;
+      const hasDraft = draftSessions.length > 0;
+      const minRows = hasResult && hasDraft ? 2 : hasResult || hasDraft ? 1 : 0;
+      const maxRows =
+        Math.min(resultSessions.length, MAX_PREVIEW_COUNT) +
+        Math.min(draftSessions.length, MAX_PREVIEW_COUNT);
+      const totalRows = clamp(fitRows || minRows, minRows, Math.max(minRows, maxRows));
+
+      const { resultCount, draftCount } = distributePreviewRows({
+        totalRows,
+        resultTotal: resultSessions.length,
+        draftTotal: draftSessions.length,
+      });
+
+      setResultPreviewCount((current) =>
+        current === resultCount ? current : resultCount
+      );
+      setDraftPreviewCount((current) =>
+        current === draftCount ? current : draftCount
+      );
+    };
+
+    const rafId = window.requestAnimationFrame(computePreviewCount);
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(computePreviewCount)
+        : null;
+
+    if (observer) {
+      if (leftCardRef.current) observer.observe(leftCardRef.current);
+      if (fixedAreaRef.current) observer.observe(fixedAreaRef.current);
+      if (listAreaRef.current) observer.observe(listAreaRef.current);
+      if (resultSectionRef.current) observer.observe(resultSectionRef.current);
+      if (draftSectionRef.current) observer.observe(draftSectionRef.current);
+      if (resultSectionHeaderRef.current) observer.observe(resultSectionHeaderRef.current);
+      if (draftSectionHeaderRef.current) observer.observe(draftSectionHeaderRef.current);
+      if (itemProbeRef.current) observer.observe(itemProbeRef.current);
+    }
+
+    window.addEventListener("resize", computePreviewCount);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      observer?.disconnect();
+      window.removeEventListener("resize", computePreviewCount);
+    };
+  }, [loading, settingsStatus, settingsMessage, resultSessions.length, draftSessions.length]);
+
+  const resultPreviewSessions = useMemo(
+    () => resultSessions.slice(0, resultPreviewCount),
+    [resultPreviewCount, resultSessions]
+  );
+  const draftPreviewSessions = useMemo(
+    () => draftSessions.slice(0, draftPreviewCount),
+    [draftPreviewCount, draftSessions]
+  );
+
+  const resultSectionGrow = resultSessions.length
+    ? Math.max(MIN_PREVIEW_COUNT, resultPreviewCount)
+    : MIN_PREVIEW_COUNT;
+  const draftSectionGrow = draftSessions.length
+    ? Math.max(MIN_PREVIEW_COUNT, draftPreviewCount)
+    : MIN_PREVIEW_COUNT;
 
   const latestResultSession = resultSessions[0] ?? null;
   const hasResultSessions = resultSessions.length > 0;
@@ -201,154 +403,213 @@ export default function HomeView() {
     void handleNewPpt();
   };
 
+  const getResultTitle = (session: SessionSummary) =>
+    resultFileNames[session.id] || toPptFileDisplayName(undefined, session.title);
+
+  const getResultMeta = (session: SessionSummary) =>
+    `会话：${session.title || "未命名会话"} · 更新时间：${formatUpdatedAt(
+      session.updated_at
+    )} · ${session.source_count} 素材 / ${session.chat_count} 对话`;
+
+  const getDraftTitle = (session: SessionSummary) => session.title || "未命名会话";
+
+  const getDraftMeta = (session: SessionSummary) =>
+    `更新时间：${formatUpdatedAt(session.updated_at)} · ${session.source_count} 素材 / ${session.chat_count} 对话`;
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,rgba(56,189,248,0.26),transparent_46%),radial-gradient(circle_at_86%_8%,rgba(20,184,166,0.2),transparent_36%),radial-gradient(circle_at_58%_86%,rgba(251,191,36,0.16),transparent_42%),linear-gradient(165deg,rgba(248,250,252,0.95)_10%,rgba(239,246,255,0.94)_48%,rgba(236,253,245,0.9)_100%)]">
-      <main className="relative mx-auto w-full max-w-[1480px] px-4 py-10 md:px-6 lg:px-8">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,rgba(56,189,248,0.26),transparent_46%),radial-gradient(circle_at_86%_8%,rgba(20,184,166,0.2),transparent_36%),radial-gradient(circle_at_58%_86%,rgba(251,191,36,0.16),transparent_42%),linear-gradient(165deg,rgba(248,250,252,0.95)_10%,rgba(239,246,255,0.94)_48%,rgba(236,253,245,0.9)_100%)] lg:h-screen lg:overflow-hidden">
+      <main className="relative mx-auto h-full w-full max-w-[1480px] px-4 py-8 md:px-6 lg:px-8 lg:py-5">
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-teal-200/40 blur-3xl" />
 
-        <section className="grid gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
-          <article className="h-full min-w-0 rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl lg:p-7">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-600">欢迎回来</p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">知演 ZhiYan</h1>
-                <p className="mt-2 text-sm text-slate-600">知识变演示，更懂演示的 AI PPT 智能体</p>
+        <section className="grid h-full gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
+          <article
+            ref={leftCardRef}
+            className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl lg:p-7"
+          >
+            <div ref={fixedAreaRef} className="shrink-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-600">欢迎回来</p>
+                  <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">
+                    知演 ZhiYan
+                  </h1>
+                  <p className="mt-2 text-sm text-slate-600">
+                    知识变演示，更懂演示的 AI PPT 智能体
+                  </p>
+                </div>
+                <UserMenu compact />
               </div>
-              <UserMenu compact />
-            </div>
 
-            {settingsStatus === "unconfigured" && settingsMessage ? (
-              <p className="mt-3 text-xs text-amber-700">{settingsMessage}</p>
-            ) : null}
+              {settingsStatus === "unconfigured" && settingsMessage ? (
+                <p className="mt-3 text-xs text-amber-700">{settingsMessage}</p>
+              ) : null}
 
-            <div className="mt-5 grid gap-2 sm:grid-cols-3">
-              <button
-                onClick={handlePrimaryAction}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/70"
-              >
-                {hasResultSessions ? <ArrowRight className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-                {hasResultSessions ? "继续最近成果" : "开始新建演示稿"}
-              </button>
-              <button
-                onClick={() => {
-                  void handleNewPpt();
-                }}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-              >
-                <FilePlus2 className="h-4 w-4" />
-                新建演示稿
-              </button>
-              <button
-                onClick={() => router.push("/assets")}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-              >
-                <Library className="h-4 w-4" />
-                素材库管理
-              </button>
-            </div>
-
-            <div className="mt-5 grid grid-cols-3 gap-2">
-              <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <Presentation className="h-4 w-4 text-emerald-600" />
-                  已生成文稿
-                </div>
-                <p className="text-xl font-semibold text-slate-900">{resultSessions.length}</p>
-              </article>
-              <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <FolderOpenDot className="h-4 w-4 text-sky-600" />
-                  待完善草稿
-                </div>
-                <p className="text-xl font-semibold text-slate-900">{draftSessions.length}</p>
-              </article>
-              <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <Library className="h-4 w-4 text-amber-600" />
-                  素材库条目
-                </div>
-                <p className="text-xl font-semibold text-slate-900">{workspaceSourceCount}</p>
-              </article>
-            </div>
-
-            <section className="mt-5 rounded-2xl border border-white/80 bg-white/75 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">最近生成文稿</h2>
+              <div className="mt-5 grid gap-2 sm:grid-cols-3">
                 <button
-                  onClick={() => router.push("/create")}
-                  className="text-xs text-slate-500 transition-colors hover:text-slate-900"
+                  onClick={handlePrimaryAction}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/70"
                 >
-                  查看全部
+                  {hasResultSessions ? (
+                    <ArrowRight className="h-4 w-4" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {hasResultSessions ? "继续最近成果" : "开始新建演示稿"}
+                </button>
+                <button
+                  onClick={() => {
+                    void handleNewPpt();
+                  }}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                >
+                  <FilePlus2 className="h-4 w-4" />
+                  新建演示稿
+                </button>
+                <button
+                  onClick={() => router.push("/assets")}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                >
+                  <Library className="h-4 w-4" />
+                  素材库管理
                 </button>
               </div>
-              {loading ? (
-                <p className="py-4 text-sm text-slate-500">加载中...</p>
-              ) : resultListSessions.length === 0 ? (
-                <p className="py-4 text-sm text-slate-500">还没有已生成文稿</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {resultListSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      onClick={() => handleOpenSession(session)}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">
-                          {resultFileNames[session.id] ||
-                            toPptFileDisplayName(undefined, session.title)}
-                        </p>
-                        <p className="truncate text-xs text-slate-500">
-                          更新时间：{formatUpdatedAt(session.updated_at)}
-                        </p>
-                      </div>
-                      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
 
-            <section className="mt-3 rounded-2xl border border-white/80 bg-white/75 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">继续中的草稿</h2>
-                <button
-                  onClick={() => router.push("/create")}
-                  className="text-xs text-slate-500 transition-colors hover:text-slate-900"
-                >
-                  去工作台
-                </button>
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Presentation className="h-4 w-4 text-emerald-600" />
+                    已生成文稿
+                  </div>
+                  <p className="text-xl font-semibold text-slate-900">
+                    {resultSessions.length}
+                  </p>
+                </article>
+                <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <FolderOpenDot className="h-4 w-4 text-sky-600" />
+                    待完善草稿
+                  </div>
+                  <p className="text-xl font-semibold text-slate-900">
+                    {draftSessions.length}
+                  </p>
+                </article>
+                <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Library className="h-4 w-4 text-amber-600" />
+                    素材库条目
+                  </div>
+                  <p className="text-xl font-semibold text-slate-900">
+                    {workspaceSourceCount}
+                  </p>
+                </article>
               </div>
-              {loading ? (
-                <p className="py-4 text-sm text-slate-500">加载中...</p>
-              ) : draftListSessions.length === 0 ? (
-                <p className="py-4 text-sm text-slate-500">暂无草稿会话</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {draftListSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      onClick={() => handleOpenSession(session)}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">
-                          {session.title || "未命名会话"}
-                        </p>
-                        <p className="truncate text-xs text-slate-500">
-                          更新时间：{formatUpdatedAt(session.updated_at)}
-                        </p>
-                      </div>
-                      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
-                    </button>
-                  ))}
+            </div>
+
+            <div ref={listAreaRef} className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+              <section
+                ref={resultSectionRef}
+                style={{ flexGrow: resultSectionGrow }}
+                className="flex min-h-0 basis-0 flex-col rounded-2xl border border-white/80 bg-white/75 p-3"
+              >
+                <div
+                  ref={resultSectionHeaderRef}
+                  className="mb-2 flex items-center justify-between"
+                >
+                  <h2 className="text-sm font-semibold text-slate-800">最近生成文稿</h2>
+                  <button
+                    onClick={() => setIsResultDialogOpen(true)}
+                    className="text-xs text-slate-500 transition-colors hover:text-slate-900"
+                  >
+                    查看全部
+                  </button>
                 </div>
-              )}
-            </section>
+
+                {loading ? (
+                  <p className="py-3 text-sm text-slate-500">加载中...</p>
+                ) : resultPreviewSessions.length === 0 ? (
+                  <p className="py-3 text-sm text-slate-500">还没有已生成文稿</p>
+                ) : (
+                  <div className="min-h-0 flex-1 space-y-1.5 overflow-hidden">
+                    {resultPreviewSessions.map((session) => (
+                      <button
+                        key={session.id}
+                        onClick={() => handleOpenSession(session)}
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">
+                            {getResultTitle(session)}
+                          </p>
+                          <p className="truncate text-xs text-slate-500">
+                            更新时间：{formatUpdatedAt(session.updated_at)}
+                          </p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section
+                ref={draftSectionRef}
+                style={{ flexGrow: draftSectionGrow }}
+                className="flex min-h-0 basis-0 flex-col rounded-2xl border border-white/80 bg-white/75 p-3"
+              >
+                <div
+                  ref={draftSectionHeaderRef}
+                  className="mb-2 flex items-center justify-between"
+                >
+                  <h2 className="text-sm font-semibold text-slate-800">继续中的草稿</h2>
+                  <button
+                    onClick={() => setIsDraftDialogOpen(true)}
+                    className="text-xs text-slate-500 transition-colors hover:text-slate-900"
+                  >
+                    去工作台
+                  </button>
+                </div>
+
+                {loading ? (
+                  <p className="py-3 text-sm text-slate-500">加载中...</p>
+                ) : draftPreviewSessions.length === 0 ? (
+                  <p className="py-3 text-sm text-slate-500">暂无草稿会话</p>
+                ) : (
+                  <div className="min-h-0 flex-1 space-y-1.5 overflow-hidden">
+                    {draftPreviewSessions.map((session) => (
+                      <button
+                        key={session.id}
+                        onClick={() => handleOpenSession(session)}
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">
+                            {getDraftTitle(session)}
+                          </p>
+                          <p className="truncate text-xs text-slate-500">
+                            更新时间：{formatUpdatedAt(session.updated_at)}
+                          </p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <div className="pointer-events-none absolute left-0 top-0 -z-10 w-full opacity-0">
+              <div
+                ref={itemProbeRef}
+                className="rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5"
+              >
+                <p className="text-sm font-semibold leading-5">示例标题</p>
+                <p className="mt-0.5 text-xs leading-4">更新时间：00/00 00:00</p>
+              </div>
+            </div>
           </article>
 
-          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)]">
+          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)] lg:min-h-0">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <FileText className="h-4 w-4 text-cyan-600" />
               最近成果预览
@@ -404,6 +665,30 @@ export default function HomeView() {
           </aside>
         </section>
       </main>
+
+      <SessionListDialog
+        open={isResultDialogOpen}
+        onOpenChange={setIsResultDialogOpen}
+        title="全部文稿"
+        description="浏览当前 workspace 中可直接进入编辑器的文稿会话"
+        emptyText="暂无可查看的已生成文稿"
+        sessions={resultSessions}
+        getSessionTitle={getResultTitle}
+        getSessionMeta={getResultMeta}
+        onOpenSession={handleOpenSession}
+      />
+
+      <SessionListDialog
+        open={isDraftDialogOpen}
+        onOpenChange={setIsDraftDialogOpen}
+        title="全部草稿会话"
+        description="浏览仍在补充素材或继续完善中的会话"
+        emptyText="暂无可查看的草稿会话"
+        sessions={draftSessions}
+        getSessionTitle={getDraftTitle}
+        getSessionMeta={getDraftMeta}
+        onOpenSession={handleOpenSession}
+      />
     </div>
   );
 }
