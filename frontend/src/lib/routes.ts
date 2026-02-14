@@ -1,5 +1,19 @@
-export function getSessionEditorPath(sessionId: string): string {
-  return `/sessions/${sessionId}/editor`;
+interface EditorPathOptions {
+  slide?: number;
+}
+
+export function getSessionEditorPath(
+  sessionId: string,
+  options?: EditorPathOptions
+): string {
+  const basePath = `/sessions/${sessionId}/editor`;
+  const slide = options?.slide;
+  if (typeof slide !== "number" || !Number.isFinite(slide)) {
+    return basePath;
+  }
+
+  const normalizedSlide = Math.max(1, Math.trunc(slide));
+  return `${basePath}?slide=${normalizedSlide}`;
 }
 
 interface CreateRouteSession {

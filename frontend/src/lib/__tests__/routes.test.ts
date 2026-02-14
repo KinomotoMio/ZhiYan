@@ -11,6 +11,10 @@ test("getSessionEditorPath returns canonical session editor route", () => {
   assert.equal(getSessionEditorPath("abc"), "/sessions/abc/editor");
 });
 
+test("getSessionEditorPath appends one-based slide query when provided", () => {
+  assert.equal(getSessionEditorPath("abc", { slide: 3 }), "/sessions/abc/editor?slide=3");
+});
+
 test("pickCreateLandingSessionId prefers current editable session", () => {
   const picked = pickCreateLandingSessionId(
     [
