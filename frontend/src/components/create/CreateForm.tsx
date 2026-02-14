@@ -489,8 +489,8 @@ export default function CreateForm() {
         <div className="w-full max-w-xl space-y-8">
           {/* 标题 */}
           <div className="text-center space-y-2">
-            <h1 className="text-4xl font-bold tracking-tight">知演 ZhiYan</h1>
-            <p className="text-muted-foreground text-lg">
+            <h1 className="text-4xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">知演 ZhiYan</h1>
+            <p className="text-slate-600 dark:text-slate-400 text-lg">
               知识变演示，更懂演示的 AI PPT 智能体
             </p>
           </div>
@@ -500,7 +500,7 @@ export default function CreateForm() {
             <div className="space-y-2">
               <label className="text-sm font-medium">主题描述</label>
               <textarea
-                className="w-full h-28 p-4 border border-input rounded-lg bg-background text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full h-28 p-4 border border-slate-300 dark:border-slate-600 rounded-lg bg-white/80 dark:bg-slate-800/80 text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="描述演示文稿的主题和重点（可选，也可以只通过左侧来源生成）"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
@@ -513,7 +513,7 @@ export default function CreateForm() {
                     <button
                       key={p.text}
                       onClick={() => setTopic(p.text)}
-                      className="flex items-start gap-2 rounded-lg border border-input p-3 text-left text-xs leading-relaxed text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent/50 hover:text-foreground"
+                      className="flex items-start gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 p-3 text-left text-xs leading-relaxed text-slate-500 dark:text-slate-400 transition-all duration-200 hover:shadow-sm hover:-translate-y-0.5 hover:text-foreground"
                     >
                       <span className="text-sm shrink-0">{p.icon}</span>
                       <span>{p.text}</span>
@@ -533,7 +533,7 @@ export default function CreateForm() {
                   void handleGenerate();
                 }}
                 disabled={!canGenerate || isGenerating}
-                className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-medium text-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-medium text-lg hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2"
               >
                 {isGenerating && <Loader2 className="h-5 w-5 animate-spin" />}
                 {isGenerating ? "AI 正在生成..." : "开始生成"}
@@ -544,7 +544,7 @@ export default function CreateForm() {
                     if (!currentSessionId) return;
                     router.push(getSessionEditorPath(currentSessionId));
                   }}
-                  className="w-full py-2 rounded-lg border border-input text-sm font-medium hover:bg-accent transition-colors"
+                  className="w-full py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 text-sm font-medium hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
                 >
                   继续编辑当前结果
                 </button>
@@ -556,7 +556,7 @@ export default function CreateForm() {
                   {settingsMessage || "默认模型未就绪，请先在左下角设置中调整模型/API 信息"}
                 </p>
               ) : (
-                <p className="text-center text-xs text-muted-foreground">
+                <p className="text-center text-xs text-slate-500 dark:text-slate-400">
                   {hasUploadingOrParsing
                     ? "等待来源解析完成..."
                     : selectedReadySources.length > 0

@@ -39,10 +39,10 @@ export default function EditorWorkspace({
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
-          <p className="text-muted-foreground">尚未生成演示文稿</p>
+          <p className="text-slate-500 dark:text-slate-400">尚未生成演示文稿</p>
           <button
             onClick={() => router.push(returnHref)}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+            className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
           >
             返回创建
           </button>
@@ -111,17 +111,17 @@ export default function EditorWorkspace({
         </div>
       )}
 
-      <header className="h-12 border-b flex items-center justify-between px-4 shrink-0">
+      <header className="h-12 border-b border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push(returnHref)}
-            className="text-sm text-muted-foreground hover:text-foreground"
+            className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
           >
             &larr; {returnLabel}
           </button>
           <span className="font-medium text-sm">{presentation.title}</span>
           {isGenerating && (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               生成中 ({loadedCount}/{totalCount})
             </span>
@@ -133,7 +133,7 @@ export default function EditorWorkspace({
             <DropdownMenuTrigger asChild>
               <button
                 disabled={exporting || isGenerating}
-                className="flex items-center gap-1.5 px-3 py-1 text-sm border rounded-md hover:bg-muted disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50 transition-all duration-200"
               >
                 {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {exporting ? "正在导出..." : "导出"}
@@ -151,7 +151,7 @@ export default function EditorWorkspace({
           <button
             onClick={() => setShowReveal(true)}
             disabled={isGenerating}
-            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+            className="px-3 py-1 text-sm bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50 transition-all duration-200"
           >
             演示
           </button>
@@ -159,7 +159,7 @@ export default function EditorWorkspace({
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-48 border-r overflow-y-auto p-3 space-y-2 shrink-0">
+        <aside className="w-48 border-r border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900/40 overflow-y-auto p-3 space-y-2 shrink-0">
           {presentation.slides.map((slide, i) => (
             <SlideThumbnail
               key={slide.slideId}
@@ -172,7 +172,7 @@ export default function EditorWorkspace({
         </aside>
 
         <main className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 flex items-center justify-center p-6 bg-muted/20">
+          <div className="flex-1 flex items-center justify-center p-6 bg-slate-50/30 dark:bg-slate-900/30">
             <div className="w-full max-w-4xl">
               <SlidePreview slide={currentSlide} className="shadow-xl" />
             </div>

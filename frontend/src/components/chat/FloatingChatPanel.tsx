@@ -29,8 +29,8 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       <div
         className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
           msg.role === "user"
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground"
+            ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900"
+            : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
         }`}
       >
         {msg.content}
@@ -329,15 +329,15 @@ export default function FloatingChatPanel() {
             onClick={() => setIsOpen(false)}
           />
 
-          <div className="fixed bottom-20 right-6 z-50 flex w-[380px] max-h-[640px] flex-col rounded-xl border bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="fixed bottom-20 right-6 z-50 flex w-[380px] max-h-[640px] flex-col rounded-2xl border border-white/60 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)]">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-4 py-3">
               <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
+                <Sparkles className="h-4 w-4 text-cyan-600" />
                 <span className="text-sm font-semibold">AI 助手</span>
               </div>
               <button
                 onClick={() => setIsOpen(false)}
-                className="rounded-md p-1 hover:bg-muted"
+                className="rounded-md p-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -345,7 +345,7 @@ export default function FloatingChatPanel() {
 
             <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-[120px] max-h-[240px]">
               {chatMessages.length === 0 && (
-                <div className="text-center text-muted-foreground text-xs mt-4">
+                <div className="text-center text-slate-500 dark:text-slate-400 text-xs mt-4">
                   <p>输入消息或使用下方快捷操作</p>
                 </div>
               )}
@@ -353,7 +353,7 @@ export default function FloatingChatPanel() {
                 <MessageBubble key={msg.id} msg={msg} />
               ))}
               {isStreaming && (
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span>思考中...</span>
                 </div>
@@ -390,22 +390,22 @@ export default function FloatingChatPanel() {
             )}
 
             {noOpReason && (
-              <div className="border-t border-muted px-3 py-2 bg-muted/30">
-                <p className="text-xs text-muted-foreground">{noOpReason}</p>
+              <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50/60 dark:bg-slate-800/60">
+                <p className="text-xs text-slate-500 dark:text-slate-400">{noOpReason}</p>
               </div>
             )}
 
-            <div className="border-t px-3 py-2">
+            <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-2">
               {showSkills && skills.length > 0 && (
-                <div className="mb-2 max-h-32 overflow-y-auto rounded-md border bg-background shadow-sm">
+                <div className="mb-2 max-h-32 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 shadow-sm">
                   {skills.map((skill) => (
                     <button
                       key={skill.name}
                       onClick={() => handleSkillSelect(skill.command || skill.name)}
-                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-accent flex items-center gap-2"
+                      className="w-full px-3 py-1.5 text-left text-xs hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                     >
                       <span className="font-medium">/{skill.command || skill.name}</span>
-                      <span className="text-muted-foreground truncate">{skill.description}</span>
+                      <span className="text-slate-500 dark:text-slate-400 truncate">{skill.description}</span>
                     </button>
                   ))}
                 </div>
@@ -413,7 +413,7 @@ export default function FloatingChatPanel() {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  className="flex-1 px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white/80 dark:bg-slate-800/80 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                   placeholder={
                     hasPendingChange
                       ? "请先应用或撤回当前预览修改"
@@ -427,21 +427,21 @@ export default function FloatingChatPanel() {
                 <button
                   onClick={handleSend}
                   disabled={!input.trim() || disableActions}
-                  className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm hover:bg-primary/90 disabled:opacity-50"
+                  className="px-3 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-md text-sm hover:bg-slate-800 dark:hover:bg-slate-200 disabled:opacity-50 transition-colors"
                 >
                   发送
                 </button>
               </div>
             </div>
 
-            <div className="border-t px-4 py-3 space-y-3">
+            <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 space-y-3">
               {QUICK_ACTIONS.map((group) => (
                 <div key={group.category}>
                   <p className="text-xs font-semibold text-foreground">
                     {group.category}
                   </p>
                   {group.description && (
-                    <p className="text-xs text-muted-foreground mb-1.5">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1.5">
                       {group.description}
                     </p>
                   )}
@@ -453,7 +453,7 @@ export default function FloatingChatPanel() {
                           key={action.label}
                           onClick={() => handleQuickAction(action)}
                           disabled={disableActions}
-                          className="flex items-center gap-1.5 rounded-md border border-input px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                          className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 transition-all duration-200 hover:shadow-sm hover:-translate-y-0.5 hover:text-foreground disabled:opacity-50"
                         >
                           <Icon className="h-3.5 w-3.5 shrink-0" />
                           {action.label}
@@ -472,8 +472,8 @@ export default function FloatingChatPanel() {
         onClick={() => setIsOpen(!isOpen)}
         className={`fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 ${
           isOpen
-            ? "bg-muted text-muted-foreground"
-            : "bg-primary text-primary-foreground"
+            ? "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400"
+            : "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900"
         }`}
       >
         <Sparkles className="h-5 w-5" />

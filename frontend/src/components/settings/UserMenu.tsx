@@ -34,10 +34,10 @@ export default function UserMenu({ compact }: UserMenuProps) {
           {compact ? (
             <button
               type="button"
-              className="relative p-1 rounded-full hover:bg-muted transition-colors"
+              className="relative p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               <Avatar className="h-7 w-7">
-                <AvatarFallback className="text-xs bg-muted">
+                <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
                   <User className="h-3.5 w-3.5" />
                 </AvatarFallback>
               </Avatar>
@@ -48,11 +48,11 @@ export default function UserMenu({ compact }: UserMenuProps) {
           ) : (
             <button
               type="button"
-              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-muted transition-colors"
+              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               <div className="relative shrink-0">
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="text-xs bg-muted">
+                  <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
                     <User className="h-4 w-4" />
                   </AvatarFallback>
                 </Avatar>
