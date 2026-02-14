@@ -78,6 +78,8 @@ function escapeHtml(str: string): string {
 }
 
 function contentDataToHTML(layoutId: string, data: Record<string, unknown>): string {
+  // Existing contentData serializers are intentionally permissive for mixed legacy payloads.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const d = data as Record<string, any>;
 
   switch (layoutId) {

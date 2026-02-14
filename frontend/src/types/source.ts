@@ -22,4 +22,7 @@ export interface SourceMeta {
   status: SourceStatus;
   previewSnippet?: string;
   error?: string;
+  created_at?: string;
+  linked_session_count?: number;
+  deduped?: boolean;
 }

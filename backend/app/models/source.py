@@ -67,5 +67,8 @@ class SourceMeta(BaseModel):
     status: SourceStatus = SourceStatus.UPLOADING
     preview_snippet: str | None = Field(None, alias="previewSnippet")
     error: str | None = None
+    created_at: str | None = None
+    linked_session_count: int | None = None
+    deduped: bool | None = None
 
     model_config = {"populate_by_name": True}

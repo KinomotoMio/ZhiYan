@@ -3,6 +3,7 @@ import json
 import sqlite3
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import app
 
@@ -11,6 +12,7 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     import app.services.sessions as sessions_pkg
     from app.api.v1 import chat as chat_api
     from app.api.v1 import sessions as sessions_api
+    from app.api.v1 import workspaces as workspaces_api
     from app.api.v1 import workspace_sources as workspace_sources_api
     from app.api.v2 import generation as generation_api
     from app.services.sessions.store import SessionStore
@@ -22,6 +24,7 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions_api, "session_store", store)
     monkeypatch.setattr(chat_api, "session_store", store)
     monkeypatch.setattr(workspace_sources_api, "session_store", store)
+    monkeypatch.setattr(workspaces_api, "session_store", store)
     monkeypatch.setattr(generation_api, "session_store", store)
     return store
 
@@ -330,3 +333,114 @@ def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):
     persisted_content = persisted["slides"][0]["contentData"]
     assert "left" in persisted_content
     assert "right" in persisted_content
+
+
+def test_workspace_source_dedup_and_cross_workspace_isolation(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    h1 = {"X-Workspace-Id": "ws-a"}
+    h2 = {"X-Workspace-Id": "ws-b"}
+
+    first = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=h1,
+        json={"name": "文档A", "content": "same-content"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+
+    second = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=h1,
+        json={"name": "文档A-重复", "content": "same-content"},
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["id"] == first_payload["id"]
+    assert second_payload["deduped"] is True
+
+    cross = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=h2,
+        json={"name": "文档B", "content": "same-content"},
+    )
+    assert cross.status_code == 200
+    cross_payload = cross.json()
+    assert cross_payload["id"] != first_payload["id"]
+    assert not cross_payload.get("deduped", False)
+
+
+def test_workspace_sources_link_count_and_bulk_delete_cascade(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-a"}
+
+    session_resp = client.post("/api/v1/sessions", headers=headers, json={"title": "S1"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "可删除素材", "content": "delete me"},
+    )
+    assert source_resp.status_code == 200
+    source_id = source_resp.json()["id"]
+
+    link_resp = client.post(
+        f"/api/v1/sessions/{session_id}/sources/link",
+        headers=headers,
+        json={"source_ids": [source_id]},
+    )
+    assert link_resp.status_code == 200
+
+    listed = client.get(
+        "/api/v1/workspace/sources",
+        headers=headers,
+        params={"sort": "linked_desc"},
+    )
+    assert listed.status_code == 200
+    rows = listed.json()
+    row = next(item for item in rows if item["id"] == source_id)
+    assert row["linked_session_count"] == 1
+
+    deleted = client.post(
+        "/api/v1/workspace/sources/bulk-delete",
+        headers=headers,
+        json={"source_ids": [source_id]},
+    )
+    assert deleted.status_code == 200
+    assert source_id in deleted.json()["deleted_ids"]
+
+    session_sources = client.get(f"/api/v1/sessions/{session_id}/sources", headers=headers)
+    assert session_sources.status_code == 200
+    assert session_sources.json() == []
+
+
+def test_workspaces_current_and_owner_unique_index(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-current"}
+
+    current = client.get("/api/v1/workspaces/current", headers=headers)
+    assert current.status_code == 200
+    payload = current.json()
+    assert payload["id"] == "ws-current"
+
+    with sqlite3.connect(store._db_path) as conn:  # noqa: SLF001
+        conn.execute(
+            """
+            UPDATE workspaces
+            SET owner_type='user', owner_id='u-1'
+            WHERE id=?
+            """,
+            ("ws-current",),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                INSERT INTO workspaces(id, owner_type, owner_id, created_at, last_seen_at)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                ("ws-other", "user", "u-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )

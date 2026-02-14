@@ -60,7 +60,7 @@ function asErrorCode(value: unknown): GenerationErrorCode | null {
 export default function CreateForm() {
   const router = useRouter();
   const {
-    sources,
+    workspaceSources,
     selectedSourceIds,
     topic,
     setTopic,
@@ -106,11 +106,11 @@ export default function CreateForm() {
   const cancellingRef = useRef(false);
   const { status: settingsStatus, message: settingsMessage } = useSettingsStatus();
 
-  const readySources = sources.filter((s) => s.status === "ready");
+  const readySources = workspaceSources.filter((s) => s.status === "ready");
   const selectedReadySources = readySources.filter((s) =>
     selectedSourceIds.includes(s.id)
   );
-  const hasUploadingOrParsing = sources.some(
+  const hasUploadingOrParsing = workspaceSources.some(
     (s) => s.status === "uploading" || s.status === "parsing"
   );
   const canGenerate =

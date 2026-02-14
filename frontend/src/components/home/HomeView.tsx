@@ -13,8 +13,8 @@ import {
 } from "lucide-react";
 import {
   createSession,
+  getCurrentWorkspace,
   getLatestSessionPresentation,
-  getWorkspaceId,
   listSessions,
   listWorkspaceSources,
   type SessionSummary,
@@ -54,8 +54,8 @@ export default function HomeView() {
     const run = async () => {
       setLoading(true);
       try {
-        const ws = getWorkspaceId();
-        setWorkspaceId(ws);
+        const workspace = await getCurrentWorkspace();
+        setWorkspaceId(workspace.id);
         const [sessionItems, sourceItems] = await Promise.all([
           listSessions({ limit: 100, offset: 0 }),
           listWorkspaceSources({ limit: 500, offset: 0 }),
@@ -188,6 +188,13 @@ export default function HomeView() {
               >
                 <FilePlus2 className="h-4 w-4" />
                 新建演示稿
+              </button>
+              <button
+                onClick={() => router.push("/assets")}
+                className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white/70 px-5 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+              >
+                <Library className="h-4 w-4" />
+                素材库管理
               </button>
             </div>
           </div>
