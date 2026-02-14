@@ -97,7 +97,7 @@ export default function SessionEditorPage() {
             onClick={() => router.push("/")}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回创建页
+            返回主页
           </button>
         </div>
       </div>
@@ -124,7 +124,7 @@ export default function SessionEditorPage() {
             onClick={() => router.push("/")}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回创建页
+            返回主页
           </button>
         </div>
       </div>
@@ -140,7 +140,7 @@ export default function SessionEditorPage() {
             onClick={() => router.push("/")}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回创建页
+            返回主页
           </button>
         </div>
       </div>
@@ -149,8 +149,8 @@ export default function SessionEditorPage() {
 
   return (
     <EditorWorkspace
-      returnHref={`/?tab=sessions&session=${encodeURIComponent(sessionId)}`}
-      returnLabel="返回会话"
+      returnHref="/"
+      returnLabel="返回主页"
     />
   );
 }

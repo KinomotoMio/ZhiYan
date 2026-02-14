@@ -1,10 +1,5 @@
-import { Suspense } from "react";
-import CreateView from "@/components/create/CreateView";
+import HomeView from "@/components/home/HomeView";
 
-export default function CreatePage() {
-  return (
-    <Suspense>
-      <CreateView />
-    </Suspense>
-  );
+export default function HomePage() {
+  return <HomeView />;
 }

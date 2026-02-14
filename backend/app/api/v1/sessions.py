@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-from urllib.parse import urlparse
-from uuid import uuid4
-
-import httpx
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.models.session import (
@@ -36,15 +30,6 @@ class UpdateSessionRequest(BaseModel):
     archived: bool | None = None
 
 
-class UrlRequest(BaseModel):
-    url: str
-
-
-class TextRequest(BaseModel):
-    name: str
-    content: str
-
-
 class SnapshotRequest(BaseModel):
     snapshot_label: str = "手动快照"
     presentation: dict | None = None
@@ -54,32 +39,6 @@ class SessionChatWriteRequest(BaseModel):
     role: str
     content: str
     model_meta: dict = Field(default_factory=dict)
-
-
-def _snippet(text: str, max_len: int = 200) -> str:
-    content = text.strip()
-    if len(content) <= max_len:
-        return content
-    return content[:max_len] + "..."
-
-
-def _sync_parse_file(path: Path) -> str:
-    from markitdown import MarkItDown
-
-    from app.services.document.parser import normalize_markdown
-
-    converter = MarkItDown()
-    result = converter.convert(str(path))
-    return normalize_markdown(result.text_content)
-
-
-async def _save_and_parse_file(source_id: str, filename: str, file_bytes: bytes) -> tuple[str, str]:
-    file_dir = session_store.uploads_dir / source_id
-    file_dir.mkdir(parents=True, exist_ok=True)
-    file_path = file_dir / filename
-    await asyncio.to_thread(file_path.write_bytes, file_bytes)
-    content = await asyncio.to_thread(_sync_parse_file, file_path)
-    return str(file_path), content
 
 
 def _ensure_session_id(value: str) -> str:
@@ -172,127 +131,6 @@ async def list_session_sources(session_id: str, request: Request):
     return [SourceMeta.model_validate(item) for item in sources]
 
 
-@router.post("/{session_id}/sources/upload", response_model=SourceMeta)
-async def upload_source(session_id: str, request: Request, file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="缺少文件名")
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    source_id = f"src-{uuid4().hex[:16]}"
-    file_bytes = await file.read()
-    try:
-        storage_path, parsed_content = await _save_and_parse_file(
-            source_id=source_id,
-            filename=file.filename,
-            file_bytes=file_bytes,
-        )
-        from app.models.source import detect_file_category
-        from app.services.document.parser import estimate_tokens
-
-        meta = await session_store.create_source(
-            session_id=sid,
-            source_type="file",
-            name=file.filename,
-            file_category=detect_file_category(file.filename).value,
-            size=len(file_bytes),
-            status="ready",
-            preview_snippet=_snippet(parsed_content),
-            storage_path=storage_path,
-            parsed_content=parsed_content,
-            metadata={"estimated_tokens": estimate_tokens(parsed_content)},
-            source_id=source_id,
-        )
-    except Exception as e:
-        meta = await session_store.create_source(
-            session_id=sid,
-            source_type="file",
-            name=file.filename,
-            file_category=None,
-            size=len(file_bytes),
-            status="error",
-            preview_snippet=None,
-            storage_path=None,
-            parsed_content=None,
-            metadata={},
-            error=str(e),
-            source_id=source_id,
-        )
-    return SourceMeta.model_validate(meta)
-
-
-@router.post("/{session_id}/sources/url", response_model=SourceMeta)
-async def add_url_source(session_id: str, req: UrlRequest, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    source_id = f"src-{uuid4().hex[:16]}"
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            resp = await client.get(req.url)
-            resp.raise_for_status()
-        parsed = urlparse(req.url)
-        filename = Path(parsed.path).name or "page.html"
-        storage_path, parsed_content = await _save_and_parse_file(
-            source_id=source_id,
-            filename=filename,
-            file_bytes=resp.content,
-        )
-        from app.services.document.parser import estimate_tokens
-
-        meta = await session_store.create_source(
-            session_id=sid,
-            source_type="url",
-            name=req.url,
-            file_category=None,
-            size=len(resp.content),
-            status="ready",
-            preview_snippet=_snippet(parsed_content),
-            storage_path=storage_path,
-            parsed_content=parsed_content,
-            metadata={"estimated_tokens": estimate_tokens(parsed_content)},
-            source_id=source_id,
-        )
-    except Exception as e:
-        meta = await session_store.create_source(
-            session_id=sid,
-            source_type="url",
-            name=req.url,
-            file_category=None,
-            size=None,
-            status="error",
-            preview_snippet=None,
-            storage_path=None,
-            parsed_content=None,
-            metadata={},
-            error=str(e),
-            source_id=source_id,
-        )
-    return SourceMeta.model_validate(meta)
-
-
-@router.post("/{session_id}/sources/text", response_model=SourceMeta)
-async def add_text_source(session_id: str, req: TextRequest, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    from app.services.document.parser import estimate_tokens
-
-    meta = await session_store.create_source(
-        session_id=sid,
-        source_type="text",
-        name=req.name,
-        file_category="text",
-        size=len(req.content.encode("utf-8")),
-        status="ready",
-        preview_snippet=_snippet(req.content),
-        storage_path=None,
-        parsed_content=req.content,
-        metadata={"estimated_tokens": estimate_tokens(req.content)},
-    )
-    return SourceMeta.model_validate(meta)
-
-
 @router.get("/{session_id}/sources/{source_id}/content")
 async def get_session_source_content(session_id: str, source_id: str, request: Request):
     workspace_id = get_workspace_id_from_request(request)
@@ -305,17 +143,6 @@ async def get_session_source_content(session_id: str, source_id: str, request: R
     return {"content": content}
 
 
-@router.delete("/{session_id}/sources/{source_id}")
-async def delete_session_source(session_id: str, source_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    deleted = await session_store.delete_source(workspace_id, sid, source_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="来源不存在")
-    return {"ok": True}
-
-
 class LinkSourcesRequest(BaseModel):
     source_ids: list[str]
 
@@ -326,7 +153,16 @@ async def link_sources_to_session(session_id: str, req: LinkSourcesRequest, requ
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
     for source_id in req.source_ids:
-        await session_store.link_source_to_session(sid, source_id)
+        try:
+            await session_store.link_source_to_session(
+                session_id=sid,
+                source_id=source_id,
+                workspace_id=workspace_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except PermissionError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
     return {"ok": True}
 
 

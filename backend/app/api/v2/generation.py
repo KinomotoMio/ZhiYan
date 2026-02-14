@@ -36,8 +36,6 @@ logger = logging.getLogger(__name__)
 
 @router.post("/jobs", response_model=CreateJobResponse)
 async def create_generation_job(req: CreateJobRequest, request: Request):
-    from app.services.document.source_store import get_combined_content
-
     workspace_id = get_workspace_id_from_request(request)
     await session_store.ensure_workspace(workspace_id)
 
@@ -49,9 +47,11 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         session_id = created_session["id"]
 
     try:
-        await session_store.get_session(workspace_id, session_id)
+        session = await session_store.get_session(workspace_id, session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if session.get("has_presentation"):
+        raise HTTPException(status_code=409, detail="当前会话已有演示稿，请新建会话生成")
 
     if req.source_ids:
         source_content = await session_store.get_combined_source_content(
@@ -59,8 +59,6 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
             session_id,
             req.source_ids,
         )
-        if not source_content:
-            source_content = get_combined_content(req.source_ids)
         combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
 
     if not combined and not req.topic:

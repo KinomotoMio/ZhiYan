@@ -81,20 +81,10 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     content = state.raw_content
     token_count = estimate_tokens(content)
 
-    if state.source_ids:
-        from app.services.document.source_store import get_layer12_summaries
-
-        summaries = get_layer12_summaries(state.source_ids)
-        if summaries:
-            content_section = f"文档摘要:\n{summaries}\n\n"
-        else:
-            content_section = ""
-        if token_count <= 8000:
-            content_section += f"文档全文:\n{content}"
-        else:
-            content_section += f"文档内容（前 12000 字符）:\n{content[:12000]}"
+    if token_count <= 8000:
+        content_section = f"内容:\n{content}"
     else:
-        content_section = f"内容:\n{content[:12000]}"
+        content_section = f"内容（前 12000 字符）:\n{content[:12000]}"
 
     prompt = (
         f"演示文稿主题：{state.topic or '综合演示'}\n"
@@ -239,13 +229,7 @@ async def stage_generate_slides(
             slide_num = item["slide_number"]
             layout_id = layout_map.get(slide_num, "bullet-with-icons")
 
-            source_content = ""
-            if item.get("source_references"):
-                from app.services.document.source_store import get_combined_content
-
-                source_content = get_combined_content(item["source_references"])
-            if not source_content:
-                source_content = state.raw_content[:2000]
+            source_content = state.raw_content[:2000]
 
             try:
                 coro = generate_slide_content(

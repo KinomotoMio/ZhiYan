@@ -2,20 +2,22 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Ellipsis, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Ellipsis, Pencil, Plus, Trash2, ExternalLink } from "lucide-react";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
   appendSessionChat,
   createSession,
   createSessionSnapshot,
-  fetchSessionUrlSource,
+  fetchWorkspaceUrlSource,
   getSessionDetail,
   getWorkspaceId,
+  linkSourcesToSession,
   listSessions,
+  listWorkspaceSources,
   removeSession,
   unlinkSourceFromSession,
   updateSession,
-  uploadSessionSource,
+  uploadWorkspaceSource,
 } from "@/lib/api";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
@@ -32,7 +34,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { getSessionEditorPath } from "@/lib/routes";
+import {
+  getSessionEditorPath,
+  pickCreateLandingSessionId,
+  shouldAutoRedirectToEditor,
+} from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
 import type { Presentation } from "@/types/slide";
 
@@ -100,6 +106,9 @@ export default function SourcePanel() {
   } = useAppStore();
 
   const [sessionQuery, setSessionQuery] = useState("");
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [workspaceSources, setWorkspaceSources] = useState<SourceMeta[]>([]);
+  const [loadingWorkspaceSources, setLoadingWorkspaceSources] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
@@ -113,6 +122,10 @@ export default function SourcePanel() {
   ).length;
   const allSelected =
     readySources.length > 0 && selectedCount === readySources.length;
+  const linkedSourceIds = new Set(sources.map((item) => item.id));
+  const reusableWorkspaceSources = workspaceSources.filter(
+    (item) => !linkedSourceIds.has(item.id) && item.status === "ready"
+  );
 
   const currentSession = sessions.find((s) => s.id === currentSessionId);
   const currentSessionTitle = currentSession?.title || "未命名会话";
@@ -126,8 +139,24 @@ export default function SourcePanel() {
     [setSessions]
   );
 
+  const refreshWorkspaceSources = useCallback(async (q = "") => {
+    setLoadingWorkspaceSources(true);
+    try {
+      const result = await listWorkspaceSources({ q, limit: 100, offset: 0 });
+      setWorkspaceSources(result);
+      return result;
+    } finally {
+      setLoadingWorkspaceSources(false);
+    }
+  }, []);
+
   const loadSession = useCallback(
-    async (sessionId: string) => {
+    async (
+      sessionId: string,
+      options?: {
+        fromExplicitSessionParam?: boolean;
+      }
+    ) => {
       setLoadingSession(true);
       try {
         const detail = await getSessionDetail(sessionId);
@@ -143,8 +172,12 @@ export default function SourcePanel() {
         });
         resetJobState();
 
-        // Auto-redirect to editor if session already has a presentation
-        if (detail.latest_presentation) {
+        if (
+          shouldAutoRedirectToEditor(
+            Boolean(detail.latest_presentation),
+            Boolean(options?.fromExplicitSessionParam)
+          )
+        ) {
           router.push(getSessionEditorPath(sessionId));
           return;
         }
@@ -159,7 +192,7 @@ export default function SourcePanel() {
     async (title: string) => {
       const created = await createSession(title);
       upsertSession(created);
-      await loadSession(created.id);
+      await loadSession(created.id, { fromExplicitSessionParam: false });
       return created.id;
     },
     [loadSession, upsertSession]
@@ -176,6 +209,7 @@ export default function SourcePanel() {
       setWorkspaceId(wsId);
 
       let items = await refreshSessions();
+      await refreshWorkspaceSources();
       if (cancelled) return;
 
       if (items.length === 0) {
@@ -209,27 +243,32 @@ export default function SourcePanel() {
           }
           items = await refreshSessions();
           if (cancelled) return;
-          await loadSession(migratedSessionId);
+          await loadSession(migratedSessionId, { fromExplicitSessionParam: false });
           return;
         }
 
         const sid = await createAndOpenSession("未命名会话");
         items = await refreshSessions();
         if (cancelled) return;
-        await loadSession(sid);
+        await loadSession(sid, { fromExplicitSessionParam: false });
         return;
       }
 
-      const preferred =
-        preferredSessionId && items.some((item) => item.id === preferredSessionId)
-          ? preferredSessionId
-          : currentSessionId && items.some((item) => item.id === currentSessionId)
-          ? currentSessionId
-          : items[0]?.id;
-
-      if (preferred) {
-        await loadSession(preferred);
+      if (preferredSessionId && items.some((item) => item.id === preferredSessionId)) {
+        await loadSession(preferredSessionId, { fromExplicitSessionParam: true });
+        return;
       }
+
+      const landingSessionId = pickCreateLandingSessionId(items, currentSessionId);
+      if (landingSessionId) {
+        await loadSession(landingSessionId, { fromExplicitSessionParam: false });
+        return;
+      }
+
+      const sid = await createAndOpenSession("未命名会话");
+      await refreshSessions();
+      if (cancelled) return;
+      await loadSession(sid, { fromExplicitSessionParam: false });
     };
 
     run().catch((err) => {
@@ -239,7 +278,15 @@ export default function SourcePanel() {
     return () => {
       cancelled = true;
     };
-  }, [createAndOpenSession, currentSessionId, loadSession, preferredSessionId, refreshSessions, setWorkspaceId]);
+  }, [
+    createAndOpenSession,
+    currentSessionId,
+    loadSession,
+    preferredSessionId,
+    refreshSessions,
+    refreshWorkspaceSources,
+    setWorkspaceId,
+  ]);
 
   // Debounced session search
   useEffect(() => {
@@ -250,6 +297,15 @@ export default function SourcePanel() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [refreshSessions, sessionQuery]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      refreshWorkspaceSources(workspaceQuery).catch((err) => {
+        console.error("refresh workspace sources failed", err);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [refreshWorkspaceSources, workspaceQuery]);
 
   const ensureSession = useCallback(async () => {
     if (currentSessionId) return currentSessionId;
@@ -270,14 +326,16 @@ export default function SourcePanel() {
         });
 
         try {
-          const meta = await uploadSessionSource(sessionId, file, (pct) => {
+          const meta = await uploadWorkspaceSource(file, (pct) => {
             if (pct < 100) {
               updateSource(tempId, { status: "uploading" });
             }
           });
+          await linkSourcesToSession(sessionId, [meta.id]);
           removeSource(tempId);
           addSource(meta);
           refreshSessions(sessionQuery).catch(() => {});
+          refreshWorkspaceSources(workspaceQuery).catch(() => {});
         } catch {
           updateSource(tempId, {
             status: "error",
@@ -286,7 +344,16 @@ export default function SourcePanel() {
         }
       }
     },
-    [addSource, ensureSession, refreshSessions, removeSource, sessionQuery, updateSource]
+    [
+      addSource,
+      ensureSession,
+      refreshSessions,
+      refreshWorkspaceSources,
+      removeSource,
+      sessionQuery,
+      updateSource,
+      workspaceQuery,
+    ]
   );
 
   const handleUrlSubmit = useCallback(
@@ -301,15 +368,36 @@ export default function SourcePanel() {
       });
 
       try {
-        const meta = await fetchSessionUrlSource(sessionId, url);
+        const meta = await fetchWorkspaceUrlSource(url);
+        await linkSourcesToSession(sessionId, [meta.id]);
         removeSource(tempId);
         addSource(meta);
         refreshSessions(sessionQuery).catch(() => {});
+        refreshWorkspaceSources(workspaceQuery).catch(() => {});
       } catch {
         updateSource(tempId, { status: "error", error: "抓取失败" });
       }
     },
-    [addSource, ensureSession, refreshSessions, removeSource, sessionQuery, updateSource]
+    [
+      addSource,
+      ensureSession,
+      refreshSessions,
+      refreshWorkspaceSources,
+      removeSource,
+      sessionQuery,
+      updateSource,
+      workspaceQuery,
+    ]
+  );
+
+  const handleAttachWorkspaceSource = useCallback(
+    async (source: SourceMeta) => {
+      const sessionId = await ensureSession();
+      await linkSourcesToSession(sessionId, [source.id]);
+      addSource(source);
+      refreshSessions(sessionQuery).catch(() => {});
+    },
+    [addSource, ensureSession, refreshSessions, sessionQuery]
   );
 
   const handleRemoveSource = useCallback(
@@ -358,8 +446,9 @@ export default function SourcePanel() {
     await removeSession(deleteTarget.id);
     removeSessionEntry(deleteTarget.id);
     const next = await refreshSessions("");
-    if (next.length > 0) {
-      await loadSession(next[0].id);
+    const landingSessionId = pickCreateLandingSessionId(next, null);
+    if (landingSessionId) {
+      await loadSession(landingSessionId, { fromExplicitSessionParam: false });
     } else {
       await handleCreateSession();
     }
@@ -442,7 +531,7 @@ export default function SourcePanel() {
             sessionQuery={sessionQuery}
             onSessionQueryChange={setSessionQuery}
             onSelectSession={(id) => {
-              void loadSession(id);
+              void loadSession(id, { fromExplicitSessionParam: true });
             }}
             onCreateSession={() => {
               void handleCreateSession();
@@ -549,6 +638,52 @@ export default function SourcePanel() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Workspace library */}
+        <div className="border-t border-border px-3 py-2">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Workspace 素材库
+            </h3>
+            <span className="text-xs text-muted-foreground">
+              {loadingWorkspaceSources ? "加载中..." : `${workspaceSources.length} 条`}
+            </span>
+          </div>
+          <input
+            value={workspaceQuery}
+            onChange={(e) => setWorkspaceQuery(e.target.value)}
+            placeholder="检索素材库..."
+            className="mb-2 h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="max-h-28 space-y-1 overflow-y-auto">
+            {reusableWorkspaceSources.length === 0 ? (
+              <p className="py-2 text-xs text-muted-foreground">
+                暂无可复用素材（当前会话已全部关联或素材库为空）
+              </p>
+            ) : (
+              reusableWorkspaceSources.slice(0, 8).map((source) => (
+                <div
+                  key={`workspace-${source.id}`}
+                  className="flex items-center justify-between rounded-md border border-border bg-card px-2 py-1.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium">{source.name}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{source.type}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      void handleAttachWorkspaceSource(source);
+                    }}
+                    className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    aria-label="关联到当前会话"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Add source area */}

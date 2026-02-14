@@ -214,69 +214,6 @@ export async function listSessionSources(sessionId: string): Promise<SourceMeta[
   return res.json();
 }
 
-export async function uploadSessionSource(
-  sessionId: string,
-  file: File,
-  onProgress?: (pct: number) => void
-): Promise<SourceMeta> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/api/v1/sessions/${sessionId}/sources/upload`);
-    xhr.setRequestHeader("X-Workspace-Id", getWorkspaceId());
-
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
-    }
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(JSON.parse(xhr.responseText));
-      } else {
-        reject(new Error(`上传失败: ${xhr.statusText}`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("网络错误"));
-
-    const formData = new FormData();
-    formData.append("file", file);
-    xhr.send(formData);
-  });
-}
-
-export async function fetchSessionUrlSource(sessionId: string, url: string): Promise<SourceMeta> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/url`, {
-    method: "POST",
-    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ url }),
-  });
-  if (!res.ok) throw new Error(`URL 抓取失败: ${res.statusText}`);
-  return res.json();
-}
-
-export async function addSessionTextSource(
-  sessionId: string,
-  name: string,
-  content: string
-): Promise<SourceMeta> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/text`, {
-    method: "POST",
-    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ name, content }),
-  });
-  if (!res.ok) throw new Error(`添加文本失败: ${res.statusText}`);
-  return res.json();
-}
-
-export async function deleteSessionSource(sessionId: string, sourceId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/${sourceId}`, {
-    method: "DELETE",
-    headers: withWorkspaceHeaders(),
-  });
-  if (!res.ok) throw new Error(`删除来源失败: ${res.statusText}`);
-}
-
 export async function getSessionSourceContent(
   sessionId: string,
   sourceId: string
@@ -344,6 +281,16 @@ export async function fetchWorkspaceUrlSource(url: string): Promise<SourceMeta> 
     body: JSON.stringify({ url }),
   });
   if (!res.ok) throw new Error(`URL 抓取失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function addWorkspaceTextSource(name: string, content: string): Promise<SourceMeta> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/text`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) throw new Error(`添加文本失败: ${res.statusText}`);
   return res.json();
 }
 
