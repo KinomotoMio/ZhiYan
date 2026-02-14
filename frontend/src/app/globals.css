@@ -124,3 +124,52 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  /* 页面渐变背景（比首页更轻，用于工作区页面） */
+  .zy-bg-page {
+    background:
+      radial-gradient(circle at 12% 10%, rgba(56,189,248,0.10), transparent 46%),
+      radial-gradient(circle at 86% 8%, rgba(20,184,166,0.08), transparent 36%),
+      linear-gradient(165deg, rgba(248,250,252,0.97) 10%, rgba(239,246,255,0.96) 48%, rgba(236,253,245,0.94) 100%);
+  }
+
+  /* 毛玻璃卡片 */
+  .zy-card-glass {
+    @apply rounded-2xl border border-white/60 bg-card/80 backdrop-blur-xl
+           shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)];
+  }
+
+  /* 轻量内嵌区块 */
+  .zy-card-inner {
+    @apply rounded-2xl border border-white/80 bg-white/75;
+  }
+
+  /* 列表项 hover 抬升 */
+  .zy-list-item {
+    @apply rounded-lg border border-slate-200 bg-white/80
+           transition-all duration-200
+           hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md;
+  }
+
+  /* Dark mode 变体 */
+  .dark .zy-bg-page {
+    background:
+      radial-gradient(circle at 12% 10%, rgba(56,189,248,0.06), transparent 46%),
+      radial-gradient(circle at 86% 8%, rgba(20,184,166,0.04), transparent 36%),
+      linear-gradient(165deg, rgba(15,23,42,0.97) 10%, rgba(15,23,42,0.96) 48%, rgba(15,23,42,0.94) 100%);
+  }
+
+  .dark .zy-card-glass {
+    @apply border-slate-700 bg-slate-800/80;
+  }
+
+  .dark .zy-card-inner {
+    @apply border-slate-700 bg-slate-800/75;
+  }
+
+  .dark .zy-list-item {
+    @apply border-slate-700 bg-slate-800/80
+           hover:border-slate-600 hover:bg-slate-800;
+  }
+}

@@ -590,8 +590,8 @@ export default function SourcePanel() {
     <>
       <div
         className={cn(
-          "relative flex w-[340px] shrink-0 flex-col border-r border-border bg-muted/30",
-          isDragOver && "ring-2 ring-inset ring-primary/50"
+          "relative flex w-[340px] shrink-0 flex-col border-r border-white/60 bg-card/60 backdrop-blur-md",
+          isDragOver && "ring-2 ring-inset ring-cyan-500/50"
         )}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -605,7 +605,7 @@ export default function SourcePanel() {
           </div>
         )}
 
-        <div className="flex items-center gap-1 border-b border-border px-3 py-2.5">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 px-3 py-2.5">
           <SessionSwitcher
             sessions={sessions}
             currentSessionId={currentSessionId}
@@ -672,7 +672,7 @@ export default function SourcePanel() {
           </DropdownMenu>
         </div>
 
-        <div className="border-b border-border px-4 py-3">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3">
           <div className="flex items-center gap-2">
             {readySources.length > 0 && (
               <input
@@ -687,7 +687,7 @@ export default function SourcePanel() {
             )}
             <h2 className="text-sm font-semibold">素材库</h2>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             {loadingWorkspaceSources
               ? "加载素材中..."
               : readySources.length > 0
@@ -696,19 +696,19 @@ export default function SourcePanel() {
           </p>
         </div>
 
-        <div className="border-b border-border px-3 py-2">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-3 py-2">
           <input
             value={workspaceQuery}
             onChange={(e) => setWorkspaceQuery(e.target.value)}
             placeholder="检索素材..."
-            className="mb-2 h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+            className="mb-2 h-8 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
           />
           <div className="flex gap-1">
             <button
               onClick={() => setSourceFilterMode("all")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs",
-                sourceFilterMode === "all" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+                "rounded-md px-2 py-1 text-xs transition-colors",
+                sourceFilterMode === "all" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
               )}
             >
               全部
@@ -716,8 +716,8 @@ export default function SourcePanel() {
             <button
               onClick={() => setSourceFilterMode("selected")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs",
-                sourceFilterMode === "selected" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+                "rounded-md px-2 py-1 text-xs transition-colors",
+                sourceFilterMode === "selected" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
               )}
             >
               已勾选
@@ -725,15 +725,15 @@ export default function SourcePanel() {
             <button
               onClick={() => setSourceFilterMode("unselected")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs",
-                sourceFilterMode === "unselected" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+                "rounded-md px-2 py-1 text-xs transition-colors",
+                sourceFilterMode === "unselected" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
               )}
             >
               未勾选
             </button>
             <button
               onClick={() => router.push("/assets")}
-              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-foreground"
             >
               <FolderOpen className="h-3.5 w-3.5" />
               管理素材库
@@ -743,7 +743,7 @@ export default function SourcePanel() {
 
         <div className="flex-1 overflow-y-auto px-3 py-2">
           {visibleSources.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-slate-500 dark:text-slate-400">
               <p>当前没有可显示素材</p>
               <p className="mt-1 text-xs">上传文档、粘贴网址，即可开始生成</p>
             </div>
@@ -770,7 +770,7 @@ export default function SourcePanel() {
           )}
         </div>
 
-        <div className="border-t border-border px-3 py-3">
+        <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-3">
           <AddSourceArea
             onFilesSelected={(files) => {
               void handleUploadFiles(files);
@@ -781,7 +781,7 @@ export default function SourcePanel() {
           />
         </div>
 
-        <div className="border-t border-border px-2 py-2">
+        <div className="border-t border-slate-200 dark:border-slate-700 px-2 py-2">
           <UserMenu />
         </div>
       </div>

@@ -105,18 +105,18 @@ export default function GenerationProgress({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="w-full max-w-md space-y-4 rounded-xl border bg-background p-6 shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl">
+      <div className="w-full max-w-md space-y-4 rounded-2xl border border-white/60 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.35)]">
         <div className="flex items-center gap-3">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          <Loader2 className="h-5 w-5 animate-spin text-cyan-600" />
           <span className="text-sm font-medium">AI 正在生成演示文稿</span>
         </div>
         <Progress value={pct} className="h-2" />
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <span>{progress?.message || "准备中..."}</span>
           <span>{stageLabel}</span>
         </div>
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <span>
             {progress
               ? `阶段 ${progress.step}/${progress.totalSteps}`
@@ -128,7 +128,7 @@ export default function GenerationProgress({
               : "页面 0/0"}
           </span>
         </div>
-        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
           <div className="flex items-center justify-between">
             <span>连接状态</span>
             <span className={connectionStale ? "text-amber-600" : "text-emerald-600"}>
@@ -158,7 +158,7 @@ export default function GenerationProgress({
         <button
           type="button"
           onClick={onCancel}
-          className="w-full py-2 text-sm border rounded-md hover:bg-muted transition-colors"
+          className="w-full py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm transition-all duration-200"
         >
           取消生成
         </button>
@@ -166,7 +166,7 @@ export default function GenerationProgress({
           <button
             type="button"
             onClick={onRetry}
-            className="w-full py-2 text-sm border rounded-md hover:bg-muted transition-colors"
+            className="w-full py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm transition-all duration-200"
           >
             重试生成
           </button>

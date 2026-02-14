@@ -49,7 +49,7 @@ const TEMPLATES: TemplateConfig[] = [
 function MiniPreview({ colors }: { colors: TemplateConfig["previewColors"] }) {
   return (
     <div
-      className="aspect-[16/10] w-full rounded-sm overflow-hidden border border-border/50"
+      className="aspect-[16/10] w-full rounded-sm overflow-hidden border border-slate-200/50 dark:border-slate-700/50"
       style={{ backgroundColor: colors.bg }}
     >
       <div className="px-2 pt-2">
@@ -134,11 +134,11 @@ export default function TemplateSelector() {
       <div className="flex items-center justify-between">
         <label className="text-sm font-medium">选择模板</label>
         <div className="flex items-center gap-1.5">
-          <label className="text-xs text-muted-foreground">页数</label>
+          <label className="text-xs text-slate-500 dark:text-slate-400">页数</label>
           <select
             value={numPages}
             onChange={(e) => setNumPages(Number(e.target.value))}
-            className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+            className="h-7 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-xs"
           >
             {Array.from({ length: 12 - 3 + 1 }, (_, i) => i + 3).map((n) => (
               <option key={n} value={n}>
@@ -158,14 +158,14 @@ export default function TemplateSelector() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-muted-foreground/30 p-2 transition-colors hover:border-primary/50 hover:bg-accent/30 disabled:opacity-50"
+          className="flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 p-2 transition-all duration-200 hover:border-slate-400 dark:hover:border-slate-500 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:shadow-sm disabled:opacity-50"
         >
           {uploading ? (
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <Loader2 className="h-5 w-5 animate-spin text-slate-400 dark:text-slate-500" />
           ) : (
-            <Upload className="h-5 w-5 text-muted-foreground" />
+            <Upload className="h-5 w-5 text-slate-400 dark:text-slate-500" />
           )}
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-slate-500 dark:text-slate-400">
             {uploading ? "导入中..." : "导入模板"}
           </span>
         </button>
@@ -185,10 +185,10 @@ export default function TemplateSelector() {
               key={t.id}
               onClick={() => setSelectedTemplateId(t.id)}
               className={cn(
-                "flex flex-col gap-1.5 rounded-lg border p-2 text-left transition-all",
+                "flex flex-col gap-1.5 rounded-lg border p-2 text-left transition-all duration-200",
                 isSelected
-                  ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                  : "border-input hover:border-primary/50"
+                  ? "border-cyan-300 dark:border-cyan-600 bg-cyan-50/40 dark:bg-cyan-900/20 ring-1 ring-cyan-200/60 dark:ring-cyan-700/40"
+                  : "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 hover:shadow-sm hover:-translate-y-0.5"
               )}
             >
               <MiniPreview colors={t.previewColors} />

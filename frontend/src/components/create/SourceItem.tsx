@@ -71,10 +71,10 @@ export default function SourceItem({
       className={cn(
         "group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors",
         isError
-          ? "border-red-300 bg-red-50"
+          ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
           : isReady
-            ? "border-border bg-card hover:bg-accent/50 cursor-pointer"
-            : "border-border bg-card"
+            ? "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 hover:-translate-y-0.5 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-white dark:hover:bg-slate-800 hover:shadow-md cursor-pointer transition-all duration-200"
+            : "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80"
       )}
       onClick={() => isReady && onPreview(source)}
       onMouseEnter={() => isReady && source.previewSnippet && setShowPopover(true)}
@@ -92,7 +92,7 @@ export default function SourceItem({
       )}
 
       {/* 图标 */}
-      <div className="shrink-0 text-muted-foreground">
+      <div className="shrink-0 text-slate-400 dark:text-slate-500">
         {isParsing || isUploading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : isError ? (
@@ -105,7 +105,7 @@ export default function SourceItem({
       {/* 名称和状态 */}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{source.name}</p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           {isError && source.error ? (
             <span className="text-red-500">{source.error}</span>
           ) : isParsing ? (
@@ -128,15 +128,15 @@ export default function SourceItem({
           className="shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
           aria-label="删除来源"
         >
-          <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+          <X className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500 hover:text-destructive" />
         </button>
       )}
 
       {/* Hover 预览浮层 */}
       {showPopover && source.previewSnippet && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover p-3 shadow-lg">
-          <p className="text-xs text-muted-foreground line-clamp-4">{source.previewSnippet}</p>
-          {extraMeta ? <p className="mt-2 text-[11px] text-muted-foreground">{extraMeta}</p> : null}
+        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm p-3 shadow-lg">
+          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">{source.previewSnippet}</p>
+          {extraMeta ? <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p> : null}
         </div>
       )}
     </div>

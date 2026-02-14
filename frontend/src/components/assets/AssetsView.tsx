@@ -131,31 +131,31 @@ export default function AssetsView() {
 
   return (
     <>
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen zy-bg-page">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-6">
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => router.push("/create")}
-              className="inline-flex items-center gap-2 rounded-md border border-input px-3 py-2 text-sm hover:bg-accent"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-3 py-2 text-sm hover:shadow-md hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/60 transition-all duration-200"
             >
               <ArrowLeft className="h-4 w-4" />
               返回创建页
             </button>
             <h1 className="text-lg font-semibold">Workspace 素材库</h1>
-            <p className="text-sm text-muted-foreground">Workspace 级素材管理</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Workspace 级素材管理</p>
           </div>
 
-          <div className="grid gap-3 rounded-xl border border-border bg-card p-4 md:grid-cols-[2fr_1fr_1fr_1fr_auto]">
+          <div className="grid gap-3 rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 md:grid-cols-[2fr_1fr_1fr_1fr_auto]">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索素材名称..."
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-10 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             />
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+              className="h-10 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-sm"
             >
               <option value="all">全部类型</option>
               <option value="file">文件</option>
@@ -165,7 +165,7 @@ export default function AssetsView() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+              className="h-10 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-sm"
             >
               <option value="all">全部状态</option>
               <option value="ready">可用</option>
@@ -176,7 +176,7 @@ export default function AssetsView() {
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as typeof sort)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+              className="h-10 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-sm"
             >
               <option value="created_desc">最近创建</option>
               <option value="name_asc">名称 A-Z</option>
@@ -186,13 +186,13 @@ export default function AssetsView() {
               onClick={() => {
                 void refreshWorkspaceSources();
               }}
-              className="h-10 rounded-md border border-input px-3 text-sm hover:bg-accent"
+              className="h-10 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-3 text-sm hover:shadow-sm transition-all duration-200"
             >
               刷新
             </button>
           </div>
 
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4">
             <AddSourceArea
               onFilesSelected={(files) => {
                 void handleUploadFiles(files);
@@ -211,7 +211,7 @@ export default function AssetsView() {
               className="h-4 w-4 rounded border-gray-300 accent-primary"
               aria-label="全选删除"
             />
-            <span className="text-sm text-muted-foreground">
+            <span className="text-sm text-slate-500 dark:text-slate-400">
               已选 {selectedForDelete.length} 条用于批量删除
             </span>
             <button
@@ -228,12 +228,12 @@ export default function AssetsView() {
 
           <div className="space-y-2">
             {loading ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">素材加载中...</p>
+              <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">素材加载中...</p>
             ) : items.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">暂无素材</p>
+              <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">暂无素材</p>
             ) : (
               items.map((source) => (
-                <div key={source.id} className="flex items-start gap-3 rounded-lg border border-border p-2">
+                <div key={source.id} className="flex items-start gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 p-2 hover:shadow-sm transition-all duration-200">
                   <input
                     type="checkbox"
                     checked={selectedForDelete.includes(source.id)}
