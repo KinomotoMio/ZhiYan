@@ -203,7 +203,7 @@ export default function HomeView() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,rgba(56,189,248,0.26),transparent_46%),radial-gradient(circle_at_86%_8%,rgba(20,184,166,0.2),transparent_36%),radial-gradient(circle_at_58%_86%,rgba(251,191,36,0.16),transparent_42%),linear-gradient(165deg,rgba(248,250,252,0.95)_10%,rgba(239,246,255,0.94)_48%,rgba(236,253,245,0.9)_100%)]">
-      <main className="relative mx-auto w-full max-w-6xl px-6 py-10">
+      <main className="relative mx-auto w-full max-w-[1480px] px-4 py-10 md:px-6 lg:px-8">
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-teal-200/40 blur-3xl" />
 
