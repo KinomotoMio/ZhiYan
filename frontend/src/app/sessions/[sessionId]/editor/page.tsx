@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import { getSessionDetail } from "@/lib/api";
@@ -28,18 +28,33 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
     .filter((item) => item.content.trim().length > 0);
 }
 
+function parseSlideQueryToIndex(rawSlide: string | null, totalSlides: number): number {
+  if (totalSlides <= 0 || !rawSlide) return 0;
+  if (!/^\d+$/.test(rawSlide)) return 0;
+
+  const requested = Number.parseInt(rawSlide, 10);
+  if (!Number.isFinite(requested)) return 0;
+
+  const oneBased = Math.max(1, requested);
+  const clamped = Math.min(oneBased, totalSlides);
+  return clamped - 1;
+}
+
 export default function SessionEditorPage() {
   const params = useParams<{ sessionId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const sessionId = useMemo(() => {
     const value = params?.sessionId;
     return typeof value === "string" ? value : "";
   }, [params]);
+  const requestedSlide = searchParams.get("slide");
 
   const [state, setState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("会话不存在或无权限访问。");
   const setCurrentSessionId = useAppStore((store) => store.setCurrentSessionId);
   const setSessionData = useAppStore((store) => store.setSessionData);
+  const setCurrentSlideIndex = useAppStore((store) => store.setCurrentSlideIndex);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -59,6 +74,10 @@ export default function SessionEditorPage() {
             : null;
         const presentation =
           detail.latest_presentation?.presentation ?? localPresentation ?? null;
+        const initialSlideIndex = parseSlideQueryToIndex(
+          requestedSlide,
+          presentation?.slides.length ?? 0
+        );
 
         setCurrentSessionId(sessionId);
         setSessionData({
@@ -66,6 +85,7 @@ export default function SessionEditorPage() {
           chatMessages,
           presentation,
         });
+        setCurrentSlideIndex(initialSlideIndex);
 
         if (presentation) {
           setState("ready");
@@ -86,7 +106,7 @@ export default function SessionEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, setCurrentSessionId, setSessionData]);
+  }, [requestedSlide, sessionId, setCurrentSessionId, setCurrentSlideIndex, setSessionData]);
 
   if (!sessionId) {
     return (

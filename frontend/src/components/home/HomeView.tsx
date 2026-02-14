@@ -19,8 +19,10 @@ import {
   listWorkspaceSources,
   type SessionSummary,
 } from "@/lib/api";
+import RecentResultCarousel from "@/components/home/RecentResultCarousel";
 import { useAppStore } from "@/lib/store";
 import { getSessionEditorPath } from "@/lib/routes";
+import type { Presentation } from "@/types/slide";
 
 function formatUpdatedAt(iso: string): string {
   const date = new Date(iso);
@@ -47,6 +49,9 @@ export default function HomeView() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [workspaceSourceCount, setWorkspaceSourceCount] = useState(0);
   const [resultFileNames, setResultFileNames] = useState<Record<string, string>>({});
+  const [latestResultPresentation, setLatestResultPresentation] = useState<Presentation | null>(null);
+  const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
+  const [isPreviewHovered, setIsPreviewHovered] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -92,6 +97,9 @@ export default function HomeView() {
     const targets = resultSessions.slice(0, 6);
     if (targets.length === 0) {
       setResultFileNames({});
+      setLatestResultPresentation(null);
+      setPreviewSlideIndex(0);
+      setIsPreviewHovered(false);
       return () => {
         cancelled = true;
       };
@@ -101,6 +109,9 @@ export default function HomeView() {
       targets.map((item) => [item.id, toPptFileDisplayName(undefined, item.title)])
     );
     setResultFileNames(fallbackMap);
+    setLatestResultPresentation(null);
+    setPreviewSlideIndex(0);
+    setIsPreviewHovered(false);
 
     const run = async () => {
       const settled = await Promise.allSettled(
@@ -109,18 +120,26 @@ export default function HomeView() {
           return {
             sessionId: session.id,
             fileName: toPptFileDisplayName(latest?.presentation?.title, session.title),
+            presentation: latest?.presentation ?? null,
           };
         })
       );
       if (cancelled) return;
 
       const nextMap = { ...fallbackMap };
+      let latestPresentation: Presentation | null = null;
       for (const item of settled) {
         if (item.status === "fulfilled") {
           nextMap[item.value.sessionId] = item.value.fileName;
+          if (item.value.sessionId === targets[0]?.id) {
+            latestPresentation = item.value.presentation;
+          }
         }
       }
       setResultFileNames(nextMap);
+      setLatestResultPresentation(latestPresentation);
+      setPreviewSlideIndex(0);
+      setIsPreviewHovered(false);
     };
 
     run().catch((err) => {
@@ -138,9 +157,13 @@ export default function HomeView() {
     router.push(`/create?session=${encodeURIComponent(created.id)}`);
   };
 
-  const handleOpenSession = (session: SessionSummary) => {
+  const handleOpenSession = (session: SessionSummary, options?: { slide?: number }) => {
     setCurrentSessionId(session.id);
     if (session.has_presentation) {
+      if (options?.slide) {
+        router.push(getSessionEditorPath(session.id, { slide: options.slide }));
+        return;
+      }
       router.push(getSessionEditorPath(session.id));
       return;
     }
@@ -161,8 +184,8 @@ export default function HomeView() {
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-teal-200/40 blur-3xl" />
 
-        <section className="grid gap-6 rounded-3xl border border-white/60 bg-card/80 p-7 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[1.35fr_1fr]">
-          <div>
+        <section className="grid gap-6 rounded-3xl border border-white/60 bg-card/80 p-7 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[1.1fr_1.25fr]">
+          <div className="min-w-0">
             <p className="inline-flex rounded-full border border-cyan-200/70 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.17em] text-slate-600">
               ZhiYan Workspace
             </p>
@@ -199,7 +222,7 @@ export default function HomeView() {
             </div>
           </div>
 
-          <aside className="rounded-2xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)]">
+          <aside className="flex min-h-[440px] min-w-0 flex-col rounded-2xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)]">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <FileText className="h-4 w-4 text-cyan-600" />
               最近成果预览
@@ -207,7 +230,7 @@ export default function HomeView() {
             {loading ? (
               <p className="py-7 text-sm text-slate-500">加载最近成果...</p>
             ) : latestResultSession ? (
-              <div className="space-y-3">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
                 <p className="truncate text-base font-semibold text-slate-900">
                   {resultFileNames[latestResultSession.id] ||
                     toPptFileDisplayName(undefined, latestResultSession.title)}
@@ -217,13 +240,24 @@ export default function HomeView() {
                   <br />
                   更新时间：{formatUpdatedAt(latestResultSession.updated_at)}
                 </p>
-                <button
-                  onClick={() => handleOpenSession(latestResultSession)}
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-cyan-200 bg-white/80 px-3 text-sm font-medium text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
-                >
-                  打开编辑器
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                {latestResultPresentation?.slides?.length ? (
+                  <div className="min-h-0 flex-1">
+                    <RecentResultCarousel
+                      presentation={latestResultPresentation}
+                      previewSlideIndex={previewSlideIndex}
+                      setPreviewSlideIndex={setPreviewSlideIndex}
+                      isPreviewHovered={isPreviewHovered}
+                      setIsPreviewHovered={setIsPreviewHovered}
+                      onOpenCurrentSlide={() =>
+                        handleOpenSession(latestResultSession, { slide: previewSlideIndex + 1 })
+                      }
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-1 items-center rounded-xl border border-cyan-100/80 bg-white/70 px-4 text-sm leading-6 text-slate-600">
+                    暂时无法加载该成果的页面预览，你仍可直接进入编辑器继续修改。
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -239,13 +273,6 @@ export default function HomeView() {
                 </button>
               </div>
             )}
-            <button
-              onClick={() => router.push("/create")}
-              className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800"
-            >
-              <FolderOpenDot className="h-3.5 w-3.5" />
-              进入创建工作台
-            </button>
           </aside>
         </section>
 
