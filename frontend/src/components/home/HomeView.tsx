@@ -192,9 +192,6 @@ export default function HomeView() {
             <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">
               先继续成果，或开始一份新的演示稿
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-              首页聚焦成果与分流；工作台负责素材组织与生成。
-            </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <button
                 onClick={handlePrimaryAction}
