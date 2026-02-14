@@ -4,6 +4,8 @@ import type { SourceMeta } from "@/types/source";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WORKSPACE_STORAGE_KEY = "zhiyan-workspace-id";
 const LOCAL_FALLBACK_WORKSPACE_ID = "workspace-local-default";
+let providerWorkspaceId: WorkspaceId | null = null;
+let currentWorkspacePromise: Promise<WorkspaceInfo> | null = null;
 
 function generateWorkspaceId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -15,12 +17,55 @@ function generateWorkspaceId(): string {
 export type WorkspaceId = string;
 
 export function getWorkspaceId(): WorkspaceId {
+  if (providerWorkspaceId) return providerWorkspaceId;
   if (typeof window === "undefined") return LOCAL_FALLBACK_WORKSPACE_ID;
   const cached = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
   if (cached) return cached;
   const created = generateWorkspaceId();
   window.localStorage.setItem(WORKSPACE_STORAGE_KEY, created);
   return created;
+}
+
+export interface WorkspaceInfo {
+  id: WorkspaceId;
+  label?: string | null;
+  owner_type?: string | null;
+  owner_id?: string | null;
+  created_at?: string | null;
+  last_seen_at?: string | null;
+}
+
+function rememberWorkspaceId(id: WorkspaceId): void {
+  providerWorkspaceId = id;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, id);
+  }
+}
+
+export async function getCurrentWorkspace(forceRefresh = false): Promise<WorkspaceInfo> {
+  if (!forceRefresh && currentWorkspacePromise) {
+    return currentWorkspacePromise;
+  }
+  currentWorkspacePromise = (async () => {
+    const res = await fetch(`${API_BASE}/api/v1/workspaces/current`, {
+      headers: withWorkspaceHeaders(),
+    });
+    if (!res.ok) {
+      const fallback = getWorkspaceId();
+      return { id: fallback };
+    }
+    const payload = (await res.json()) as WorkspaceInfo;
+    const nextId = payload.id || getWorkspaceId();
+    rememberWorkspaceId(nextId);
+    return { ...payload, id: nextId };
+  })();
+
+  try {
+    return await currentWorkspacePromise;
+  } catch {
+    const fallback = getWorkspaceId();
+    return { id: fallback };
+  }
 }
 
 function withWorkspaceHeaders(headers: HeadersInit = {}): HeadersInit {
@@ -229,11 +274,17 @@ export async function getSessionSourceContent(
 
 export async function listWorkspaceSources(params?: {
   q?: string;
+  type?: "file" | "url" | "text";
+  status?: "uploading" | "parsing" | "ready" | "error";
+  sort?: "created_desc" | "created_asc" | "name_asc" | "name_desc" | "linked_desc";
   limit?: number;
   offset?: number;
 }): Promise<SourceMeta[]> {
   const search = new URLSearchParams();
   if (params?.q) search.set("q", params.q);
+  if (params?.type) search.set("type", params.type);
+  if (params?.status) search.set("status", params.status);
+  if (params?.sort) search.set("sort", params.sort);
   if (typeof params?.limit === "number") search.set("limit", String(params.limit));
   if (typeof params?.offset === "number") search.set("offset", String(params.offset));
 
@@ -308,6 +359,19 @@ export async function deleteWorkspaceSource(sourceId: string): Promise<void> {
     headers: withWorkspaceHeaders(),
   });
   if (!res.ok) throw new Error(`删除来源失败: ${res.statusText}`);
+}
+
+export async function bulkDeleteWorkspaceSources(sourceIds: string[]): Promise<{
+  deleted_ids: string[];
+  not_found_ids: string[];
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/bulk-delete`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ source_ids: sourceIds }),
+  });
+  if (!res.ok) throw new Error(`批量删除来源失败: ${res.statusText}`);
+  return res.json();
 }
 
 export async function linkSourcesToSession(sessionId: string, sourceIds: string[]): Promise<void> {

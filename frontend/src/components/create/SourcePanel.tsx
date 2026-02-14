@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Ellipsis, Pencil, Plus, Trash2, ExternalLink } from "lucide-react";
+import { Ellipsis, Pencil, FolderOpen, Trash2, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
   appendSessionChat,
   createSession,
   createSessionSnapshot,
   fetchWorkspaceUrlSource,
+  getCurrentWorkspace,
   getSessionDetail,
-  getWorkspaceId,
   linkSourcesToSession,
   listSessions,
   listWorkspaceSources,
@@ -81,6 +82,15 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
     .filter((item) => item.content.trim().length > 0);
 }
 
+type SourceFilterMode = "all" | "selected" | "unselected";
+
+function toTimestamp(source: SourceMeta): number {
+  const raw = source.created_at;
+  if (!raw) return 0;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export default function SourcePanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -95,37 +105,55 @@ export default function SourcePanel() {
     setCurrentSessionId,
     setSessionData,
     resetJobState,
-    sources,
+    workspaceSources,
+    setWorkspaceSources,
+    addWorkspaceSource,
+    updateWorkspaceSource,
+    removeWorkspaceSource,
     selectedSourceIds,
-    addSource,
-    updateSource,
-    removeSource,
-    toggleSourceSelection,
+    addSelectedSource,
+    removeSelectedSource,
     selectAllSources,
     deselectAllSources,
   } = useAppStore();
 
   const [sessionQuery, setSessionQuery] = useState("");
   const [workspaceQuery, setWorkspaceQuery] = useState("");
-  const [workspaceSources, setWorkspaceSources] = useState<SourceMeta[]>([]);
   const [loadingWorkspaceSources, setLoadingWorkspaceSources] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [sourceFilterMode, setSourceFilterMode] = useState<SourceFilterMode>("all");
   const bootstrappedRef = useRef(false);
 
-  const readySources = sources.filter((s) => s.status === "ready");
+  const readySources = workspaceSources.filter((s) => s.status === "ready");
   const selectedCount = readySources.filter((s) =>
     selectedSourceIds.includes(s.id)
   ).length;
-  const allSelected =
-    readySources.length > 0 && selectedCount === readySources.length;
-  const linkedSourceIds = new Set(sources.map((item) => item.id));
-  const reusableWorkspaceSources = workspaceSources.filter(
-    (item) => !linkedSourceIds.has(item.id) && item.status === "ready"
-  );
+  const allSelected = readySources.length > 0 && selectedCount === readySources.length;
+
+  const visibleSources = useMemo(() => {
+    const selectedSet = new Set(selectedSourceIds);
+    const filtered = workspaceSources.filter((source) => {
+      if (workspaceQuery.trim()) {
+        const normalized = workspaceQuery.trim().toLowerCase();
+        if (!source.name.toLowerCase().includes(normalized)) {
+          return false;
+        }
+      }
+      if (sourceFilterMode === "selected") return selectedSet.has(source.id);
+      if (sourceFilterMode === "unselected") return !selectedSet.has(source.id);
+      return true;
+    });
+    return filtered.sort((a, b) => {
+      const selectedA = selectedSet.has(a.id) ? 1 : 0;
+      const selectedB = selectedSet.has(b.id) ? 1 : 0;
+      if (selectedA !== selectedB) return selectedB - selectedA;
+      return toTimestamp(b) - toTimestamp(a);
+    });
+  }, [selectedSourceIds, sourceFilterMode, workspaceQuery, workspaceSources]);
 
   const currentSession = sessions.find((s) => s.id === currentSessionId);
   const currentSessionTitle = currentSession?.title || "未命名会话";
@@ -139,16 +167,23 @@ export default function SourcePanel() {
     [setSessions]
   );
 
-  const refreshWorkspaceSources = useCallback(async (q = "") => {
-    setLoadingWorkspaceSources(true);
-    try {
-      const result = await listWorkspaceSources({ q, limit: 100, offset: 0 });
-      setWorkspaceSources(result);
-      return result;
-    } finally {
-      setLoadingWorkspaceSources(false);
-    }
-  }, []);
+  const refreshWorkspaceSources = useCallback(
+    async () => {
+      setLoadingWorkspaceSources(true);
+      try {
+        const result = await listWorkspaceSources({
+          sort: "created_desc",
+          limit: 300,
+          offset: 0,
+        });
+        setWorkspaceSources(result);
+        return result;
+      } finally {
+        setLoadingWorkspaceSources(false);
+      }
+    },
+    [setWorkspaceSources]
+  );
 
   const loadSession = useCallback(
     async (
@@ -198,15 +233,14 @@ export default function SourcePanel() {
     [loadSession, upsertSession]
   );
 
-  // Bootstrap: load workspace + sessions on mount
   useEffect(() => {
     if (bootstrappedRef.current) return;
     bootstrappedRef.current = true;
 
     let cancelled = false;
     const run = async () => {
-      const wsId = getWorkspaceId();
-      setWorkspaceId(wsId);
+      const workspace = await getCurrentWorkspace();
+      setWorkspaceId(workspace.id);
 
       let items = await refreshSessions();
       await refreshWorkspaceSources();
@@ -244,6 +278,7 @@ export default function SourcePanel() {
           items = await refreshSessions();
           if (cancelled) return;
           await loadSession(migratedSessionId, { fromExplicitSessionParam: false });
+          await refreshWorkspaceSources();
           return;
         }
 
@@ -251,17 +286,20 @@ export default function SourcePanel() {
         items = await refreshSessions();
         if (cancelled) return;
         await loadSession(sid, { fromExplicitSessionParam: false });
+        await refreshWorkspaceSources();
         return;
       }
 
       if (preferredSessionId && items.some((item) => item.id === preferredSessionId)) {
         await loadSession(preferredSessionId, { fromExplicitSessionParam: true });
+        await refreshWorkspaceSources();
         return;
       }
 
       const landingSessionId = pickCreateLandingSessionId(items, currentSessionId);
       if (landingSessionId) {
         await loadSession(landingSessionId, { fromExplicitSessionParam: false });
+        await refreshWorkspaceSources();
         return;
       }
 
@@ -269,6 +307,7 @@ export default function SourcePanel() {
       await refreshSessions();
       if (cancelled) return;
       await loadSession(sid, { fromExplicitSessionParam: false });
+      await refreshWorkspaceSources();
     };
 
     run().catch((err) => {
@@ -288,7 +327,6 @@ export default function SourcePanel() {
     setWorkspaceId,
   ]);
 
-  // Debounced session search
   useEffect(() => {
     const timer = window.setTimeout(() => {
       refreshSessions(sessionQuery).catch((err) => {
@@ -297,15 +335,6 @@ export default function SourcePanel() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [refreshSessions, sessionQuery]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      refreshWorkspaceSources(workspaceQuery).catch((err) => {
-        console.error("refresh workspace sources failed", err);
-      });
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [refreshWorkspaceSources, workspaceQuery]);
 
   const ensureSession = useCallback(async () => {
     if (currentSessionId) return currentSessionId;
@@ -317,7 +346,7 @@ export default function SourcePanel() {
       const sessionId = await ensureSession();
       for (const file of files) {
         const tempId = `temp-${Date.now()}-${file.name}`;
-        addSource({
+        addWorkspaceSource({
           id: tempId,
           name: file.name,
           type: "file",
@@ -328,16 +357,19 @@ export default function SourcePanel() {
         try {
           const meta = await uploadWorkspaceSource(file, (pct) => {
             if (pct < 100) {
-              updateSource(tempId, { status: "uploading" });
+              updateWorkspaceSource(tempId, { status: "uploading" });
             }
           });
           await linkSourcesToSession(sessionId, [meta.id]);
-          removeSource(tempId);
-          addSource(meta);
+          removeWorkspaceSource(tempId);
+          addSelectedSource(meta.id);
+          await refreshWorkspaceSources();
           refreshSessions(sessionQuery).catch(() => {});
-          refreshWorkspaceSources(workspaceQuery).catch(() => {});
+          if (meta.deduped) {
+            toast.info("检测到重复素材，已复用已有内容");
+          }
         } catch {
-          updateSource(tempId, {
+          updateWorkspaceSource(tempId, {
             status: "error",
             error: "上传失败",
           });
@@ -345,14 +377,14 @@ export default function SourcePanel() {
       }
     },
     [
-      addSource,
+      addSelectedSource,
+      addWorkspaceSource,
       ensureSession,
       refreshSessions,
       refreshWorkspaceSources,
-      removeSource,
+      removeWorkspaceSource,
       sessionQuery,
-      updateSource,
-      workspaceQuery,
+      updateWorkspaceSource,
     ]
   );
 
@@ -360,7 +392,7 @@ export default function SourcePanel() {
     async (url: string) => {
       const sessionId = await ensureSession();
       const tempId = `temp-url-${Date.now()}`;
-      addSource({
+      addWorkspaceSource({
         id: tempId,
         name: url,
         type: "url",
@@ -370,53 +402,104 @@ export default function SourcePanel() {
       try {
         const meta = await fetchWorkspaceUrlSource(url);
         await linkSourcesToSession(sessionId, [meta.id]);
-        removeSource(tempId);
-        addSource(meta);
+        removeWorkspaceSource(tempId);
+        addSelectedSource(meta.id);
+        await refreshWorkspaceSources();
         refreshSessions(sessionQuery).catch(() => {});
-        refreshWorkspaceSources(workspaceQuery).catch(() => {});
+        if (meta.deduped) {
+          toast.info("检测到重复素材，已复用已有内容");
+        }
       } catch {
-        updateSource(tempId, { status: "error", error: "抓取失败" });
+        updateWorkspaceSource(tempId, { status: "error", error: "抓取失败" });
       }
     },
     [
-      addSource,
+      addSelectedSource,
+      addWorkspaceSource,
       ensureSession,
       refreshSessions,
       refreshWorkspaceSources,
-      removeSource,
+      removeWorkspaceSource,
       sessionQuery,
-      updateSource,
-      workspaceQuery,
+      updateWorkspaceSource,
     ]
   );
 
-  const handleAttachWorkspaceSource = useCallback(
-    async (source: SourceMeta) => {
+  const handleToggleSessionSource = useCallback(
+    async (sourceId: string) => {
       const sessionId = await ensureSession();
-      await linkSourcesToSession(sessionId, [source.id]);
-      addSource(source);
+      const selected = selectedSourceIds.includes(sourceId);
+      if (selected) {
+        removeSelectedSource(sourceId);
+        try {
+          await unlinkSourceFromSession(sessionId, sourceId);
+        } catch {
+          addSelectedSource(sourceId);
+          toast.error("取消关联失败，请稍后重试");
+        }
+      } else {
+        addSelectedSource(sourceId);
+        try {
+          await linkSourcesToSession(sessionId, [sourceId]);
+        } catch {
+          removeSelectedSource(sourceId);
+          toast.error("关联素材失败，请稍后重试");
+        }
+      }
       refreshSessions(sessionQuery).catch(() => {});
     },
-    [addSource, ensureSession, refreshSessions, sessionQuery]
+    [
+      addSelectedSource,
+      ensureSession,
+      refreshSessions,
+      removeSelectedSource,
+      selectedSourceIds,
+      sessionQuery,
+    ]
   );
 
-  const handleRemoveSource = useCallback(
-    async (id: string) => {
-      if (!currentSessionId) return;
-      removeSource(id);
-      unlinkSourceFromSession(currentSessionId, id).catch(() => {});
-      refreshSessions(sessionQuery).catch(() => {});
-    },
-    [currentSessionId, refreshSessions, removeSource, sessionQuery]
-  );
-
-  const handleToggleAll = useCallback(() => {
+  const handleToggleAll = useCallback(async () => {
+    const sessionId = await ensureSession();
     if (allSelected) {
+      const toUnlink = readySources
+        .map((source) => source.id)
+        .filter((id) => selectedSourceIds.includes(id));
       deselectAllSources();
-    } else {
-      selectAllSources();
+      await Promise.all(
+        toUnlink.map((id) =>
+          unlinkSourceFromSession(sessionId, id).catch(() => {
+            addSelectedSource(id);
+          })
+        )
+      );
+      refreshSessions(sessionQuery).catch(() => {});
+      return;
     }
-  }, [allSelected, deselectAllSources, selectAllSources]);
+
+    const toLink = readySources
+      .map((source) => source.id)
+      .filter((id) => !selectedSourceIds.includes(id));
+    if (toLink.length === 0) return;
+    selectAllSources();
+    try {
+      await linkSourcesToSession(sessionId, toLink);
+    } catch {
+      toLink.forEach((id) => removeSelectedSource(id));
+      toast.error("批量关联失败，请稍后重试");
+    }
+    refreshSessions(sessionQuery).catch(() => {});
+  }, [
+    addSelectedSource,
+    allSelected,
+    deselectAllSources,
+    ensureSession,
+    readySources,
+    refreshSessions,
+    removeSelectedSource,
+    selectedSourceIds,
+    selectAllSources,
+    sessionQuery,
+  ]);
 
   const handleCreateSession = useCallback(async () => {
     const id = await createAndOpenSession("未命名会话");
@@ -522,7 +605,6 @@ export default function SourcePanel() {
           </div>
         )}
 
-        {/* SessionHeader: switcher + actions */}
         <div className="flex items-center gap-1 border-b border-border px-3 py-2.5">
           <SessionSwitcher
             sessions={sessions}
@@ -539,7 +621,6 @@ export default function SourcePanel() {
             loadingSession={loadingSession}
           />
 
-          {/* More actions menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -589,104 +670,106 @@ export default function SourcePanel() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-
         </div>
 
-        {/* Source stats bar */}
         <div className="border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             {readySources.length > 0 && (
               <input
                 type="checkbox"
                 checked={allSelected}
-                onChange={handleToggleAll}
+                onChange={() => {
+                  void handleToggleAll();
+                }}
                 className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-primary"
                 aria-label="全选来源"
               />
             )}
-            <h2 className="text-sm font-semibold">会话素材</h2>
+            <h2 className="text-sm font-semibold">素材库</h2>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {currentSessionId
-              ? loadingSession
-                ? "加载会话中..."
-                : readySources.length > 0
-                  ? `已选择 ${selectedCount}/${readySources.length} 个来源`
-                  : `已添加 ${sources.length} 个来源`
-              : "正在初始化会话..."}
+            {loadingWorkspaceSources
+              ? "加载素材中..."
+              : readySources.length > 0
+                ? `当前会话已勾选 ${selectedCount}/${readySources.length} 个可用素材`
+                : `共 ${workspaceSources.length} 条素材`}
           </p>
         </div>
 
-        {/* Source list (scrollable) */}
+        <div className="border-b border-border px-3 py-2">
+          <input
+            value={workspaceQuery}
+            onChange={(e) => setWorkspaceQuery(e.target.value)}
+            placeholder="检索素材..."
+            className="mb-2 h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="flex gap-1">
+            <button
+              onClick={() => setSourceFilterMode("all")}
+              className={cn(
+                "rounded-md px-2 py-1 text-xs",
+                sourceFilterMode === "all" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              )}
+            >
+              全部
+            </button>
+            <button
+              onClick={() => setSourceFilterMode("selected")}
+              className={cn(
+                "rounded-md px-2 py-1 text-xs",
+                sourceFilterMode === "selected" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              )}
+            >
+              已勾选
+            </button>
+            <button
+              onClick={() => setSourceFilterMode("unselected")}
+              className={cn(
+                "rounded-md px-2 py-1 text-xs",
+                sourceFilterMode === "unselected" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              )}
+            >
+              未勾选
+            </button>
+            <button
+              onClick={() => router.push("/assets")}
+              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              管理素材库
+            </button>
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto px-3 py-2">
-          {sources.length === 0 ? (
+          {visibleSources.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-muted-foreground">
-              <p>当前会话还没有素材</p>
+              <p>当前没有可显示素材</p>
               <p className="mt-1 text-xs">上传文档、粘贴网址，即可开始生成</p>
             </div>
           ) : (
             <div className="space-y-1.5">
-              {sources.map((source) => (
+              {visibleSources.map((source) => (
                 <SourceItem
                   key={source.id}
                   source={source}
                   isSelected={selectedSourceIds.includes(source.id)}
-                  onToggleSelect={toggleSourceSelection}
-                  onRemove={handleRemoveSource}
+                  onToggleSelect={(id) => {
+                    void handleToggleSessionSource(id);
+                  }}
                   onPreview={setPreviewSource}
+                  showRemove={false}
+                  extraMeta={
+                    typeof source.linked_session_count === "number"
+                      ? `已关联 ${source.linked_session_count} 个会话`
+                      : undefined
+                  }
                 />
               ))}
             </div>
           )}
         </div>
 
-        {/* Workspace library */}
-        <div className="border-t border-border px-3 py-2">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Workspace 素材库
-            </h3>
-            <span className="text-xs text-muted-foreground">
-              {loadingWorkspaceSources ? "加载中..." : `${workspaceSources.length} 条`}
-            </span>
-          </div>
-          <input
-            value={workspaceQuery}
-            onChange={(e) => setWorkspaceQuery(e.target.value)}
-            placeholder="检索素材库..."
-            className="mb-2 h-8 w-full rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <div className="max-h-28 space-y-1 overflow-y-auto">
-            {reusableWorkspaceSources.length === 0 ? (
-              <p className="py-2 text-xs text-muted-foreground">
-                暂无可复用素材（当前会话已全部关联或素材库为空）
-              </p>
-            ) : (
-              reusableWorkspaceSources.slice(0, 8).map((source) => (
-                <div
-                  key={`workspace-${source.id}`}
-                  className="flex items-center justify-between rounded-md border border-border bg-card px-2 py-1.5"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium">{source.name}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">{source.type}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      void handleAttachWorkspaceSource(source);
-                    }}
-                    className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                    aria-label="关联到当前会话"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Add source area */}
         <div className="border-t border-border px-3 py-3">
           <AddSourceArea
             onFilesSelected={(files) => {
@@ -698,13 +781,11 @@ export default function SourcePanel() {
           />
         </div>
 
-        {/* User menu */}
         <div className="border-t border-border px-2 py-2">
           <UserMenu />
         </div>
       </div>
 
-      {/* Dialogs */}
       <RenameDialog
         open={renameTarget !== null}
         currentTitle={renameTarget?.title || ""}

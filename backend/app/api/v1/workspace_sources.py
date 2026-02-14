@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -25,6 +26,10 @@ class UrlRequest(BaseModel):
 class TextRequest(BaseModel):
     name: str
     content: str
+
+
+class BulkDeleteRequest(BaseModel):
+    source_ids: list[str]
 
 
 def _snippet(text: str, max_len: int = 200) -> str:
@@ -53,16 +58,37 @@ async def _save_and_parse_file(source_id: str, filename: str, file_bytes: bytes)
     return str(file_path), content
 
 
+def _hash_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _hash_text(payload: str) -> str:
+    return _hash_bytes(payload.encode("utf-8"))
+
+
 @router.get("", response_model=list[SourceMeta])
 async def list_workspace_sources(
     request: Request,
     q: str = Query(default=""),
+    source_type: str | None = Query(default=None, alias="type"),
+    status: str | None = Query(default=None),
+    sort: str = Query(default="created_desc"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
+    if sort not in {"created_desc", "created_asc", "name_asc", "name_desc", "linked_desc"}:
+        raise HTTPException(status_code=400, detail="无效的 sort 参数")
     workspace_id = get_workspace_id_from_request(request)
     await session_store.ensure_workspace(workspace_id)
-    sources = await session_store.list_workspace_sources(workspace_id, q=q, limit=limit, offset=offset)
+    sources = await session_store.list_workspace_sources(
+        workspace_id,
+        q=q,
+        source_type=source_type,
+        status=status,
+        sort=sort,
+        limit=limit,
+        offset=offset,
+    )
     return [SourceMeta.model_validate(item) for item in sources]
 
 
@@ -74,6 +100,13 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
     await session_store.ensure_workspace(workspace_id)
     source_id = f"src-{uuid4().hex[:16]}"
     file_bytes = await file.read()
+    content_hash = _hash_bytes(file_bytes)
+
+    deduped = await session_store.get_workspace_source_by_hash(workspace_id, content_hash)
+    if deduped:
+        deduped["deduped"] = True
+        return SourceMeta.model_validate(deduped)
+
     try:
         storage_path, parsed_content = await _save_and_parse_file(
             source_id=source_id, filename=file.filename, file_bytes=file_bytes,
@@ -88,6 +121,7 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
             file_category=detect_file_category(file.filename).value,
             size=len(file_bytes),
             status="ready",
+            content_hash=content_hash,
             preview_snippet=_snippet(parsed_content),
             storage_path=storage_path,
             parsed_content=parsed_content,
@@ -102,6 +136,7 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
             file_category=None,
             size=len(file_bytes),
             status="error",
+            content_hash=content_hash,
             preview_snippet=None,
             storage_path=None,
             parsed_content=None,
@@ -121,6 +156,11 @@ async def add_workspace_url_source(req: UrlRequest, request: Request):
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
             resp = await client.get(req.url)
             resp.raise_for_status()
+        content_hash = _hash_bytes(resp.content)
+        deduped = await session_store.get_workspace_source_by_hash(workspace_id, content_hash)
+        if deduped:
+            deduped["deduped"] = True
+            return SourceMeta.model_validate(deduped)
         parsed = urlparse(req.url)
         filename = Path(parsed.path).name or "page.html"
         storage_path, parsed_content = await _save_and_parse_file(
@@ -135,6 +175,7 @@ async def add_workspace_url_source(req: UrlRequest, request: Request):
             file_category=None,
             size=len(resp.content),
             status="ready",
+            content_hash=content_hash,
             preview_snippet=_snippet(parsed_content),
             storage_path=storage_path,
             parsed_content=parsed_content,
@@ -149,6 +190,7 @@ async def add_workspace_url_source(req: UrlRequest, request: Request):
             file_category=None,
             size=None,
             status="error",
+            content_hash=None,
             preview_snippet=None,
             storage_path=None,
             parsed_content=None,
@@ -164,6 +206,12 @@ async def add_workspace_text_source(req: TextRequest, request: Request):
     workspace_id = get_workspace_id_from_request(request)
     await session_store.ensure_workspace(workspace_id)
     from app.services.document.parser import estimate_tokens
+    content_hash = _hash_text(req.content)
+
+    deduped = await session_store.get_workspace_source_by_hash(workspace_id, content_hash)
+    if deduped:
+        deduped["deduped"] = True
+        return SourceMeta.model_validate(deduped)
 
     meta = await session_store.create_workspace_source(
         workspace_id=workspace_id,
@@ -172,6 +220,7 @@ async def add_workspace_text_source(req: TextRequest, request: Request):
         file_category="text",
         size=len(req.content.encode("utf-8")),
         status="ready",
+        content_hash=content_hash,
         preview_snippet=_snippet(req.content),
         storage_path=None,
         parsed_content=req.content,
@@ -187,6 +236,14 @@ async def delete_workspace_source(source_id: str, request: Request):
     if not deleted:
         raise HTTPException(status_code=404, detail="来源不存在")
     return {"ok": True}
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_workspace_sources(req: BulkDeleteRequest, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    await session_store.ensure_workspace(workspace_id)
+    result = await session_store.bulk_delete_workspace_sources(workspace_id, req.source_ids)
+    return result
 
 
 @router.get("/{source_id}/content")

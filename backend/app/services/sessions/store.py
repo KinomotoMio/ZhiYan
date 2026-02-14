@@ -52,6 +52,8 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS workspaces (
                     id TEXT PRIMARY KEY,
                     label TEXT,
+                    owner_type TEXT,
+                    owner_id TEXT,
                     created_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL
                 );
@@ -137,6 +139,7 @@ class SessionStore:
                     file_category TEXT,
                     size INTEGER,
                     status TEXT NOT NULL,
+                    content_hash TEXT,
                     preview_snippet TEXT,
                     storage_path TEXT,
                     parsed_content TEXT,
@@ -158,6 +161,32 @@ class SessionStore:
                     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
                     FOREIGN KEY(source_id) REFERENCES workspace_sources(id) ON DELETE CASCADE
                 );
+                """
+            )
+
+            def _has_column(table: str, column: str) -> bool:
+                rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                return any(str(row["name"]) == column for row in rows)
+
+            if not _has_column("workspaces", "owner_type"):
+                conn.execute("ALTER TABLE workspaces ADD COLUMN owner_type TEXT")
+            if not _has_column("workspaces", "owner_id"):
+                conn.execute("ALTER TABLE workspaces ADD COLUMN owner_id TEXT")
+            if not _has_column("workspace_sources", "content_hash"):
+                conn.execute("ALTER TABLE workspace_sources ADD COLUMN content_hash TEXT")
+
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_owner_unique
+                ON workspaces(owner_type, owner_id)
+                WHERE owner_type IS NOT NULL AND owner_id IS NOT NULL
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_wsources_workspace_content_hash_ready
+                ON workspace_sources(workspace_id, content_hash)
+                WHERE status='ready' AND content_hash IS NOT NULL
                 """
             )
 
@@ -212,6 +241,30 @@ class SessionStore:
                 (workspace_id, now, now),
             )
             conn.commit()
+
+    async def get_workspace(self, workspace_id: str) -> dict | None:
+        return await asyncio.to_thread(self._get_workspace_sync, workspace_id)
+
+    def _get_workspace_sync(self, workspace_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, label, owner_type, owner_id, created_at, last_seen_at
+                FROM workspaces
+                WHERE id=?
+                """,
+                (workspace_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "label": row["label"],
+            "owner_type": row["owner_type"],
+            "owner_id": row["owner_id"],
+            "created_at": row["created_at"],
+            "last_seen_at": row["last_seen_at"],
+        }
 
     async def create_session(self, workspace_id: str, title: str) -> dict:
         session_id = f"sess-{uuid4().hex[:12]}"
@@ -633,6 +686,7 @@ class SessionStore:
         file_category: str | None,
         size: int | None,
         status: str,
+        content_hash: str | None,
         preview_snippet: str | None,
         storage_path: str | None,
         parsed_content: str | None,
@@ -646,7 +700,7 @@ class SessionStore:
             await asyncio.to_thread(
                 self._create_workspace_source_sync,
                 sid, workspace_id, source_type, name, file_category, size,
-                status, preview_snippet, storage_path, parsed_content,
+                status, content_hash, preview_snippet, storage_path, parsed_content,
                 metadata or {}, error, now,
             )
         return await self.get_workspace_source(workspace_id, sid)
@@ -660,6 +714,7 @@ class SessionStore:
         file_category: str | None,
         size: int | None,
         status: str,
+        content_hash: str | None,
         preview_snippet: str | None,
         storage_path: str | None,
         parsed_content: str | None,
@@ -672,13 +727,13 @@ class SessionStore:
                 """
                 INSERT INTO workspace_sources(
                     id, workspace_id, source_type, name, file_category, size, status,
-                    preview_snippet, storage_path, parsed_content, metadata_json,
+                    content_hash, preview_snippet, storage_path, parsed_content, metadata_json,
                     error, created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id, workspace_id, source_type, name, file_category, size,
-                    status, preview_snippet, storage_path, parsed_content,
+                    status, content_hash, preview_snippet, storage_path, parsed_content,
                     json.dumps(metadata, ensure_ascii=False), error, now, now,
                 ),
             )
@@ -718,28 +773,109 @@ class SessionStore:
             ).fetchone()
         return None if row is None else (row["parsed_content"] or "")
 
+    async def get_workspace_source_by_hash(
+        self,
+        workspace_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        return await asyncio.to_thread(
+            self._get_workspace_source_by_hash_sync, workspace_id, content_hash
+        )
+
+    def _get_workspace_source_by_hash_sync(
+        self,
+        workspace_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT ws.*,
+                       (
+                         SELECT COUNT(*)
+                         FROM session_source_links sl
+                         JOIN sessions s ON s.id = sl.session_id
+                         WHERE sl.source_id = ws.id
+                           AND s.workspace_id = ws.workspace_id
+                           AND s.archived_at IS NULL
+                       ) AS linked_session_count
+                FROM workspace_sources ws
+                WHERE ws.workspace_id=? AND ws.content_hash=? AND ws.status='ready'
+                LIMIT 1
+                """,
+                (workspace_id, content_hash),
+            ).fetchone()
+        return None if row is None else self._row_to_source_meta(row)
+
     async def list_workspace_sources(
-        self, workspace_id: str, q: str = "", limit: int = 100, offset: int = 0
+        self,
+        workspace_id: str,
+        q: str = "",
+        source_type: str | None = None,
+        status: str | None = None,
+        sort: str = "created_desc",
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[dict]:
         return await asyncio.to_thread(
-            self._list_workspace_sources_sync, workspace_id, q, limit, offset
+            self._list_workspace_sources_sync,
+            workspace_id,
+            q,
+            source_type,
+            status,
+            sort,
+            limit,
+            offset,
         )
 
     def _list_workspace_sources_sync(
-        self, workspace_id: str, q: str, limit: int, offset: int
+        self,
+        workspace_id: str,
+        q: str,
+        source_type: str | None,
+        status: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
     ) -> list[dict]:
-        where = "workspace_id = ?"
+        where = "ws.workspace_id = ?"
         params: list[object] = [workspace_id]
         if q.strip():
-            where += " AND name LIKE ?"
+            where += " AND ws.name LIKE ?"
             params.append(f"%{q.strip()}%")
+        if source_type:
+            where += " AND ws.source_type = ?"
+            params.append(source_type)
+        if status:
+            where += " AND ws.status = ?"
+            params.append(status)
+
+        order_by_map = {
+            "created_desc": "ws.created_at DESC",
+            "created_asc": "ws.created_at ASC",
+            "name_asc": "ws.name COLLATE NOCASE ASC",
+            "name_desc": "ws.name COLLATE NOCASE DESC",
+            "linked_desc": "linked_session_count DESC, ws.created_at DESC",
+        }
+        order_by = order_by_map.get(sort, order_by_map["created_desc"])
+
         params.extend([limit, offset])
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM workspace_sources
+                SELECT
+                    ws.*,
+                    (
+                      SELECT COUNT(*)
+                      FROM session_source_links sl
+                      JOIN sessions s ON s.id = sl.session_id
+                      WHERE sl.source_id = ws.id
+                        AND s.workspace_id = ws.workspace_id
+                        AND s.archived_at IS NULL
+                    ) AS linked_session_count
+                FROM workspace_sources ws
                 WHERE {where}
-                ORDER BY created_at DESC
+                ORDER BY {order_by}
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params),
@@ -774,6 +910,68 @@ class SessionStore:
                 if target.exists():
                     shutil.rmtree(target, ignore_errors=True)
         return True
+
+    async def bulk_delete_workspace_sources(
+        self,
+        workspace_id: str,
+        source_ids: list[str],
+    ) -> dict:
+        if not source_ids:
+            return {"deleted_ids": [], "not_found_ids": []}
+
+        deduped_ids = list(dict.fromkeys(source_ids))
+        async with self._write_lock:
+            deleted_rows, not_found_ids = await asyncio.to_thread(
+                self._bulk_delete_workspace_sources_sync, workspace_id, deduped_ids
+            )
+
+        for _, storage_path in deleted_rows:
+            if not storage_path:
+                continue
+            path = Path(storage_path)
+            target = path.parent if path.name else path
+            with suppress(Exception):
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+
+        return {
+            "deleted_ids": [row_id for row_id, _ in deleted_rows],
+            "not_found_ids": not_found_ids,
+        }
+
+    def _bulk_delete_workspace_sources_sync(
+        self,
+        workspace_id: str,
+        source_ids: list[str],
+    ) -> tuple[list[tuple[str, str | None]], list[str]]:
+        placeholders = ",".join("?" for _ in source_ids)
+        params: list[object] = [workspace_id, *source_ids]
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, storage_path
+                FROM workspace_sources
+                WHERE workspace_id=? AND id IN ({placeholders})
+                """,
+                tuple(params),
+            ).fetchall()
+            deleted_rows = [(str(row["id"]), row["storage_path"]) for row in rows]
+            if deleted_rows:
+                deleted_ids = [row_id for row_id, _ in deleted_rows]
+                delete_placeholders = ",".join("?" for _ in deleted_ids)
+                conn.execute(
+                    f"""
+                    DELETE FROM workspace_sources
+                    WHERE workspace_id=? AND id IN ({delete_placeholders})
+                    """,
+                    (workspace_id, *deleted_ids),
+                )
+                conn.commit()
+
+        existing = {row_id for row_id, _ in deleted_rows}
+        not_found_ids = [source_id for source_id in source_ids if source_id not in existing]
+        return deleted_rows, not_found_ids
 
     async def link_source_to_session(
         self,
@@ -1208,6 +1406,7 @@ class SessionStore:
 
     @staticmethod
     def _row_to_source_meta(row: sqlite3.Row) -> dict:
+        linked_count = row["linked_session_count"] if "linked_session_count" in row.keys() else None
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1218,4 +1417,5 @@ class SessionStore:
             "previewSnippet": row["preview_snippet"],
             "error": row["error"],
             "created_at": row["created_at"],
+            "linked_session_count": int(linked_count) if linked_count is not None else None,
         }

@@ -12,7 +12,7 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
-import type { SourceMeta, FileCategory } from "@/types/source";
+import type { SourceMeta } from "@/types/source";
 import { cn } from "@/lib/utils";
 
 const CATEGORY_ICON: Record<string, typeof FileText> = {
@@ -32,18 +32,22 @@ function formatSize(bytes: number | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getIcon(source: SourceMeta) {
-  if (source.type === "url") return Globe;
-  if (source.type === "text") return Type;
-  return CATEGORY_ICON[source.fileCategory ?? "unknown"] ?? FileText;
+function renderSourceIcon(source: SourceMeta) {
+  if (source.type === "url") return <Globe className="h-4 w-4" />;
+  if (source.type === "text") return <Type className="h-4 w-4" />;
+  const Icon = CATEGORY_ICON[source.fileCategory ?? "unknown"] ?? FileText;
+  return <Icon className="h-4 w-4" />;
 }
 
 interface SourceItemProps {
   source: SourceMeta;
   isSelected: boolean;
   onToggleSelect: (id: string) => void;
-  onRemove: (id: string) => void;
+  onRemove?: (id: string) => void;
   onPreview: (source: SourceMeta) => void;
+  showSelectionCheckbox?: boolean;
+  showRemove?: boolean;
+  extraMeta?: string;
 }
 
 export default function SourceItem({
@@ -52,9 +56,11 @@ export default function SourceItem({
   onToggleSelect,
   onRemove,
   onPreview,
+  showSelectionCheckbox = true,
+  showRemove = false,
+  extraMeta,
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
-  const Icon = getIcon(source);
   const isError = source.status === "error";
   const isParsing = source.status === "parsing";
   const isUploading = source.status === "uploading";
@@ -75,7 +81,7 @@ export default function SourceItem({
       onMouseLeave={() => setShowPopover(false)}
     >
       {/* Checkbox — 仅 ready 状态显示 */}
-      {isReady && (
+      {isReady && showSelectionCheckbox && (
         <input
           type="checkbox"
           checked={isSelected}
@@ -92,7 +98,7 @@ export default function SourceItem({
         ) : isError ? (
           <AlertCircle className="h-4 w-4 text-red-500" />
         ) : (
-          <Icon className="h-4 w-4" />
+          renderSourceIcon(source)
         )}
       </div>
 
@@ -113,23 +119,24 @@ export default function SourceItem({
       </div>
 
       {/* 删除按钮 */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove(source.id);
-        }}
-        className="shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
-        aria-label="删除来源"
-      >
-        <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-      </button>
+      {showRemove && onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(source.id);
+          }}
+          className="shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
+          aria-label="删除来源"
+        >
+          <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+        </button>
+      )}
 
       {/* Hover 预览浮层 */}
       {showPopover && source.previewSnippet && (
         <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover p-3 shadow-lg">
-          <p className="text-xs text-muted-foreground line-clamp-4">
-            {source.previewSnippet}
-          </p>
+          <p className="text-xs text-muted-foreground line-clamp-4">{source.previewSnippet}</p>
+          {extraMeta ? <p className="mt-2 text-[11px] text-muted-foreground">{extraMeta}</p> : null}
         </div>
       )}
     </div>

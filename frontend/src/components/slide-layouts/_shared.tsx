@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   Zap, Shield, Target, Users, BarChart3, Globe,
   Lightbulb, Rocket, Heart, Star, CheckCircle, Clock,
@@ -55,7 +56,18 @@ export function LayoutIcon({ query, className }: { query: string; className?: st
 
 export function ImagePlaceholder({ prompt, alt, url }: { prompt: string; alt?: string; url?: string | null }) {
   if (url) {
-    return <img src={url} alt={alt || prompt} className="w-full h-full object-cover" />;
+    return (
+      <div className="relative h-full w-full">
+        <Image
+          src={url}
+          alt={alt || prompt}
+          fill
+          unoptimized
+          sizes="100vw"
+          className="object-cover"
+        />
+      </div>
+    );
   }
   return (
     <div className="w-full h-full bg-gray-100 flex flex-col items-center justify-center text-gray-400">

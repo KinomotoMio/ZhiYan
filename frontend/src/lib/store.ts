@@ -35,7 +35,7 @@ interface AppState {
   chatMessages: ChatMessage[];
 
   // 创建视图状态
-  sources: SourceMeta[];
+  workspaceSources: SourceMeta[];
   selectedSourceIds: string[];
   topic: string;
   selectedTemplateId: string;
@@ -76,11 +76,13 @@ interface AppState {
   finishGeneration: () => void;
 
   // 创建视图 actions
-  addSource: (source: SourceMeta) => void;
-  setSources: (sources: SourceMeta[]) => void;
-  updateSource: (id: string, patch: Partial<SourceMeta>) => void;
-  removeSource: (id: string) => void;
-  clearSources: () => void;
+  setWorkspaceSources: (sources: SourceMeta[]) => void;
+  addWorkspaceSource: (source: SourceMeta) => void;
+  updateWorkspaceSource: (id: string, patch: Partial<SourceMeta>) => void;
+  removeWorkspaceSource: (id: string) => void;
+  clearWorkspaceSources: () => void;
+  addSelectedSource: (id: string) => void;
+  removeSelectedSource: (id: string) => void;
   toggleSourceSelection: (id: string) => void;
   selectAllSources: () => void;
   deselectAllSources: () => void;
@@ -109,7 +111,7 @@ export const useAppStore = create<AppState>()(
       chatMessages: [],
 
       // 创建视图状态
-      sources: [],
+      workspaceSources: [],
       selectedSourceIds: [],
       topic: "",
       selectedTemplateId: "default",
@@ -139,7 +141,6 @@ export const useAppStore = create<AppState>()(
       setCurrentSessionId: (id) => set({ currentSessionId: id }),
       setSessionData: ({ sources, chatMessages, presentation }) =>
         set({
-          sources,
           selectedSourceIds: sources
             .filter((s) => s.status === "ready")
             .map((s) => s.id),
@@ -221,41 +222,45 @@ export const useAppStore = create<AppState>()(
       finishGeneration: () => set({ isGenerating: false }),
 
       // 创建视图 actions
-      addSource: (source) =>
+      setWorkspaceSources: (workspaceSources) => set({ workspaceSources }),
+      addWorkspaceSource: (source) =>
         set((state) => ({
-          sources: [source, ...state.sources],
+          workspaceSources: [source, ...state.workspaceSources],
           selectedSourceIds:
             source.status === "ready"
               ? [...state.selectedSourceIds, source.id]
               : state.selectedSourceIds,
         })),
-      setSources: (sources) =>
-        set({
-          sources,
-          selectedSourceIds: sources
-            .filter((s) => s.status === "ready")
-            .map((s) => s.id),
-        }),
-      updateSource: (id, patch) =>
+      updateWorkspaceSource: (id, patch) =>
         set((state) => {
-          const newSources = state.sources.map((s) =>
+          const newSources = state.workspaceSources.map((s) =>
             s.id === id ? { ...s, ...patch } : s
           );
           const becameReady =
             patch.status === "ready" && !state.selectedSourceIds.includes(id);
           return {
-            sources: newSources,
+            workspaceSources: newSources,
             selectedSourceIds: becameReady
               ? [...state.selectedSourceIds, id]
               : state.selectedSourceIds,
           };
         }),
-      removeSource: (id) =>
+      removeWorkspaceSource: (id) =>
         set((state) => ({
-          sources: state.sources.filter((s) => s.id !== id),
+          workspaceSources: state.workspaceSources.filter((s) => s.id !== id),
           selectedSourceIds: state.selectedSourceIds.filter((sid) => sid !== id),
         })),
-      clearSources: () => set({ sources: [], selectedSourceIds: [] }),
+      clearWorkspaceSources: () => set({ workspaceSources: [], selectedSourceIds: [] }),
+      addSelectedSource: (id) =>
+        set((state) => ({
+          selectedSourceIds: state.selectedSourceIds.includes(id)
+            ? state.selectedSourceIds
+            : [...state.selectedSourceIds, id],
+        })),
+      removeSelectedSource: (id) =>
+        set((state) => ({
+          selectedSourceIds: state.selectedSourceIds.filter((sid) => sid !== id),
+        })),
       toggleSourceSelection: (id) =>
         set((state) => ({
           selectedSourceIds: state.selectedSourceIds.includes(id)
@@ -264,7 +269,7 @@ export const useAppStore = create<AppState>()(
         })),
       selectAllSources: () =>
         set((state) => ({
-          selectedSourceIds: state.sources
+          selectedSourceIds: state.workspaceSources
             .filter((s) => s.status === "ready")
             .map((s) => s.id),
         })),

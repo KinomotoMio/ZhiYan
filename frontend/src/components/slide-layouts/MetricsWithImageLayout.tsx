@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { ImageIcon } from "lucide-react";
 import type { MetricsWithImageData } from "@/types/layout-data";
 
@@ -36,7 +37,16 @@ export default function MetricsWithImageLayout({ data }: { data: MetricsWithImag
       </div>
       <div className="w-[45%] shrink-0 bg-gray-100 flex flex-col items-center justify-center">
         {data.image.url ? (
-          <img src={data.image.url} alt={data.image.alt || ""} className="w-full h-full object-cover" />
+          <div className="relative h-full w-full">
+            <Image
+              src={data.image.url}
+              alt={data.image.alt || ""}
+              fill
+              unoptimized
+              sizes="45vw"
+              className="object-cover"
+            />
+          </div>
         ) : (
           <div className="flex flex-col items-center text-gray-400">
             <ImageIcon className="w-12 h-12 mb-2" />
