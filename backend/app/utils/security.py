@@ -49,12 +49,12 @@ def get_safe_httpx_client(**kwargs) -> httpx.AsyncClient:
     """
     Returns an httpx.AsyncClient with SSRF protection enabled via request hooks.
     """
-    event_hooks = kwargs.get("event_hooks", {})
-    if "request" not in event_hooks:
-        event_hooks["request"] = []
+    hooks = kwargs.pop("event_hooks", {}).copy()
+    request_hooks = hooks.get("request", []).copy()
 
-    # Add our validation hook to the list
-    event_hooks["request"].append(validate_url_hook)
-    kwargs["event_hooks"] = event_hooks
+    if validate_url_hook not in request_hooks:
+        request_hooks.append(validate_url_hook)
 
-    return httpx.AsyncClient(**kwargs)
+    hooks["request"] = request_hooks
+
+    return httpx.AsyncClient(event_hooks=hooks, **kwargs)
