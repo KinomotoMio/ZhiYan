@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.model_status import ModelStatus, build_model_status
+from app.utils.security import get_safe_httpx_client
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 logger = logging.getLogger(__name__)
@@ -154,10 +155,8 @@ async def validate_api_key(req: ValidateRequest):
     """验证 API key — 向 provider 发送最小请求"""
     try:
         if req.provider == "openai":
-            import httpx
-
             base = req.base_url or "https://api.openai.com/v1"
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     f"{base}/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
@@ -167,9 +166,7 @@ async def validate_api_key(req: ValidateRequest):
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
         elif req.provider == "anthropic":
-            import httpx
-
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -190,9 +187,7 @@ async def validate_api_key(req: ValidateRequest):
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
         elif req.provider == "google":
-            import httpx
-
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     f"https://generativelanguage.googleapis.com/v1beta/models?key={req.api_key}"
                 )
@@ -201,9 +196,7 @@ async def validate_api_key(req: ValidateRequest):
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
         elif req.provider == "deepseek":
-            import httpx
-
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     "https://api.deepseek.com/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
@@ -215,9 +208,7 @@ async def validate_api_key(req: ValidateRequest):
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
         elif req.provider == "openrouter":
-            import httpx
-
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     "https://openrouter.ai/api/v1/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
