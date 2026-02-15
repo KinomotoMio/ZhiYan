@@ -28,25 +28,8 @@ async def is_safe_url(url: str) -> bool:
             ip_str = res[4][0]
             ip = ipaddress.ip_address(ip_str)
 
-            # Check for private, loopback, link-local, multicast, etc.
-            if (ip.is_private or
-                ip.is_loopback or
-                ip.is_link_local or
-                ip.is_multicast or
-                ip.is_unspecified or
-                ip.is_reserved):
+            if not ip.is_global:
                 return False
-
-            # Check for IPv4-mapped IPv6 addresses (::ffff:192.168.0.1)
-            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-                mapped_ip = ip.ipv4_mapped
-                if (mapped_ip.is_private or
-                    mapped_ip.is_loopback or
-                    mapped_ip.is_link_local or
-                    mapped_ip.is_multicast or
-                    mapped_ip.is_unspecified or
-                    mapped_ip.is_reserved):
-                    return False
         return True
     except Exception:
         # If anything goes wrong during parsing or resolution, assume unsafe
