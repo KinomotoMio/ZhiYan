@@ -6,6 +6,11 @@ from copy import deepcopy
 import re
 from typing import Any
 
+_RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*•]+\s*")
+_RE_ORDERED_LIST_PREFIX = re.compile(r"^\s*\d+[.)]\s*")
+_RE_WHITESPACE = re.compile(r"\s+")
+_RE_TABLE_SEPARATOR = re.compile(r"[-:]+")
+
 DEFAULT_LEFT_HEADING = "要点 A"
 DEFAULT_RIGHT_HEADING = "要点 B"
 DEFAULT_FILLER_TEXT = "内容生成中"
@@ -276,18 +281,18 @@ def _extract_text_items_from_text(text: str) -> list[str]:
 
 def _clean_markdown_text(raw: str) -> str:
     text = raw.strip()
-    text = re.sub(r"^\s*[-*•]+\s*", "", text)
-    text = re.sub(r"^\s*\d+[.)]\s*", "", text)
+    text = _RE_UNORDERED_LIST_PREFIX.sub("", text)
+    text = _RE_ORDERED_LIST_PREFIX.sub("", text)
     text = text.strip("| ")
     text = text.replace("**", "").replace("__", "").replace("`", "")
-    text = re.sub(r"\s+", " ", text).strip()
+    text = _RE_WHITESPACE.sub(" ", text).strip()
     return text
 
 
 def _should_keep_cell(text: str) -> bool:
     if not text:
         return False
-    if re.fullmatch(r"[-:]+", text):
+    if _RE_TABLE_SEPARATOR.fullmatch(text):
         return False
     if text in {"栏目", "新增内容"}:
         return False
