@@ -446,42 +446,6 @@ async def stage_fix_slides_once(
 
 
 
-def _fallback_outline(state: PipelineState) -> dict[str, Any]:
-    items: list[dict[str, Any]] = [
-        {
-            "slide_number": 1,
-            "title": state.topic or "演示文稿",
-            "content_brief": "演示文稿标题页",
-            "key_points": [],
-            "source_references": [],
-            "suggested_layout_category": "intro",
-        }
-    ]
-    for i in range(2, state.num_pages):
-        items.append(
-            {
-                "slide_number": i,
-                "title": f"第 {i} 节",
-                "content_brief": "内容页",
-                "key_points": ["要点"],
-                "source_references": [],
-                "suggested_layout_category": "bullets",
-            }
-        )
-    items.append(
-        {
-            "slide_number": state.num_pages,
-            "title": "谢谢",
-            "content_brief": "致谢结束页",
-            "key_points": [],
-            "source_references": [],
-            "suggested_layout_category": "thankyou",
-        }
-    )
-    return {"narrative_arc": "自动生成的演示大纲", "items": items}
-
-
-
 def _category_to_layout(category: str) -> str:
     mapping = {
         "intro": "intro-slide",
