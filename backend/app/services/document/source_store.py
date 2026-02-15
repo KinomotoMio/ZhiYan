@@ -23,6 +23,7 @@ from app.models.source import (
     SourceType,
     detect_file_category,
 )
+from app.utils.security import get_safe_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,7 @@ async def add_url(url: str) -> SourceMeta:
     }
 
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+        async with get_safe_httpx_client(follow_redirects=True, timeout=30) as client:
             resp = await client.get(url)
             resp.raise_for_status()
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app.models.source import SourceMeta
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
+from app.utils.security import get_safe_httpx_client
 
 router = APIRouter(prefix="/workspace/sources", tags=["workspace-sources"])
 
@@ -153,7 +154,7 @@ async def add_workspace_url_source(req: UrlRequest, request: Request):
     await session_store.ensure_workspace(workspace_id)
     source_id = f"src-{uuid4().hex[:16]}"
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+        async with get_safe_httpx_client(follow_redirects=True, timeout=30) as client:
             resp = await client.get(req.url)
             resp.raise_for_status()
         content_hash = _hash_bytes(resp.content)

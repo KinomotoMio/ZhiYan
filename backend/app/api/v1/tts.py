@@ -1,10 +1,12 @@
 """POST /api/v1/tts — 文本转语音"""
 
 import logging
+import httpx
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
+from app.utils.security import get_safe_httpx_client
 
 router = APIRouter(prefix="/tts", tags=["tts"])
 logger = logging.getLogger(__name__)
@@ -31,9 +33,7 @@ async def text_to_speech(req: TTSRequest):
     voice = req.voice or settings.tts_voice
 
     try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with get_safe_httpx_client(timeout=30) as client:
             resp = await client.post(
                 f"{settings.openai_base_url}/audio/speech",
                 headers={
