@@ -112,6 +112,11 @@ export interface SessionDetail {
   session: SessionSummary;
   sources: SourceMeta[];
   chat_messages: ChatRecord[];
+  latest_generation_job: {
+    job_id: string;
+    status: JobStatus;
+    updated_at: string;
+  } | null;
   latest_presentation: {
     id: string;
     version_no: number;
@@ -475,16 +480,24 @@ export interface GenerationIssue {
   [k: string]: unknown;
 }
 
+export interface GenerationRequestDataLite {
+  num_pages?: number;
+  title?: string;
+}
+
 export interface GenerationJob {
   job_id: string;
   status: JobStatus;
   current_stage: StageStatus | null;
+  events_seq?: number;
+  request?: GenerationRequestDataLite;
   outline: Record<string, unknown>;
   layouts: Array<Record<string, unknown>>;
   slides: Slide[];
   issues: GenerationIssue[];
   failed_slide_indices: number[];
   error: string | null;
+  presentation?: Presentation | null;
   [k: string]: unknown;
 }
 
@@ -575,14 +588,31 @@ export interface JobEventCallbacks {
   onError?: (err: Error) => void;
 }
 
+export interface SubscribeJobEventsOptions {
+  signal?: AbortSignal;
+  afterSeq?: number;
+}
+
+export function buildJobEventsUrl(jobId: string, afterSeq?: number): string {
+  const normalizedAfterSeq =
+    typeof afterSeq === "number" && Number.isFinite(afterSeq)
+      ? Math.max(0, Math.trunc(afterSeq))
+      : 0;
+  return normalizedAfterSeq > 0
+    ? `${API_BASE}/api/v2/generation/jobs/${jobId}/events?after_seq=${normalizedAfterSeq}`
+    : `${API_BASE}/api/v2/generation/jobs/${jobId}/events`;
+}
+
 export async function subscribeJobEvents(
   jobId: string,
   callbacks: JobEventCallbacks,
-  signal?: AbortSignal
+  options?: SubscribeJobEventsOptions
 ): Promise<void> {
   const { onEvent, onDone, onError } = callbacks;
+  const signal = options?.signal;
+  const eventsUrl = buildJobEventsUrl(jobId, options?.afterSeq);
   try {
-    const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/events`, {
+    const res = await fetch(eventsUrl, {
       method: "GET",
       headers: withWorkspaceHeaders(),
       signal,

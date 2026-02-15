@@ -41,8 +41,15 @@ class LatestPresentationWriteRequest(BaseModel):
     source: str | None = "editor"
 
 
+class LatestGenerationJobMeta(BaseModel):
+    job_id: str
+    status: str
+    updated_at: str
+
+
 class SessionDetail(BaseModel):
     session: SessionSummary
     sources: list[SourceMeta] = Field(default_factory=list)
     chat_messages: list[ChatRecord] = Field(default_factory=list)
     latest_presentation: dict | None = None
+    latest_generation_job: LatestGenerationJobMeta | None = None

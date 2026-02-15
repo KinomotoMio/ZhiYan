@@ -100,7 +100,7 @@ class GenerationRunner:
         if job is None:
             return
 
-        if from_stage is None and job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+        if from_stage is None and job.status in {JobStatus.COMPLETED, JobStatus.CANCELLED}:
             return
 
         start_stage = from_stage or self._infer_start_stage(job)
@@ -110,6 +110,13 @@ class GenerationRunner:
         job.cancel_requested = False
         job.updated_at = now_iso()
         await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.RUNNING.value,
+            )
 
         if job.events_seq == 0:
             await self._emit_event(
@@ -206,6 +213,13 @@ class GenerationRunner:
                         job.current_stage = StageStatus.OUTLINE
                         job.updated_at = now_iso()
                         await self._store.save_job(job)
+                        if job.request.session_id:
+                            from app.services.sessions import session_store
+
+                            await session_store.update_generation_job_status(
+                                job.job_id,
+                                JobStatus.WAITING_OUTLINE_REVIEW.value,
+                            )
                         return
                 elif stage == StageStatus.LAYOUT:
                     await self._run_stage(
@@ -341,6 +355,19 @@ class GenerationRunner:
             await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
             return
         except Exception as e:
+            partial_saved = False
+            partial_presentation: dict | None = None
+            with suppress(Exception):
+                await self._sync_state_to_job(job, state)
+            try:
+                partial_saved, partial_presentation = await self._persist_partial_presentation(job, state)
+            except Exception:
+                logger.warning(
+                    "persist partial presentation failed",
+                    extra={"job_id": job.job_id},
+                    exc_info=True,
+                )
+
             failed_stage = job.current_stage
             classified = self._classify_generation_error(
                 e,
@@ -359,15 +386,19 @@ class GenerationRunner:
                     job.job_id,
                     JobStatus.FAILED.value,
                 )
+            payload = self._build_error_payload(
+                classified=classified,
+                stage=failed_stage,
+                timeout_seconds=e.timeout_seconds if isinstance(e, StageTimeoutError) else None,
+            )
+            payload["partial_saved"] = partial_saved
+            if partial_presentation is not None:
+                payload["presentation"] = partial_presentation
             await self._emit_event(
                 job,
                 EventType.JOB_FAILED,
                 message="任务失败",
-                payload=self._build_error_payload(
-                    classified=classified,
-                    stage=failed_stage,
-                    timeout_seconds=e.timeout_seconds if isinstance(e, StageTimeoutError) else None,
-                ),
+                payload=payload,
             )
             logger.exception(
                 "generation job failed",
@@ -651,6 +682,45 @@ class GenerationRunner:
         job.failed_slide_indices = list(state.failed_slide_indices)
         job.updated_at = now_iso()
         await self._store.save_job(job)
+
+    async def _persist_partial_presentation(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+    ) -> tuple[bool, dict | None]:
+        if not job.slides and not state.slides:
+            return False, None
+
+        if not job.slides:
+            await self._sync_state_to_job(job, state)
+        if not job.slides:
+            return False, None
+
+        current = job.presentation if isinstance(job.presentation, dict) else {}
+        presentation_id = current.get("presentationId")
+        if not isinstance(presentation_id, str) or not presentation_id.strip():
+            presentation_id = f"pres-{uuid4().hex[:8]}"
+
+        presentation_payload = {
+            "presentationId": presentation_id,
+            "title": job.request.title or "新演示文稿",
+            "slides": list(job.slides),
+        }
+        job.presentation = presentation_payload
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+
+        saved_to_session = False
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.save_presentation(
+                session_id=job.request.session_id,
+                payload=presentation_payload,
+                is_snapshot=False,
+            )
+            saved_to_session = True
+        return saved_to_session, presentation_payload
 
     async def _emit_event(
         self,

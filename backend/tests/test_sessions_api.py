@@ -123,6 +123,14 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     )
     assert create_ok.status_code == 200
     assert create_ok.json()["session_id"] == session_id
+    created_job_id = create_ok.json()["job_id"]
+
+    detail = client.get(f"/api/v1/sessions/{session_id}", headers=h1)
+    assert detail.status_code == 200
+    latest_generation_job = detail.json().get("latest_generation_job")
+    assert latest_generation_job is not None
+    assert latest_generation_job["job_id"] == created_job_id
+    assert latest_generation_job["status"] == "pending"
 
     create_denied = client.post(
         "/api/v2/generation/jobs",

@@ -196,3 +196,64 @@ def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):
 
     first_chunk = asyncio.run(_case())
     assert EventType.HEARTBEAT.value in first_chunk
+
+
+def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tmp_path):
+    store, _runner = _install_runtime(monkeypatch, tmp_path)
+
+    from app.api.v2 import generation as generation_api
+    from app.models.generation import GenerationEvent, GenerationJob, GenerationRequestData, StageStatus
+
+    async def _case():
+        job = GenerationJob(
+            job_id="job-after-seq",
+            request=GenerationRequestData(topic="续流测试", resolved_content="测试内容"),
+            outline_accepted=True,
+        )
+        await store.create_job(job)
+        await store.append_event(
+            GenerationEvent(seq=1, type=EventType.JOB_FAILED, job_id=job.job_id, message="old failure")
+        )
+
+        response = await generation_api.stream_job_events(job.job_id, after_seq=1)
+
+        async def publish_live_events():
+            await asyncio.sleep(0.05)
+            evt2 = GenerationEvent(
+                seq=2,
+                type=EventType.STAGE_STARTED,
+                job_id=job.job_id,
+                stage=StageStatus.VERIFY,
+                message="verify retry",
+            )
+            evt3 = GenerationEvent(
+                seq=3,
+                type=EventType.JOB_COMPLETED,
+                job_id=job.job_id,
+                message="done",
+            )
+            await store.append_event(evt2)
+            await store.append_event(evt3)
+            await generation_api.event_bus.publish(evt2)
+            await generation_api.event_bus.publish(evt3)
+
+        publish_task = asyncio.create_task(publish_live_events())
+        chunks: list[str] = []
+        try:
+            while True:
+                chunk = await asyncio.wait_for(response.body_iterator.__anext__(), timeout=1.0)
+                text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                chunks.append(text)
+                if "[DONE]" in text:
+                    break
+        finally:
+            await response.body_iterator.aclose()
+            await publish_task
+
+        body = "".join(chunks)
+        assert '"type": "job_failed"' not in body
+        assert '"type": "stage_started"' in body
+        assert '"type": "job_completed"' in body
+        assert "[DONE]" in body
+
+    asyncio.run(_case())

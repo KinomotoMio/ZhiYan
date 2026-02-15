@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Ellipsis, Pencil, FolderOpen, Trash2, ExternalLink } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
@@ -15,29 +15,15 @@ import {
   linkSourcesToSession,
   listSessions,
   listWorkspaceSources,
-  removeSession,
   unlinkSourceFromSession,
-  updateSession,
   uploadWorkspaceSource,
 } from "@/lib/api";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
-import SessionSwitcher from "./SessionSwitcher";
-import RenameDialog from "./RenameDialog";
-import DeleteConfirmDialog from "./DeleteConfirmDialog";
-import UserMenu from "@/components/settings/UserMenu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   getSessionEditorPath,
-  pickCreateLandingSessionId,
   shouldAutoRedirectToEditor,
 } from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
@@ -97,14 +83,13 @@ export default function SourcePanel() {
   const preferredSessionId = searchParams.get("session");
   const {
     setWorkspaceId,
-    sessions,
     setSessions,
     upsertSession,
-    removeSessionEntry,
     currentSessionId,
     setCurrentSessionId,
     setSessionData,
-    resetJobState,
+    updateJobState,
+    setIsGenerating,
     workspaceSources,
     setWorkspaceSources,
     addWorkspaceSource,
@@ -117,14 +102,10 @@ export default function SourcePanel() {
     deselectAllSources,
   } = useAppStore();
 
-  const [sessionQuery, setSessionQuery] = useState("");
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [loadingWorkspaceSources, setLoadingWorkspaceSources] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
-  const [loadingSession, setLoadingSession] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [sourceFilterMode, setSourceFilterMode] = useState<SourceFilterMode>("all");
   const bootstrappedRef = useRef(false);
 
@@ -154,9 +135,6 @@ export default function SourcePanel() {
       return toTimestamp(b) - toTimestamp(a);
     });
   }, [selectedSourceIds, sourceFilterMode, workspaceQuery, workspaceSources]);
-
-  const currentSession = sessions.find((s) => s.id === currentSessionId);
-  const currentSessionTitle = currentSession?.title || "未命名会话";
 
   const refreshSessions = useCallback(
     async (q = "") => {
@@ -192,35 +170,54 @@ export default function SourcePanel() {
         fromExplicitSessionParam?: boolean;
       }
     ) => {
-      setLoadingSession(true);
-      try {
-        const detail = await getSessionDetail(sessionId);
-        const chatMessages = toStoreChatMessages(
-          detail.chat_messages as unknown as Array<Record<string, unknown>>
-        );
-        setCurrentSessionId(sessionId);
-        upsertSession(detail.session);
-        setSessionData({
-          sources: detail.sources,
-          chatMessages,
-          presentation: detail.latest_presentation?.presentation ?? null,
+      const detail = await getSessionDetail(sessionId);
+      const chatMessages = toStoreChatMessages(
+        detail.chat_messages as unknown as Array<Record<string, unknown>>
+      );
+      const currentStore = useAppStore.getState();
+      const resolvedJobStatus =
+        detail.latest_generation_job?.status === "pending" &&
+        currentStore.jobId === detail.latest_generation_job.job_id &&
+        currentStore.jobStatus === "running"
+          ? "running"
+          : detail.latest_generation_job?.status ?? null;
+      setCurrentSessionId(sessionId);
+      upsertSession(detail.session);
+      setSessionData({
+        sources: detail.sources,
+        chatMessages,
+        presentation: detail.latest_presentation?.presentation ?? null,
+      });
+      if (detail.latest_generation_job?.job_id) {
+        updateJobState({
+          jobId: detail.latest_generation_job.job_id,
+          jobStatus: resolvedJobStatus,
+          currentStage: null,
+          lastJobEventSeq: 0,
         });
-        resetJobState();
+        setIsGenerating(resolvedJobStatus === "running");
+      } else {
+        updateJobState({
+          jobId: null,
+          jobStatus: null,
+          currentStage: null,
+          lastJobEventSeq: 0,
+          issues: [],
+          failedSlideIndices: [],
+        });
+        setIsGenerating(false);
+      }
 
-        if (
-          shouldAutoRedirectToEditor(
-            Boolean(detail.latest_presentation),
-            Boolean(options?.fromExplicitSessionParam)
-          )
-        ) {
-          router.push(getSessionEditorPath(sessionId));
-          return;
-        }
-      } finally {
-        setLoadingSession(false);
+      if (
+        shouldAutoRedirectToEditor(
+          Boolean(detail.latest_presentation),
+          Boolean(options?.fromExplicitSessionParam)
+        )
+      ) {
+        router.push(getSessionEditorPath(sessionId));
       }
     },
-    [resetJobState, router, setCurrentSessionId, setSessionData, upsertSession]
+    [router, setCurrentSessionId, setIsGenerating, setSessionData, updateJobState, upsertSession]
   );
 
   const createAndOpenSession = useCallback(
@@ -292,22 +289,15 @@ export default function SourcePanel() {
 
       if (preferredSessionId && items.some((item) => item.id === preferredSessionId)) {
         await loadSession(preferredSessionId, { fromExplicitSessionParam: true });
-        await refreshWorkspaceSources();
         return;
       }
 
-      const landingSessionId = pickCreateLandingSessionId(items, currentSessionId);
-      if (landingSessionId) {
-        await loadSession(landingSessionId, { fromExplicitSessionParam: false });
-        await refreshWorkspaceSources();
+      if (currentSessionId && items.some((item) => item.id === currentSessionId)) {
+        await loadSession(currentSessionId, { fromExplicitSessionParam: false });
         return;
       }
 
-      const sid = await createAndOpenSession("未命名会话");
-      await refreshSessions();
-      if (cancelled) return;
-      await loadSession(sid, { fromExplicitSessionParam: false });
-      await refreshWorkspaceSources();
+      await createAndOpenSession("未命名会话");
     };
 
     run().catch((err) => {
@@ -326,15 +316,6 @@ export default function SourcePanel() {
     refreshWorkspaceSources,
     setWorkspaceId,
   ]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      refreshSessions(sessionQuery).catch((err) => {
-        console.error("refresh sessions failed", err);
-      });
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [refreshSessions, sessionQuery]);
 
   const ensureSession = useCallback(async () => {
     if (currentSessionId) return currentSessionId;
@@ -364,7 +345,7 @@ export default function SourcePanel() {
           removeWorkspaceSource(tempId);
           addSelectedSource(meta.id);
           await refreshWorkspaceSources();
-          refreshSessions(sessionQuery).catch(() => {});
+          refreshSessions().catch(() => {});
           if (meta.deduped) {
             toast.info("检测到重复素材，已复用已有内容");
           }
@@ -383,7 +364,6 @@ export default function SourcePanel() {
       refreshSessions,
       refreshWorkspaceSources,
       removeWorkspaceSource,
-      sessionQuery,
       updateWorkspaceSource,
     ]
   );
@@ -405,7 +385,7 @@ export default function SourcePanel() {
         removeWorkspaceSource(tempId);
         addSelectedSource(meta.id);
         await refreshWorkspaceSources();
-        refreshSessions(sessionQuery).catch(() => {});
+        refreshSessions().catch(() => {});
         if (meta.deduped) {
           toast.info("检测到重复素材，已复用已有内容");
         }
@@ -420,7 +400,6 @@ export default function SourcePanel() {
       refreshSessions,
       refreshWorkspaceSources,
       removeWorkspaceSource,
-      sessionQuery,
       updateWorkspaceSource,
     ]
   );
@@ -446,7 +425,7 @@ export default function SourcePanel() {
           toast.error("关联素材失败，请稍后重试");
         }
       }
-      refreshSessions(sessionQuery).catch(() => {});
+      refreshSessions().catch(() => {});
     },
     [
       addSelectedSource,
@@ -454,7 +433,6 @@ export default function SourcePanel() {
       refreshSessions,
       removeSelectedSource,
       selectedSourceIds,
-      sessionQuery,
     ]
   );
 
@@ -472,7 +450,7 @@ export default function SourcePanel() {
           })
         )
       );
-      refreshSessions(sessionQuery).catch(() => {});
+      refreshSessions().catch(() => {});
       return;
     }
 
@@ -487,7 +465,7 @@ export default function SourcePanel() {
       toLink.forEach((id) => removeSelectedSource(id));
       toast.error("批量关联失败，请稍后重试");
     }
-    refreshSessions(sessionQuery).catch(() => {});
+    refreshSessions().catch(() => {});
   }, [
     addSelectedSource,
     allSelected,
@@ -498,44 +476,7 @@ export default function SourcePanel() {
     removeSelectedSource,
     selectedSourceIds,
     selectAllSources,
-    sessionQuery,
   ]);
-
-  const handleCreateSession = useCallback(async () => {
-    const id = await createAndOpenSession("未命名会话");
-    await refreshSessions(sessionQuery);
-    setCurrentSessionId(id);
-  }, [createAndOpenSession, refreshSessions, sessionQuery, setCurrentSessionId]);
-
-  const handleOpenSessionResult = useCallback(
-    (sessionId: string) => {
-      setCurrentSessionId(sessionId);
-      router.push(getSessionEditorPath(sessionId));
-    },
-    [router, setCurrentSessionId]
-  );
-
-  const handleRenameConfirm = useCallback(
-    async (newTitle: string) => {
-      if (!renameTarget) return;
-      const updated = await updateSession(renameTarget.id, { title: newTitle });
-      upsertSession(updated);
-    },
-    [renameTarget, upsertSession]
-  );
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget) return;
-    await removeSession(deleteTarget.id);
-    removeSessionEntry(deleteTarget.id);
-    const next = await refreshSessions("");
-    const landingSessionId = pickCreateLandingSessionId(next, null);
-    if (landingSessionId) {
-      await loadSession(landingSessionId, { fromExplicitSessionParam: false });
-    } else {
-      await handleCreateSession();
-    }
-  }, [deleteTarget, handleCreateSession, loadSession, refreshSessions, removeSessionEntry]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -604,73 +545,6 @@ export default function SourcePanel() {
             <p className="text-sm font-medium text-primary">松开以上传素材</p>
           </div>
         )}
-
-        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 px-3 py-2.5">
-          <SessionSwitcher
-            sessions={sessions}
-            currentSessionId={currentSessionId}
-            currentSessionTitle={currentSessionTitle}
-            sessionQuery={sessionQuery}
-            onSessionQueryChange={setSessionQuery}
-            onSelectSession={(id) => {
-              void loadSession(id, { fromExplicitSessionParam: true });
-            }}
-            onCreateSession={() => {
-              void handleCreateSession();
-            }}
-            loadingSession={loadingSession}
-          />
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="会话操作"
-              >
-                <Ellipsis className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() =>
-                  setRenameTarget({
-                    id: currentSessionId || "",
-                    title: currentSessionTitle,
-                  })
-                }
-                disabled={!currentSessionId}
-              >
-                <Pencil className="h-4 w-4" />
-                重命名
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  if (currentSessionId) {
-                    handleOpenSessionResult(currentSessionId);
-                  }
-                }}
-                disabled={!currentSessionId}
-              >
-                <ExternalLink className="h-4 w-4" />
-                编辑结果
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() =>
-                  setDeleteTarget({
-                    id: currentSessionId || "",
-                    title: currentSessionTitle,
-                  })
-                }
-                disabled={!currentSessionId}
-              >
-                <Trash2 className="h-4 w-4" />
-                删除会话
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
 
         <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3">
           <div className="flex items-center gap-2">
@@ -781,28 +655,7 @@ export default function SourcePanel() {
           />
         </div>
 
-        <div className="border-t border-slate-200 dark:border-slate-700 px-2 py-2">
-          <UserMenu />
-        </div>
       </div>
-
-      <RenameDialog
-        open={renameTarget !== null}
-        currentTitle={renameTarget?.title || ""}
-        onConfirm={(newTitle) => {
-          void handleRenameConfirm(newTitle);
-        }}
-        onClose={() => setRenameTarget(null)}
-      />
-
-      <DeleteConfirmDialog
-        open={deleteTarget !== null}
-        sessionTitle={deleteTarget?.title || ""}
-        onConfirm={() => {
-          void handleDeleteConfirm();
-        }}
-        onClose={() => setDeleteTarget(null)}
-      />
 
       {previewSource && (
         <SourcePreviewModal

@@ -88,11 +88,13 @@ async def get_session_detail(session_id: str, request: Request):
     sources = await session_store.list_sources(workspace_id, sid)
     chats = await session_store.list_chat_messages(workspace_id, sid)
     latest = await session_store.get_latest_presentation(workspace_id, sid)
+    latest_generation_job = await session_store.get_latest_generation_job(workspace_id, sid)
     return SessionDetail(
         session=SessionSummary.model_validate(session),
         sources=[SourceMeta.model_validate(item) for item in sources],
         chat_messages=[ChatRecord.model_validate(item) for item in chats],
         latest_presentation=latest,
+        latest_generation_job=latest_generation_job,
     )
 
 

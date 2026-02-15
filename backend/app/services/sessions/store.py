@@ -1387,6 +1387,43 @@ class SessionStore:
             )
             conn.commit()
 
+    async def get_latest_generation_job(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict | None:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_generation_job_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_generation_job_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT gj.job_id, gj.status, gj.updated_at
+                FROM generation_jobs gj
+                JOIN sessions s ON s.id = gj.session_id
+                WHERE gj.session_id=? AND s.workspace_id=? AND s.archived_at IS NULL
+                ORDER BY gj.updated_at DESC
+                LIMIT 1
+                """,
+                (session_id, workspace_id),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "job_id": row["job_id"],
+                "status": row["status"],
+                "updated_at": row["updated_at"],
+            }
+
     @staticmethod
     def _row_to_session_summary(row: sqlite3.Row) -> dict:
         return {

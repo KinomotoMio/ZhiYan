@@ -6,13 +6,15 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
-import { exportPptx, exportPdf } from "@/lib/api";
+import { cancelJob, exportPptx, exportPdf } from "@/lib/api";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { canResumeGenerationJob } from "@/lib/routes";
+import { resumeGenerationJob } from "@/components/editor/resume-job";
 import SlidePreview from "@/components/slides/SlidePreview";
 import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
@@ -30,16 +32,81 @@ export default function EditorWorkspace({
   returnLabel = "返回",
 }: EditorWorkspaceProps) {
   const router = useRouter();
-  const { presentation, currentSlideIndex, setCurrentSlideIndex, isGenerating } =
-    useAppStore();
+  const {
+    presentation,
+    currentSlideIndex,
+    setCurrentSlideIndex,
+    isGenerating,
+    jobId,
+    jobStatus,
+    updateJobState,
+    setIsGenerating,
+    initGenerationShell,
+  } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [resuming, setResuming] = useState(false);
+
+  const canResume = canResumeGenerationJob(jobId, jobStatus);
+
+  const handleResume = async () => {
+    if (!jobId || resuming) return;
+    setResuming(true);
+    try {
+      const resumed = await resumeGenerationJob(jobId);
+      updateJobState({
+        lastJobEventSeq: resumed.eventsSeq,
+      });
+      if (!presentation) {
+        initGenerationShell(resumed.requestTitle, resumed.requestNumPages);
+      }
+      setIsGenerating(true);
+      updateJobState({
+        jobId: resumed.resumedJobId,
+        jobStatus: resumed.resumedStatus,
+        currentStage: resumed.resumedStage,
+      });
+      toast.success("已继续生成任务");
+    } catch (err) {
+      setIsGenerating(false);
+      toast.error(err instanceof Error ? err.message : "继续任务失败");
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    if (!jobId) return;
+    try {
+      await cancelJob(jobId);
+      updateJobState({
+        jobStatus: "cancelled",
+        currentStage: null,
+      });
+      setIsGenerating(false);
+      toast.info("已取消生成");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "取消任务失败");
+    }
+  };
 
   if (!presentation) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
           <p className="text-slate-500 dark:text-slate-400">尚未生成演示文稿</p>
+          {canResume && (
+            <button
+              onClick={() => {
+                void handleResume();
+              }}
+              disabled={resuming}
+              className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-60 transition-all duration-200 inline-flex items-center gap-2"
+            >
+              {resuming && <Loader2 className="h-4 w-4 animate-spin" />}
+              {resuming ? "继续中..." : "继续任务"}
+            </button>
+          )}
           <button
             onClick={() => router.push(returnHref)}
             className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
@@ -148,6 +215,28 @@ export default function EditorWorkspace({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {canResume && (
+            <button
+              onClick={() => {
+                void handleResume();
+              }}
+              disabled={resuming || isGenerating}
+              className="px-3 py-1 text-sm rounded-lg border border-cyan-300 bg-cyan-50 text-cyan-700 hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 transition-all duration-200 inline-flex items-center gap-1.5"
+            >
+              {resuming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {resuming ? "继续中..." : "继续任务"}
+            </button>
+          )}
+          {isGenerating && (
+            <button
+              onClick={() => {
+                void handleCancelGeneration();
+              }}
+              className="px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm transition-all duration-200"
+            >
+              取消生成
+            </button>
+          )}
           <button
             onClick={() => setShowReveal(true)}
             disabled={isGenerating}
@@ -185,4 +274,3 @@ export default function EditorWorkspace({
     </div>
   );
 }
-

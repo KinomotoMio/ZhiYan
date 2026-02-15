@@ -6,9 +6,10 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
@@ -160,7 +161,10 @@ async def cancel_job(job_id: str):
 
 
 @router.get("/jobs/{job_id}/events")
-async def stream_job_events(job_id: str):
+async def stream_job_events(
+    job_id: str,
+    after_seq: Annotated[int, Query(ge=0)] = 0,
+):
     heartbeat = max(0.1, settings.sse_heartbeat_seconds)
 
     async def event_generator():
@@ -175,10 +179,12 @@ async def stream_job_events(job_id: str):
         try:
             # Subscribe first to avoid missing terminal event between replay and live subscribe.
             replay = await job_store.list_events(job_id)
-            last_seq = 0
+            last_seq = max(0, after_seq)
             terminal_seen = False
 
             for event in replay:
+                if event.seq <= after_seq:
+                    continue
                 last_seq = max(last_seq, event.seq)
                 yield f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
                 if event.type in {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}:

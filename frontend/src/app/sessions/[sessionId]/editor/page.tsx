@@ -4,8 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
-import { getSessionDetail } from "@/lib/api";
+import { getJob, getSessionDetail } from "@/lib/api";
+import {
+  buildShellSlides,
+  mergeGeneratedSlide,
+} from "@/components/generation/presentation-shell";
 import { useAppStore, type ChatMessage } from "@/lib/store";
+import type { Presentation, Slide } from "@/types/slide";
 
 type LoadState = "loading" | "ready" | "empty" | "error";
 
@@ -55,14 +60,16 @@ export default function SessionEditorPage() {
   const setCurrentSessionId = useAppStore((store) => store.setCurrentSessionId);
   const setSessionData = useAppStore((store) => store.setSessionData);
   const setCurrentSlideIndex = useAppStore((store) => store.setCurrentSlideIndex);
+  const updateJobState = useAppStore((store) => store.updateJobState);
+  const setIsGenerating = useAppStore((store) => store.setIsGenerating);
 
   useEffect(() => {
     if (!sessionId) return;
 
     let cancelled = false;
-
-    getSessionDetail(sessionId)
-      .then((detail) => {
+    const run = async () => {
+      try {
+        const detail = await getSessionDetail(sessionId);
         if (cancelled) return;
         const chatMessages = toStoreChatMessages(
           detail.chat_messages as unknown as Array<Record<string, unknown>>
@@ -72,8 +79,62 @@ export default function SessionEditorPage() {
           currentStore.currentSessionId === sessionId
             ? currentStore.presentation
             : null;
-        const presentation =
+        let presentation =
           detail.latest_presentation?.presentation ?? localPresentation ?? null;
+        const latestJob = detail.latest_generation_job;
+        const resolvedJobStatus =
+          latestJob?.status === "pending" &&
+          currentStore.jobId === latestJob.job_id &&
+          currentStore.jobStatus === "running"
+            ? "running"
+            : latestJob?.status ?? null;
+
+        if (!presentation && latestJob?.job_id && resolvedJobStatus === "running") {
+          try {
+            const job = await getJob(latestJob.job_id);
+            const rawNumPages =
+              typeof job.request?.num_pages === "number"
+                ? job.request.num_pages
+                : 5;
+            const pageCount = Math.max(1, Math.trunc(rawNumPages));
+            const jobTitle =
+              typeof job.request?.title === "string" &&
+              job.request.title.trim()
+                ? job.request.title
+                : "生成中...";
+
+            let mergedSlides = buildShellSlides(pageCount, "生成中...");
+            if (Array.isArray(job.slides) && job.slides.length > 0) {
+              for (let idx = 0; idx < Math.min(job.slides.length, mergedSlides.length); idx += 1) {
+                const slide = job.slides[idx] as Slide | undefined;
+                if (slide) {
+                  mergedSlides = mergeGeneratedSlide(mergedSlides, idx, slide);
+                }
+              }
+            }
+
+            const maybePresentation = job.presentation as Record<string, unknown> | null | undefined;
+            const presentationId =
+              maybePresentation &&
+              typeof maybePresentation.presentationId === "string" &&
+              maybePresentation.presentationId.trim()
+                ? maybePresentation.presentationId
+                : "pres-skeleton";
+
+            presentation = {
+              presentationId,
+              title: jobTitle,
+              slides: mergedSlides,
+            } as Presentation;
+          } catch {
+            presentation = {
+              presentationId: "pres-skeleton",
+              title: "生成中...",
+              slides: buildShellSlides(5, "生成中..."),
+            };
+          }
+        }
+
         const initialSlideIndex = parseSlideQueryToIndex(
           requestedSlide,
           presentation?.slides.length ?? 0
@@ -85,15 +146,33 @@ export default function SessionEditorPage() {
           chatMessages,
           presentation,
         });
+        if (latestJob?.job_id) {
+          updateJobState({
+            jobId: latestJob.job_id,
+            jobStatus: resolvedJobStatus,
+            currentStage: null,
+            lastJobEventSeq: 0,
+          });
+          setIsGenerating(resolvedJobStatus === "running");
+        } else {
+          updateJobState({
+            jobId: null,
+            jobStatus: null,
+            currentStage: null,
+            lastJobEventSeq: 0,
+            issues: [],
+            failedSlideIndices: [],
+          });
+          setIsGenerating(false);
+        }
         setCurrentSlideIndex(initialSlideIndex);
 
-        if (presentation) {
+        if (presentation || latestJob?.job_id) {
           setState("ready");
         } else {
           setState("empty");
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         setState("error");
         setErrorMessage(
@@ -101,12 +180,22 @@ export default function SessionEditorPage() {
             ? `会话加载失败：${err.message}`
             : "会话不存在或无权限访问。"
         );
-      });
+      }
+    };
+    void run();
 
     return () => {
       cancelled = true;
     };
-  }, [requestedSlide, sessionId, setCurrentSessionId, setCurrentSlideIndex, setSessionData]);
+  }, [
+    requestedSlide,
+    sessionId,
+    setCurrentSessionId,
+    setCurrentSlideIndex,
+    setIsGenerating,
+    setSessionData,
+    updateJobState,
+  ]);
 
   if (!sessionId) {
     return (

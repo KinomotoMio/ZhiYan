@@ -2,6 +2,28 @@ interface EditorPathOptions {
   slide?: number;
 }
 
+export function resolvePostCreateEditorPath(
+  createdSessionId: string | null,
+  currentSessionId: string | null,
+  fallbackSessionId: string | null
+): string | null {
+  const targetSessionId = createdSessionId || currentSessionId || fallbackSessionId;
+  if (!targetSessionId) {
+    return null;
+  }
+  return getSessionEditorPath(targetSessionId);
+}
+
+export function canResumeGenerationJob(
+  jobId: string | null,
+  jobStatus: string | null
+): boolean {
+  if (!jobId) {
+    return false;
+  }
+  return jobStatus === "failed" || jobStatus === "cancelled";
+}
+
 export function getSessionEditorPath(
   sessionId: string,
   options?: EditorPathOptions

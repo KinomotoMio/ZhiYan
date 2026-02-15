@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canResumeGenerationJob,
   getSessionEditorPath,
   pickCreateLandingSessionId,
+  resolvePostCreateEditorPath,
   shouldAutoRedirectToEditor,
 } from "@/lib/routes";
 
@@ -52,4 +54,28 @@ test("shouldAutoRedirectToEditor only redirects for explicit session route", () 
   assert.equal(shouldAutoRedirectToEditor(true, false), false);
   assert.equal(shouldAutoRedirectToEditor(true, true), true);
   assert.equal(shouldAutoRedirectToEditor(false, true), false);
+});
+
+test("resolvePostCreateEditorPath prefers created session id", () => {
+  const path = resolvePostCreateEditorPath("sess-created", "sess-current", "sess-fallback");
+  assert.equal(path, "/sessions/sess-created/editor");
+});
+
+test("resolvePostCreateEditorPath falls back to current and fallback session", () => {
+  assert.equal(
+    resolvePostCreateEditorPath(null, "sess-current", "sess-fallback"),
+    "/sessions/sess-current/editor"
+  );
+  assert.equal(
+    resolvePostCreateEditorPath(null, null, "sess-fallback"),
+    "/sessions/sess-fallback/editor"
+  );
+  assert.equal(resolvePostCreateEditorPath(null, null, null), null);
+});
+
+test("canResumeGenerationJob is true only for failed/cancelled jobs", () => {
+  assert.equal(canResumeGenerationJob("job-1", "failed"), true);
+  assert.equal(canResumeGenerationJob("job-1", "cancelled"), true);
+  assert.equal(canResumeGenerationJob("job-1", "running"), false);
+  assert.equal(canResumeGenerationJob(null, "failed"), false);
 });

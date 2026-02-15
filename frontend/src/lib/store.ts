@@ -3,6 +3,12 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type { SessionSummary, WorkspaceId } from "@/lib/api";
+import {
+  buildShellSlides,
+  mergeGeneratedSlide,
+  mergeOutlineTitles,
+  type OutlineTitleItem,
+} from "@/components/generation/presentation-shell";
 
 export interface OutlineItem {
   slide_number: number;
@@ -30,6 +36,7 @@ interface AppState {
   jobId: string | null;
   jobStatus: string | null;
   currentStage: string | null;
+  lastJobEventSeq: number;
   issues: Array<Record<string, unknown>>;
   failedSlideIndices: number[];
   chatMessages: ChatMessage[];
@@ -62,6 +69,7 @@ interface AppState {
     jobId?: string | null;
     jobStatus?: string | null;
     currentStage?: string | null;
+    lastJobEventSeq?: number;
     issues?: Array<Record<string, unknown>>;
     failedSlideIndices?: number[];
   }) => void;
@@ -71,6 +79,9 @@ interface AppState {
   getCurrentSlide: () => Slide | null;
 
   // 渐进式生成 actions
+  initGenerationShell: (title: string, pageCount: number) => void;
+  setPresentationTitle: (title: string) => void;
+  patchSlideTitlesFromOutline: (items: OutlineTitleItem[]) => void;
   initSkeletonPresentation: (title: string, outlineItems: OutlineItem[]) => void;
   updateSlideAtIndex: (index: number, slide: Slide) => void;
   finishGeneration: () => void;
@@ -106,6 +117,7 @@ export const useAppStore = create<AppState>()(
       jobId: null,
       jobStatus: null,
       currentStage: null,
+      lastJobEventSeq: 0,
       issues: [],
       failedSlideIndices: [],
       chatMessages: [],
@@ -169,6 +181,7 @@ export const useAppStore = create<AppState>()(
           jobId: patch.jobId ?? state.jobId,
           jobStatus: patch.jobStatus ?? state.jobStatus,
           currentStage: patch.currentStage ?? state.currentStage,
+          lastJobEventSeq: patch.lastJobEventSeq ?? state.lastJobEventSeq,
           issues: patch.issues ?? state.issues,
           failedSlideIndices: patch.failedSlideIndices ?? state.failedSlideIndices,
         })),
@@ -177,6 +190,7 @@ export const useAppStore = create<AppState>()(
           jobId: null,
           jobStatus: null,
           currentStage: null,
+          lastJobEventSeq: 0,
           issues: [],
           failedSlideIndices: [],
         }),
@@ -190,14 +204,51 @@ export const useAppStore = create<AppState>()(
       },
 
       // 渐进式生成 actions
+      initGenerationShell: (title, pageCount) =>
+        set((state) => {
+          const safeTitle = title.trim() || "生成中...";
+          const currentPresentationId =
+            state.presentation?.presentationId || "pres-skeleton";
+          return {
+            presentation: {
+              presentationId: currentPresentationId,
+              title: safeTitle,
+              slides: buildShellSlides(pageCount, safeTitle),
+            },
+            currentSlideIndex: 0,
+            isGenerating: true,
+          };
+        }),
+      setPresentationTitle: (title) =>
+        set((state) => {
+          if (!state.presentation) return {};
+          const safeTitle = title.trim();
+          if (!safeTitle) return {};
+          return {
+            presentation: {
+              ...state.presentation,
+              title: safeTitle,
+            },
+          };
+        }),
+      patchSlideTitlesFromOutline: (items) =>
+        set((state) => {
+          if (!state.presentation) return {};
+          return {
+            presentation: {
+              ...state.presentation,
+              slides: mergeOutlineTitles(state.presentation.slides, items),
+            },
+          };
+        }),
       initSkeletonPresentation: (title, outlineItems) => {
-        const skeletonSlides: Slide[] = outlineItems.map((item) => ({
-          slideId: `slide-${item.slide_number}`,
-          layoutType: "blank" as Slide["layoutType"],
-          layoutId: undefined,
-          contentData: { title: item.title, _loading: true },
-          components: [],
-        }));
+        const skeletonSlides = mergeOutlineTitles(
+          buildShellSlides(outlineItems.length, title),
+          outlineItems.map((item) => ({
+            slide_number: item.slide_number,
+            title: item.title,
+          }))
+        );
         set({
           presentation: {
             presentationId: "pres-skeleton",
@@ -212,11 +263,12 @@ export const useAppStore = create<AppState>()(
       updateSlideAtIndex: (index, slide) =>
         set((state) => {
           if (!state.presentation) return {};
-          const slides = [...state.presentation.slides];
-          if (index >= 0 && index < slides.length) {
-            slides[index] = slide;
-          }
-          return { presentation: { ...state.presentation, slides } };
+          return {
+            presentation: {
+              ...state.presentation,
+              slides: mergeGeneratedSlide(state.presentation.slides, index, slide),
+            },
+          };
         }),
 
       finishGeneration: () => set({ isGenerating: false }),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -17,6 +17,8 @@ import {
   getLatestSessionPresentation,
   listSessions,
   listWorkspaceSources,
+  removeSession,
+  updateSession,
   type SessionSummary,
 } from "@/lib/api";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
@@ -395,6 +397,49 @@ export default function HomeView() {
     router.push(`/create?session=${encodeURIComponent(session.id)}`);
   };
 
+  const refreshSessionList = useCallback(async () => {
+    const items = await listSessions({ limit: 100, offset: 0 });
+    setSessions(items);
+  }, []);
+
+  const handleCreateSessionFromDialog = useCallback(async () => {
+    const created = await createSession("未命名会话");
+    setCurrentSessionId(created.id);
+    router.push(`/create?session=${encodeURIComponent(created.id)}`);
+  }, [router, setCurrentSessionId]);
+
+  const handleRenameSession = useCallback(
+    async (id: string, newTitle: string) => {
+      await updateSession(id, { title: newTitle });
+      await refreshSessionList();
+    },
+    [refreshSessionList]
+  );
+
+  const handleDeleteSession = useCallback(
+    async (id: string) => {
+      await removeSession(id);
+      await refreshSessionList();
+    },
+    [refreshSessionList]
+  );
+
+  const handleTogglePinSession = useCallback(
+    async (id: string, isPinned: boolean) => {
+      await updateSession(id, { is_pinned: isPinned });
+      await refreshSessionList();
+    },
+    [refreshSessionList]
+  );
+
+  const handleBatchDeleteSessions = useCallback(
+    async (ids: string[]) => {
+      await Promise.all(ids.map((id) => removeSession(id)));
+      await refreshSessionList();
+    },
+    [refreshSessionList]
+  );
+
   const handlePrimaryAction = () => {
     if (latestResultSession) {
       handleOpenSession(latestResultSession);
@@ -676,6 +721,11 @@ export default function HomeView() {
         getSessionTitle={getResultTitle}
         getSessionMeta={getResultMeta}
         onOpenSession={handleOpenSession}
+        onCreateSession={handleCreateSessionFromDialog}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
+        onTogglePinSession={handleTogglePinSession}
+        onBatchDeleteSessions={handleBatchDeleteSessions}
       />
 
       <SessionListDialog
@@ -688,6 +738,11 @@ export default function HomeView() {
         getSessionTitle={getDraftTitle}
         getSessionMeta={getDraftMeta}
         onOpenSession={handleOpenSession}
+        onCreateSession={handleCreateSessionFromDialog}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
+        onTogglePinSession={handleTogglePinSession}
+        onBatchDeleteSessions={handleBatchDeleteSessions}
       />
     </div>
   );
