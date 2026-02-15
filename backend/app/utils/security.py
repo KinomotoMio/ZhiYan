@@ -31,7 +31,7 @@ async def is_safe_url(url: str) -> bool:
             if not ip.is_global:
                 return False
         return True
-    except Exception:
+    except (socket.gaierror, ValueError):
         # If anything goes wrong during parsing or resolution, assume unsafe
         return False
 
