@@ -380,7 +380,8 @@ export async function bulkDeleteWorkspaceSources(sourceIds: string[]): Promise<{
 }
 
 export async function linkSourcesToSession(sessionId: string, sourceIds: string[]): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/link`, {
+  const sid = encodeURIComponent(sessionId);
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sid}/sources/link`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ source_ids: sourceIds }),
@@ -389,11 +390,13 @@ export async function linkSourcesToSession(sessionId: string, sourceIds: string[
 }
 
 export async function unlinkSourceFromSession(sessionId: string, sourceId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/sources/${sourceId}/link`, {
+  const sid = encodeURIComponent(sessionId);
+  const srcId = encodeURIComponent(sourceId);
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sid}/sources/${srcId}/link`, {
     method: "DELETE",
     headers: withWorkspaceHeaders(),
   });
-  if (!res.ok) throw new Error(`取消关联失败: ${res.statusText}`);
+  if (!res.ok && res.status !== 404) throw new Error(`取消关联失败: ${res.statusText}`);
 }
 
 // ---------- Generation v2 ----------
@@ -403,6 +406,7 @@ export type JobStatus =
   | "pending"
   | "running"
   | "waiting_outline_review"
+  | "waiting_fix_review"
   | "completed"
   | "failed"
   | "cancelled";
@@ -422,6 +426,8 @@ export type EventType =
   | "outline_ready"
   | "layout_ready"
   | "slide_ready"
+  | "job_waiting_fix_review"
+  | "fix_preview_ready"
   | "stage_failed"
   | "job_completed"
   | "job_failed"
@@ -477,6 +483,8 @@ export interface GenerationIssue {
   category?: string;
   message?: string;
   suggestion?: string;
+  tier?: "hard" | "advisory" | string;
+  source?: string;
   [k: string]: unknown;
 }
 
@@ -496,6 +504,10 @@ export interface GenerationJob {
   slides: Slide[];
   issues: GenerationIssue[];
   failed_slide_indices: number[];
+  hard_issue_slide_ids?: string[];
+  advisory_issue_count?: number;
+  fix_preview_slides?: Slide[];
+  fix_preview_source_ids?: string[];
   error: string | null;
   presentation?: Presentation | null;
   [k: string]: unknown;
@@ -578,6 +590,44 @@ export async function cancelJob(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `取消任务失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fixPreview(jobId: string, slideIds?: string[]): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/preview`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ slide_ids: slideIds && slideIds.length > 0 ? slideIds : null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `生成修复建议失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fixApply(jobId: string, slideIds: string[]): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/apply`, {
+    method: "POST",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ slide_ids: slideIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `应用修复失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fixSkip(jobId: string): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/skip`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `跳过修复失败: ${res.statusText}`);
   }
   return res.json();
 }

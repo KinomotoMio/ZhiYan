@@ -240,7 +240,7 @@ export default function SlidePreview({
           <RenderLayoutSlide slide={slide} />
         </div>
       ) : (
-        slide.components.map((comp) => (
+        (slide.components ?? []).map((comp) => (
           <RenderComponent key={comp.id} comp={comp} scale={scale} />
         ))
       )}

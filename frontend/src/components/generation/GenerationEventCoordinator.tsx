@@ -9,6 +9,7 @@ import {
   type GenerationErrorCode,
   type GenerationEvent,
 } from "@/lib/api";
+import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
 import type { Presentation, Slide } from "@/types/slide";
 
@@ -48,6 +49,10 @@ export default function GenerationEventCoordinator() {
     jobId,
     jobStatus,
     updateJobState,
+    setFixPreviewSelection,
+    clearFixReviewState,
+    setIssueDecision,
+    resetIssueReviewState,
     patchSlideTitlesFromOutline,
     setPresentationTitle,
     updateSlideAtIndex,
@@ -129,23 +134,91 @@ export default function GenerationEventCoordinator() {
             return;
           }
 
+          if (evt.type === "job_waiting_fix_review") {
+            const payload = evt.payload as Record<string, unknown>;
+            const normalizedIssues = Array.isArray(payload.issues)
+              ? (payload.issues as Array<Record<string, unknown>>)
+              : [];
+            updateJobState({
+              jobId,
+              jobStatus: "waiting_fix_review",
+              currentStage: "verify",
+              issues: normalizedIssues,
+              failedSlideIndices: Array.isArray(payload.failed_slide_indices)
+                ? (payload.failed_slide_indices as number[])
+                : [],
+              hardIssueSlideIds: Array.isArray(payload.hard_issue_slide_ids)
+                ? (payload.hard_issue_slide_ids as string[])
+                : [],
+              advisoryIssueCount:
+                typeof payload.advisory_issue_count === "number"
+                  ? payload.advisory_issue_count
+                  : 0,
+              fixPreviewSlides: [],
+              fixPreviewSourceIds: [],
+              selectedFixPreviewSlideIds: [],
+            });
+            for (const slideId of collectIssueSlideIds(normalizedIssues)) {
+              setIssueDecision(slideId, "pending");
+            }
+            finishGeneration();
+            toast.warning("检测到需要人工决策的问题，请确认是否应用修复建议");
+            return;
+          }
+
+          if (evt.type === "fix_preview_ready") {
+            const payload = evt.payload as Record<string, unknown>;
+            const previewSlides = Array.isArray(payload.fix_preview_slides)
+              ? (payload.fix_preview_slides as Slide[])
+              : [];
+            const sourceIds = Array.isArray(payload.fix_preview_source_ids)
+              ? (payload.fix_preview_source_ids as string[])
+              : [];
+            updateJobState({
+              fixPreviewSlides: previewSlides,
+              fixPreviewSourceIds: sourceIds,
+              selectedFixPreviewSlideIds: sourceIds,
+            });
+            setFixPreviewSelection(sourceIds);
+            toast.success(`已生成 ${sourceIds.length} 页修复建议`);
+            return;
+          }
+
           if (evt.type === "job_completed") {
             const payload = evt.payload as Record<string, unknown>;
             const presentation = payload.presentation as Presentation | undefined;
             if (presentation) {
               setPresentation(presentation);
             }
+            const normalizedIssues = Array.isArray(payload.issues)
+              ? (payload.issues as Array<Record<string, unknown>>)
+              : [];
             updateJobState({
               jobId,
               jobStatus: "completed",
               currentStage: "complete",
-              issues: Array.isArray(payload.issues)
-                ? (payload.issues as Array<Record<string, unknown>>)
-                : [],
+              issues: normalizedIssues,
               failedSlideIndices: Array.isArray(payload.failed_slide_indices)
                 ? (payload.failed_slide_indices as number[])
                 : [],
+              hardIssueSlideIds: Array.isArray(payload.hard_issue_slide_ids)
+                ? (payload.hard_issue_slide_ids as string[])
+                : [],
+              advisoryIssueCount:
+                typeof payload.advisory_issue_count === "number"
+                  ? payload.advisory_issue_count
+                  : 0,
+              fixPreviewSlides: [],
+              fixPreviewSourceIds: [],
+              selectedFixPreviewSlideIds: [],
             });
+            clearFixReviewState();
+            for (const slideId of collectIssueSlideIds(normalizedIssues)) {
+              const currentDecision = useAppStore.getState().issueDecisionBySlideId[slideId];
+              if (!currentDecision) {
+                setIssueDecision(slideId, "pending");
+              }
+            }
             finishGeneration();
             return;
           }
@@ -160,7 +233,14 @@ export default function GenerationEventCoordinator() {
               jobId,
               jobStatus: "failed",
               currentStage: null,
+              hardIssueSlideIds: [],
+              advisoryIssueCount: 0,
+              fixPreviewSlides: [],
+              fixPreviewSourceIds: [],
+              selectedFixPreviewSlideIds: [],
             });
+            clearFixReviewState();
+            resetIssueReviewState();
             finishGeneration();
             toast.error(toErrorMessage(evt));
             return;
@@ -171,7 +251,14 @@ export default function GenerationEventCoordinator() {
               jobId,
               jobStatus: "cancelled",
               currentStage: null,
+              hardIssueSlideIds: [],
+              advisoryIssueCount: 0,
+              fixPreviewSlides: [],
+              fixPreviewSourceIds: [],
+              selectedFixPreviewSlideIds: [],
             });
+            clearFixReviewState();
+            resetIssueReviewState();
             finishGeneration();
             toast.info("任务已取消");
           }
@@ -181,7 +268,14 @@ export default function GenerationEventCoordinator() {
             jobId,
             jobStatus: "failed",
             currentStage: null,
+            hardIssueSlideIds: [],
+            advisoryIssueCount: 0,
+            fixPreviewSlides: [],
+            fixPreviewSourceIds: [],
+            selectedFixPreviewSlideIds: [],
           });
+          clearFixReviewState();
+          resetIssueReviewState();
           finishGeneration();
           toast.error(err.message || "事件流连接失败");
         },
@@ -200,7 +294,11 @@ export default function GenerationEventCoordinator() {
     jobId,
     jobStatus,
     patchSlideTitlesFromOutline,
+    clearFixReviewState,
+    resetIssueReviewState,
     setIsGenerating,
+    setIssueDecision,
+    setFixPreviewSelection,
     setPresentation,
     setPresentationTitle,
     updateJobState,

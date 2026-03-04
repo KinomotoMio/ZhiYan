@@ -10,6 +10,7 @@ import {
   createSession,
   createSessionSnapshot,
   fetchWorkspaceUrlSource,
+  getJob,
   getCurrentWorkspace,
   getSessionDetail,
   linkSourcesToSession,
@@ -27,7 +28,7 @@ import {
   shouldAutoRedirectToEditor,
 } from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
-import type { Presentation } from "@/types/slide";
+import type { Presentation, Slide } from "@/types/slide";
 
 const MIGRATION_FLAG_KEY = "zhiyan-session-migrated-v1";
 
@@ -70,6 +71,17 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
 
 type SourceFilterMode = "all" | "selected" | "unselected";
 
+type HydratedGenerationJob = {
+  slides?: Slide[];
+  request?: { title?: string };
+  issues?: Array<Record<string, unknown>>;
+  failed_slide_indices?: number[];
+  hard_issue_slide_ids?: string[];
+  advisory_issue_count?: number;
+  fix_preview_slides?: Slide[];
+  fix_preview_source_ids?: string[];
+};
+
 function toTimestamp(source: SourceMeta): number {
   const raw = source.created_at;
   if (!raw) return 0;
@@ -107,16 +119,21 @@ export default function SourcePanel() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [sourceFilterMode, setSourceFilterMode] = useState<SourceFilterMode>("all");
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const bootstrappedRef = useRef(false);
+  const effectiveSelectedSourceIds = useMemo(
+    () => (isBootstrapping ? [] : selectedSourceIds),
+    [isBootstrapping, selectedSourceIds]
+  );
 
   const readySources = workspaceSources.filter((s) => s.status === "ready");
   const selectedCount = readySources.filter((s) =>
-    selectedSourceIds.includes(s.id)
+    effectiveSelectedSourceIds.includes(s.id)
   ).length;
   const allSelected = readySources.length > 0 && selectedCount === readySources.length;
 
   const visibleSources = useMemo(() => {
-    const selectedSet = new Set(selectedSourceIds);
+    const selectedSet = new Set(effectiveSelectedSourceIds);
     const filtered = workspaceSources.filter((source) => {
       if (workspaceQuery.trim()) {
         const normalized = workspaceQuery.trim().toLowerCase();
@@ -134,7 +151,7 @@ export default function SourcePanel() {
       if (selectedA !== selectedB) return selectedB - selectedA;
       return toTimestamp(b) - toTimestamp(a);
     });
-  }, [selectedSourceIds, sourceFilterMode, workspaceQuery, workspaceSources]);
+  }, [effectiveSelectedSourceIds, sourceFilterMode, workspaceQuery, workspaceSources]);
 
   const refreshSessions = useCallback(
     async (q = "") => {
@@ -181,12 +198,40 @@ export default function SourcePanel() {
         currentStore.jobStatus === "running"
           ? "running"
           : detail.latest_generation_job?.status ?? null;
+      let hydratedJob: HydratedGenerationJob | null = null;
+      let hydratedPresentation = detail.latest_presentation?.presentation ?? null;
+      const shouldHydrateJob =
+        Boolean(detail.latest_generation_job?.job_id) &&
+        (resolvedJobStatus === "running" ||
+          resolvedJobStatus === "waiting_fix_review" ||
+          resolvedJobStatus === "completed");
+      if (shouldHydrateJob && detail.latest_generation_job?.job_id) {
+        try {
+          const job = await getJob(detail.latest_generation_job.job_id);
+          hydratedJob = job as unknown as HydratedGenerationJob;
+          if (!hydratedPresentation && Array.isArray(job.slides) && job.slides.length > 0) {
+            hydratedPresentation = {
+              presentationId:
+                (typeof job.presentation?.presentationId === "string" &&
+                job.presentation.presentationId.trim()
+                  ? job.presentation.presentationId
+                  : "pres-skeleton"),
+              title:
+                (typeof job.request?.title === "string" && job.request.title.trim()) ||
+                "生成中...",
+              slides: job.slides,
+            };
+          }
+        } catch {
+          hydratedJob = null;
+        }
+      }
       setCurrentSessionId(sessionId);
       upsertSession(detail.session);
       setSessionData({
         sources: detail.sources,
         chatMessages,
-        presentation: detail.latest_presentation?.presentation ?? null,
+        presentation: hydratedPresentation,
       });
       if (detail.latest_generation_job?.job_id) {
         updateJobState({
@@ -194,6 +239,34 @@ export default function SourcePanel() {
           jobStatus: resolvedJobStatus,
           currentStage: null,
           lastJobEventSeq: 0,
+          issues:
+            hydratedJob && Array.isArray(hydratedJob.issues)
+              ? hydratedJob.issues
+              : [],
+          failedSlideIndices:
+            hydratedJob && Array.isArray(hydratedJob.failed_slide_indices)
+              ? hydratedJob.failed_slide_indices
+              : [],
+          hardIssueSlideIds:
+            hydratedJob && Array.isArray(hydratedJob.hard_issue_slide_ids)
+              ? hydratedJob.hard_issue_slide_ids
+              : [],
+          advisoryIssueCount:
+            hydratedJob && typeof hydratedJob.advisory_issue_count === "number"
+              ? hydratedJob.advisory_issue_count
+              : 0,
+          fixPreviewSlides:
+            hydratedJob && Array.isArray(hydratedJob.fix_preview_slides)
+              ? hydratedJob.fix_preview_slides
+              : [],
+          fixPreviewSourceIds:
+            hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
+              ? hydratedJob.fix_preview_source_ids
+              : [],
+          selectedFixPreviewSlideIds:
+            hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
+              ? hydratedJob.fix_preview_source_ids
+              : [],
         });
         setIsGenerating(resolvedJobStatus === "running");
       } else {
@@ -204,6 +277,11 @@ export default function SourcePanel() {
           lastJobEventSeq: 0,
           issues: [],
           failedSlideIndices: [],
+          hardIssueSlideIds: [],
+          advisoryIssueCount: 0,
+          fixPreviewSlides: [],
+          fixPreviewSourceIds: [],
+          selectedFixPreviewSlideIds: [],
         });
         setIsGenerating(false);
       }
@@ -235,7 +313,9 @@ export default function SourcePanel() {
     bootstrappedRef.current = true;
 
     let cancelled = false;
+    let finished = false;
     const run = async () => {
+      setIsBootstrapping(true);
       const workspace = await getCurrentWorkspace();
       setWorkspaceId(workspace.id);
 
@@ -302,10 +382,20 @@ export default function SourcePanel() {
 
     run().catch((err) => {
       console.error("session bootstrap failed", err);
+    }).finally(() => {
+      finished = true;
+      if (!cancelled) {
+        setIsBootstrapping(false);
+      }
     });
 
     return () => {
       cancelled = true;
+      // React Strict Mode will teardown immediately once in dev.
+      // If bootstrap has not finished yet, allow a second setup run.
+      if (!finished) {
+        bootstrappedRef.current = false;
+      }
     };
   }, [
     createAndOpenSession,
@@ -406,8 +496,9 @@ export default function SourcePanel() {
 
   const handleToggleSessionSource = useCallback(
     async (sourceId: string) => {
+      if (isBootstrapping) return;
       const sessionId = await ensureSession();
-      const selected = selectedSourceIds.includes(sourceId);
+      const selected = effectiveSelectedSourceIds.includes(sourceId);
       if (selected) {
         removeSelectedSource(sourceId);
         try {
@@ -430,18 +521,20 @@ export default function SourcePanel() {
     [
       addSelectedSource,
       ensureSession,
+      effectiveSelectedSourceIds,
+      isBootstrapping,
       refreshSessions,
       removeSelectedSource,
-      selectedSourceIds,
     ]
   );
 
   const handleToggleAll = useCallback(async () => {
+    if (isBootstrapping) return;
     const sessionId = await ensureSession();
     if (allSelected) {
       const toUnlink = readySources
         .map((source) => source.id)
-        .filter((id) => selectedSourceIds.includes(id));
+        .filter((id) => effectiveSelectedSourceIds.includes(id));
       deselectAllSources();
       await Promise.all(
         toUnlink.map((id) =>
@@ -456,7 +549,7 @@ export default function SourcePanel() {
 
     const toLink = readySources
       .map((source) => source.id)
-      .filter((id) => !selectedSourceIds.includes(id));
+      .filter((id) => !effectiveSelectedSourceIds.includes(id));
     if (toLink.length === 0) return;
     selectAllSources();
     try {
@@ -471,10 +564,11 @@ export default function SourcePanel() {
     allSelected,
     deselectAllSources,
     ensureSession,
+    effectiveSelectedSourceIds,
+    isBootstrapping,
     readySources,
     refreshSessions,
     removeSelectedSource,
-    selectedSourceIds,
     selectAllSources,
   ]);
 
@@ -552,6 +646,7 @@ export default function SourcePanel() {
               <input
                 type="checkbox"
                 checked={allSelected}
+                disabled={isBootstrapping}
                 onChange={() => {
                   void handleToggleAll();
                 }}
@@ -627,7 +722,7 @@ export default function SourcePanel() {
                 <SourceItem
                   key={source.id}
                   source={source}
-                  isSelected={selectedSourceIds.includes(source.id)}
+                  isSelected={effectiveSelectedSourceIds.includes(source.id)}
                   onToggleSelect={(id) => {
                     void handleToggleSessionSource(id);
                   }}

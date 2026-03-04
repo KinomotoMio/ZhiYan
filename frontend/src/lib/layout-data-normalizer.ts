@@ -268,7 +268,60 @@ function normalizeChallengeOutcome(data: RecordLike): LayoutNormalizeResult {
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize challenge shape" : null };
 }
 
+function normalizeIntroSlide(data: RecordLike): LayoutNormalizeResult {
+  const repaired: RecordLike = {
+    title: asText(data.title, "未命名演示"),
+  };
+  const subtitle = asText(data.subtitle);
+  if (subtitle) repaired.subtitle = subtitle;
+  const author = asText(data.author) || asText(data.presenter);
+  if (author) repaired.author = author;
+  const date = asText(data.date);
+  if (date) repaired.date = date;
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize intro shape" : null };
+}
+
+function normalizeQuoteSlide(data: RecordLike): LayoutNormalizeResult {
+  const quote = asText(data.quote) || asText(data.title);
+  if (!quote) {
+    return { data, recoverable: false, changed: false, reason: "missing quote text" };
+  }
+
+  const repaired: RecordLike = { quote };
+  const author = asText(data.author) || asText(data.attribution);
+  if (author) repaired.author = author;
+  const context = asText(data.context);
+  if (context) repaired.context = context;
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize quote shape" : null };
+}
+
+function normalizeThankYou(data: RecordLike): LayoutNormalizeResult {
+  const repaired: RecordLike = {
+    title: asText(data.title, "谢谢"),
+  };
+  const subtitle = asText(data.subtitle);
+  if (subtitle) repaired.subtitle = subtitle;
+  const contact = asText(data.contact) || asText(data.contact_info);
+  if (contact) repaired.contact = contact;
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize thank-you shape" : null };
+}
+
 export function normalizeLayoutData(layoutId: string, data: Record<string, unknown>): LayoutNormalizeResult {
+  if (layoutId === "intro-slide") {
+    return normalizeIntroSlide(data);
+  }
+  if (layoutId === "quote-slide") {
+    return normalizeQuoteSlide(data);
+  }
+  if (layoutId === "thank-you") {
+    return normalizeThankYou(data);
+  }
   if (layoutId === "two-column-compare") {
     return normalizeTwoColumnCompare(data);
   }

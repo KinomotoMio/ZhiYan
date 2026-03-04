@@ -1,62 +1,32 @@
 /**
- * PPTX 导出模块 — 使用 dom-to-pptx 将 DOM 元素导出为 .pptx
- *
- * 主要方案：客户端 dom-to-pptx（高保真，所见即所得）
- * 回退方案：服务端 python-pptx（通过 /api/v1/export/pptx）
+ * @deprecated Legacy export helpers are frozen.
+ * Use `@/lib/api` exportPptx/exportPdf in active code paths.
  */
 
 import type { Presentation } from "@/types/slide";
 
-/**
- * 客户端 dom-to-pptx 导出
- *
- * 要求页面中已渲染所有 slides 为 1280x720 DOM 元素，
- * 并使用 `data-slide-export` 属性标记。
- */
-export async function exportPptxClient(
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+async function downloadExport(
   presentation: Presentation,
-  options?: { fileName?: string },
+  format: "pptx" | "pdf",
+  fileName?: string,
 ): Promise<void> {
-  const { exportToPptx } = await import("dom-to-pptx");
-
-  const slideElements = document.querySelectorAll<HTMLElement>(
-    "[data-slide-export]",
-  );
-
-  if (slideElements.length === 0) {
-    throw new Error("未找到可导出的幻灯片 DOM 元素");
-  }
-
-  const fileName =
-    options?.fileName || `${presentation.title || "演示文稿"}.pptx`;
-
-  await exportToPptx(Array.from(slideElements), {
-    fileName,
+  const res = await fetch(`${API_BASE}/api/v1/export/${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ presentation }),
   });
-}
-
-/**
- * 服务端 python-pptx 导出（回退方案）
- */
-export async function exportPptxServer(
-  presentationId: string,
-  options?: { fileName?: string },
-): Promise<void> {
-  const response = await fetch(
-    `/api/v1/export/pptx?presentation_id=${encodeURIComponent(presentationId)}`,
-    { method: "GET" },
-  );
-
-  if (!response.ok) {
-    throw new Error(`导出失败: ${response.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `${format.toUpperCase()} 导出失败: ${res.statusText}`);
   }
 
-  const blob = await response.blob();
+  const blob = await res.blob();
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement("a");
   a.href = url;
-  a.download = options?.fileName || "presentation.pptx";
+  a.download = fileName || `${presentation.title || "presentation"}.${format}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -64,20 +34,38 @@ export async function exportPptxServer(
 }
 
 /**
- * 统一导出入口 — 优先客户端，失败回退服务端
+ * @deprecated Frozen compatibility wrapper.
+ */
+export async function exportPptxClient(
+  presentation: Presentation,
+  options?: { fileName?: string },
+): Promise<void> {
+  return downloadExport(presentation, "pptx", options?.fileName);
+}
+
+/**
+ * @deprecated Frozen compatibility wrapper.
+ */
+export async function exportPptxServer(
+  presentationId: string, // kept for legacy signature compatibility
+  options?: { fileName?: string; presentation?: Presentation },
+): Promise<void> {
+  const presentation = options?.presentation;
+  if (!presentation) {
+    throw new Error(
+      `Legacy exportPptxServer(${presentationId}) 已冻结。请改用 @/lib/api.exportPptx(presentation)。`,
+    );
+  }
+  return downloadExport(presentation, "pptx", options?.fileName);
+}
+
+/**
+ * @deprecated Frozen compatibility wrapper.
  */
 export async function exportPptx(
   presentation: Presentation,
   options?: { fileName?: string; preferServer?: boolean },
 ): Promise<void> {
-  if (options?.preferServer) {
-    return exportPptxServer(presentation.presentationId, options);
-  }
-
-  try {
-    await exportPptxClient(presentation, options);
-  } catch (err) {
-    console.warn("客户端 PPTX 导出失败，回退到服务端:", err);
-    return exportPptxServer(presentation.presentationId, options);
-  }
+  void options?.preferServer;
+  return downloadExport(presentation, "pptx", options?.fileName);
 }

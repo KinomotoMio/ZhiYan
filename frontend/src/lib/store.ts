@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type { SessionSummary, WorkspaceId } from "@/lib/api";
+import type { IssueDecisionStatus } from "@/lib/verification-issues";
 import {
   buildShellSlides,
   mergeGeneratedSlide,
@@ -39,6 +40,14 @@ interface AppState {
   lastJobEventSeq: number;
   issues: Array<Record<string, unknown>>;
   failedSlideIndices: number[];
+  hardIssueSlideIds: string[];
+  advisoryIssueCount: number;
+  fixPreviewSlides: Slide[];
+  fixPreviewSourceIds: string[];
+  selectedFixPreviewSlideIds: string[];
+  issuePanelOpen: boolean;
+  issuePanelSlideId: string | null;
+  issueDecisionBySlideId: Record<string, IssueDecisionStatus>;
   chatMessages: ChatMessage[];
 
   // 创建视图状态
@@ -72,8 +81,21 @@ interface AppState {
     lastJobEventSeq?: number;
     issues?: Array<Record<string, unknown>>;
     failedSlideIndices?: number[];
+    hardIssueSlideIds?: string[];
+    advisoryIssueCount?: number;
+    fixPreviewSlides?: Slide[];
+    fixPreviewSourceIds?: string[];
+    selectedFixPreviewSlideIds?: string[];
   }) => void;
   resetJobState: () => void;
+  setFixPreviewSelection: (slideIds: string[]) => void;
+  toggleFixPreviewSelection: (slideId: string) => void;
+  setIssuePanelOpen: (open: boolean) => void;
+  openIssuePanelForSlide: (slideId: string | null) => void;
+  setIssueDecision: (slideId: string, status: IssueDecisionStatus) => void;
+  markSlidesProcessed: (slideIds: string[], status: Exclude<IssueDecisionStatus, "pending">) => void;
+  resetIssueReviewState: () => void;
+  clearFixReviewState: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   setChatMessages: (messages: ChatMessage[]) => void;
   getCurrentSlide: () => Slide | null;
@@ -120,6 +142,14 @@ export const useAppStore = create<AppState>()(
       lastJobEventSeq: 0,
       issues: [],
       failedSlideIndices: [],
+      hardIssueSlideIds: [],
+      advisoryIssueCount: 0,
+      fixPreviewSlides: [],
+      fixPreviewSourceIds: [],
+      selectedFixPreviewSlideIds: [],
+      issuePanelOpen: false,
+      issuePanelSlideId: null,
+      issueDecisionBySlideId: {},
       chatMessages: [],
 
       // 创建视图状态
@@ -159,6 +189,14 @@ export const useAppStore = create<AppState>()(
           chatMessages,
           presentation,
           currentSlideIndex: 0,
+          hardIssueSlideIds: [],
+          advisoryIssueCount: 0,
+          fixPreviewSlides: [],
+          fixPreviewSourceIds: [],
+          selectedFixPreviewSlideIds: [],
+          issuePanelOpen: false,
+          issuePanelSlideId: null,
+          issueDecisionBySlideId: {},
         }),
 
       // 编辑器 actions
@@ -184,6 +222,12 @@ export const useAppStore = create<AppState>()(
           lastJobEventSeq: patch.lastJobEventSeq ?? state.lastJobEventSeq,
           issues: patch.issues ?? state.issues,
           failedSlideIndices: patch.failedSlideIndices ?? state.failedSlideIndices,
+          hardIssueSlideIds: patch.hardIssueSlideIds ?? state.hardIssueSlideIds,
+          advisoryIssueCount: patch.advisoryIssueCount ?? state.advisoryIssueCount,
+          fixPreviewSlides: patch.fixPreviewSlides ?? state.fixPreviewSlides,
+          fixPreviewSourceIds: patch.fixPreviewSourceIds ?? state.fixPreviewSourceIds,
+          selectedFixPreviewSlideIds:
+            patch.selectedFixPreviewSlideIds ?? state.selectedFixPreviewSlideIds,
         })),
       resetJobState: () =>
         set({
@@ -193,6 +237,68 @@ export const useAppStore = create<AppState>()(
           lastJobEventSeq: 0,
           issues: [],
           failedSlideIndices: [],
+          hardIssueSlideIds: [],
+          advisoryIssueCount: 0,
+          fixPreviewSlides: [],
+          fixPreviewSourceIds: [],
+          selectedFixPreviewSlideIds: [],
+          issuePanelOpen: false,
+          issuePanelSlideId: null,
+          issueDecisionBySlideId: {},
+        }),
+      setFixPreviewSelection: (slideIds) =>
+        set({
+          selectedFixPreviewSlideIds: Array.from(
+            new Set(slideIds.filter((id) => id.trim().length > 0))
+          ),
+        }),
+      toggleFixPreviewSelection: (slideId) =>
+        set((state) => {
+          if (!slideId) return {};
+          const exists = state.selectedFixPreviewSlideIds.includes(slideId);
+          return {
+            selectedFixPreviewSlideIds: exists
+              ? state.selectedFixPreviewSlideIds.filter((id) => id !== slideId)
+              : [...state.selectedFixPreviewSlideIds, slideId],
+          };
+        }),
+      setIssuePanelOpen: (issuePanelOpen) => set({ issuePanelOpen }),
+      openIssuePanelForSlide: (slideId) =>
+        set({
+          issuePanelOpen: true,
+          issuePanelSlideId: slideId,
+        }),
+      setIssueDecision: (slideId, status) =>
+        set((state) => ({
+          issueDecisionBySlideId: {
+            ...state.issueDecisionBySlideId,
+            [slideId]: status,
+          },
+        })),
+      markSlidesProcessed: (slideIds, status) =>
+        set((state) => {
+          const next = { ...state.issueDecisionBySlideId };
+          for (const slideId of slideIds) {
+            if (!slideId) continue;
+            next[slideId] = status;
+          }
+          return { issueDecisionBySlideId: next };
+        }),
+      resetIssueReviewState: () =>
+        set({
+          issuePanelOpen: false,
+          issuePanelSlideId: null,
+          issueDecisionBySlideId: {},
+        }),
+      clearFixReviewState: () =>
+        set({
+          hardIssueSlideIds: [],
+          advisoryIssueCount: 0,
+          fixPreviewSlides: [],
+          fixPreviewSourceIds: [],
+          selectedFixPreviewSlideIds: [],
+          issuePanelOpen: false,
+          issuePanelSlideId: null,
         }),
       addChatMessage: (msg) =>
         set((state) => ({ chatMessages: [...state.chatMessages, msg] })),

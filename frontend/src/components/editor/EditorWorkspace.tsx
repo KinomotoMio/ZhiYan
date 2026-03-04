@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
-import { cancelJob, exportPptx, exportPdf } from "@/lib/api";
+import { cancelJob, exportPptx, exportPdf, fixApply, fixPreview, fixSkip } from "@/lib/api";
+import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,7 @@ import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
+import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
 
 interface EditorWorkspaceProps {
   returnHref: string;
@@ -42,10 +44,27 @@ export default function EditorWorkspace({
     updateJobState,
     setIsGenerating,
     initGenerationShell,
+    setFixPreviewSelection,
+    toggleFixPreviewSelection,
+    setIssuePanelOpen,
+    openIssuePanelForSlide,
+    setIssueDecision,
+    markSlidesProcessed,
+    issues,
+    hardIssueSlideIds,
+    fixPreviewSlides,
+    selectedFixPreviewSlideIds,
+    issuePanelOpen,
+    issuePanelSlideId,
+    issueDecisionBySlideId,
+    setPresentation,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [previewingFix, setPreviewingFix] = useState(false);
+  const [applyingFix, setApplyingFix] = useState(false);
+  const [skippingFix, setSkippingFix] = useState(false);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
 
@@ -90,6 +109,192 @@ export default function EditorWorkspace({
     }
   };
 
+  const handlePreviewFix = async (targetSlideIds?: string[]) => {
+    if (!jobId || previewingFix || applyingFix || skippingFix) return;
+    setPreviewingFix(true);
+    try {
+      const job = await fixPreview(
+        jobId,
+        targetSlideIds && targetSlideIds.length > 0
+          ? targetSlideIds
+          : hardIssueSlideIds.length > 0
+            ? hardIssueSlideIds
+            : undefined
+      );
+      const sourceIds = Array.isArray(job.fix_preview_source_ids)
+        ? job.fix_preview_source_ids
+        : [];
+      updateJobState({
+        jobStatus: job.status,
+        currentStage: job.current_stage,
+        issues: Array.isArray(job.issues)
+          ? (job.issues as Array<Record<string, unknown>>)
+          : [],
+        failedSlideIndices: Array.isArray(job.failed_slide_indices)
+          ? job.failed_slide_indices
+          : [],
+        hardIssueSlideIds: Array.isArray(job.hard_issue_slide_ids)
+          ? job.hard_issue_slide_ids
+          : [],
+        advisoryIssueCount:
+          typeof job.advisory_issue_count === "number"
+            ? job.advisory_issue_count
+            : 0,
+        fixPreviewSlides: Array.isArray(job.fix_preview_slides)
+          ? job.fix_preview_slides
+          : [],
+        fixPreviewSourceIds: sourceIds,
+        selectedFixPreviewSlideIds: sourceIds,
+      });
+      setFixPreviewSelection(sourceIds);
+      toast.success(`已生成 ${sourceIds.length} 页修复建议`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成修复建议失败");
+    } finally {
+      setPreviewingFix(false);
+    }
+  };
+
+  const handleApplyFix = async () => {
+    if (!jobId || applyingFix || previewingFix || skippingFix) return;
+    if (selectedFixPreviewSlideIds.length === 0) {
+      toast.info("请先勾选要应用的页面");
+      return;
+    }
+    setApplyingFix(true);
+    try {
+      const job = await fixApply(jobId, selectedFixPreviewSlideIds);
+      if (job.presentation) {
+        setPresentation(job.presentation);
+      }
+      const normalizedIssues = Array.isArray(job.issues)
+        ? (job.issues as Array<Record<string, unknown>>)
+        : [];
+      const allIssueSlideIds = collectIssueSlideIds(normalizedIssues);
+      const selectedSet = new Set(selectedFixPreviewSlideIds);
+      const skippedSlideIds = allIssueSlideIds.filter((slideId) => !selectedSet.has(slideId));
+      markSlidesProcessed(selectedFixPreviewSlideIds, "applied");
+      markSlidesProcessed(skippedSlideIds, "skipped");
+      updateJobState({
+        jobStatus: job.status,
+        currentStage: job.current_stage,
+        issues: normalizedIssues,
+        failedSlideIndices: Array.isArray(job.failed_slide_indices)
+          ? job.failed_slide_indices
+          : [],
+        hardIssueSlideIds: Array.isArray(job.hard_issue_slide_ids)
+          ? job.hard_issue_slide_ids
+          : [],
+        advisoryIssueCount:
+          typeof job.advisory_issue_count === "number"
+            ? job.advisory_issue_count
+            : 0,
+        fixPreviewSlides: [],
+        fixPreviewSourceIds: [],
+        selectedFixPreviewSlideIds: [],
+      });
+      setIsGenerating(false);
+      toast.success("已按所选页面应用修复");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "应用修复失败");
+    } finally {
+      setApplyingFix(false);
+    }
+  };
+
+  const handleSkipFix = async () => {
+    if (!jobId || skippingFix || previewingFix || applyingFix) return;
+    setSkippingFix(true);
+    try {
+      const job = await fixSkip(jobId);
+      if (job.presentation) {
+        setPresentation(job.presentation);
+      }
+      const normalizedIssues = Array.isArray(job.issues)
+        ? (job.issues as Array<Record<string, unknown>>)
+        : [];
+      const allIssueSlideIds = collectIssueSlideIds(normalizedIssues);
+      markSlidesProcessed(allIssueSlideIds, "skipped");
+      updateJobState({
+        jobStatus: job.status,
+        currentStage: job.current_stage,
+        issues: normalizedIssues,
+        failedSlideIndices: Array.isArray(job.failed_slide_indices)
+          ? job.failed_slide_indices
+          : [],
+        hardIssueSlideIds: Array.isArray(job.hard_issue_slide_ids)
+          ? job.hard_issue_slide_ids
+          : [],
+        advisoryIssueCount:
+          typeof job.advisory_issue_count === "number"
+            ? job.advisory_issue_count
+            : 0,
+        fixPreviewSlides: [],
+        fixPreviewSourceIds: [],
+        selectedFixPreviewSlideIds: [],
+      });
+      setIsGenerating(false);
+      toast.success("已完成当前版本");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "完成当前版本失败");
+    } finally {
+      setSkippingFix(false);
+    }
+  };
+
+  const handleDiscardFixPreview = () => {
+    updateJobState({
+      fixPreviewSlides: [],
+      fixPreviewSourceIds: [],
+      selectedFixPreviewSlideIds: [],
+    });
+    setFixPreviewSelection([]);
+    toast.info("已丢弃当前修复候选");
+  };
+
+  const handleMarkSlideHandled = (slideId: string) => {
+    setIssueDecision(slideId, "skipped");
+    toast.success(`已将 ${slideId} 标记为已处理`);
+  };
+
+  const slides = presentation?.slides ?? [];
+  const currentSlide = slides[currentSlideIndex] ?? null;
+  const loadedCount = slides.filter(
+    (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
+  ).length;
+  const totalCount = slides.length;
+  const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
+  const waitingFixReview = jobStatus === "waiting_fix_review";
+  const groupedIssues = groupIssuesBySlide(issues);
+  const issueSlideIds = Array.from(groupedIssues.keys());
+  const totalIssueCount = Array.from(groupedIssues.values()).reduce(
+    (sum, item) => sum + item.total,
+    0
+  );
+  const fixPreviewBySlideId = new Map(fixPreviewSlides.map((slide) => [slide.slideId, slide]));
+  const activeIssueSlideId =
+    issuePanelSlideId && groupedIssues.has(issuePanelSlideId)
+      ? issuePanelSlideId
+      : currentSlide && groupedIssues.has(currentSlide.slideId)
+        ? currentSlide.slideId
+        : issueSlideIds[0] ?? null;
+
+  useEffect(() => {
+    const missingSlideIds = issueSlideIds.filter(
+      (slideId) => !issueDecisionBySlideId[slideId]
+    );
+    if (missingSlideIds.length === 0) return;
+    for (const slideId of missingSlideIds) {
+      setIssueDecision(slideId, "pending");
+    }
+  }, [issueDecisionBySlideId, issueSlideIds, setIssueDecision]);
+
+  useEffect(() => {
+    if (totalIssueCount === 0 && issuePanelOpen) {
+      setIssuePanelOpen(false);
+    }
+  }, [issuePanelOpen, setIssuePanelOpen, totalIssueCount]);
+
   if (!presentation) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -117,14 +322,6 @@ export default function EditorWorkspace({
       </div>
     );
   }
-
-  const slides = presentation.slides ?? [];
-  const currentSlide = presentation.slides[currentSlideIndex];
-  const loadedCount = slides.filter(
-    (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
-  ).length;
-  const totalCount = slides.length;
-  const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
 
   const handleExport = async (format: "pptx" | "pdf") => {
     if (!presentation || exporting) return;
@@ -237,6 +434,21 @@ export default function EditorWorkspace({
               取消生成
             </button>
           )}
+          {totalIssueCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (activeIssueSlideId) {
+                  openIssuePanelForSlide(activeIssueSlideId);
+                } else {
+                  setIssuePanelOpen(true);
+                }
+              }}
+              className="px-3 py-1 text-sm rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:shadow-sm transition-all duration-200"
+            >
+              校验问题（{totalIssueCount}）
+            </button>
+          )}
           <button
             onClick={() => setShowReveal(true)}
             disabled={isGenerating}
@@ -256,6 +468,24 @@ export default function EditorWorkspace({
               index={i}
               isActive={i === currentSlideIndex}
               onClick={() => setCurrentSlideIndex(i)}
+              issueMeta={
+                groupedIssues.has(slide.slideId)
+                  ? {
+                      hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
+                      advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
+                      total: groupedIssues.get(slide.slideId)?.total ?? 0,
+                      decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
+                    }
+                  : undefined
+              }
+              onIssueClick={
+                groupedIssues.has(slide.slideId)
+                  ? () => {
+                      setCurrentSlideIndex(i);
+                      openIssuePanelForSlide(slide.slideId);
+                    }
+                  : undefined
+              }
             />
           ))}
         </aside>
@@ -269,6 +499,40 @@ export default function EditorWorkspace({
           <SpeakerNotes notes={currentSlide?.speakerNotes} />
         </main>
       </div>
+
+      <IssueReviewDrawer
+        open={issuePanelOpen}
+        onOpenChange={setIssuePanelOpen}
+        slides={slides}
+        groupedIssues={groupedIssues}
+        issueDecisionBySlideId={issueDecisionBySlideId}
+        focusSlideId={activeIssueSlideId}
+        onFocusSlide={(slideId) => {
+          const targetIndex = slides.findIndex((slide) => slide.slideId === slideId);
+          if (targetIndex >= 0) {
+            setCurrentSlideIndex(targetIndex);
+          }
+          openIssuePanelForSlide(slideId);
+        }}
+        fixPreviewBySlideId={fixPreviewBySlideId}
+        selectedFixPreviewSlideIds={selectedFixPreviewSlideIds}
+        waitingFixReview={waitingFixReview}
+        previewingFix={previewingFix}
+        applyingFix={applyingFix}
+        skippingFix={skippingFix}
+        onGeneratePreview={(slideId) => {
+          void handlePreviewFix([slideId]);
+        }}
+        onToggleApplySlide={toggleFixPreviewSelection}
+        onApplySelected={() => {
+          void handleApplyFix();
+        }}
+        onSkipAll={() => {
+          void handleSkipFix();
+        }}
+        onDiscardPreview={handleDiscardFixPreview}
+        onMarkHandled={handleMarkSlideHandled}
+      />
 
       <FloatingChatPanel />
     </div>

@@ -13,7 +13,8 @@ export interface ImageRef {
 }
 
 export interface ChartData {
-  chartType: string;
+  chart_type?: string;
+  chartType?: string; // legacy compatibility
   labels: string[];
   datasets: { label: string; data: number[]; color?: string }[];
 }

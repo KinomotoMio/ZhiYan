@@ -14,6 +14,18 @@ import type { Presentation, Slide } from "@/types/slide";
 
 type LoadState = "loading" | "ready" | "empty" | "error";
 
+type HydratedGenerationJob = {
+  slides?: Slide[];
+  request?: { num_pages?: number; title?: string };
+  presentation?: Presentation | null;
+  issues?: Array<Record<string, unknown>>;
+  failed_slide_indices?: number[];
+  hard_issue_slide_ids?: string[];
+  advisory_issue_count?: number;
+  fix_preview_slides?: Slide[];
+  fix_preview_source_ids?: string[];
+};
+
 function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessage[] {
   return records
     .map((item) => {
@@ -89,49 +101,60 @@ export default function SessionEditorPage() {
             ? "running"
             : latestJob?.status ?? null;
 
-        if (!presentation && latestJob?.job_id && resolvedJobStatus === "running") {
+        let hydratedJob: HydratedGenerationJob | null = null;
+
+        const shouldHydrateJob =
+          Boolean(latestJob?.job_id) &&
+          (resolvedJobStatus === "running" ||
+            resolvedJobStatus === "waiting_fix_review" ||
+            resolvedJobStatus === "completed");
+
+        if (shouldHydrateJob && latestJob?.job_id) {
           try {
             const job = await getJob(latestJob.job_id);
-            const rawNumPages =
-              typeof job.request?.num_pages === "number"
-                ? job.request.num_pages
-                : 5;
-            const pageCount = Math.max(1, Math.trunc(rawNumPages));
-            const jobTitle =
-              typeof job.request?.title === "string" &&
-              job.request.title.trim()
-                ? job.request.title
-                : "生成中...";
+            hydratedJob = job as unknown as HydratedGenerationJob;
+            if (!presentation) {
+              const rawNumPages =
+                typeof job.request?.num_pages === "number"
+                  ? job.request.num_pages
+                  : 5;
+              const pageCount = Math.max(1, Math.trunc(rawNumPages));
+              const jobTitle =
+                typeof job.request?.title === "string" &&
+                job.request.title.trim()
+                  ? job.request.title
+                  : "生成中...";
 
-            let mergedSlides = buildShellSlides(pageCount, "生成中...");
-            if (Array.isArray(job.slides) && job.slides.length > 0) {
-              for (let idx = 0; idx < Math.min(job.slides.length, mergedSlides.length); idx += 1) {
-                const slide = job.slides[idx] as Slide | undefined;
-                if (slide) {
-                  mergedSlides = mergeGeneratedSlide(mergedSlides, idx, slide);
+              let mergedSlides = buildShellSlides(pageCount, "生成中...");
+              if (Array.isArray(job.slides) && job.slides.length > 0) {
+                for (let idx = 0; idx < Math.min(job.slides.length, mergedSlides.length); idx += 1) {
+                  const slide = job.slides[idx] as Slide | undefined;
+                  if (slide) {
+                    mergedSlides = mergeGeneratedSlide(mergedSlides, idx, slide);
+                  }
                 }
               }
+
+              const presentationId =
+                typeof job.presentation?.presentationId === "string" &&
+                job.presentation.presentationId.trim()
+                  ? job.presentation.presentationId
+                  : "pres-skeleton";
+
+              presentation = {
+                presentationId,
+                title: jobTitle,
+                slides: mergedSlides,
+              } as Presentation;
             }
-
-            const maybePresentation = job.presentation as Record<string, unknown> | null | undefined;
-            const presentationId =
-              maybePresentation &&
-              typeof maybePresentation.presentationId === "string" &&
-              maybePresentation.presentationId.trim()
-                ? maybePresentation.presentationId
-                : "pres-skeleton";
-
-            presentation = {
-              presentationId,
-              title: jobTitle,
-              slides: mergedSlides,
-            } as Presentation;
           } catch {
-            presentation = {
-              presentationId: "pres-skeleton",
-              title: "生成中...",
-              slides: buildShellSlides(5, "生成中..."),
-            };
+            if (!presentation && resolvedJobStatus === "running") {
+              presentation = {
+                presentationId: "pres-skeleton",
+                title: "生成中...",
+                slides: buildShellSlides(5, "生成中..."),
+              };
+            }
           }
         }
 
@@ -152,6 +175,34 @@ export default function SessionEditorPage() {
             jobStatus: resolvedJobStatus,
             currentStage: null,
             lastJobEventSeq: 0,
+            issues:
+              hydratedJob && Array.isArray(hydratedJob.issues)
+                ? hydratedJob.issues
+                : [],
+            failedSlideIndices:
+              hydratedJob && Array.isArray(hydratedJob.failed_slide_indices)
+                ? hydratedJob.failed_slide_indices
+                : [],
+            hardIssueSlideIds:
+              hydratedJob && Array.isArray(hydratedJob.hard_issue_slide_ids)
+                ? hydratedJob.hard_issue_slide_ids
+                : [],
+            advisoryIssueCount:
+              hydratedJob && typeof hydratedJob.advisory_issue_count === "number"
+                ? hydratedJob.advisory_issue_count
+                : 0,
+            fixPreviewSlides:
+              hydratedJob && Array.isArray(hydratedJob.fix_preview_slides)
+                ? hydratedJob.fix_preview_slides
+                : [],
+            fixPreviewSourceIds:
+              hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
+                ? hydratedJob.fix_preview_source_ids
+                : [],
+            selectedFixPreviewSlideIds:
+              hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
+                ? hydratedJob.fix_preview_source_ids
+                : [],
           });
           setIsGenerating(resolvedJobStatus === "running");
         } else {
@@ -162,6 +213,11 @@ export default function SessionEditorPage() {
             lastJobEventSeq: 0,
             issues: [],
             failedSlideIndices: [],
+            hardIssueSlideIds: [],
+            advisoryIssueCount: 0,
+            fixPreviewSlides: [],
+            fixPreviewSourceIds: [],
+            selectedFixPreviewSlideIds: [],
           });
           setIsGenerating(false);
         }

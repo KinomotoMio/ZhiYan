@@ -65,12 +65,12 @@ export interface Component {
 export interface Slide {
   slideId: string;
   layoutType: LayoutType;
-  // 新增：具体 layout ID（对应 template-registry 中的布局）
+  // 主渲染字段：具体 layout ID（对应 template-registry 中的布局）
   layoutId?: string;
-  // 新增：结构化内容数据（按 layout schema 生成的 JSON）
+  // 主渲染字段：结构化内容数据（按 layout schema 生成的 JSON）
   contentData?: Record<string, unknown>;
-  // 保留 components 用于向后兼容
-  components: Component[];
+  // 旧版兼容字段（只读兼容）
+  components?: Component[];
   speakerNotes?: string;
   templateSlotMapping?: Record<string, string>;
 }

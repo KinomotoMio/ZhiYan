@@ -27,49 +27,51 @@ export default function UserMenu({ compact }: UserMenuProps) {
     if (!open) refresh();
   };
 
+  const trigger = compact ? (
+    <button
+      type="button"
+      className="relative p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+    >
+      <Avatar className="h-7 w-7">
+        <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
+          <User className="h-3.5 w-3.5" />
+        </AvatarFallback>
+      </Avatar>
+      {needsSetup && (
+        <span className="absolute top-0 right-0 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />
+      )}
+    </button>
+  ) : (
+    <button
+      type="button"
+      className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+    >
+      <div className="relative shrink-0">
+        <Avatar className="h-8 w-8">
+          <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
+            <User className="h-4 w-4" />
+          </AvatarFallback>
+        </Avatar>
+        {needsSetup && (
+          <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">未登录用户</p>
+        {needsSetup && (
+          <p className="truncate text-xs text-amber-600 dark:text-amber-400">
+            {message || "默认模型未就绪"}
+          </p>
+        )}
+      </div>
+    </button>
+  );
+
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          {compact ? (
-            <button
-              type="button"
-              className="relative p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              <Avatar className="h-7 w-7">
-                <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
-                  <User className="h-3.5 w-3.5" />
-                </AvatarFallback>
-              </Avatar>
-              {needsSetup && (
-                <span className="absolute top-0 right-0 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              <div className="relative shrink-0">
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="text-xs bg-slate-100 dark:bg-slate-800">
-                    <User className="h-4 w-4" />
-                  </AvatarFallback>
-                </Avatar>
-                {needsSetup && (
-                  <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-background" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">未登录用户</p>
-                {needsSetup && (
-                  <p className="truncate text-xs text-amber-600 dark:text-amber-400">
-                    {message || "默认模型未就绪"}
-                  </p>
-                )}
-              </div>
-            </button>
-          )}
+          {trigger}
         </DropdownMenuTrigger>
         <DropdownMenuContent
           side={compact ? "bottom" : "top"}
