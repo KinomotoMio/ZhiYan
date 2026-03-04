@@ -8,6 +8,7 @@
 
 import io
 import re
+from typing import Any
 
 from pptx import Presentation as PptxPresentation
 from pptx.util import Inches, Pt, Emu
@@ -186,6 +187,104 @@ GRAY_600 = RGBColor(0x4B, 0x55, 0x63)
 GRAY_400 = RGBColor(0x9C, 0xA3, 0xAF)
 
 
+def _as_text(value: Any, default: str = "") -> str:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return default
+
+
+def _item_text(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        return (
+            _as_text(item.get("text"))
+            or _as_text(item.get("title"))
+            or _as_text(item.get("label"))
+            or _as_text(item.get("challenge"))
+            or _as_text(item.get("outcome"))
+        )
+    return ""
+
+
+def _item_description(item: Any) -> str:
+    if isinstance(item, dict):
+        return _as_text(item.get("description"))
+    return ""
+
+
+def _table_headers_and_rows(data: dict[str, Any]) -> tuple[list[str], list[list[str]]]:
+    headers_raw = data.get("headers")
+    if not isinstance(headers_raw, list):
+        headers_raw = data.get("columns")
+    headers = [_as_text(header) for header in headers_raw if _as_text(header)] if isinstance(headers_raw, list) else []
+
+    rows_raw = data.get("rows")
+    rows: list[list[str]] = []
+    if isinstance(rows_raw, list):
+        for row in rows_raw:
+            if isinstance(row, list):
+                values = [_as_text(cell) for cell in row]
+                if len(values) < len(headers):
+                    values.extend([""] * (len(headers) - len(values)))
+                rows.append(values[: len(headers)])
+            elif isinstance(row, dict):
+                rows.append([_as_text(row.get(header)) for header in headers])
+    return headers, rows
+
+
+def _extract_compare_column(raw: Any, fallback: str) -> tuple[str, list[str]]:
+    if not isinstance(raw, dict):
+        return fallback, []
+    heading = _as_text(raw.get("heading")) or _as_text(raw.get("title")) or fallback
+    items_raw = raw.get("items")
+    if not isinstance(items_raw, list):
+        return heading, []
+    items = [_item_text(item) for item in items_raw]
+    return heading, [item for item in items if item]
+
+
+def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    raw_items = data.get("items")
+    if isinstance(raw_items, list):
+        for row in raw_items:
+            if isinstance(row, dict):
+                pairs.append(
+                    (
+                        _as_text(row.get("challenge"), "内容生成中"),
+                        _as_text(row.get("outcome"), "待补充"),
+                    )
+                )
+            elif isinstance(row, str) and row.strip():
+                pairs.append((row.strip(), "待补充"))
+    if pairs:
+        return pairs
+
+    for side_key in ("challenge", "outcome"):
+        if not isinstance(data.get(side_key), dict):
+            return []
+    challenge_items_raw = data["challenge"].get("items")
+    outcome_items_raw = data["outcome"].get("items")
+    challenge_items = [_item_text(item) for item in challenge_items_raw] if isinstance(challenge_items_raw, list) else []
+    outcome_items = [_item_text(item) for item in outcome_items_raw] if isinstance(outcome_items_raw, list) else []
+    count = max(len(challenge_items), len(outcome_items))
+    if count == 0:
+        return []
+    for idx in range(count):
+        pairs.append(
+            (
+                challenge_items[idx] if idx < len(challenge_items) and challenge_items[idx] else "内容生成中",
+                outcome_items[idx] if idx < len(outcome_items) and outcome_items[idx] else "待补充",
+            )
+        )
+    return pairs
+
+
 def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGBColor | None = None) -> None:
     """根据 layout_id 和 contentData 渲染幻灯片内容"""
     color = theme_color or PRIMARY_COLOR
@@ -202,8 +301,9 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          d["subtitle"], font_size=24, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
         info_parts = []
-        if d.get("presenter"):
-            info_parts.append(d["presenter"])
+        author = _as_text(d.get("author")) or _as_text(d.get("presenter"))
+        if author:
+            info_parts.append(author)
         if d.get("date"):
             info_parts.append(d["date"])
         if info_parts:
@@ -235,8 +335,8 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         items = d.get("items") or d.get("features") or []
         y = Inches(1.8)
         for item in items[:6]:
-            text = item.get("text", "") if isinstance(item, dict) else str(item)
-            desc = item.get("description", "") if isinstance(item, dict) else ""
+            text = _item_text(item)
+            desc = _item_description(item)
             _add_textbox(slide_obj,
                          Inches(1.2), y, Inches(10), Inches(0.5),
                          f"• {text}", font_size=22, bold=True)
@@ -255,14 +355,14 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         items = d.get("items") or d.get("steps") or []
         y = Inches(1.8)
         for i, item in enumerate(items[:6]):
-            text = item.get("text", "") if isinstance(item, dict) else str(item)
+            text = _item_text(item)
             _add_textbox(slide_obj,
                          Inches(0.8), y, Inches(0.6), Inches(0.5),
                          str(i + 1), font_size=24, bold=True, color=color)
             _add_textbox(slide_obj,
                          Inches(1.6), y, Inches(10), Inches(0.5),
                          text, font_size=22)
-            desc = item.get("description", "") if isinstance(item, dict) else ""
+            desc = _item_description(item)
             if desc:
                 _add_textbox(slide_obj,
                              Inches(1.6), y + Inches(0.5), Inches(10), Inches(0.4),
@@ -336,10 +436,9 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         _add_textbox(slide_obj,
                      Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
                      d.get("title", ""), font_size=36, bold=True)
-        columns = d.get("columns") or []
-        rows = d.get("rows") or []
-        if columns:
-            n_cols = len(columns)
+        headers, rows = _table_headers_and_rows(d)
+        if headers and rows:
+            n_cols = len(headers)
             n_rows = min(len(rows), 8) + 1
             col_w = min(10.0 / n_cols, 3.0)
             table_shape = slide_obj.shapes.add_table(
@@ -348,16 +447,16 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                 Inches(col_w * n_cols), Inches(0.5 * n_rows),
             )
             table = table_shape.table
-            for ci, col_name in enumerate(columns):
+            for ci, col_name in enumerate(headers):
                 cell = table.cell(0, ci)
                 cell.text = str(col_name)
                 for p in cell.text_frame.paragraphs:
                     p.font.bold = True
                     p.font.size = Pt(14)
             for ri, row in enumerate(rows[:8]):
-                for ci, col_name in enumerate(columns):
+                for ci in range(n_cols):
                     cell = table.cell(ri + 1, ci)
-                    cell.text = str(row.get(col_name, "")) if isinstance(row, dict) else ""
+                    cell.text = row[ci] if ci < len(row) else ""
                     for p in cell.text_frame.paragraphs:
                         p.font.size = Pt(13)
 
@@ -365,16 +464,16 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         _add_textbox(slide_obj,
                      Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
                      d.get("title", ""), font_size=36, bold=True)
-        for side, x_offset in [("left", 0.8), ("right", 7.0)]:
-            col = d.get(side) or {}
-            col_title = col.get("title", "")
+        left_col, right_col = _extract_compare_column(d.get("left"), "要点 A"), _extract_compare_column(d.get("right"), "要点 B")
+        if not left_col[1] and not right_col[1]:
+            left_col = _extract_compare_column(d.get("challenge"), "要点 A")
+            right_col = _extract_compare_column(d.get("outcome"), "要点 B")
+        for (col_title, col_items), x_offset in [(left_col, 0.8), (right_col, 7.0)]:
             _add_textbox(slide_obj,
                          Inches(x_offset), Inches(1.8), Inches(5.0), Inches(0.6),
                          col_title, font_size=24, bold=True, color=color)
-            items = col.get("items") or []
             y = Inches(2.6)
-            for item in items[:5]:
-                text = item.get("text", "") if isinstance(item, dict) else str(item)
+            for text in col_items[:5]:
                 _add_textbox(slide_obj,
                              Inches(x_offset), y, Inches(5.0), Inches(0.5),
                              f"• {text}", font_size=18)
@@ -422,32 +521,35 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                      Inches(1.5), Inches(2.0), Inches(10), Inches(2.5),
                      f'"{d.get("quote", "")}"', font_size=32, bold=False,
                      alignment=PP_ALIGN.CENTER)
-        if d.get("attribution"):
+        author = _as_text(d.get("author")) or _as_text(d.get("attribution"))
+        context = _as_text(d.get("context"))
+        footer = " · ".join(part for part in (author, context) if part)
+        if footer:
             _add_textbox(slide_obj,
                          Inches(2), Inches(5.0), Inches(9), Inches(0.6),
-                         f'— {d["attribution"]}', font_size=18, color=GRAY_400,
+                         f"— {footer}", font_size=18, color=GRAY_400,
                          alignment=PP_ALIGN.CENTER)
 
     elif layout_id == "challenge-outcome":
         _add_textbox(slide_obj,
                      Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
                      d.get("title", ""), font_size=36, bold=True)
-        for side_key, x_offset, side_color in [
-            ("challenge", 0.8, RGBColor(0xDC, 0x26, 0x26)),
-            ("outcome", 7.0, RGBColor(0x16, 0xA3, 0x4A)),
-        ]:
-            side = d.get(side_key) or {}
+        pairs = _extract_challenge_outcome_pairs(d)
+        _add_textbox(slide_obj,
+                     Inches(0.8), Inches(1.8), Inches(5.0), Inches(0.6),
+                     "挑战", font_size=24, bold=True, color=RGBColor(0xDC, 0x26, 0x26))
+        _add_textbox(slide_obj,
+                     Inches(7.0), Inches(1.8), Inches(5.0), Inches(0.6),
+                     "方案", font_size=24, bold=True, color=RGBColor(0x16, 0xA3, 0x4A))
+        y = Inches(2.6)
+        for challenge_text, outcome_text in pairs[:5]:
             _add_textbox(slide_obj,
-                         Inches(x_offset), Inches(1.8), Inches(5.0), Inches(0.6),
-                         side.get("title", side_key.capitalize()), font_size=24, bold=True, color=side_color)
-            items = side.get("items") or []
-            y = Inches(2.6)
-            for item in items[:5]:
-                text = item.get("text", "") if isinstance(item, dict) else str(item)
-                _add_textbox(slide_obj,
-                             Inches(x_offset), y, Inches(5.0), Inches(0.5),
-                             f"• {text}", font_size=18)
-                y += Inches(0.6)
+                         Inches(0.8), y, Inches(5.0), Inches(0.5),
+                         f"• {challenge_text}", font_size=18)
+            _add_textbox(slide_obj,
+                         Inches(7.0), y, Inches(5.0), Inches(0.5),
+                         f"• {outcome_text}", font_size=18)
+            y += Inches(0.6)
 
     elif layout_id == "thank-you":
         _add_textbox(slide_obj,
@@ -459,10 +561,11 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          Inches(2), Inches(4.0), Inches(9), Inches(0.8),
                          d["subtitle"], font_size=22, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
-        if d.get("contact_info"):
+        contact = _as_text(d.get("contact")) or _as_text(d.get("contact_info"))
+        if contact:
             _add_textbox(slide_obj,
                          Inches(2), Inches(5.2), Inches(9), Inches(0.6),
-                         d["contact_info"], font_size=16, color=GRAY_400,
+                         contact, font_size=16, color=GRAY_400,
                          alignment=PP_ALIGN.CENTER)
 
     else:

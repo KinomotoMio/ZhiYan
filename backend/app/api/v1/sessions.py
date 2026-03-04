@@ -173,9 +173,7 @@ async def unlink_source_from_session(session_id: str, source_id: str, request: R
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
-    removed = await session_store.unlink_source_from_session(sid, source_id)
-    if not removed:
-        raise HTTPException(status_code=404, detail="来源关联不存在")
+    await session_store.unlink_source_from_session(sid, source_id)
     return {"ok": True}
 
 

@@ -11,6 +11,7 @@ from app.models.generation import (
     JobStatus,
     StageStatus,
 )
+from app.models.slide import Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
@@ -29,6 +30,19 @@ def _build_job(job_id: str = "job-test") -> GenerationJob:
         ),
         outline_accepted=True,
     )
+
+
+def _slide_payload(slide_id: str, title: str) -> dict:
+    return {
+        "slideId": slide_id,
+        "layoutType": "bullet-with-icons",
+        "layoutId": "bullet-with-icons",
+        "contentData": {
+            "title": title,
+            "items": [{"title": "要点", "description": "说明"}],
+        },
+        "components": [],
+    }
 
 
 def test_job_store_persists_job_and_events(tmp_path):
@@ -375,6 +389,59 @@ def test_two_column_compare_fallback_shape_on_slide_generation_error(monkeypatch
     asyncio.run(_case())
 
 
+def test_stage_generate_slides_uses_per_slide_context(monkeypatch):
+    async def _case():
+        from app.services.agents import slide_generator
+
+        captured_source: list[str] = []
+
+        async def fake_generate(**kwargs):
+            captured_source.append(str(kwargs.get("source_content", "")))
+            return {"title": kwargs.get("title", ""), "items": [{"title": "要点", "description": "说明"}]}
+
+        monkeypatch.setattr(slide_generator, "generate_slide_content", fake_generate)
+
+        raw_content = (
+            "苹果战略：聚焦品牌升级与渠道优化，强调高端客群。\n\n"
+            "香蕉供应链：围绕冷链、仓配协同和损耗控制，强调成本效率。\n\n"
+            "葡萄营销：针对社媒内容与达人合作，强调转化闭环。"
+        )
+        state = PipelineState(
+            raw_content=raw_content,
+            topic="测试主题",
+            num_pages=3,
+            job_id="job-source-context",
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "苹果战略",
+                        "content_brief": "介绍苹果品牌策略",
+                        "key_points": ["苹果", "品牌升级"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "香蕉供应链",
+                        "content_brief": "介绍香蕉供应链优化",
+                        "key_points": ["香蕉", "冷链"],
+                    },
+                ]
+            },
+            layout_selections=[
+                {"slide_number": 1, "layout_id": "bullet-with-icons"},
+                {"slide_number": 2, "layout_id": "bullet-with-icons"},
+            ],
+        )
+
+        await stage_generate_slides(state, per_slide_timeout=0.5)
+        assert len(captured_source) == 2
+        assert captured_source[0] != captured_source[1]
+        assert "苹果" in captured_source[0]
+        assert "香蕉" in captured_source[1]
+
+    asyncio.run(_case())
+
+
 def test_cancel_semantics_sets_terminal_status(tmp_path):
     async def _case():
         store = GenerationJobStore(tmp_path / "jobs")
@@ -457,5 +524,270 @@ def test_cancel_semantics_sets_terminal_status(tmp_path):
                 runner_mod.stage_verify_slides,
                 runner_mod.stage_fix_slides_once,
             ) = originals
+
+    asyncio.run(_case())
+
+
+def test_verify_hard_issues_enters_waiting_fix_review(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        from app.services.generation import runner as runner_mod
+
+        async def fake_parse(state, progress=None):  # noqa: ARG001
+            state.document_metadata = {"char_count": len(state.raw_content)}
+
+        async def fake_outline(state, progress=None):  # noqa: ARG001
+            state.outline = {
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "第一页",
+                        "key_points": [],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "第二页",
+                        "key_points": [],
+                    },
+                ]
+            }
+
+        async def fake_layout(state, progress=None):  # noqa: ARG001
+            state.layout_selections = [
+                {"slide_number": 1, "layout_id": "bullet-with-icons"},
+                {"slide_number": 2, "layout_id": "bullet-with-icons"},
+            ]
+
+        async def fake_slides(state, per_slide_timeout, progress=None, on_slide=None):  # noqa: ARG001
+            state.slide_contents = [
+                {"slide_number": 1, "layout_id": "bullet-with-icons", "content_data": {"title": "第一页"}},
+                {"slide_number": 2, "layout_id": "bullet-with-icons", "content_data": {"title": "第二页"}},
+            ]
+
+        async def fake_assets(state, progress=None):  # noqa: ARG001
+            state.slides = [
+                Slide.model_validate(_slide_payload("slide-1", "第一页")),
+                Slide.model_validate(_slide_payload("slide-2", "第二页")),
+            ]
+
+        async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+            state.verification_issues = [
+                {
+                    "slide_id": "slide-1",
+                    "severity": "error",
+                    "category": "bounds",
+                    "message": "元素越界",
+                    "suggestion": "收缩内容",
+                    "source": "programmatic",
+                    "tier": "hard",
+                },
+                {
+                    "slide_id": "slide-2",
+                    "severity": "warning",
+                    "category": "aesthetic",
+                    "message": "信息略密",
+                    "suggestion": "增加留白",
+                    "source": "vision",
+                    "tier": "advisory",
+                },
+            ]
+
+        async def fail_if_fix_called(state, per_slide_timeout, progress=None, on_slide=None):  # noqa: ARG001
+            raise AssertionError("auto fix should not run")
+
+        originals = (
+            runner_mod.stage_parse_document,
+            runner_mod.stage_generate_outline,
+            runner_mod.stage_select_layouts,
+            runner_mod.stage_generate_slides,
+            runner_mod.stage_resolve_assets,
+            runner_mod.stage_verify_slides,
+            runner_mod.stage_fix_slides_once,
+        )
+        runner_mod.stage_parse_document = fake_parse
+        runner_mod.stage_generate_outline = fake_outline
+        runner_mod.stage_select_layouts = fake_layout
+        runner_mod.stage_generate_slides = fake_slides
+        runner_mod.stage_resolve_assets = fake_assets
+        runner_mod.stage_verify_slides = fake_verify
+        runner_mod.stage_fix_slides_once = fail_if_fix_called
+        try:
+            job = _build_job("job-waiting-fix")
+            await store.create_job(job)
+            await runner._run_job(job.job_id, from_stage=StageStatus.PARSE)  # noqa: SLF001
+
+            loaded = await store.get_job(job.job_id)
+            assert loaded is not None
+            assert loaded.status == JobStatus.WAITING_FIX_REVIEW
+            assert loaded.current_stage == StageStatus.VERIFY
+            assert loaded.hard_issue_slide_ids == ["slide-1"]
+            assert loaded.advisory_issue_count == 1
+            assert loaded.fix_preview_slides == []
+            assert loaded.fix_preview_source_ids == []
+
+            events = await store.list_events(job.job_id)
+            types = [evt.type for evt in events]
+            assert EventType.JOB_WAITING_FIX_REVIEW in types
+            assert EventType.JOB_COMPLETED not in types
+        finally:
+            (
+                runner_mod.stage_parse_document,
+                runner_mod.stage_generate_outline,
+                runner_mod.stage_select_layouts,
+                runner_mod.stage_generate_slides,
+                runner_mod.stage_resolve_assets,
+                runner_mod.stage_verify_slides,
+                runner_mod.stage_fix_slides_once,
+            ) = originals
+
+    asyncio.run(_case())
+
+
+def test_preview_fix_generates_candidates_without_overwriting_slides(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        from app.services.generation import runner as runner_mod
+
+        async def fake_fix(state, per_slide_timeout, progress=None, on_slide=None, target_slide_ids=None):  # noqa: ARG001
+            for idx, slide in enumerate(state.slides):
+                if target_slide_ids and slide.slide_id not in target_slide_ids:
+                    continue
+                patched = slide.model_copy(deep=True)
+                content = dict(patched.content_data or {})
+                content["title"] = f"{content.get('title', '页面')}（修复）"
+                patched.content_data = content
+                state.slides[idx] = patched
+
+        original_fix = runner_mod.stage_fix_slides_once
+        runner_mod.stage_fix_slides_once = fake_fix
+        try:
+            job = _build_job("job-preview-fix")
+            job.status = JobStatus.WAITING_FIX_REVIEW
+            job.slides = [
+                _slide_payload("slide-1", "第一页"),
+                _slide_payload("slide-2", "第二页"),
+            ]
+            job.hard_issue_slide_ids = ["slide-1"]
+            await store.create_job(job)
+
+            previewed = await runner.preview_fix(job.job_id)
+            assert previewed.status == JobStatus.WAITING_FIX_REVIEW
+            assert previewed.fix_preview_source_ids == ["slide-1"]
+            assert len(previewed.fix_preview_slides) == 1
+            assert previewed.fix_preview_slides[0]["slideId"] == "slide-1"
+            assert "修复" in str(previewed.fix_preview_slides[0]["contentData"].get("title"))
+
+            loaded = await store.get_job(job.job_id)
+            assert loaded is not None
+            assert loaded.slides[0]["contentData"]["title"] == "第一页"
+            assert loaded.slides[1]["contentData"]["title"] == "第二页"
+
+            events = await store.list_events(job.job_id)
+            assert any(evt.type == EventType.FIX_PREVIEW_READY for evt in events)
+        finally:
+            runner_mod.stage_fix_slides_once = original_fix
+
+    asyncio.run(_case())
+
+
+def test_apply_fix_replaces_selected_slides_only(tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        job = _build_job("job-apply-fix")
+        job.status = JobStatus.WAITING_FIX_REVIEW
+        job.slides = [
+            _slide_payload("slide-1", "第一页"),
+            _slide_payload("slide-2", "第二页"),
+        ]
+        job.fix_preview_slides = [
+            _slide_payload("slide-1", "第一页（修复）"),
+            _slide_payload("slide-2", "第二页（修复）"),
+        ]
+        job.fix_preview_source_ids = ["slide-1", "slide-2"]
+        await store.create_job(job)
+
+        applied = await runner.apply_fix(job.job_id, slide_ids=["slide-1"])
+        assert applied.status == JobStatus.COMPLETED
+        assert applied.current_stage == StageStatus.COMPLETE
+        assert applied.slides[0]["contentData"]["title"] == "第一页（修复）"
+        assert applied.slides[1]["contentData"]["title"] == "第二页"
+        assert applied.fix_preview_slides == []
+        assert applied.fix_preview_source_ids == []
+
+        events = await store.list_events(job.job_id)
+        completed = [evt for evt in events if evt.type == EventType.JOB_COMPLETED]
+        assert completed
+        assert completed[-1].payload.get("applied_slide_ids") == ["slide-1"]
+
+    asyncio.run(_case())
+
+
+def test_skip_fix_completes_without_modifying_slides(tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        job = _build_job("job-skip-fix")
+        job.status = JobStatus.WAITING_FIX_REVIEW
+        job.slides = [
+            _slide_payload("slide-1", "第一页"),
+            _slide_payload("slide-2", "第二页"),
+        ]
+        job.fix_preview_slides = [_slide_payload("slide-1", "第一页（修复）")]
+        job.fix_preview_source_ids = ["slide-1"]
+        await store.create_job(job)
+
+        skipped = await runner.skip_fix(job.job_id)
+        assert skipped.status == JobStatus.COMPLETED
+        assert skipped.current_stage == StageStatus.COMPLETE
+        assert skipped.slides[0]["contentData"]["title"] == "第一页"
+        assert skipped.fix_preview_slides == []
+        assert skipped.fix_preview_source_ids == []
+
+        events = await store.list_events(job.job_id)
+        completed = [evt for evt in events if evt.type == EventType.JOB_COMPLETED]
+        assert completed
+        assert completed[-1].payload.get("fix_skipped") is True
+
+    asyncio.run(_case())
+
+
+def test_apply_fix_requires_waiting_state_and_preview(tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        job = _build_job("job-apply-guard")
+        job.status = JobStatus.RUNNING
+        job.slides = [_slide_payload("slide-1", "第一页")]
+        await store.create_job(job)
+
+        try:
+            await runner.apply_fix(job.job_id, slide_ids=["slide-1"])
+            assert False, "expected runtime error for non-waiting status"
+        except RuntimeError as err:
+            assert "当前状态不支持应用修复" in str(err)
+
+        job_waiting = _build_job("job-apply-guard-preview")
+        job_waiting.status = JobStatus.WAITING_FIX_REVIEW
+        job_waiting.slides = [_slide_payload("slide-1", "第一页")]
+        await store.create_job(job_waiting)
+
+        try:
+            await runner.apply_fix(job_waiting.job_id, slide_ids=["slide-1"])
+            assert False, "expected runtime error when preview is missing"
+        except RuntimeError as err:
+            assert "先生成修复建议" in str(err)
 
     asyncio.run(_case())

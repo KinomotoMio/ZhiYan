@@ -36,7 +36,7 @@
     },
     "Slide": {
       "type": "object",
-      "required": ["slideId", "layoutType", "components"],
+      "required": ["slideId", "layoutType"],
       "properties": {
         "slideId": {
           "type": "string",
@@ -51,12 +51,35 @@
             "two-column",
             "image-full",
             "section-header",
-            "blank"
+            "blank",
+            "intro-slide",
+            "bullet-with-icons",
+            "numbered-bullets",
+            "metrics-slide",
+            "metrics-with-image",
+            "chart-with-bullets",
+            "table-info",
+            "two-column-compare",
+            "image-and-description",
+            "timeline",
+            "quote-slide",
+            "bullet-icons-only",
+            "challenge-outcome",
+            "thank-you"
           ],
           "description": "布局类型，对应模板中的 layout"
         },
+        "layoutId": {
+          "type": "string",
+          "description": "推荐的主渲染字段：模板布局 ID（配合 contentData）"
+        },
+        "contentData": {
+          "type": "object",
+          "description": "推荐的主渲染字段：布局结构化内容数据"
+        },
         "components": {
           "type": "array",
+          "description": "旧版兼容字段（只读兼容）",
           "items": {
             "$ref": "#/$defs/Component"
           }

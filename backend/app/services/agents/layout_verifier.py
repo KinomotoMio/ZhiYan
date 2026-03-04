@@ -8,7 +8,10 @@
 - 旧版：components 列表（检查位置越界、重叠、密度）
 """
 
+import asyncio
+import json
 import logging
+import re
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +28,8 @@ class VerificationIssue(BaseModel):
     category: str = Field(description="bounds | overlap | density | content | aesthetic")
     message: str
     suggestion: str
+    source: str | None = None
+    tier: str | None = None
 
 
 class VerificationResult(BaseModel):
@@ -177,15 +182,29 @@ def _extract_title_from_slide(slide: Slide) -> str:
 async def run_aesthetic_verification(
     slides: list[Slide],
     presentation_dict: dict | None = None,
+    vision_timeout_seconds: float | None = None,
 ) -> VerificationResult | None:
     """LLM 审美评估 — 优先使用截图多模态，回退到文本摘要"""
+    vision_timed_out = False
     try:
         agent = _get_aesthetic_verifier_agent()
 
         if presentation_dict is not None:
             try:
-                result = await _run_vision_verification(agent, slides, presentation_dict)
-                return result
+                if vision_timeout_seconds and vision_timeout_seconds > 0:
+                    raw_text = await asyncio.wait_for(
+                        _run_vision_verification(agent, slides, presentation_dict),
+                        timeout=vision_timeout_seconds,
+                    )
+                else:
+                    raw_text = await _run_vision_verification(agent, slides, presentation_dict)
+                return _parse_aesthetic_text(raw_text, slides)
+            except asyncio.TimeoutError:
+                vision_timed_out = True
+                logger.warning(
+                    "Vision verification timed out after %.1fs, falling back to text",
+                    vision_timeout_seconds or 0.0,
+                )
             except Exception as e:
                 logger.warning("Vision verification failed, falling back to text: %s", e)
 
@@ -198,7 +217,20 @@ async def run_aesthetic_verification(
         result = await agent.run(
             f"请评估以下演示文稿的设计质量：\n{slides_summary}"
         )
-        return result.output
+        output = _parse_aesthetic_text(str(result.output), slides)
+        if vision_timed_out and slides:
+            output.issues.append(
+                VerificationIssue(
+                    slide_id=slides[0].slide_id,
+                    severity="warning",
+                    category="aesthetic",
+                    message="视觉截图评估超时，已降级为文本审美评估",
+                    suggestion="减少页数、降低视觉评估复杂度，或延长 verify 超时预算",
+                    source="vision_timeout_fallback",
+                    tier="advisory",
+                )
+            )
+        return output
     except Exception as e:
         logger.warning("Aesthetic verification skipped: %s", e)
         return None
@@ -206,7 +238,7 @@ async def run_aesthetic_verification(
 
 async def _run_vision_verification(
     agent, slides: list[Slide], presentation_dict: dict
-) -> VerificationResult:
+) -> str:
     """使用截图 + BinaryContent 进行多模态审美评估"""
     from pydantic_ai import BinaryContent
 
@@ -227,7 +259,7 @@ async def _run_vision_verification(
         user_prompt.append(BinaryContent(data=ss.png_bytes, media_type="image/png"))
 
     result = await agent.run(user_prompt)
-    return result.output
+    return str(result.output)
 
 
 def _get_aesthetic_verifier_agent():
@@ -243,12 +275,102 @@ def _get_aesthetic_verifier_agent():
 
     _agent = Agent(
         model=resolve_model(settings.vision_model),
-        output_type=VerificationResult,
+        output_type=str,
         instructions=(
             "你是一个演示文稿设计评审专家。评估幻灯片的视觉质量。\n"
             "检查维度：配色协调性、信息密度合理性、视觉层级清晰度、留白是否充足、排版整洁度。\n"
             "如果收到截图，请基于实际视觉效果进行评估。\n"
-            "给出 0-100 的评分和具体改进建议。"
+            "请优先输出 JSON，格式如下：\n"
+            '{"score": 0-100, "issues": [{"slide_id":"slide-1","severity":"warning","category":"aesthetic","message":"问题描述","suggestion":"修改建议"}]}\n'
+            "无法输出 JSON 时，也请至少给出评分和可执行建议。"
         ),
     )
     return _agent
+
+
+def _parse_aesthetic_text(raw_text: str, slides: list[Slide]) -> VerificationResult:
+    text = (raw_text or "").strip()
+    if not text:
+        return VerificationResult(passed=True, issues=[], score=80)
+
+    json_candidate = _extract_json_block(text)
+    if json_candidate is not None:
+        parsed = _parse_json_result(json_candidate, slides)
+        if parsed is not None:
+            return parsed
+
+    score = _extract_score(text)
+    return VerificationResult(passed=True, issues=[], score=score)
+
+
+def _extract_json_block(text: str) -> str | None:
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", text, re.IGNORECASE)
+    if fenced:
+        return fenced.group(1)
+    direct = re.search(r"(\{[\s\S]*\})", text)
+    if direct:
+        return direct.group(1)
+    return None
+
+
+def _parse_json_result(payload: str, slides: list[Slide]) -> VerificationResult | None:
+    try:
+        obj = json.loads(payload)
+    except Exception:
+        return None
+
+    if not isinstance(obj, dict):
+        return None
+
+    score_raw = obj.get("score")
+    try:
+        score = int(score_raw)
+    except Exception:
+        score = 80
+    score = max(0, min(score, 100))
+
+    issues_raw = obj.get("issues", [])
+    issues: list[VerificationIssue] = []
+    default_slide_id = slides[0].slide_id if slides else "slide-1"
+    valid_slide_ids = {slide.slide_id for slide in slides}
+    for entry in issues_raw if isinstance(issues_raw, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        slide_id = str(entry.get("slide_id") or default_slide_id)
+        if valid_slide_ids and slide_id not in valid_slide_ids:
+            slide_id = default_slide_id
+
+        severity = str(entry.get("severity") or "warning").lower()
+        if severity not in {"warning", "info"}:
+            severity = "warning"
+
+        category = str(entry.get("category") or "aesthetic").lower()
+        message = str(entry.get("message") or "").strip()
+        suggestion = str(entry.get("suggestion") or "").strip()
+        if not message or not suggestion:
+            continue
+
+        issues.append(
+            VerificationIssue(
+                slide_id=slide_id,
+                severity=severity,
+                category=category,
+                message=message,
+                suggestion=suggestion,
+                source="vision",
+                tier="advisory",
+            )
+        )
+
+    return VerificationResult(passed=True, issues=issues, score=score)
+
+
+def _extract_score(text: str) -> int:
+    candidates = re.findall(r"(\d{1,3})\s*(?:/|分|score)?\s*100?", text, flags=re.IGNORECASE)
+    if candidates:
+        try:
+            score = int(candidates[0])
+            return max(0, min(score, 100))
+        except Exception:
+            pass
+    return 80

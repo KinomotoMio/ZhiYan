@@ -68,6 +68,12 @@ def _normalize_layout_content(
     layout_id: str,
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], bool, bool, str]:
+    if layout_id == "intro-slide":
+        return _normalize_intro_slide(data)
+    if layout_id == "quote-slide":
+        return _normalize_quote_slide(data)
+    if layout_id == "thank-you":
+        return _normalize_thank_you(data)
     if layout_id == "two-column-compare":
         return _normalize_two_column_compare(data)
     if layout_id == "table-info":
@@ -75,6 +81,59 @@ def _normalize_layout_content(
     if layout_id == "challenge-outcome":
         return _normalize_challenge_outcome(data)
     return data, False, True, ""
+
+
+def _normalize_intro_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    title = _as_text(data.get("title"), "未命名演示")
+    subtitle = _as_text(data.get("subtitle"), "")
+    author = _as_text(data.get("author") or data.get("presenter"), "")
+    date = _as_text(data.get("date"), "")
+
+    normalized: dict[str, Any] = {"title": title}
+    if subtitle:
+        normalized["subtitle"] = subtitle
+    if author:
+        normalized["author"] = author
+    if date:
+        normalized["date"] = date
+
+    changed = normalized != data
+    return normalized, changed, True, "intro-slide-shape" if changed else ""
+
+
+def _normalize_quote_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    quote = _as_text(data.get("quote"), "")
+    if not quote:
+        quote = _as_text(data.get("title"), "")
+    if not quote:
+        return data, False, False, "quote-slide-unrecoverable"
+
+    author = _as_text(data.get("author") or data.get("attribution"), "")
+    context = _as_text(data.get("context"), "")
+
+    normalized: dict[str, Any] = {"quote": quote}
+    if author:
+        normalized["author"] = author
+    if context:
+        normalized["context"] = context
+
+    changed = normalized != data
+    return normalized, changed, True, "quote-slide-shape" if changed else ""
+
+
+def _normalize_thank_you(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    title = _as_text(data.get("title"), "谢谢")
+    subtitle = _as_text(data.get("subtitle"), "")
+    contact = _as_text(data.get("contact") or data.get("contact_info"), "")
+
+    normalized: dict[str, Any] = {"title": title}
+    if subtitle:
+        normalized["subtitle"] = subtitle
+    if contact:
+        normalized["contact"] = contact
+
+    changed = normalized != data
+    return normalized, changed, True, "thank-you-shape" if changed else ""
 
 
 def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:

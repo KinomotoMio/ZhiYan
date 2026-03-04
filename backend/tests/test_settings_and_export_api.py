@@ -68,3 +68,31 @@ def test_export_pdf_returns_503_with_manual_install_hint(monkeypatch):
 
     assert resp.status_code == 503
     assert "uv run playwright install chromium" in resp.json()["detail"]
+
+
+def test_cors_preflight_allows_localhost_and_loopback():
+    client = TestClient(app)
+
+    for origin in ("http://127.0.0.1:3000", "http://localhost:5173"):
+        resp = client.options(
+            "/api/v1/settings",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "content-type,x-workspace-id",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") == origin
+
+
+def test_cors_preflight_rejects_unknown_origin():
+    client = TestClient(app)
+    resp = client.options(
+        "/api/v1/settings",
+        headers={
+            "Origin": "https://evil.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 400

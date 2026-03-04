@@ -257,3 +257,56 @@ def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tm
         assert "[DONE]" in body
 
     asyncio.run(_case())
+
+
+def test_generation_v2_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_path):
+    store, _runner = _install_runtime(monkeypatch, tmp_path)
+
+    from app.api.v2 import generation as generation_api
+    from app.models.generation import GenerationEvent, GenerationJob, GenerationRequestData, StageStatus
+
+    async def _case():
+        job = GenerationJob(
+            job_id="job-waiting-fix-stream",
+            request=GenerationRequestData(topic="待修复", resolved_content="测试内容"),
+            outline_accepted=True,
+        )
+        await store.create_job(job)
+        await store.append_event(
+            GenerationEvent(
+                seq=1,
+                type=EventType.STAGE_STARTED,
+                job_id=job.job_id,
+                stage=StageStatus.VERIFY,
+                message="verify",
+            )
+        )
+        await store.append_event(
+            GenerationEvent(
+                seq=2,
+                type=EventType.JOB_WAITING_FIX_REVIEW,
+                job_id=job.job_id,
+                stage=StageStatus.VERIFY,
+                message="waiting review",
+                payload={"hard_issue_slide_ids": ["slide-1"], "advisory_issue_count": 1},
+            )
+        )
+
+        response = await generation_api.stream_job_events(job.job_id)
+        chunks: list[str] = []
+        try:
+            while True:
+                chunk = await asyncio.wait_for(response.body_iterator.__anext__(), timeout=1.0)
+                text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+                chunks.append(text)
+                if "[DONE]" in text:
+                    break
+        finally:
+            await response.body_iterator.aclose()
+
+        body = "".join(chunks)
+        assert '"type": "stage_started"' in body
+        assert '"type": "job_waiting_fix_review"' in body
+        assert "[DONE]" in body
+
+    asyncio.run(_case())

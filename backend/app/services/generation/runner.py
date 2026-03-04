@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -274,45 +275,37 @@ class GenerationRunner:
                     )
                     await self._sync_state_to_job(job, state)
 
-            # Optional single fix pass when errors exist
-            error_count = sum(1 for issue in state.verification_issues if issue.get("severity") == "error")
-            if error_count > 0 and job.fix_passes < settings.max_fix_passes:
-                await self._run_stage(
+            hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
+            if hard_slide_ids:
+                job.status = JobStatus.WAITING_FIX_REVIEW
+                job.current_stage = StageStatus.VERIFY
+                job.hard_issue_slide_ids = hard_slide_ids
+                job.advisory_issue_count = advisory_count
+                job.fix_preview_slides = []
+                job.fix_preview_source_ids = []
+                job.updated_at = now_iso()
+                await self._store.save_job(job)
+                if job.request.session_id:
+                    from app.services.sessions import session_store
+                    await session_store.update_generation_job_status(
+                        job.job_id,
+                        JobStatus.WAITING_FIX_REVIEW.value,
+                    )
+                await self._emit_event(
                     job,
-                    state,
-                    stage=StageStatus.FIX,
-                    timeout=float(settings.job_timeout_seconds),
-                    stage_coro=stage_fix_slides_once(
-                        state,
-                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
-                        progress=progress_hook,
-                        on_slide=slide_hook,
-                    ),
-                )
-                job.fix_passes += 1
-                await self._sync_state_to_job(job, state)
-
-                await self._run_stage(
-                    job,
-                    state,
+                    EventType.JOB_WAITING_FIX_REVIEW,
                     stage=StageStatus.VERIFY,
-                    timeout=float(settings.verify_timeout_seconds),
-                    stage_coro=stage_verify_slides(
-                        state,
-                        progress=progress_hook,
-                        enable_vision=settings.enable_vision_verification,
-                    ),
+                    message="发现硬错误，等待用户决策修复",
+                    payload={
+                        "issues": job.issues,
+                        "hard_issue_slide_ids": hard_slide_ids,
+                        "advisory_issue_count": advisory_count,
+                        "failed_slide_indices": job.failed_slide_indices,
+                    },
                 )
-                await self._sync_state_to_job(job, state)
+                return
 
-            title = job.request.title or "新演示文稿"
-            presentation = Presentation(
-                presentationId=f"pres-{uuid4().hex[:8]}",
-                title=title,
-                slides=state.slides,
-            )
-
-            job.presentation = presentation.model_dump(mode="json", by_alias=True)
+            job.presentation = self._build_presentation_payload(job, state.slides)
             job.status = JobStatus.COMPLETED
             job.current_stage = StageStatus.COMPLETE
             job.updated_at = now_iso()
@@ -411,6 +404,188 @@ class GenerationRunner:
                     "elapsed_ms": elapsed_ms,
                 },
             )
+
+    async def preview_fix(
+        self,
+        job_id: str,
+        *,
+        slide_ids: list[str] | None = None,
+    ) -> GenerationJob:
+        job = await self._store.get_job(job_id)
+        if job is None:
+            raise ValueError("Job not found")
+        if job.status != JobStatus.WAITING_FIX_REVIEW:
+            raise RuntimeError(f"当前状态不支持生成修复建议: {job.status.value}")
+
+        requested_ids = [sid for sid in (slide_ids or []) if sid]
+        target_ids = requested_ids or list(job.hard_issue_slide_ids)
+        if not target_ids:
+            target_ids, _ = self._collect_fix_issue_summary(job.issues)
+        if not target_ids:
+            raise RuntimeError("当前任务没有可修复的硬错误页面")
+
+        preview_state = self._build_state(job)
+        await stage_fix_slides_once(
+            preview_state,
+            per_slide_timeout=float(settings.per_slide_timeout_seconds),
+            target_slide_ids=set(target_ids),
+        )
+
+        base_slides: dict[str, dict] = {}
+        for item in job.slides:
+            if not isinstance(item, dict):
+                continue
+            try:
+                normalized = Slide.model_validate(item).model_dump(mode="json", by_alias=True)
+            except Exception:
+                normalized = deepcopy(item)
+            sid = str(normalized.get("slideId") or item.get("slideId") or "").strip()
+            if sid:
+                base_slides[sid] = normalized
+        preview_slides: list[dict] = []
+        preview_slide_ids: list[str] = []
+        for slide in preview_state.slides:
+            slide_payload = slide.model_dump(mode="json", by_alias=True)
+            sid = slide.slide_id
+            base = base_slides.get(sid)
+            if base == slide_payload:
+                continue
+            preview_slides.append(slide_payload)
+            preview_slide_ids.append(sid)
+
+        job.fix_preview_slides = preview_slides
+        job.fix_preview_source_ids = preview_slide_ids
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+
+        await self._emit_event(
+            job,
+            EventType.FIX_PREVIEW_READY,
+            stage=StageStatus.FIX,
+            message="修复建议已生成，请按页选择是否应用",
+            payload={
+                "fix_preview_slides": job.fix_preview_slides,
+                "fix_preview_source_ids": job.fix_preview_source_ids,
+                "requested_slide_ids": target_ids,
+            },
+        )
+        return job
+
+    async def apply_fix(
+        self,
+        job_id: str,
+        *,
+        slide_ids: list[str],
+    ) -> GenerationJob:
+        job = await self._store.get_job(job_id)
+        if job is None:
+            raise ValueError("Job not found")
+        if job.status != JobStatus.WAITING_FIX_REVIEW:
+            raise RuntimeError(f"当前状态不支持应用修复: {job.status.value}")
+        if not job.fix_preview_slides:
+            raise RuntimeError("暂无修复候选，请先生成修复建议")
+
+        selected = [sid for sid in slide_ids if sid]
+        if not selected:
+            raise RuntimeError("请至少选择一页进行应用")
+
+        preview_by_id = {
+            str(slide.get("slideId")): deepcopy(slide)
+            for slide in job.fix_preview_slides
+            if isinstance(slide, dict) and slide.get("slideId")
+        }
+        unknown = [sid for sid in selected if sid not in preview_by_id]
+        if unknown:
+            raise RuntimeError("存在无效候选页，请重新生成修复建议")
+
+        next_slides: list[dict] = []
+        selected_set = set(selected)
+        for slide in job.slides:
+            sid = str(slide.get("slideId")) if isinstance(slide, dict) else ""
+            if sid in selected_set:
+                next_slides.append(preview_by_id[sid])
+            else:
+                next_slides.append(slide)
+
+        job.slides = next_slides
+        job.fix_preview_slides = []
+        job.fix_preview_source_ids = []
+        job.presentation = self._build_presentation_payload(
+            job,
+            [Slide.model_validate(slide) for slide in job.slides],
+        )
+        job.status = JobStatus.COMPLETED
+        job.current_stage = StageStatus.COMPLETE
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+
+        if job.request.session_id:
+            from app.services.sessions import session_store
+            await session_store.save_presentation(
+                session_id=job.request.session_id,
+                payload=job.presentation,
+                is_snapshot=False,
+            )
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.COMPLETED.value,
+            )
+
+        await self._emit_event(
+            job,
+            EventType.JOB_COMPLETED,
+            stage=StageStatus.COMPLETE,
+            message="已按选择应用修复并完成任务",
+            payload={
+                "presentation": job.presentation,
+                "issues": job.issues,
+                "failed_slide_indices": job.failed_slide_indices,
+                "applied_slide_ids": selected,
+            },
+        )
+        return job
+
+    async def skip_fix(self, job_id: str) -> GenerationJob:
+        job = await self._store.get_job(job_id)
+        if job is None:
+            raise ValueError("Job not found")
+        if job.status != JobStatus.WAITING_FIX_REVIEW:
+            raise RuntimeError(f"当前状态不支持跳过修复: {job.status.value}")
+
+        slides = [Slide.model_validate(slide) for slide in job.slides]
+        job.fix_preview_slides = []
+        job.fix_preview_source_ids = []
+        job.presentation = self._build_presentation_payload(job, slides)
+        job.status = JobStatus.COMPLETED
+        job.current_stage = StageStatus.COMPLETE
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+
+        if job.request.session_id:
+            from app.services.sessions import session_store
+            await session_store.save_presentation(
+                session_id=job.request.session_id,
+                payload=job.presentation,
+                is_snapshot=False,
+            )
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.COMPLETED.value,
+            )
+
+        await self._emit_event(
+            job,
+            EventType.JOB_COMPLETED,
+            stage=StageStatus.COMPLETE,
+            message="已跳过修复并完成任务",
+            payload={
+                "presentation": job.presentation,
+                "issues": job.issues,
+                "failed_slide_indices": job.failed_slide_indices,
+                "fix_skipped": True,
+            },
+        )
+        return job
 
     async def _run_stage(
         self,
@@ -679,9 +854,41 @@ class GenerationRunner:
                 for item in state.slide_contents
             ]
         job.issues = list(state.verification_issues)
+        hard_slide_ids, advisory_count = self._collect_fix_issue_summary(job.issues)
+        job.hard_issue_slide_ids = hard_slide_ids
+        job.advisory_issue_count = advisory_count
         job.failed_slide_indices = list(state.failed_slide_indices)
         job.updated_at = now_iso()
         await self._store.save_job(job)
+
+    @staticmethod
+    def _collect_fix_issue_summary(issues: list[dict]) -> tuple[list[str], int]:
+        hard_slide_ids: set[str] = set()
+        advisory_count = 0
+        for issue in issues:
+            tier = str(issue.get("tier") or "").lower()
+            severity = str(issue.get("severity") or "").lower()
+            is_hard = tier == "hard" or (not tier and severity == "error")
+            if is_hard:
+                slide_id = str(issue.get("slide_id") or "").strip()
+                if slide_id:
+                    hard_slide_ids.add(slide_id)
+                continue
+            advisory_count += 1
+        return sorted(hard_slide_ids), advisory_count
+
+    @staticmethod
+    def _build_presentation_payload(job: GenerationJob, slides: list[Slide]) -> dict:
+        title = job.request.title or "新演示文稿"
+        existing = job.presentation if isinstance(job.presentation, dict) else {}
+        presentation_id = existing.get("presentationId")
+        if not isinstance(presentation_id, str) or not presentation_id.strip():
+            presentation_id = f"pres-{uuid4().hex[:8]}"
+        return Presentation(
+            presentationId=presentation_id,
+            title=title,
+            slides=slides,
+        ).model_dump(mode="json", by_alias=True)
 
     async def _persist_partial_presentation(
         self,

@@ -22,6 +22,7 @@ class JobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     WAITING_OUTLINE_REVIEW = "waiting_outline_review"
+    WAITING_FIX_REVIEW = "waiting_fix_review"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -45,6 +46,8 @@ class EventType(str, Enum):
     OUTLINE_READY = "outline_ready"
     LAYOUT_READY = "layout_ready"
     SLIDE_READY = "slide_ready"
+    JOB_WAITING_FIX_REVIEW = "job_waiting_fix_review"
+    FIX_PREVIEW_READY = "fix_preview_ready"
     STAGE_FAILED = "stage_failed"
     JOB_COMPLETED = "job_completed"
     JOB_FAILED = "job_failed"
@@ -111,6 +114,10 @@ class GenerationJob(BaseModel):
     slides: list[dict[str, Any]] = Field(default_factory=list)
     issues: list[dict[str, Any]] = Field(default_factory=list)
     failed_slide_indices: list[int] = Field(default_factory=list)
+    hard_issue_slide_ids: list[str] = Field(default_factory=list)
+    advisory_issue_count: int = 0
+    fix_preview_slides: list[dict[str, Any]] = Field(default_factory=list)
+    fix_preview_source_ids: list[str] = Field(default_factory=list)
 
     outline_accepted: bool = False
     fix_passes: int = 0
@@ -133,6 +140,14 @@ class CreateJobResponse(BaseModel):
 
 class AcceptOutlineRequest(BaseModel):
     outline: dict[str, Any] | None = None
+
+
+class FixPreviewRequest(BaseModel):
+    slide_ids: list[str] | None = None
+
+
+class FixApplyRequest(BaseModel):
+    slide_ids: list[str] = Field(default_factory=list)
 
 
 class JobActionResponse(BaseModel):

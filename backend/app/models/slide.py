@@ -1,7 +1,7 @@
 """Slide 数据模型 — 与 shared/schemas/slide.schema.json 保持同步
 
-新增 layout_id + content_data 字段用于结构化渲染。
-保留 components 字段用于向后兼容。
+layout_id + content_data 是主渲染契约。
+components 字段仅保留读兼容。
 """
 
 from enum import Enum
@@ -105,7 +105,7 @@ class Slide(BaseModel):
     # 新增：结构化内容数据（按 layout schema 生成的 JSON）
     content_data: dict | None = Field(None, alias="contentData")
 
-    # 保留 components 用于向后兼容 / fallback 渲染
+    # 旧版兼容字段（只读兼容）
     components: list[Component] = Field(default_factory=list)
 
     speaker_notes: str | None = Field(None, alias="speakerNotes")

@@ -244,6 +244,50 @@ def test_workspace_source_link_acl_and_content_acl(monkeypatch, tmp_path):
     assert content_denied.status_code == 404
 
 
+def test_unlink_source_is_idempotent(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-a"}
+
+    session_resp = client.post("/api/v1/sessions", headers=headers, json={"title": "S1"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "待取消素材", "content": "unlink me"},
+    )
+    assert source_resp.status_code == 200
+    source_id = source_resp.json()["id"]
+
+    linked = client.post(
+        f"/api/v1/sessions/{session_id}/sources/link",
+        headers=headers,
+        json={"source_ids": [source_id]},
+    )
+    assert linked.status_code == 200
+
+    first_unlink = client.delete(
+        f"/api/v1/sessions/{session_id}/sources/{source_id}/link",
+        headers=headers,
+    )
+    assert first_unlink.status_code == 200
+    assert first_unlink.json()["ok"] is True
+
+    second_unlink = client.delete(
+        f"/api/v1/sessions/{session_id}/sources/{source_id}/link",
+        headers=headers,
+    )
+    assert second_unlink.status_code == 200
+    assert second_unlink.json()["ok"] is True
+
+    sources = client.get(f"/api/v1/sessions/{session_id}/sources", headers=headers)
+    assert sources.status_code == 200
+    assert sources.json() == []
+
+
 def test_put_latest_presentation_workspace_isolation(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 

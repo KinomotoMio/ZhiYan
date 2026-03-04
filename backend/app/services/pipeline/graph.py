@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from app.models.slide import Slide
 logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 6
+_SLIDE_CONTEXT_MAX_CHARS = 2000
 
 ProgressHook = Callable[[str, int, int, str], Awaitable[None]]
 SlideHook = Callable[[dict[str, Any]], Awaitable[None]]
@@ -229,7 +231,14 @@ async def stage_generate_slides(
             slide_num = item["slide_number"]
             layout_id = layout_map.get(slide_num, "bullet-with-icons")
 
-            source_content = state.raw_content[:2000]
+            source_content = _extract_slide_context(
+                raw_content=state.raw_content,
+                title=item.get("title", ""),
+                content_brief=item.get("content_brief", ""),
+                key_points=item.get("key_points", []),
+                slide_index=idx,
+                total_slides=max(1, len(outline_items)),
+            )
 
             try:
                 coro = generate_slide_content(
@@ -336,24 +345,50 @@ async def stage_verify_slides(
     state: PipelineState,
     progress: ProgressHook | None = None,
     enable_vision: bool = True,
+    vision_timeout_seconds: float | None = None,
 ) -> None:
     if progress:
         await progress("verify", 6, TOTAL_STEPS, "验证布局质量...")
 
     from app.services.agents.layout_verifier import run_aesthetic_verification, verify_programmatic
 
-    issues = [issue.model_dump(mode="json") for issue in verify_programmatic(state.slides)]
+    issues = []
+    for issue in verify_programmatic(state.slides):
+        issue_dict = issue.model_dump(mode="json")
+        issue_dict["source"] = issue_dict.get("source") or "programmatic"
+        severity = str(issue_dict.get("severity") or "warning").lower()
+        issue_dict["tier"] = "hard" if severity == "error" else "advisory"
+        issues.append(issue_dict)
 
     if enable_vision and state.slides:
+        if vision_timeout_seconds is None:
+            from app.core.config import settings
+
+            verify_timeout = float(settings.verify_timeout_seconds)
+            vision_timeout_seconds = min(
+                max(5.0, verify_timeout * 0.6),
+                max(1.0, verify_timeout - 1.0),
+            )
         presentation_dict = {
             "presentationId": "verification-temp",
             "title": state.topic or "演示文稿",
             "slides": [s.model_dump(mode="json", by_alias=True) for s in state.slides],
         }
-        aesthetic = await run_aesthetic_verification(state.slides, presentation_dict=presentation_dict)
+        aesthetic = await run_aesthetic_verification(
+            state.slides,
+            presentation_dict=presentation_dict,
+            vision_timeout_seconds=vision_timeout_seconds,
+        )
         if aesthetic:
             for issue in aesthetic.issues:
-                issues.append(issue.model_dump(mode="json"))
+                issue_dict = issue.model_dump(mode="json")
+                severity = str(issue_dict.get("severity") or "warning").lower()
+                # 视觉问题统一降级为 advisory，避免误触发自动修复链路
+                if severity == "error":
+                    issue_dict["severity"] = "warning"
+                issue_dict["source"] = issue_dict.get("source") or "vision"
+                issue_dict["tier"] = "advisory"
+                issues.append(issue_dict)
 
     state.verification_issues = issues
 
@@ -363,17 +398,21 @@ async def stage_fix_slides_once(
     per_slide_timeout: float,
     progress: ProgressHook | None = None,
     on_slide: SlideHook | None = None,
+    target_slide_ids: set[str] | None = None,
 ) -> None:
     if progress:
         await progress("fix", 6, TOTAL_STEPS, "修复存在问题的页面...")
 
     from app.services.agents.slide_generator import generate_slide_content
 
-    error_slide_ids = {
-        issue.get("slide_id")
-        for issue in state.verification_issues
-        if issue.get("severity") == "error" and issue.get("slide_id")
-    }
+    if target_slide_ids is not None:
+        error_slide_ids = {sid for sid in target_slide_ids if sid}
+    else:
+        error_slide_ids = {
+            issue.get("slide_id")
+            for issue in state.verification_issues
+            if issue.get("severity") == "error" and issue.get("slide_id")
+        }
     if not error_slide_ids:
         return
 
@@ -390,7 +429,14 @@ async def stage_fix_slides_once(
             continue
 
         layout_id = layout_map.get(slide_num, slide.layout_id or "bullet-with-icons")
-        source_content = state.raw_content[:2000]
+        source_content = _extract_slide_context(
+            raw_content=state.raw_content,
+            title=item.get("title", ""),
+            content_brief=item.get("content_brief", ""),
+            key_points=item.get("key_points", []),
+            slide_index=idx,
+            total_slides=max(1, len(state.slides)),
+        )
 
         try:
             coro = generate_slide_content(
@@ -464,6 +510,117 @@ def _category_to_layout(category: str) -> str:
     return mapping.get(category, "bullet-with-icons")
 
 
+def _extract_slide_context(
+    raw_content: str,
+    title: str,
+    content_brief: str,
+    key_points: list[str],
+    slide_index: int,
+    total_slides: int,
+    max_chars: int = _SLIDE_CONTEXT_MAX_CHARS,
+) -> str:
+    content = (raw_content or "").strip()
+    if not content:
+        return ""
+
+    paragraphs = [segment.strip() for segment in re.split(r"\n\s*\n+", content) if segment.strip()]
+    if len(paragraphs) <= 1:
+        return content[:max_chars]
+
+    title_text = str(title or "")
+    brief_text = str(content_brief or "")
+    query_terms = _collect_query_terms(title_text, brief_text, key_points)
+    scored: list[tuple[int, int, str]] = []
+
+    for idx, paragraph in enumerate(paragraphs):
+        score = _score_paragraph(paragraph, title_text, brief_text, key_points, query_terms)
+        scored.append((score, idx, paragraph))
+
+    matched = [entry for entry in scored if entry[0] > 0]
+    if not matched:
+        return _slice_content_by_position(content, slide_index, total_slides, max_chars)
+
+    matched.sort(key=lambda item: (-item[0], item[1]))
+    top_entries = matched[:6]
+    top_entries.sort(key=lambda item: item[1])
+
+    selected: list[str] = []
+    size = 0
+    for _, _, paragraph in top_entries:
+        delta = len(paragraph) + (2 if selected else 0)
+        if size + delta > max_chars:
+            continue
+        selected.append(paragraph)
+        size += delta
+        if size >= max_chars * 0.85:
+            break
+
+    if not selected:
+        return _slice_content_by_position(content, slide_index, total_slides, max_chars)
+    return "\n\n".join(selected)
+
+
+def _slice_content_by_position(content: str, slide_index: int, total_slides: int, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    denominator = max(1, total_slides - 1)
+    ratio = min(max(slide_index, 0), denominator) / denominator
+    anchor = int((len(content) - max_chars) * ratio)
+    start = max(0, min(anchor, len(content) - max_chars))
+    end = start + max_chars
+    return content[start:end]
+
+
+def _collect_query_terms(title: str, content_brief: str, key_points: list[str]) -> list[str]:
+    terms: list[str] = []
+    candidates = [title, content_brief, *key_points]
+    for text in candidates:
+        if not text:
+            continue
+        trimmed = text.strip()
+        if len(trimmed) >= 2:
+            terms.append(trimmed.lower())
+        pieces = re.split(r"[\s,，。;；:：/|()（）【】\\-]+", trimmed)
+        for piece in pieces:
+            token = piece.strip().lower()
+            if len(token) >= 2:
+                terms.append(token)
+    deduped: list[str] = []
+    for term in terms:
+        if term and term not in deduped:
+            deduped.append(term)
+    return deduped
+
+
+def _score_paragraph(
+    paragraph: str,
+    title: str,
+    content_brief: str,
+    key_points: list[str],
+    query_terms: list[str],
+) -> int:
+    haystack = paragraph.lower()
+    score = 0
+
+    title_text = title.strip().lower()
+    if title_text and title_text in haystack:
+        score += 8
+
+    brief_text = content_brief.strip().lower()
+    if brief_text and brief_text in haystack:
+        score += 4
+
+    for point in key_points:
+        point_text = point.strip().lower()
+        if point_text and point_text in haystack:
+            score += 3
+
+    for term in query_terms:
+        if term in haystack:
+            score += 1
+    return score
+
+
 
 def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     title = item.get("title", "幻灯片")
@@ -524,7 +681,7 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
         return {
             "title": title,
             "chart": {
-                "chartType": "bar",
+                "chart_type": "bar",
                 "labels": ["A", "B", "C"],
                 "datasets": [{"label": "指标", "data": [60, 75, 90], "color": "#3b82f6"}],
             },

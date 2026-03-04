@@ -38,6 +38,75 @@ def test_normalize_two_column_compare_from_items():
     assert isinstance(content["right"]["items"], list)
 
 
+def test_normalize_intro_slide_presenter_to_author():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-intro",
+                "layoutId": "intro-slide",
+                "contentData": {
+                    "title": "项目介绍",
+                    "subtitle": "副标题",
+                    "presenter": "张三",
+                    "date": "2026",
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "intro-slide-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["author"] == "张三"
+    assert "presenter" not in content
+
+
+def test_normalize_thank_you_contact_info_to_contact():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-thanks",
+                "layoutId": "thank-you",
+                "contentData": {
+                    "title": "谢谢",
+                    "subtitle": "欢迎交流",
+                    "contact_info": "hello@example.com",
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "thank-you-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["contact"] == "hello@example.com"
+    assert "contact_info" not in content
+
+
+def test_normalize_quote_attribution_to_author():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-quote",
+                "layoutId": "quote-slide",
+                "contentData": {
+                    "quote": "大道至简",
+                    "attribution": "某作者",
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "quote-slide-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["author"] == "某作者"
+    assert "attribution" not in content
+
+
 def test_normalize_table_info_from_columns_rows_dict():
     payload = _wrap_slides(
         [

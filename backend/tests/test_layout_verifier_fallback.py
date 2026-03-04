@@ -16,12 +16,7 @@ class _FakeAgent:
 
 
 def test_run_aesthetic_verification_falls_back_to_text(monkeypatch):
-    expected = layout_verifier.VerificationResult(
-        passed=True,
-        issues=[],
-        score=88,
-    )
-    fake_agent = _FakeAgent(expected)
+    fake_agent = _FakeAgent('{"score": 88, "issues": []}')
 
     async def fake_vision(agent, slides, presentation_dict):  # noqa: ARG001
         raise RuntimeError("BrowserType.launch: Executable doesn't exist")
@@ -53,3 +48,38 @@ def test_run_aesthetic_verification_falls_back_to_text(monkeypatch):
     assert len(fake_agent.prompts) == 1
     assert isinstance(fake_agent.prompts[0], str)
     assert "请评估以下演示文稿的设计质量" in fake_agent.prompts[0]
+
+
+def test_run_aesthetic_verification_timeout_adds_warning_issue(monkeypatch):
+    fake_agent = _FakeAgent('{"score": 82, "issues": []}')
+
+    async def slow_vision(agent, slides, presentation_dict):  # noqa: ARG001
+        await asyncio.sleep(0.05)
+        return '{"score": 99, "issues": []}'
+
+    monkeypatch.setattr(
+        layout_verifier,
+        "_get_aesthetic_verifier_agent",
+        lambda: fake_agent,
+    )
+    monkeypatch.setattr(layout_verifier, "_run_vision_verification", slow_vision)
+
+    slide = Slide(
+        slideId="slide-1",
+        layoutType="intro-slide",
+        layoutId="intro-slide",
+        contentData={"title": "封面"},
+        components=[],
+    )
+
+    result = asyncio.run(
+        layout_verifier.run_aesthetic_verification(
+            [slide],
+            presentation_dict={"title": "测试", "slides": [{}]},
+            vision_timeout_seconds=0.01,
+        )
+    )
+
+    assert result is not None
+    assert result.score == 82
+    assert any("视觉截图评估超时" in issue.message for issue in result.issues)

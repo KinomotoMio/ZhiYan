@@ -18,6 +18,8 @@ from app.models.generation import (
     CreateJobRequest,
     CreateJobResponse,
     EventType,
+    FixApplyRequest,
+    FixPreviewRequest,
     GenerationEvent,
     GenerationJob,
     GenerationMode,
@@ -134,6 +136,8 @@ async def run_job(job_id: str):
 
     if job.mode == GenerationMode.REVIEW_OUTLINE and not job.outline_accepted:
         raise HTTPException(status_code=409, detail="请先确认大纲后再继续")
+    if job.status == JobStatus.WAITING_FIX_REVIEW:
+        raise HTTPException(status_code=409, detail="当前任务正在等待修复决策，请先完成 fix 决策")
 
     started = await generation_runner.start_job(job_id)
     if not started and job.status == JobStatus.RUNNING:
@@ -144,6 +148,39 @@ async def run_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return JobActionResponse(job_id=refreshed.job_id, status=refreshed.status, current_stage=refreshed.current_stage)
+
+
+@router.post("/jobs/{job_id}/fix/preview", response_model=GenerationJob)
+async def preview_fix(job_id: str, req: FixPreviewRequest):
+    try:
+        job = await generation_runner.preview_fix(job_id, slide_ids=req.slide_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job
+
+
+@router.post("/jobs/{job_id}/fix/apply", response_model=GenerationJob)
+async def apply_fix(job_id: str, req: FixApplyRequest):
+    try:
+        job = await generation_runner.apply_fix(job_id, slide_ids=req.slide_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job
+
+
+@router.post("/jobs/{job_id}/fix/skip", response_model=GenerationJob)
+async def skip_fix(job_id: str):
+    try:
+        job = await generation_runner.skip_fix(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return job
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobActionResponse)
@@ -166,6 +203,12 @@ async def stream_job_events(
     after_seq: Annotated[int, Query(ge=0)] = 0,
 ):
     heartbeat = max(0.1, settings.sse_heartbeat_seconds)
+    terminal_events = {
+        EventType.JOB_COMPLETED,
+        EventType.JOB_FAILED,
+        EventType.JOB_CANCELLED,
+        EventType.JOB_WAITING_FIX_REVIEW,
+    }
 
     async def event_generator():
         job = await job_store.get_job(job_id)
@@ -187,7 +230,7 @@ async def stream_job_events(
                     continue
                 last_seq = max(last_seq, event.seq)
                 yield f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
-                if event.type in {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}:
+                if event.type in terminal_events:
                     terminal_seen = True
 
             if terminal_seen:
@@ -213,7 +256,7 @@ async def stream_job_events(
                 last_seq = max(last_seq, event.seq)
                 yield f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
 
-                if event.type in {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}:
+                if event.type in terminal_events:
                     yield "data: [DONE]\n\n"
                     break
         except asyncio.CancelledError:
