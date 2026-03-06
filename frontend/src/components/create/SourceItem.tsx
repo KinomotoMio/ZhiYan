@@ -26,6 +26,15 @@ const CATEGORY_ICON: Record<string, typeof FileText> = {
   unknown: FileSpreadsheet,
 };
 
+const CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN = 12;
+const CREATE_HOVER_PREVIEW_GAP = 8;
+const CREATE_HOVER_PREVIEW_MAX_WIDTH = 420;
+const CREATE_HOVER_PREVIEW_MIN_WIDTH = 320;
+const CREATE_HOVER_PREVIEW_WIDTH_PADDING = 20;
+const CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT = 240;
+const CREATE_HOVER_PREVIEW_MIN_HEIGHT = 180;
+const CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS = 80;
+
 function formatSize(bytes: number | undefined): string {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -98,25 +107,28 @@ export default function SourceItem({
       if (!triggerRef.current) return;
 
       const triggerRect = triggerRef.current.getBoundingClientRect();
-      const viewportMargin = 12;
-      const gap = 8;
-      const maxWidth = Math.min(420, window.innerWidth - viewportMargin * 2);
+      const viewportMargin = CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN;
+      const gap = CREATE_HOVER_PREVIEW_GAP;
+      const maxWidth = Math.min(CREATE_HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
       const width = Math.min(
         maxWidth,
-        Math.max(Math.min(triggerRect.width + 20, maxWidth), Math.min(320, maxWidth))
+        Math.max(
+          Math.min(triggerRect.width + CREATE_HOVER_PREVIEW_WIDTH_PADDING, maxWidth),
+          Math.min(CREATE_HOVER_PREVIEW_MIN_WIDTH, maxWidth)
+        )
       );
       const left = Math.min(
         Math.max(triggerRect.left, viewportMargin),
         Math.max(viewportMargin, window.innerWidth - width - viewportMargin)
       );
-      const previewHeight = hoverCardRef.current?.offsetHeight ?? 240;
+      const previewHeight = hoverCardRef.current?.offsetHeight ?? CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT;
       const fitsBelow = triggerRect.bottom + gap + previewHeight <= window.innerHeight - viewportMargin;
       const top = fitsBelow
         ? triggerRect.bottom + gap
         : Math.max(viewportMargin, triggerRect.top - previewHeight - gap);
       const maxHeight = fitsBelow
-        ? Math.max(180, window.innerHeight - top - viewportMargin)
-        : Math.max(180, triggerRect.top - gap - viewportMargin);
+        ? Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, window.innerHeight - top - viewportMargin)
+        : Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, triggerRect.top - gap - viewportMargin);
 
       setHoverPreviewPosition({
         top,
@@ -168,7 +180,7 @@ export default function SourceItem({
       setShowPopover(false);
       setHoverPreviewPosition(null);
       closeTimeoutRef.current = null;
-    }, 80);
+    }, CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS);
   };
 
   const inlineHoverPreview =
