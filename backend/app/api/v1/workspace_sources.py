@@ -8,7 +8,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 
-import httpx
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 

@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.core.model_status import ModelStatus, build_model_status

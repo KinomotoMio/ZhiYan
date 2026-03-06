@@ -13,8 +13,6 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import httpx
-
 from app.models.document import DocumentLayer
 from app.models.source import (
     FileCategory,

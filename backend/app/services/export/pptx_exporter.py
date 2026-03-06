@@ -11,12 +11,12 @@ import re
 from typing import Any
 
 from pptx import Presentation as PptxPresentation
-from pptx.util import Inches, Pt, Emu
+from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
-from app.models.slide import Presentation, Slide, Component
+from app.models.slide import Presentation, Component
 
 # 16:9 宽屏尺寸
 SLIDE_WIDTH = Inches(13.333)

@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
 from pydantic import BaseModel
 
 from app.models.layouts.schemas import (

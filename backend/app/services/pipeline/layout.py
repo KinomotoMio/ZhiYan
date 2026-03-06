@@ -7,7 +7,6 @@ from app.models.slide import (
     Component,
     ComponentRole,
     ComponentType,
-    LayoutType,
     Position,
     Slide,
     Style,
