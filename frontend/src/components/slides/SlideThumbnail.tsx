@@ -60,7 +60,7 @@ export default function SlideThumbnail({
   return (
     <div className="flex gap-2 items-start" ref={ref}>
       <div className="flex flex-col items-center gap-1 w-4 shrink-0">
-        <span className="text-xs text-muted-foreground mt-1 w-4 text-center">
+        <span className="text-xs text-muted-foreground mt-1">
           {index + 1}
         </span>
         {hasIssue && issueMeta && onIssueClick && (
