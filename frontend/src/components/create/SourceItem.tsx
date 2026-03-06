@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   FileText,
   Globe,
@@ -25,6 +26,15 @@ const CATEGORY_ICON: Record<string, typeof FileText> = {
   unknown: FileSpreadsheet,
 };
 
+const CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN = 12;
+const CREATE_HOVER_PREVIEW_GAP = 8;
+const CREATE_HOVER_PREVIEW_MAX_WIDTH = 420;
+const CREATE_HOVER_PREVIEW_MIN_WIDTH = 320;
+const CREATE_HOVER_PREVIEW_WIDTH_PADDING = 20;
+const CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT = 240;
+const CREATE_HOVER_PREVIEW_MIN_HEIGHT = 180;
+const CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS = 80;
+
 function formatSize(bytes: number | undefined): string {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -48,7 +58,14 @@ interface SourceItemProps {
   showSelectionCheckbox?: boolean;
   showRemove?: boolean;
   extraMeta?: string;
-  hoverPreviewVariant?: "default" | "assets";
+  hoverPreviewVariant?: "default" | "assets" | "create";
+}
+
+interface HoverPreviewPosition {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
 }
 
 export default function SourceItem({
@@ -63,14 +80,192 @@ export default function SourceItem({
   hoverPreviewVariant = "default",
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
+  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const hoverCardRef = useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = useRef<number | null>(null);
   const isError = source.status === "error";
   const isParsing = source.status === "parsing";
   const isUploading = source.status === "uploading";
   const isReady = source.status === "ready";
+  const hasHoverPreview = isReady && Boolean(source.previewSnippet);
   const isAssetsHoverPreview = hoverPreviewVariant === "assets";
+  const isCreateHoverPreview = hoverPreviewVariant === "create";
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current !== null) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isCreateHoverPreview || !showPopover || !hasHoverPreview) return;
+
+    const updateHoverPreviewPosition = () => {
+      if (!triggerRef.current) return;
+
+      const triggerRect = triggerRef.current.getBoundingClientRect();
+      const viewportMargin = CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN;
+      const gap = CREATE_HOVER_PREVIEW_GAP;
+      const maxWidth = Math.min(CREATE_HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
+      const width = Math.min(
+        Math.max(triggerRect.width + CREATE_HOVER_PREVIEW_WIDTH_PADDING, CREATE_HOVER_PREVIEW_MIN_WIDTH),
+        maxWidth
+      );
+      const left = Math.max(
+        viewportMargin,
+        Math.min(triggerRect.left, window.innerWidth - width - viewportMargin)
+      );
+      const previewHeight = hoverCardRef.current?.offsetHeight ?? CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT;
+      const fitsBelow = triggerRect.bottom + gap + previewHeight <= window.innerHeight - viewportMargin;
+      const top = fitsBelow
+        ? triggerRect.bottom + gap
+        : Math.max(viewportMargin, triggerRect.top - previewHeight - gap);
+      const maxHeight = fitsBelow
+        ? Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, window.innerHeight - top - viewportMargin)
+        : Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, triggerRect.top - gap - viewportMargin);
+
+      setHoverPreviewPosition({
+        top,
+        left,
+        width,
+        maxHeight,
+      });
+    };
+
+    updateHoverPreviewPosition();
+    const frame = window.requestAnimationFrame(updateHoverPreviewPosition);
+    window.addEventListener("resize", updateHoverPreviewPosition);
+    window.addEventListener("scroll", updateHoverPreviewPosition, true);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updateHoverPreviewPosition);
+      window.removeEventListener("scroll", updateHoverPreviewPosition, true);
+    };
+  }, [hasHoverPreview, isCreateHoverPreview, showPopover]);
+
+  const clearCloseTimeout = () => {
+    if (closeTimeoutRef.current !== null) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  };
+
+  const openHoverPreview = () => {
+    if (!hasHoverPreview) return;
+    clearCloseTimeout();
+    setShowPopover(true);
+  };
+
+  const closeHoverPreview = () => {
+    clearCloseTimeout();
+    setShowPopover(false);
+    setHoverPreviewPosition(null);
+  };
+
+  const scheduleHoverPreviewClose = () => {
+    if (!isCreateHoverPreview) {
+      closeHoverPreview();
+      return;
+    }
+
+    clearCloseTimeout();
+    closeTimeoutRef.current = window.setTimeout(() => {
+      setShowPopover(false);
+      setHoverPreviewPosition(null);
+      closeTimeoutRef.current = null;
+    }, CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS);
+  };
+
+  const inlineHoverPreview =
+    !isCreateHoverPreview && showPopover && source.previewSnippet ? (
+      <div
+        className={cn(
+          "absolute left-0 top-full z-20 mt-1 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/90",
+          "w-full",
+          isAssetsHoverPreview && "space-y-2.5"
+        )}
+      >
+        {isAssetsHoverPreview ? (
+          <>
+            <div className="space-y-1">
+              <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
+                {source.name}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {formatSize(source.size)}
+              </p>
+            </div>
+            <p className="line-clamp-6 text-xs leading-5 text-slate-600 dark:text-slate-300">
+              {source.previewSnippet}
+            </p>
+            {extraMeta ? (
+              <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
+                {extraMeta}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
+              {source.previewSnippet}
+            </p>
+            {extraMeta ? (
+              <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p>
+            ) : null}
+          </>
+        )}
+      </div>
+    ) : null;
+
+  const createHoverPreview =
+    isCreateHoverPreview &&
+    showPopover &&
+    source.previewSnippet &&
+    hoverPreviewPosition &&
+    typeof document !== "undefined"
+      ? createPortal(
+          <div className="pointer-events-none fixed inset-0 z-[70]">
+            <div
+              ref={hoverCardRef}
+              className="pointer-events-auto fixed overflow-hidden rounded-xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800/95"
+              style={hoverPreviewPosition}
+              onMouseEnter={openHoverPreview}
+              onMouseLeave={scheduleHoverPreviewClose}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex max-h-full flex-col gap-2.5">
+                <div className="space-y-1">
+                  <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
+                    {source.name}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {formatSize(source.size)}
+                  </p>
+                </div>
+                <div className="overflow-y-auto">
+                  <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                    {source.previewSnippet}
+                  </p>
+                </div>
+                {extraMeta ? (
+                  <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
+                    {extraMeta}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <div
+      ref={triggerRef}
       className={cn(
         "group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors",
         isError
@@ -80,8 +275,8 @@ export default function SourceItem({
             : "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80"
       )}
       onClick={() => isReady && onPreview(source)}
-      onMouseEnter={() => isReady && source.previewSnippet && setShowPopover(true)}
-      onMouseLeave={() => setShowPopover(false)}
+      onMouseEnter={openHoverPreview}
+      onMouseLeave={scheduleHoverPreviewClose}
     >
       {/* Checkbox — 仅 ready 状态显示 */}
       {isReady && showSelectionCheckbox && (
@@ -135,46 +330,8 @@ export default function SourceItem({
         </button>
       )}
 
-      {/* Hover 预览浮层 */}
-      {showPopover && source.previewSnippet && (
-        <div
-          className={cn(
-            "absolute left-0 top-full z-20 mt-1 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/90",
-            "w-full",
-            isAssetsHoverPreview && "space-y-2.5"
-          )}
-        >
-          {isAssetsHoverPreview ? (
-            <>
-              <div className="space-y-1">
-                <p className="text-sm font-medium leading-5 text-slate-900 dark:text-slate-100 break-words">
-                  {source.name}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {formatSize(source.size)}
-                </p>
-              </div>
-              <p className="text-xs leading-5 text-slate-600 dark:text-slate-300 line-clamp-6">
-                {source.previewSnippet}
-              </p>
-              {extraMeta ? (
-                <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
-                  {extraMeta}
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
-                {source.previewSnippet}
-              </p>
-              {extraMeta ? (
-                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p>
-              ) : null}
-            </>
-          )}
-        </div>
-      )}
+      {inlineHoverPreview}
+      {createHoverPreview}
     </div>
   );
 }
