@@ -48,6 +48,7 @@ interface SourceItemProps {
   showSelectionCheckbox?: boolean;
   showRemove?: boolean;
   extraMeta?: string;
+  hoverPreviewVariant?: "default" | "assets";
 }
 
 export default function SourceItem({
@@ -59,12 +60,14 @@ export default function SourceItem({
   showSelectionCheckbox = true,
   showRemove = false,
   extraMeta,
+  hoverPreviewVariant = "default",
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
   const isError = source.status === "error";
   const isParsing = source.status === "parsing";
   const isUploading = source.status === "uploading";
   const isReady = source.status === "ready";
+  const isAssetsHoverPreview = hoverPreviewVariant === "assets";
 
   return (
     <div
@@ -134,9 +137,42 @@ export default function SourceItem({
 
       {/* Hover 预览浮层 */}
       {showPopover && source.previewSnippet && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm p-3 shadow-lg">
-          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">{source.previewSnippet}</p>
-          {extraMeta ? <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p> : null}
+        <div
+          className={cn(
+            "absolute left-0 top-full z-20 mt-1 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/90",
+            "w-full",
+            isAssetsHoverPreview && "space-y-2.5"
+          )}
+        >
+          {isAssetsHoverPreview ? (
+            <>
+              <div className="space-y-1">
+                <p className="text-sm font-medium leading-5 text-slate-900 dark:text-slate-100 break-words">
+                  {source.name}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {formatSize(source.size)}
+                </p>
+              </div>
+              <p className="text-xs leading-5 text-slate-600 dark:text-slate-300 line-clamp-6">
+                {source.previewSnippet}
+              </p>
+              {extraMeta ? (
+                <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
+                  {extraMeta}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
+                {source.previewSnippet}
+              </p>
+              {extraMeta ? (
+                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p>
+              ) : null}
+            </>
+          )}
         </div>
       )}
     </div>
