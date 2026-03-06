@@ -233,7 +233,10 @@ export default function AssetsView() {
               <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">暂无素材</p>
             ) : (
               items.map((source) => (
-                <div key={source.id} className="flex items-start gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 p-2 hover:shadow-sm transition-all duration-200">
+                <div
+                  key={source.id}
+                  className="relative z-0 flex items-start gap-3 rounded-lg border border-slate-200 bg-white/80 p-2 transition-all duration-200 hover:z-30 hover:shadow-sm focus-within:z-30 dark:border-slate-700 dark:bg-slate-800/80"
+                >
                   <input
                     type="checkbox"
                     checked={selectedForDelete.includes(source.id)}
@@ -249,6 +252,7 @@ export default function AssetsView() {
                       onPreview={setPreviewSource}
                       showSelectionCheckbox={false}
                       showRemove={false}
+                      hoverPreviewVariant="assets"
                       extraMeta={
                         typeof source.linked_session_count === "number"
                           ? `已关联 ${source.linked_session_count} 个会话`
