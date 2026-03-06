@@ -140,7 +140,8 @@ export default function SourceItem({
         <div
           className={cn(
             "absolute left-0 top-full z-20 mt-1 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/90",
-            isAssetsHoverPreview ? "w-full space-y-2.5" : "w-full"
+            "w-full",
+            isAssetsHoverPreview && "space-y-2.5"
           )}
         >
           {isAssetsHoverPreview ? (
