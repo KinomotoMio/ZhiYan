@@ -59,9 +59,30 @@ export default function SlideThumbnail({
 
   return (
     <div className="flex gap-2 items-start" ref={ref}>
-      <span className="text-xs text-muted-foreground mt-1 w-4 text-right shrink-0">
-        {index + 1}
-      </span>
+      <div className="flex flex-col items-center gap-1 w-4 shrink-0">
+        <span className="text-xs text-muted-foreground mt-1 w-4 text-center">
+          {index + 1}
+        </span>
+        {hasIssue && issueMeta && onIssueClick && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onIssueClick();
+            }}
+            className={`relative flex min-h-5 min-w-5 items-center justify-center rounded-full border border-white px-1 text-[10px] font-semibold text-white shadow ${
+              statusColor
+            } ${isHandled ? "opacity-50" : "opacity-100"}`}
+            title={`hard ${issueMeta.hard} / advisory ${issueMeta.advisory}`}
+          >
+            {issueMeta.total}
+            {isHandled && (
+              <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-white bg-slate-700" />
+            )}
+          </button>
+        )}
+      </div>
       <div className="relative w-full">
         {isVisible ? (
           <SlidePreview
@@ -72,25 +93,6 @@ export default function SlideThumbnail({
           />
         ) : (
           <Skeleton className="w-full aspect-[16/9] rounded" />
-        )}
-        {hasIssue && issueMeta && onIssueClick && (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onIssueClick();
-            }}
-            className={`absolute -right-1 top-2 relative flex min-h-5 min-w-5 items-center justify-center rounded-full border border-white px-1 text-[10px] font-semibold text-white shadow ${
-              statusColor
-            } ${isHandled ? "opacity-50" : "opacity-100"}`}
-            title={`hard ${issueMeta.hard} / advisory ${issueMeta.advisory}`}
-          >
-            {issueMeta.total}
-            {isHandled && (
-              <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-white bg-slate-700" />
-            )}
-          </button>
         )}
       </div>
     </div>
