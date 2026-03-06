@@ -111,15 +111,12 @@ export default function SourceItem({
       const gap = CREATE_HOVER_PREVIEW_GAP;
       const maxWidth = Math.min(CREATE_HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
       const width = Math.min(
-        maxWidth,
-        Math.max(
-          Math.min(triggerRect.width + CREATE_HOVER_PREVIEW_WIDTH_PADDING, maxWidth),
-          Math.min(CREATE_HOVER_PREVIEW_MIN_WIDTH, maxWidth)
-        )
+        Math.max(triggerRect.width + CREATE_HOVER_PREVIEW_WIDTH_PADDING, CREATE_HOVER_PREVIEW_MIN_WIDTH),
+        maxWidth
       );
-      const left = Math.min(
-        Math.max(triggerRect.left, viewportMargin),
-        Math.max(viewportMargin, window.innerWidth - width - viewportMargin)
+      const left = Math.max(
+        viewportMargin,
+        Math.min(triggerRect.left, window.innerWidth - width - viewportMargin)
       );
       const previewHeight = hoverCardRef.current?.offsetHeight ?? CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT;
       const fitsBelow = triggerRect.bottom + gap + previewHeight <= window.innerHeight - viewportMargin;
