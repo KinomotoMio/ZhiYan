@@ -728,6 +728,7 @@ export default function SourcePanel() {
                   }}
                   onPreview={setPreviewSource}
                   showRemove={false}
+                  hoverPreviewVariant="create"
                   extraMeta={
                     typeof source.linked_session_count === "number"
                       ? `已关联 ${source.linked_session_count} 个会话`
