@@ -1,15 +1,12 @@
 /**
- * 缂傚倷鑳堕搹搴ㄥ矗鎼淬劌绐楅柡宥庡幗閸嬧晛螖閿濆懎鏆欑紒鐘冲灩閹茬鐣濋崟顒€娈橀梺纭呮彧闂勫嫰鍩涢幒鏃傜＝闁割偁鍨规牎濡?闂?Slide JSON 闂?reveal.js HTML
- *
- * 闂備浇顕х换鎰崲閹邦儵娑樷槈濮橆剙鐏婇悗骞垮劚濡盯銆呴悜鑺ュ仯闁告繂瀚幆鍫熴亜?JSON 闂傚倷娴囧銊╂嚄閼稿灚娅犳俊銈傚亾闁伙絽鐏氶幏鍛喆閸曨偒娼俊鐐€栫敮濠勭矆娴ｈ鍎熷┑鐘插€靛Σ?reveal.js 闂傚倷鑳堕…鍫㈡崲閹烘鍌ㄧ憸鏃堛€佸▎鎾崇疀闁绘鐗嗛崜?section HTML闂?
- * 闂傚倷娴囬妴鈧柛瀣尰閵囧嫰寮介妸褉妲堥梺浼欏瘜閸ｏ綁寮婚敓鐘茬＜婵炴垶锕╁Λ鍡樼節?layoutId + contentData 闂傚倷绀侀幉锛勫垝瀹€鍕珘妞ゆ巻鍋撻摶鐐淬亜閹板爼妾柛?components 闂傚倷绀侀幉锟犳偡閵夆晛瀚夋い鎺戝暙閺嗙偤鏌ｆ惔銏╁晱闁哥姵鐗滈幑銏ゅ醇閵夈儳鍔?
- * 婵犵數鍋為崹鍫曞箰閸濄儳鐭撻柟缁㈠枛缁犳岸鏌涢銈呮灁妞も晝鍏橀幃瑙勬媴閸濄儻绱炵紓?LLM 闂備浇宕垫慨鎾敄閸涙潙鐤ù鍏兼綑閺嬩線鏌曢崼婵愭Ч闁哄拋鍓涢埀顒€鍘滈崑鎾绘煃瑜滈崜鐔风暦濞嗘挻鍋╅悘鐐村劤閸樼懓顪冮妶鍡橆梿闁稿鍔欏铏鐎涙鍘靛銈嗗焾閸撴瑥螞濞嗘垹鐭堟い鏇楀亾闁哄瞼鍠撻幏鐘诲焺閸愩劉鏋忛梻?
+ * Deterministic transform: Slide JSON -> reveal.js HTML.
+ * Converts structured slide data into reveal.js-compatible section HTML.
+ * Supports both layoutId/contentData payloads and legacy component payloads.
  */
-
 import type { Component, Slide, Presentation, Style } from "@/types/slide";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 
-// ---------- 闂傚倷绀侀幖顐﹀船閺屻儱宸濇い鎾楀嫭鐦?Component 闂?HTML ----------
+// Legacy component -> HTML
 
 function escapeAttribute(str: string): string {
   return escapeHtml(str).replace(/'/g, "&#39;");
@@ -113,7 +110,7 @@ function componentToHTML(comp: Component): string {
       const content = (comp.content || "")
         .split("\n")
         .map((line) => {
-          if (line.startsWith("闂?") || line.startsWith("- ")) {
+          if (line.startsWith("\u2022 ") || line.startsWith("- ")) {
             return `<li>${escapeHtml(line.slice(2))}</li>`;
           }
           return `<p>${escapeHtml(line)}</p>`;
@@ -276,7 +273,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "intro-slide": {
       const author = asText(d.author) || asText(d.presenter);
       const date = asText(d.date);
-      const meta = [author, date].filter(Boolean).join(" 闂?");
+      const meta = [author, date].filter(Boolean).join(" / ");
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:60px;">
           <h1 style="font-size:56px;font-weight:bold;color:var(--primary-color,#3b82f6);margin-bottom:24px;">${escapeHtml(d.title || "")}</h1>
@@ -366,8 +363,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
               </div>
             `).join("")}
           </div>
-          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">
-            [闂傚倷鐒﹂幃鍫曞磿鏉堛劍娅犻柤鎭掑劜濞呯娀鏌?
+          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Image]</div>
           </div>
         </div>`;
     }
@@ -378,9 +374,9 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         <div style="padding:60px 80px;height:100%;display:flex;flex-direction:column;">
           <h2 style="font-size:40px;font-weight:bold;margin-bottom:32px;">${escapeHtml(d.title || "")}</h2>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;flex:1;">
-            <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[闂傚倷鐒﹂幃鍫曞磿閹绘帞鏆︽慨妞诲亾濠碘剝鎸冲畷?/div>
+            <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Chart]</div>
             <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;">
-              ${bullets.map((b) => `<p style="font-size:20px;">闂?${escapeHtml(itemText(b))}</p>`).join("")}
+              ${bullets.map((b) => `<p style="font-size:20px;">\u2022 ${escapeHtml(itemText(b))}</p>`).join("")}
             </div>
           </div>
         </div>`;
@@ -410,11 +406,11 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;flex:1;">
             <div>
               <h3 style="font-size:24px;font-weight:600;margin-bottom:20px;color:var(--primary-color,#3b82f6);">${escapeHtml(left.heading)}</h3>
-              ${left.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">闂?${escapeHtml(item)}</p>`).join("")}
+              ${left.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">\u2022 ${escapeHtml(item)}</p>`).join("")}
             </div>
             <div>
               <h3 style="font-size:24px;font-weight:600;margin-bottom:20px;color:var(--primary-color,#3b82f6);">${escapeHtml(right.heading)}</h3>
-              ${right.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">闂?${escapeHtml(item)}</p>`).join("")}
+              ${right.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">\u2022 ${escapeHtml(item)}</p>`).join("")}
             </div>
           </div>
         </div>`;
@@ -423,7 +419,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "image-and-description":
       return `
         <div style="display:grid;grid-template-columns:1fr 1fr;height:100%;">
-          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[闂傚倷鐒﹂幃鍫曞磿鏉堛劍娅犻柤鎭掑劜濞呯娀鏌?/div>
+          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Image]</div>
           <div style="padding:60px;display:flex;flex-direction:column;justify-content:center;">
             <h2 style="font-size:36px;font-weight:bold;margin-bottom:20px;">${escapeHtml(d.title || "")}</h2>
             <p style="font-size:20px;color:#4b5563;line-height:1.6;">${escapeHtml(d.description || "")}</p>
@@ -450,11 +446,11 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "quote-slide": {
       const author = asText(d.author) || asText(d.attribution);
       const context = asText(d.context);
-      const meta = [author, context].filter(Boolean).join(" 闂?");
+      const meta = [author, context].filter(Boolean).join(" / ");
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px 120px;">
           <p style="font-size:36px;font-style:italic;color:#374151;line-height:1.5;">"${escapeHtml(d.quote || "")}"</p>
-          ${meta ? `<p style="font-size:20px;color:#9ca3af;margin-top:32px;">闂?${escapeHtml(meta)}</p>` : ""}
+          ${meta ? `<p style="font-size:20px;color:#9ca3af;margin-top:32px;">\u2014 ${escapeHtml(meta)}</p>` : ""}
         </div>`;
     }
 
@@ -505,7 +501,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
   }
 }
 
-// ---------- Slide 闂?Section ----------
+// Slide -> section
 
 function renderLayoutContent(layoutId: string, data: Record<string, unknown>): string {
   const normalized = normalizeLayoutData(layoutId, data);
@@ -599,7 +595,7 @@ ${sections}
       const { h } = deck.getIndices();
       window.parent.postMessage(
         { type: 'reveal-preview-slidechange', slideIndex: h },
-        '*'
+        window.location.origin
       );
     };
 
