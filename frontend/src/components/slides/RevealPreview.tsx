@@ -32,6 +32,29 @@ export function getRevealPreviewSlideIndex(data: unknown): number | null {
   return Math.max(0, Math.trunc(payload.slideIndex));
 }
 
+type FocusableRevealFrame = {
+  focus?: (options?: FocusOptions) => void;
+  contentWindow?: {
+    focus?: () => void;
+  } | null;
+};
+
+export function focusRevealPreviewFrame(frame: FocusableRevealFrame | null): void {
+  if (!frame) return;
+
+  try {
+    frame.focus?.({ preventScroll: true });
+  } catch {
+    frame.focus?.();
+  }
+
+  try {
+    frame.contentWindow?.focus?.();
+  } catch {
+    // Ignore focus failures for sandboxed or not-yet-ready frames.
+  }
+}
+
 export default function RevealPreview({
   presentation,
   startSlide = 0,
@@ -72,6 +95,8 @@ export default function RevealPreview({
       className={`w-full h-full border-0 ${className}`}
       title="Presentation preview"
       sandbox="allow-scripts allow-same-origin"
+      tabIndex={-1}
+      onLoad={() => focusRevealPreviewFrame(iframeRef.current)}
     />
   );
 }

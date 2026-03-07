@@ -582,14 +582,29 @@ export function presentationToRevealHTML(pres: Presentation): string {
   </style>
 </head>
 <body>
-  <div class="reveal">
+  <div class="reveal" tabindex="-1">
     <div class="slides">
 ${sections}
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"><\/script>
   <script>
-    const deck = new Reveal(document.querySelector('.reveal'));
+    const revealElement = document.querySelector('.reveal');
+    const deck = new Reveal(revealElement);
+
+    const focusRevealSurface = () => {
+      try {
+        window.focus();
+      } catch {
+        // Ignore focus failures in browsers that block it during load.
+      }
+
+      try {
+        revealElement?.focus({ preventScroll: true });
+      } catch {
+        revealElement?.focus();
+      }
+    };
 
     const notifySlideChange = () => {
       const { h } = deck.getIndices();
@@ -599,7 +614,10 @@ ${sections}
       );
     };
 
-    deck.on('ready', notifySlideChange);
+    deck.on('ready', () => {
+      notifySlideChange();
+      window.requestAnimationFrame(focusRevealSurface);
+    });
     deck.on('slidechanged', notifySlideChange);
 
     deck.initialize({

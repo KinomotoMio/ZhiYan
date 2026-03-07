@@ -38,12 +38,15 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.doesNotMatch(html, /<section data-slide-id="slide-1" style=/);
   assert.match(html, /class="slide-shell"/);
   assert.ok(html.includes("hash: true"));
+  assert.ok(html.includes("<div class=\"reveal\" tabindex=\"-1\">"));
+  assert.ok(html.includes("const revealElement = document.querySelector('.reveal');"));
   assert.ok(html.includes("reveal-preview-slidechange"));
-  assert.ok(html.includes("deck.on('ready', notifySlideChange)"));
+  assert.ok(html.includes("window.requestAnimationFrame(focusRevealSurface)"));
+  assert.ok(html.includes("deck.on('ready', () => {"));
   assert.ok(html.includes("deck.on('slidechanged', notifySlideChange)"));
   assert.ok(html.includes("window.location.origin"));
   assert.doesNotMatch(html, /const initialSlideIndex = 1/);
-  assert.doesNotMatch(html, /deck.slide(initialSlideIndex)/);
+  assert.doesNotMatch(html, /deck.slide\(initialSlideIndex\)/);
   assert.doesNotMatch(html, /reveal-preview-close/);
 });
 
