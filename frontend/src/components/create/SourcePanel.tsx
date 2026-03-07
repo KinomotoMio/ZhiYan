@@ -25,6 +25,7 @@ import AddSourceArea from "./AddSourceArea";
 import { cn } from "@/lib/utils";
 import {
   getSessionEditorPath,
+  pickCreateLandingSessionId,
   shouldAutoRedirectToEditor,
 } from "@/lib/routes";
 import type { SourceMeta } from "@/types/source";
@@ -372,8 +373,9 @@ export default function SourcePanel() {
         return;
       }
 
-      if (currentSessionId && items.some((item) => item.id === currentSessionId)) {
-        await loadSession(currentSessionId, { fromExplicitSessionParam: false });
+      const landingSessionId = pickCreateLandingSessionId(items, currentSessionId);
+      if (landingSessionId) {
+        await loadSession(landingSessionId, { fromExplicitSessionParam: false });
         return;
       }
 

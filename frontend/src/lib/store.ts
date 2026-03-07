@@ -10,6 +10,13 @@ import {
   mergeOutlineTitles,
   type OutlineTitleItem,
 } from "@/components/generation/presentation-shell";
+import {
+  getSessionTopicDraft,
+  migrateLegacyTopicDraftState,
+  removeSessionTopicDraft,
+  setSessionTopicDraft,
+  type SessionTopicDrafts,
+} from "@/lib/session-topic-drafts";
 
 export interface OutlineItem {
   slide_number: number;
@@ -54,6 +61,7 @@ interface AppState {
   workspaceSources: SourceMeta[];
   selectedSourceIds: string[];
   topic: string;
+  sessionTopicDrafts: SessionTopicDrafts;
   selectedTemplateId: string;
   numPages: number;
 
@@ -156,6 +164,7 @@ export const useAppStore = create<AppState>()(
       workspaceSources: [],
       selectedSourceIds: [],
       topic: "",
+      sessionTopicDrafts: {},
       selectedTemplateId: "default",
       numPages: 5,
 
@@ -175,17 +184,34 @@ export const useAppStore = create<AppState>()(
           return { sessions: next };
         }),
       removeSessionEntry: (sessionId) =>
+        set((state) => {
+          const nextCurrentSessionId =
+            state.currentSessionId === sessionId ? null : state.currentSessionId;
+          const nextSessionTopicDrafts = removeSessionTopicDraft(
+            state.sessionTopicDrafts,
+            sessionId
+          );
+          return {
+            sessions: state.sessions.filter((s) => s.id !== sessionId),
+            currentSessionId: nextCurrentSessionId,
+            sessionTopicDrafts: nextSessionTopicDrafts,
+            topic: getSessionTopicDraft(nextSessionTopicDrafts, nextCurrentSessionId),
+          };
+        }),
+      setCurrentSessionId: (id) =>
         set((state) => ({
-          sessions: state.sessions.filter((s) => s.id !== sessionId),
-          currentSessionId:
-            state.currentSessionId === sessionId ? null : state.currentSessionId,
+          currentSessionId: id,
+          topic: getSessionTopicDraft(state.sessionTopicDrafts, id),
         })),
-      setCurrentSessionId: (id) => set({ currentSessionId: id }),
       setSessionData: ({ sources, chatMessages, presentation }) =>
-        set({
+        set((state) => ({
           selectedSourceIds: sources
             .filter((s) => s.status === "ready")
             .map((s) => s.id),
+          topic: getSessionTopicDraft(
+            state.sessionTopicDrafts,
+            state.currentSessionId
+          ),
           chatMessages,
           presentation,
           currentSlideIndex: 0,
@@ -197,7 +223,7 @@ export const useAppStore = create<AppState>()(
           issuePanelOpen: false,
           issuePanelSlideId: null,
           issueDecisionBySlideId: {},
-        }),
+        })),
 
       // 编辑器 actions
       setPresentation: (p) => set({ presentation: p }),
@@ -432,16 +458,26 @@ export const useAppStore = create<AppState>()(
             .map((s) => s.id),
         })),
       deselectAllSources: () => set({ selectedSourceIds: [] }),
-      setTopic: (topic) => set({ topic }),
+      setTopic: (topic) =>
+        set((state) => ({
+          topic,
+          sessionTopicDrafts: setSessionTopicDraft(
+            state.sessionTopicDrafts,
+            state.currentSessionId,
+            topic
+          ),
+        })),
       setSelectedTemplateId: (id) => set({ selectedTemplateId: id }),
       setNumPages: (n) => set({ numPages: n }),
     }),
     {
       name: "zhiyan-store",
+      version: 2,
+      migrate: (persistedState) => migrateLegacyTopicDraftState(persistedState),
       partialize: (state) => ({
         workspaceId: state.workspaceId,
         currentSessionId: state.currentSessionId,
-        topic: state.topic,
+        sessionTopicDrafts: state.sessionTopicDrafts,
         selectedTemplateId: state.selectedTemplateId,
         numPages: state.numPages,
       }),
