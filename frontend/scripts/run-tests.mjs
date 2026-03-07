@@ -30,8 +30,10 @@ function collectTestFiles(dir) {
   return files;
 }
 
-if (!statSync(srcDir).isDirectory()) {
-  console.error("Test source directory not found:", srcDir);
+const srcStats = statSync(srcDir, { throwIfNoEntry: false });
+
+if (!srcStats || !srcStats.isDirectory()) {
+  console.error("Test source directory not found or is not a directory:", srcDir);
   process.exit(1);
 }
 
