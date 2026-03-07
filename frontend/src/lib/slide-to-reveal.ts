@@ -1,36 +1,104 @@
 /**
- * 确定性中间件 — Slide JSON → reveal.js HTML
- *
- * 将组件化 JSON 数据转换为 reveal.js 兼容的 section HTML。
- * 支持新版 layoutId + contentData 和旧版 components 双模式。
- * 不含任何 LLM 调用，纯确定性转换。
+ * Deterministic transform: Slide JSON -> reveal.js HTML.
+ * Converts structured slide data into reveal.js-compatible section HTML.
+ * Supports both layoutId/contentData payloads and legacy component payloads.
  */
-
 import type { Component, Slide, Presentation, Style } from "@/types/slide";
+import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 
-// ---------- 旧版 Component → HTML ----------
+// Legacy component -> HTML
+
+function escapeAttribute(str: string): string {
+  return escapeHtml(str).replace(/'/g, "&#39;");
+}
+
+function normalizeFiniteNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function sanitizeCssColor(value: unknown, fallback = ""): string {
+  if (typeof value !== "string") return fallback;
+  const color = value.trim();
+  if (!color) return fallback;
+
+  const hex = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+  const rgb = /^rgba?\((?:\s*\d{1,3}%?\s*,){2}\s*\d{1,3}%?(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/;
+  const hsl = /^hsla?\(\s*\d{1,3}(?:deg|rad|turn)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/;
+
+  if (hex.test(color) || rgb.test(color) || hsl.test(color)) {
+    return color;
+  }
+
+  return fallback;
+}
+
+function sanitizeImageSrc(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const src = value.trim();
+  if (!src) return "";
+
+  if (
+    src.startsWith("/") ||
+    src.startsWith("./") ||
+    src.startsWith("../") ||
+    src.startsWith("blob:")
+  ) {
+    return src;
+  }
+
+  if (/^https?:\/\//i.test(src)) return src;
+  if (/^data:image\//i.test(src)) return src;
+  return "";
+}
+
+function sanitizeFontWeight(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const fontWeight = value.trim();
+  return /^(?:normal|bold|bolder|lighter|[1-9]00)$/.test(fontWeight)
+    ? fontWeight
+    : "";
+}
+
+function sanitizeFontStyle(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const fontStyle = value.trim();
+  return /^(?:normal|italic|oblique)$/.test(fontStyle) ? fontStyle : "";
+}
 
 function styleToCSS(style?: Style): string {
   if (!style) return "";
   const parts: string[] = [];
-  if (style.fontSize) parts.push(`font-size: ${style.fontSize}px`);
-  if (style.fontWeight) parts.push(`font-weight: ${style.fontWeight}`);
-  if (style.fontStyle) parts.push(`font-style: ${style.fontStyle}`);
-  if (style.color) parts.push(`color: ${style.color}`);
-  if (style.backgroundColor)
-    parts.push(`background-color: ${style.backgroundColor}`);
+
+  const fontSize = normalizeFiniteNumber(style.fontSize, NaN);
+  if (Number.isFinite(fontSize)) parts.push(`font-size: ${fontSize}px`);
+
+  const fontWeight = sanitizeFontWeight(style.fontWeight);
+  if (fontWeight) parts.push(`font-weight: ${fontWeight}`);
+
+  const fontStyle = sanitizeFontStyle(style.fontStyle);
+  if (fontStyle) parts.push(`font-style: ${fontStyle}`);
+
+  const color = sanitizeCssColor(style.color);
+  if (color) parts.push(`color: ${color}`);
+
+  const backgroundColor = sanitizeCssColor(style.backgroundColor);
+  if (backgroundColor) parts.push(`background-color: ${backgroundColor}`);
+
   if (style.textAlign) parts.push(`text-align: ${style.textAlign}`);
-  if (style.opacity !== undefined) parts.push(`opacity: ${style.opacity}`);
+
+  const opacity = normalizeFiniteNumber(style.opacity, NaN);
+  if (Number.isFinite(opacity)) parts.push(`opacity: ${opacity}`);
+
   return parts.join("; ");
 }
 
 function componentToHTML(comp: Component): string {
   const posStyle = [
     `position: absolute`,
-    `left: ${comp.position.x}%`,
-    `top: ${comp.position.y}%`,
-    `width: ${comp.position.width}%`,
-    `height: ${comp.position.height}%`,
+    `left: ${normalizeFiniteNumber(comp.position.x)}%`,
+    `top: ${normalizeFiniteNumber(comp.position.y)}%`,
+    `width: ${normalizeFiniteNumber(comp.position.width)}%`,
+    `height: ${normalizeFiniteNumber(comp.position.height)}%`,
   ].join("; ");
 
   const contentStyle = styleToCSS(comp.style);
@@ -42,33 +110,28 @@ function componentToHTML(comp: Component): string {
       const content = (comp.content || "")
         .split("\n")
         .map((line) => {
-          if (line.startsWith("• ") || line.startsWith("- ")) {
-            return `<li>${line.slice(2)}</li>`;
+          if (line.startsWith("\u2022 ") || line.startsWith("- ")) {
+            return `<li>${escapeHtml(line.slice(2))}</li>`;
           }
-          return `<p>${line}</p>`;
+          return `<p>${escapeHtml(line)}</p>`;
         })
         .join("\n");
 
       const hasListItems = content.includes("<li>");
-      const wrappedContent = hasListItems
-        ? `<ul>${content}</ul>`
-        : content;
+      const wrappedContent = hasListItems ? `<ul>${content}</ul>` : content;
 
-      return `<${tag} style="${fullStyle}">${wrappedContent}</${tag}>`;
+      return `<${tag} style="${escapeAttribute(fullStyle)}">${wrappedContent}</${tag}>`;
     }
     case "image":
-      return `<img src="${comp.content || ""}" alt="${comp.role}" style="${fullStyle}; object-fit: contain;" />`;
+      return `<img src="${escapeAttribute(sanitizeImageSrc(comp.content || ""))}" alt="${escapeAttribute(comp.role)}" style="${escapeAttribute(`${fullStyle}; object-fit: contain;`)}" />`;
     case "chart":
-      return `<div style="${fullStyle}" class="chart-placeholder" data-chart='${JSON.stringify(comp.chartData || {})}'>[图表]</div>`;
+      return `<div style="${escapeAttribute(fullStyle)}" class="chart-placeholder" data-chart="${escapeAttribute(JSON.stringify(comp.chartData || {}))}">[chart]</div>`;
     case "shape":
-      return `<div style="${fullStyle}">${comp.content || ""}</div>`;
+      return `<div style="${escapeAttribute(fullStyle)}">${escapeHtml(comp.content || "")}</div>`;
     default:
       return "";
   }
 }
-
-// ---------- 新版 contentData → HTML ----------
-
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -151,15 +214,15 @@ function compareColumns(data: Record<string, unknown>) {
     return { heading, items };
   };
 
-  let left = normalize(data.left, "要点 A");
-  let right = normalize(data.right, "要点 B");
+  let left = normalize(data.left, "Point A");
+  let right = normalize(data.right, "Point B");
   if (left.items.length === 0 && right.items.length === 0) {
-    left = normalize(data.challenge, "要点 A");
-    right = normalize(data.outcome, "要点 B");
+    left = normalize(data.challenge, "Point A");
+    right = normalize(data.outcome, "Point B");
   }
   return {
-    left: { heading: left.heading, items: left.items.length > 0 ? left.items : ["内容生成中"] },
-    right: { heading: right.heading, items: right.items.length > 0 ? right.items : ["内容生成中"] },
+    left: { heading: left.heading, items: left.items.length > 0 ? left.items : ["Content unavailable"] },
+    right: { heading: right.heading, items: right.items.length > 0 ? right.items : ["Content unavailable"] },
   };
 }
 
@@ -170,11 +233,11 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
       if (entry && typeof entry === "object") {
         const rec = entry as Record<string, unknown>;
         pairs.push({
-          challenge: asText(rec.challenge, "内容生成中"),
-          outcome: asText(rec.outcome, "待补充"),
+          challenge: asText(rec.challenge, "Content unavailable"),
+          outcome: asText(rec.outcome, "Pending"),
         });
       } else if (typeof entry === "string" && entry.trim()) {
-        pairs.push({ challenge: entry.trim(), outcome: "待补充" });
+        pairs.push({ challenge: entry.trim(), outcome: "Pending" });
       }
     }
   }
@@ -195,13 +258,12 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
   const count = Math.max(challengeItems.length, outcomeItems.length);
   for (let i = 0; i < count; i += 1) {
     pairs.push({
-      challenge: challengeItems[i] || "内容生成中",
-      outcome: outcomeItems[i] || "待补充",
+      challenge: challengeItems[i] || "Content unavailable",
+      outcome: outcomeItems[i] || "Pending",
     });
   }
-  return pairs.length > 0 ? pairs : [{ challenge: "内容生成中", outcome: "待补充" }];
+  return pairs.length > 0 ? pairs : [{ challenge: "Content unavailable", outcome: "Pending" }];
 }
-
 function contentDataToHTML(layoutId: string, data: Record<string, unknown>): string {
   // Existing contentData serializers are intentionally permissive for mixed legacy payloads.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -211,7 +273,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "intro-slide": {
       const author = asText(d.author) || asText(d.presenter);
       const date = asText(d.date);
-      const meta = [author, date].filter(Boolean).join(" · ");
+      const meta = [author, date].filter(Boolean).join(" / ");
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:60px;">
           <h1 style="font-size:56px;font-weight:bold;color:var(--primary-color,#3b82f6);margin-bottom:24px;">${escapeHtml(d.title || "")}</h1>
@@ -301,8 +363,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
               </div>
             `).join("")}
           </div>
-          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">
-            [图片]
+          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Image]</div>
           </div>
         </div>`;
     }
@@ -313,9 +374,9 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         <div style="padding:60px 80px;height:100%;display:flex;flex-direction:column;">
           <h2 style="font-size:40px;font-weight:bold;margin-bottom:32px;">${escapeHtml(d.title || "")}</h2>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;flex:1;">
-            <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[图表]</div>
+            <div style="background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Chart]</div>
             <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;">
-              ${bullets.map((b) => `<p style="font-size:20px;">• ${escapeHtml(itemText(b))}</p>`).join("")}
+              ${bullets.map((b) => `<p style="font-size:20px;">\u2022 ${escapeHtml(itemText(b))}</p>`).join("")}
             </div>
           </div>
         </div>`;
@@ -345,11 +406,11 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:48px;flex:1;">
             <div>
               <h3 style="font-size:24px;font-weight:600;margin-bottom:20px;color:var(--primary-color,#3b82f6);">${escapeHtml(left.heading)}</h3>
-              ${left.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">• ${escapeHtml(item)}</p>`).join("")}
+              ${left.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">\u2022 ${escapeHtml(item)}</p>`).join("")}
             </div>
             <div>
               <h3 style="font-size:24px;font-weight:600;margin-bottom:20px;color:var(--primary-color,#3b82f6);">${escapeHtml(right.heading)}</h3>
-              ${right.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">• ${escapeHtml(item)}</p>`).join("")}
+              ${right.items.map((item) => `<p style="font-size:18px;margin-bottom:12px;">\u2022 ${escapeHtml(item)}</p>`).join("")}
             </div>
           </div>
         </div>`;
@@ -358,7 +419,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "image-and-description":
       return `
         <div style="display:grid;grid-template-columns:1fr 1fr;height:100%;">
-          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[图片]</div>
+          <div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[Image]</div>
           <div style="padding:60px;display:flex;flex-direction:column;justify-content:center;">
             <h2 style="font-size:36px;font-weight:bold;margin-bottom:20px;">${escapeHtml(d.title || "")}</h2>
             <p style="font-size:20px;color:#4b5563;line-height:1.6;">${escapeHtml(d.description || "")}</p>
@@ -385,11 +446,11 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "quote-slide": {
       const author = asText(d.author) || asText(d.attribution);
       const context = asText(d.context);
-      const meta = [author, context].filter(Boolean).join(" · ");
+      const meta = [author, context].filter(Boolean).join(" / ");
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px 120px;">
           <p style="font-size:36px;font-style:italic;color:#374151;line-height:1.5;">"${escapeHtml(d.quote || "")}"</p>
-          ${meta ? `<p style="font-size:20px;color:#9ca3af;margin-top:32px;">— ${escapeHtml(meta)}</p>` : ""}
+          ${meta ? `<p style="font-size:20px;color:#9ca3af;margin-top:32px;">\u2014 ${escapeHtml(meta)}</p>` : ""}
         </div>`;
     }
 
@@ -429,25 +490,37 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
       const contact = asText(d.contact) || asText(d.contact_info);
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px;">
-          <h1 style="font-size:56px;font-weight:bold;color:var(--primary-color,#3b82f6);margin-bottom:24px;">${escapeHtml(d.title || "谢谢")}</h1>
+          <h1 style="font-size:56px;font-weight:bold;color:var(--primary-color,#3b82f6);margin-bottom:24px;">${escapeHtml(d.title || "Thanks")}</h1>
           ${d.subtitle ? `<p style="font-size:24px;color:#6b7280;margin-bottom:40px;">${escapeHtml(d.subtitle)}</p>` : ""}
           ${contact ? `<p style="font-size:18px;color:#9ca3af;">${escapeHtml(contact)}</p>` : ""}
         </div>`;
     }
 
     default:
-      return `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9ca3af;">未知布局: ${escapeHtml(layoutId)}</div>`;
+      return `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9ca3af;">Unknown layout: ${escapeHtml(layoutId)}</div>`;
   }
 }
 
-// ---------- Slide → Section ----------
+// Slide -> section
+
+function renderLayoutContent(layoutId: string, data: Record<string, unknown>): string {
+  const normalized = normalizeLayoutData(layoutId, data);
+  if (!normalized.recoverable) {
+    return `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;padding:48px;text-align:center;color:#6b7280;">
+        Slide data is unavailable in presentation mode.
+      </div>`;
+  }
+
+  return contentDataToHTML(layoutId, normalized.data);
+}
 
 function slideToSection(slide: Slide): string {
   const useNewLayout = !!(slide.layoutId && slide.contentData);
 
   let content: string;
   if (useNewLayout) {
-    content = contentDataToHTML(slide.layoutId!, slide.contentData as Record<string, unknown>);
+    content = renderLayoutContent(slide.layoutId!, slide.contentData as Record<string, unknown>);
   } else {
     content = (slide.components ?? []).map(componentToHTML).join("\n    ");
   }
@@ -456,14 +529,17 @@ function slideToSection(slide: Slide): string {
     ? `\n    <aside class="notes">${escapeHtml(slide.speakerNotes)}</aside>`
     : "";
 
-  return `  <section data-slide-id="${slide.slideId}" style="position: relative; width: 100%; height: 100%;">
-    ${content}${notes}
+  return `  <section data-slide-id="${escapeAttribute(slide.slideId)}">
+    <div class="slide-shell">
+      ${content}${notes}
+    </div>
   </section>`;
 }
 
 export function presentationToRevealHTML(pres: Presentation): string {
   const sections = pres.slides.map(slideToSection).join("\n\n");
-
+  const primaryColor = sanitizeCssColor(pres.theme?.primaryColor, "#3b82f6");
+  const backgroundColor = sanitizeCssColor(pres.theme?.backgroundColor, "#ffffff");
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -472,13 +548,33 @@ export function presentationToRevealHTML(pres: Presentation): string {
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/white.css" />
   <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: ${backgroundColor};
+    }
     :root {
-      --primary-color: ${pres.theme?.primaryColor || "#3b82f6"};
+      --primary-color: ${primaryColor};
       --primary-text: #ffffff;
-      --background-color: ${pres.theme?.backgroundColor || "#ffffff"};
+      --background-color: ${backgroundColor};
       --background-text: #111827;
     }
+    .reveal {
+      width: 100%;
+      height: 100%;
+    }
     .reveal section { text-align: left; }
+    .reveal .slides section {
+      box-sizing: border-box;
+    }
+    .reveal .slides section .slide-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
     .reveal h1, .reveal h2, .reveal h3 { margin: 0; }
     .reveal ul { list-style: disc; padding-left: 1.5em; margin: 0; }
     .reveal p { margin: 0.3em 0; }
@@ -486,20 +582,52 @@ export function presentationToRevealHTML(pres: Presentation): string {
   </style>
 </head>
 <body>
-  <div class="reveal">
+  <div class="reveal" tabindex="-1">
     <div class="slides">
 ${sections}
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"><\/script>
   <script>
-    Reveal.initialize({
+    const revealElement = document.querySelector('.reveal');
+    const deck = new Reveal(revealElement);
+
+    const focusRevealSurface = () => {
+      try {
+        window.focus();
+      } catch {
+        // Ignore focus failures in browsers that block it during load.
+      }
+
+      try {
+        revealElement?.focus({ preventScroll: true });
+      } catch {
+        revealElement?.focus();
+      }
+    };
+
+    const notifySlideChange = () => {
+      const { h } = deck.getIndices();
+      window.parent.postMessage(
+        { type: 'reveal-preview-slidechange', slideIndex: h },
+        window.location.origin
+      );
+    };
+
+    deck.on('ready', () => {
+      notifySlideChange();
+      window.requestAnimationFrame(focusRevealSurface);
+    });
+    deck.on('slidechanged', notifySlideChange);
+
+    deck.initialize({
       hash: true,
       width: 1280,
       height: 720,
       margin: 0.04,
+      embedded: true,
     });
-  <\/script>
+  </script>
 </body>
 </html>`;
 }
