@@ -1,0 +1,107 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "问题修复 / Something isn't working"
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "文档改进 / Improvements or additions to documentation"
+  },
+  {
+    "name": "duplicate",
+    "color": "cfd3d7",
+    "description": "重复 / This issue or pull request already exists"
+  },
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "新功能 / New feature or request"
+  },
+  {
+    "name": "good first issue",
+    "color": "7057ff",
+    "description": "适合新人 / Good for newcomers"
+  },
+  {
+    "name": "help wanted",
+    "color": "008672",
+    "description": "需要帮助 / Extra attention is needed"
+  },
+  {
+    "name": "invalid",
+    "color": "e4e669",
+    "description": "无效 / This doesn't seem right"
+  },
+  {
+    "name": "question",
+    "color": "d876e3",
+    "description": "待确认 / Further information is requested"
+  },
+  {
+    "name": "wontfix",
+    "color": "ffffff",
+    "description": "不予处理 / This will not be worked on"
+  },
+  {
+    "name": "design",
+    "color": "1D76DB",
+    "description": "设计与视觉改进 / Design and visual improvements"
+  },
+  {
+    "name": "performance",
+    "color": "0E8A16",
+    "description": "性能优化 / Performance optimization"
+  },
+  {
+    "name": "refactor",
+    "color": "D4C5F9",
+    "description": "代码重构 / Code refactoring"
+  },
+  {
+    "name": "infra",
+    "color": "F9D0C4",
+    "description": "基础设施 / Infrastructure, CI/CD, deployment"
+  },
+  {
+    "name": "good first vibe",
+    "color": "7057ff",
+    "description": "AI 友好的任务 / AI-friendly task"
+  },
+  {
+    "name": "size:XS",
+    "color": "00ff00",
+    "description": "This PR changes 0-9 lines, ignoring generated files."
+  },
+  {
+    "name": "size:S",
+    "color": "77b800",
+    "description": "This PR changes 10-29 lines, ignoring generated files."
+  },
+  {
+    "name": "size:M",
+    "color": "ebb800",
+    "description": "This PR changes 30-99 lines, ignoring generated files."
+  },
+  {
+    "name": "size:L",
+    "color": "eb9500",
+    "description": "This PR changes 100-499 lines, ignoring generated files."
+  },
+  {
+    "name": "size:XL",
+    "color": "ff823f",
+    "description": "This PR changes 500-999 lines, ignoring generated files."
+  },
+  {
+    "name": "size:XXL",
+    "color": "ffb8b8",
+    "description": "This PR changes 1000+ lines, ignoring generated files."
+  },
+  {
+    "name": "lgtm",
+    "color": "238636",
+    "description": "This PR has been approved by a maintainer"
+  }
+]
