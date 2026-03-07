@@ -58,7 +58,7 @@ export default function SlideThumbnail({
   const isHandled = issueMeta && issueMeta.decision !== "pending";
 
   return (
-    <div className="flex gap-2 items-start" ref={ref}>
+    <div className="flex w-full min-w-0 gap-2 items-start" ref={ref}>
       <div className="flex flex-col items-center gap-1 w-4 shrink-0">
         <span className="text-xs text-muted-foreground mt-1">
           {index + 1}
@@ -83,7 +83,7 @@ export default function SlideThumbnail({
           </button>
         )}
       </div>
-      <div className="relative w-full">
+      <div className="relative min-w-0 flex-1">
         {isVisible ? (
           <SlidePreview
             slide={slide}
@@ -98,3 +98,4 @@ export default function SlideThumbnail({
     </div>
   );
 }
+
