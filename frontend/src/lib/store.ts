@@ -18,19 +18,11 @@ import {
   type SessionTopicDrafts,
 } from "@/lib/session-topic-drafts";
 
-const DEFAULT_SESSION_TITLE = "\u672a\u547d\u540d\u4f1a\u8bdd";
-
 function shouldSyncGeneratedSessionTitle(
   session: SessionSummary | undefined,
-  previousPresentationTitle?: string
 ): boolean {
   if (!session) return false;
-  const sessionTitle = session.title.trim();
-  const previousTitle = previousPresentationTitle?.trim();
-  if (!sessionTitle || sessionTitle === DEFAULT_SESSION_TITLE) {
-    return true;
-  }
-  return Boolean(previousTitle && sessionTitle === previousTitle);
+  return !session.title_edited_by_user;
 }
 
 export interface OutlineItem {
@@ -250,8 +242,7 @@ export const useAppStore = create<AppState>()(
             (session) => session.id === state.currentSessionId
           );
           const shouldSyncSessionTitle =
-            p.title.trim().length > 0 &&
-            shouldSyncGeneratedSessionTitle(currentSession, state.presentation?.title);
+            p.title.trim().length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
           return {
             presentation: p,
             sessions:
@@ -397,8 +388,7 @@ export const useAppStore = create<AppState>()(
             (session) => session.id === state.currentSessionId
           );
           const shouldSyncSessionTitle =
-            safeTitle.length > 0 &&
-            shouldSyncGeneratedSessionTitle(currentSession, state.presentation.title);
+            safeTitle.length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
           return {
             presentation: {
               ...state.presentation,

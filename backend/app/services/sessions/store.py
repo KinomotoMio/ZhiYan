@@ -1450,6 +1450,7 @@ class SessionStore:
             "id": row["id"],
             "workspace_id": row["workspace_id"],
             "title": row["title"],
+            "title_edited_by_user": bool(row["title_edited_by_user"]),
             "status": row["status"],
             "is_pinned": bool(row["is_pinned"]),
             "archived_at": row["archived_at"],

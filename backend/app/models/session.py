@@ -9,6 +9,7 @@ class SessionSummary(BaseModel):
     id: str
     workspace_id: str
     title: str
+    title_edited_by_user: bool = False
     status: str = "active"
     is_pinned: bool = False
     archived_at: str | None = None
