@@ -1,12 +1,32 @@
 "use client";
 
 import Image from "next/image";
+import { createElement } from "react";
 import { Eye } from "lucide-react";
-import { getLayoutIconComponent } from "@/lib/layout-icons";
+import { getLayoutIconNode } from "@/lib/layout-icons";
 
 export function LayoutIcon({ query, className }: { query: string; className?: string }) {
-  const Icon = getLayoutIconComponent(query);
-  return <Icon className={className} />;
+  const iconNode = getLayoutIconNode(query);
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+    >
+      {iconNode.map(([tag, attrs], index) =>
+        createElement(tag, {
+          ...attrs,
+          key: `${tag}-${index}`,
+        })
+      )}
+    </svg>
+  );
 }
 
 export function ImagePlaceholder({ prompt, alt, url }: { prompt: string; alt?: string; url?: string | null }) {
