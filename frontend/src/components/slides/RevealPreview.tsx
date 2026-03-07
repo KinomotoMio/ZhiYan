@@ -42,7 +42,7 @@ export default function RevealPreview({
 
   useEffect(() => {
     if (!iframeRef.current) return;
-    const html = presentationToRevealHTML(presentation, { startSlide });
+    const html = presentationToRevealHTML(presentation);
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     iframeRef.current.src = buildRevealPreviewSrc(url, startSlide);
@@ -54,6 +54,7 @@ export default function RevealPreview({
 
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.origin !== window.location.origin) return;
 
       const slideIndex = getRevealPreviewSlideIndex(event.data);
       if (slideIndex === null) return;

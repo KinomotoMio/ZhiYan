@@ -32,7 +32,7 @@ const basePresentation: Presentation = {
 };
 
 test("presentationToRevealHTML keeps reveal section positioning intact and emits slide change updates", () => {
-  const html = presentationToRevealHTML(basePresentation, { startSlide: 1 });
+  const html = presentationToRevealHTML(basePresentation);
 
   assert.match(html, /<section data-slide-id="slide-1">/);
   assert.doesNotMatch(html, /<section data-slide-id="slide-1" style=/);
@@ -41,9 +41,31 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.ok(html.includes("reveal-preview-slidechange"));
   assert.ok(html.includes("deck.on('ready', notifySlideChange)"));
   assert.ok(html.includes("deck.on('slidechanged', notifySlideChange)"));
+  assert.ok(html.includes("window.location.origin"));
   assert.doesNotMatch(html, /const initialSlideIndex = 1/);
   assert.doesNotMatch(html, /deck.slide(initialSlideIndex)/);
   assert.doesNotMatch(html, /reveal-preview-close/);
+});
+
+test("presentationToRevealHTML escapes slide identifiers and sanitizes theme colors", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    theme: {
+      primaryColor: "red; </style><script>alert(1)</script><style>",
+      backgroundColor: "#12345z",
+    },
+    slides: [
+      {
+        ...basePresentation.slides[0],
+        slideId: '"><script>alert(1)</script>',
+      },
+    ],
+  });
+
+  assert.ok(html.includes('data-slide-id="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"'));
+  assert.ok(html.includes("--primary-color: #3b82f6;"));
+  assert.ok(html.includes("--background-color: #ffffff;"));
+  assert.ok(!html.includes("<script>alert(1)</script>"));
 });
 
 test("presentationToRevealHTML normalizes malformed compare layout data", () => {
@@ -88,6 +110,5 @@ test("presentationToRevealHTML renders a fallback message for unrecoverable layo
     ],
   });
 
-  assert.ok(html.includes("????"));
-  assert.ok(html.includes("????????"));
+  assert.ok(html.includes("Slide data is unavailable in presentation mode."));
 });
