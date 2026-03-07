@@ -20,8 +20,7 @@ export function setSessionTopicDraft(
   }
 
   if (topic === "") {
-    const nextDrafts = { ...drafts };
-    delete nextDrafts[sessionId];
+    const { [sessionId]: _, ...nextDrafts } = drafts;
     return nextDrafts;
   }
 
