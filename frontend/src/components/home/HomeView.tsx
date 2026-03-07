@@ -108,16 +108,6 @@ function formatUpdatedAt(iso: string): string {
   });
 }
 
-function toPptFileDisplayName(
-  presentationTitle?: string | null,
-  sessionTitle?: string
-): string {
-  const title = presentationTitle?.trim();
-  const fallback = sessionTitle?.trim() || "未命名演示稿";
-  const baseName = title && title.length > 0 ? title : fallback;
-  return /\.pptx$/i.test(baseName) ? baseName : `${baseName}.pptx`;
-}
-
 export default function HomeView() {
   const router = useRouter();
   const setCurrentSessionId = useAppStore((store) => store.setCurrentSessionId);
@@ -134,7 +124,6 @@ export default function HomeView() {
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [workspaceSourceCount, setWorkspaceSourceCount] = useState(0);
-  const [resultFileNames, setResultFileNames] = useState<Record<string, string>>({});
   const [latestResultPresentation, setLatestResultPresentation] =
     useState<PresentationModel | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
@@ -316,10 +305,8 @@ export default function HomeView() {
 
   useEffect(() => {
     let cancelled = false;
-    const targets = resultSessions.slice(0, 6);
 
-    if (targets.length === 0) {
-      setResultFileNames({});
+    if (!latestResultSession) {
       setLatestResultPresentation(null);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
@@ -328,52 +315,26 @@ export default function HomeView() {
       };
     }
 
-    const fallbackMap = Object.fromEntries(
-      targets.map((item) => [item.id, toPptFileDisplayName(undefined, item.title)])
-    );
-    setResultFileNames(fallbackMap);
     setLatestResultPresentation(null);
     setPreviewSlideIndex(0);
     setIsPreviewHovered(false);
 
     const run = async () => {
-      const settled = await Promise.allSettled(
-        targets.map(async (session) => {
-          const latest = await getLatestSessionPresentation(session.id);
-          return {
-            sessionId: session.id,
-            fileName: toPptFileDisplayName(latest?.presentation?.title, session.title),
-            presentation: latest?.presentation ?? null,
-          };
-        })
-      );
+      const latest = await getLatestSessionPresentation(latestResultSession.id);
       if (cancelled) return;
-
-      const nextMap = { ...fallbackMap };
-      let latestPresentation: PresentationModel | null = null;
-
-      for (const item of settled) {
-        if (item.status !== "fulfilled") continue;
-        nextMap[item.value.sessionId] = item.value.fileName;
-        if (item.value.sessionId === targets[0]?.id) {
-          latestPresentation = item.value.presentation;
-        }
-      }
-
-      setResultFileNames(nextMap);
-      setLatestResultPresentation(latestPresentation);
+      setLatestResultPresentation(latest?.presentation ?? null);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
     };
 
     run().catch((err) => {
-      console.warn("load latest presentation titles failed", err);
+      console.warn("load latest presentation preview failed", err);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [resultSessions]);
+  }, [latestResultSession]);
 
   const handleNewPpt = async () => {
     const created = await createSession("未命名会话");
@@ -448,18 +409,15 @@ export default function HomeView() {
     void handleNewPpt();
   };
 
-  const getResultTitle = (session: SessionSummary) =>
-    resultFileNames[session.id] || toPptFileDisplayName(undefined, session.title);
+  const getResultTitle = (session: SessionSummary) => session.title || "未命名会话";
 
   const getResultMeta = (session: SessionSummary) =>
-    `会话：${session.title || "未命名会话"} · 更新时间：${formatUpdatedAt(
-      session.updated_at
-    )} · ${session.source_count} 素材 / ${session.chat_count} 对话`;
+    `更新时间：${formatUpdatedAt(session.updated_at)}`;
 
   const getDraftTitle = (session: SessionSummary) => session.title || "未命名会话";
 
   const getDraftMeta = (session: SessionSummary) =>
-    `更新时间：${formatUpdatedAt(session.updated_at)} · ${session.source_count} 素材 / ${session.chat_count} 对话`;
+    `更新时间：${formatUpdatedAt(session.updated_at)}`;
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,rgba(56,189,248,0.26),transparent_46%),radial-gradient(circle_at_86%_8%,rgba(20,184,166,0.2),transparent_36%),radial-gradient(circle_at_58%_86%,rgba(251,191,36,0.16),transparent_42%),linear-gradient(165deg,rgba(248,250,252,0.95)_10%,rgba(239,246,255,0.94)_48%,rgba(236,253,245,0.9)_100%)] lg:h-screen lg:overflow-hidden">
@@ -664,12 +622,9 @@ export default function HomeView() {
             ) : latestResultSession ? (
               <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
                 <p className="truncate text-base font-semibold text-slate-900">
-                  {resultFileNames[latestResultSession.id] ||
-                    toPptFileDisplayName(undefined, latestResultSession.title)}
+                  {latestResultSession.title || "未命名会话"}
                 </p>
                 <p className="text-xs leading-5 text-slate-600">
-                  会话：{latestResultSession.title || "未命名会话"}
-                  <br />
                   更新时间：{formatUpdatedAt(latestResultSession.updated_at)}
                 </p>
                 {latestResultPresentation?.slides?.length ? (

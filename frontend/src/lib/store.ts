@@ -18,6 +18,21 @@ import {
   type SessionTopicDrafts,
 } from "@/lib/session-topic-drafts";
 
+const DEFAULT_SESSION_TITLE = "\u672a\u547d\u540d\u4f1a\u8bdd";
+
+function shouldSyncGeneratedSessionTitle(
+  session: SessionSummary | undefined,
+  previousPresentationTitle?: string
+): boolean {
+  if (!session) return false;
+  const sessionTitle = session.title.trim();
+  const previousTitle = previousPresentationTitle?.trim();
+  if (!sessionTitle || sessionTitle === DEFAULT_SESSION_TITLE) {
+    return true;
+  }
+  return Boolean(previousTitle && sessionTitle === previousTitle);
+}
+
 export interface OutlineItem {
   slide_number: number;
   title: string;
@@ -37,7 +52,7 @@ interface AppState {
   sessions: SessionSummary[];
   currentSessionId: string | null;
 
-  // 编辑器状态
+  // Editor state
   presentation: Presentation | null;
   currentSlideIndex: number;
   isGenerating: boolean;
@@ -57,7 +72,7 @@ interface AppState {
   issueDecisionBySlideId: Record<string, IssueDecisionStatus>;
   chatMessages: ChatMessage[];
 
-  // 创建视图状态
+  // Create view state
   workspaceSources: SourceMeta[];
   selectedSourceIds: string[];
   topic: string;
@@ -77,7 +92,7 @@ interface AppState {
     presentation: Presentation | null;
   }) => void;
 
-  // 编辑器 actions
+  // Editor actions
   setPresentation: (p: Presentation | null) => void;
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
@@ -108,7 +123,7 @@ interface AppState {
   setChatMessages: (messages: ChatMessage[]) => void;
   getCurrentSlide: () => Slide | null;
 
-  // 渐进式生成 actions
+  // Progressive generation actions
   initGenerationShell: (title: string, pageCount: number) => void;
   setPresentationTitle: (title: string) => void;
   patchSlideTitlesFromOutline: (items: OutlineTitleItem[]) => void;
@@ -116,7 +131,7 @@ interface AppState {
   updateSlideAtIndex: (index: number, slide: Slide) => void;
   finishGeneration: () => void;
 
-  // 创建视图 actions
+  // Create view actions
   setWorkspaceSources: (sources: SourceMeta[]) => void;
   addWorkspaceSource: (source: SourceMeta) => void;
   updateWorkspaceSource: (id: string, patch: Partial<SourceMeta>) => void;
@@ -140,7 +155,7 @@ export const useAppStore = create<AppState>()(
       sessions: [],
       currentSessionId: null,
 
-      // 编辑器状态
+      // Editor state
       presentation: null,
       currentSlideIndex: 0,
       isGenerating: false,
@@ -160,7 +175,7 @@ export const useAppStore = create<AppState>()(
       issueDecisionBySlideId: {},
       chatMessages: [],
 
-      // 创建视图状态
+      // Create view state
       workspaceSources: [],
       selectedSourceIds: [],
       topic: "",
@@ -225,8 +240,30 @@ export const useAppStore = create<AppState>()(
           issueDecisionBySlideId: {},
         })),
 
-      // 编辑器 actions
-      setPresentation: (p) => set({ presentation: p }),
+      // Editor actions
+      setPresentation: (p) =>
+        set((state) => {
+          if (!p) {
+            return { presentation: null };
+          }
+          const currentSession = state.sessions.find(
+            (session) => session.id === state.currentSessionId
+          );
+          const shouldSyncSessionTitle =
+            p.title.trim().length > 0 &&
+            shouldSyncGeneratedSessionTitle(currentSession, state.presentation?.title);
+          return {
+            presentation: p,
+            sessions:
+              shouldSyncSessionTitle && state.currentSessionId
+                ? state.sessions.map((session) =>
+                    session.id === state.currentSessionId
+                      ? { ...session, title: p.title }
+                      : session
+                  )
+                : state.sessions,
+          };
+        }),
       updateSlides: (slides) =>
         set((state) => {
           if (!state.presentation) return {};
@@ -335,7 +372,7 @@ export const useAppStore = create<AppState>()(
         return presentation?.slides[currentSlideIndex] ?? null;
       },
 
-      // 渐进式生成 actions
+      // Progressive generation actions
       initGenerationShell: (title, pageCount) =>
         set((state) => {
           const safeTitle = title.trim() || "生成中...";
@@ -356,11 +393,25 @@ export const useAppStore = create<AppState>()(
           if (!state.presentation) return {};
           const safeTitle = title.trim();
           if (!safeTitle) return {};
+          const currentSession = state.sessions.find(
+            (session) => session.id === state.currentSessionId
+          );
+          const shouldSyncSessionTitle =
+            safeTitle.length > 0 &&
+            shouldSyncGeneratedSessionTitle(currentSession, state.presentation.title);
           return {
             presentation: {
               ...state.presentation,
               title: safeTitle,
             },
+            sessions:
+              shouldSyncSessionTitle && state.currentSessionId
+                ? state.sessions.map((session) =>
+                    session.id === state.currentSessionId
+                      ? { ...session, title: safeTitle }
+                      : session
+                  )
+                : state.sessions,
           };
         }),
       patchSlideTitlesFromOutline: (items) =>
@@ -405,7 +456,7 @@ export const useAppStore = create<AppState>()(
 
       finishGeneration: () => set({ isGenerating: false }),
 
-      // 创建视图 actions
+      // Create view actions
       setWorkspaceSources: (workspaceSources) => set({ workspaceSources }),
       addWorkspaceSource: (source) =>
         set((state) => ({

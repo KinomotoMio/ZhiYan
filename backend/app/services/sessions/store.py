@@ -62,6 +62,7 @@ class SessionStore:
                     id TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL,
                     title TEXT NOT NULL,
+                    title_edited_by_user INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'active',
                     is_pinned INTEGER NOT NULL DEFAULT 0,
                     archived_at TEXT,
@@ -172,6 +173,10 @@ class SessionStore:
                 conn.execute("ALTER TABLE workspaces ADD COLUMN owner_type TEXT")
             if not _has_column("workspaces", "owner_id"):
                 conn.execute("ALTER TABLE workspaces ADD COLUMN owner_id TEXT")
+            if not _has_column("sessions", "title_edited_by_user"):
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN title_edited_by_user INTEGER NOT NULL DEFAULT 0"
+                )
             if not _has_column("workspace_sources", "content_hash"):
                 conn.execute("ALTER TABLE workspace_sources ADD COLUMN content_hash TEXT")
 
@@ -282,9 +287,9 @@ class SessionStore:
             conn.execute(
                 """
                 INSERT INTO sessions(
-                    id, workspace_id, title, status, is_pinned,
+                    id, workspace_id, title, title_edited_by_user, status, is_pinned,
                     created_at, updated_at, last_opened_at
-                ) VALUES(?, ?, ?, 'active', 0, ?, ?, ?)
+                ) VALUES(?, ?, ?, 0, 'active', 0, ?, ?, ?)
                 """,
                 (session_id, workspace_id, title, now, now, now),
             )
@@ -405,6 +410,7 @@ class SessionStore:
         if title is not None:
             set_parts.append("title = ?")
             params.append(title)
+            set_parts.append("title_edited_by_user = 1")
         if is_pinned is not None:
             set_parts.append("is_pinned = ?")
             params.append(1 if is_pinned else 0)
@@ -1207,6 +1213,7 @@ class SessionStore:
         snapshot_label: str | None,
         now: str,
     ) -> dict:
+        normalized_title = str(payload.get("title") or "").strip()
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT COALESCE(MAX(version_no), 0) + 1 AS next_no FROM session_presentations WHERE session_id=?",
@@ -1229,10 +1236,23 @@ class SessionStore:
                     now,
                 ),
             )
-            conn.execute(
-                "UPDATE sessions SET updated_at=? WHERE id=?",
-                (now, session_id),
+            session_row = conn.execute(
+                "SELECT title_edited_by_user FROM sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+            title_edited_by_user = bool(
+                session_row and int(session_row["title_edited_by_user"] or 0)
             )
+            if normalized_title and not title_edited_by_user:
+                conn.execute(
+                    "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
+                    (normalized_title, now, session_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE sessions SET updated_at=? WHERE id=?",
+                    (now, session_id),
+                )
             conn.commit()
         return {
             "id": presentation_id,
