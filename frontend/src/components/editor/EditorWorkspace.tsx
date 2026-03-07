@@ -460,7 +460,7 @@ export default function EditorWorkspace({
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-48 border-r border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900/40 overflow-y-auto p-3 space-y-2 shrink-0">
+        <aside className="w-56 border-r border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900/40 overflow-x-hidden overflow-y-auto p-3 space-y-2 shrink-0">
           {presentation.slides.map((slide, i) => (
             <SlideThumbnail
               key={slide.slideId}
