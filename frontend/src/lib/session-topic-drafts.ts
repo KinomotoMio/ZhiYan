@@ -38,8 +38,7 @@ export function removeSessionTopicDraft(
     return drafts;
   }
 
-  const nextDrafts = { ...drafts };
-  delete nextDrafts[sessionId];
+  const { [sessionId]: _, ...nextDrafts } = drafts;
   return nextDrafts;
 }
 
