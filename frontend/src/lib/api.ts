@@ -81,6 +81,7 @@ export interface SessionSummary {
   id: string;
   workspace_id: string;
   title: string;
+  title_edited_by_user: boolean;
   status: string;
   is_pinned: boolean;
   archived_at: string | null;

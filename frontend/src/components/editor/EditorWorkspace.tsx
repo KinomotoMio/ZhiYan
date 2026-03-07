@@ -6,7 +6,14 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
-import { cancelJob, exportPptx, exportPdf, fixApply, fixPreview, fixSkip } from "@/lib/api";
+import {
+  cancelJob,
+  exportPptx,
+  exportPdf,
+  fixApply,
+  fixPreview,
+  fixSkip,
+} from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
   DropdownMenu,
@@ -23,15 +30,20 @@ import RevealPreview from "@/components/slides/RevealPreview";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
+import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 
 interface EditorWorkspaceProps {
   returnHref: string;
   returnLabel?: string;
+  sessionTitle: string;
+  onRenameSessionTitle: (nextTitle: string) => Promise<void>;
 }
 
 export default function EditorWorkspace({
   returnHref,
   returnLabel = "返回",
+  sessionTitle,
+  onRenameSessionTitle,
 }: EditorWorkspaceProps) {
   const router = useRouter();
   const {
@@ -392,7 +404,11 @@ export default function EditorWorkspace({
           >
             &larr; {returnLabel}
           </button>
-          <span className="font-medium text-sm">{presentation.title}</span>
+          <SessionTitleInlineEditor
+            title={sessionTitle}
+            onSave={onRenameSessionTitle}
+            className="min-w-0"
+          />
           {isGenerating && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

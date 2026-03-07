@@ -10,6 +10,7 @@ import SourcePanel from "./SourcePanel";
 import CreateForm from "./CreateForm";
 import RenameDialog from "./RenameDialog";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
+import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 import UserMenu from "@/components/settings/UserMenu";
 import {
   DropdownMenu,
@@ -47,6 +48,15 @@ export default function CreateView() {
     [renameTarget, upsertSession]
   );
 
+  const handleRenameSessionTitle = useCallback(
+    async (nextTitle: string) => {
+      if (!currentSessionId) return;
+      const updated = await updateSession(currentSessionId, { title: nextTitle });
+      upsertSession(updated);
+    },
+    [currentSessionId, upsertSession]
+  );
+
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
     await removeSession(deleteTarget.id);
@@ -72,9 +82,12 @@ export default function CreateView() {
 
         <div className="mx-1 h-4 w-px bg-slate-200" />
 
-        <span className="min-w-0 truncate text-sm font-semibold text-slate-800">
-          {currentSessionTitle}
-        </span>
+        <SessionTitleInlineEditor
+          title={currentSessionTitle}
+          onSave={handleRenameSessionTitle}
+          disabled={!currentSessionId}
+          className="min-w-0"
+        />
 
         <div className="ml-auto flex items-center gap-1">
           <DropdownMenu>

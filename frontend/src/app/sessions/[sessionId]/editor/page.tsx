@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
-import { getJob, getSessionDetail } from "@/lib/api";
+import { getJob, getSessionDetail, updateSession } from "@/lib/api";
 import {
   buildShellSlides,
   mergeGeneratedSlide,
@@ -69,7 +69,13 @@ export default function SessionEditorPage() {
 
   const [state, setState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("会话不存在或无权限访问。");
+  const [sessionTitle, setSessionTitle] = useState("\u672a\u547d\u540d\u4f1a\u8bdd");
   const setCurrentSessionId = useAppStore((store) => store.setCurrentSessionId);
+  const syncedSessionTitle = useAppStore(
+    (store) => store.sessions.find((session) => session.id === sessionId)?.title ?? ""
+  );
+  const displaySessionTitle = syncedSessionTitle || sessionTitle;
+  const upsertSession = useAppStore((store) => store.upsertSession);
   const setSessionData = useAppStore((store) => store.setSessionData);
   const setCurrentSlideIndex = useAppStore((store) => store.setCurrentSlideIndex);
   const updateJobState = useAppStore((store) => store.updateJobState);
@@ -83,6 +89,8 @@ export default function SessionEditorPage() {
       try {
         const detail = await getSessionDetail(sessionId);
         if (cancelled) return;
+        setSessionTitle(detail.session.title || "未命名会话");
+        upsertSession(detail.session);
         const chatMessages = toStoreChatMessages(
           detail.chat_messages as unknown as Array<Record<string, unknown>>
         );
@@ -251,6 +259,7 @@ export default function SessionEditorPage() {
     setIsGenerating,
     setSessionData,
     updateJobState,
+    upsertSession,
   ]);
 
   if (!sessionId) {
@@ -312,10 +321,19 @@ export default function SessionEditorPage() {
     );
   }
 
+  const handleRenameSessionTitle = async (nextTitle: string) => {
+    if (!sessionId) return;
+    const updated = await updateSession(sessionId, { title: nextTitle });
+    upsertSession(updated);
+    setSessionTitle(updated.title || "未命名会话");
+  };
+
   return (
     <EditorWorkspace
       returnHref="/"
       returnLabel="返回主页"
+      sessionTitle={displaySessionTitle}
+      onRenameSessionTitle={handleRenameSessionTitle}
     />
   );
 }
