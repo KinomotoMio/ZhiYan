@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test $(find src -type f \\( -name '*.test.ts' -o -name '*.test.tsx' \\))"
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",

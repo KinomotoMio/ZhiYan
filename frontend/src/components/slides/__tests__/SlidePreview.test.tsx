@@ -11,10 +11,10 @@ test("two-column-compare malformed content does not crash", () => {
     layoutType: "two-column-compare",
     layoutId: "two-column-compare",
     contentData: {
-      title: "核心框架",
+      title: "Core frame",
       items: [
-        { title: "要点一", description: "描述一" },
-        { title: "要点二", description: "描述二" },
+        { title: "Point A", description: "Desc A" },
+        { title: "Point B", description: "Desc B" },
       ],
     },
     components: [],
@@ -24,7 +24,7 @@ test("two-column-compare malformed content does not crash", () => {
   assert.doesNotThrow(() => {
     html = renderToStaticMarkup(<SlidePreview slide={malformedSlide} />);
   });
-  assert.match(html, /核心框架|要点 A|要点 B/);
+  assert.match(html, /Core frame|Point A|Point B/);
 });
 
 test("unrecoverable layout data renders fallback card", () => {
@@ -32,12 +32,13 @@ test("unrecoverable layout data renders fallback card", () => {
     slideId: "slide-2",
     layoutType: "table-info",
     layoutId: "table-info",
-    contentData: { title: "坏数据", rows: [] },
+    contentData: { title: "Broken data", rows: [] },
     components: [],
   };
 
   const html = renderToStaticMarkup(<SlidePreview slide={brokenSlide} />);
   assert.match(html, /该页数据异常，可重新生成/);
+  assert.match(html, /table-info/);
 });
 
 test("two-column-compare string columns are repaired", () => {
@@ -46,14 +47,35 @@ test("two-column-compare string columns are repaired", () => {
     layoutType: "two-column-compare",
     layoutId: "two-column-compare",
     contentData: {
-      title: "比较维度",
-      left: "**左栏**\n- 要点一\n- 要点二",
-      right: "| 栏目 | 新增内容 |\n|---|---|\n| 方法 | 细化步骤 |",
+      title: "Compare axis",
+      left: "**Left**\n- Point A\n- Point B",
+      right: "| Column | Value |\n|---|---|\n| Method | Detailed steps |",
     },
     components: [],
   };
 
   const html = renderToStaticMarkup(<SlidePreview slide={brokenByChatSlide} />);
   assert.doesNotMatch(html, /该页数据异常，可重新生成/);
-  assert.match(html, /比较维度|要点 A|要点 B/);
+  assert.match(html, /Compare axis|Point A|Point B/);
+});
+
+test("active slide preview keeps ring and shadow classes", () => {
+  const loadingSlide: Slide = {
+    slideId: "slide-4",
+    layoutType: "blank",
+    layoutId: "blank",
+    contentData: {
+      _loading: true,
+      title: "Loading",
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <SlidePreview slide={loadingSlide} isActive className="w-full" />
+  );
+
+  assert.match(html, /ring-2 ring-primary shadow-lg/);
+  assert.match(html, /w-full/);
+  assert.doesNotMatch(html, /hover:shadow-md/);
 });
