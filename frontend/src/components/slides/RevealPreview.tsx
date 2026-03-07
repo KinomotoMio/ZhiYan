@@ -45,7 +45,11 @@ export function focusRevealPreviewFrame(frame: FocusableRevealFrame | null): voi
   try {
     frame.focus?.({ preventScroll: true });
   } catch {
-    frame.focus?.();
+    try {
+      frame.focus?.();
+    } catch {
+      // Ignore frame focus failures in restricted environments.
+    }
   }
 
   try {
