@@ -34,6 +34,10 @@ import {
   Zap,
 } from "lucide-react";
 
+// We intentionally read Lucide's internal icon nodes so editor layouts and
+// reveal HTML can share the same SVG source. This relies on Lucide's current
+// package layout, so keep lucide-react pinned to the exact version in package.json.
+
 import { __iconNode as awardIconNode } from "lucide-react/dist/esm/icons/award.js";
 import { __iconNode as chartColumnIconNode } from "lucide-react/dist/esm/icons/chart-column.js";
 import { __iconNode as circleCheckBigIconNode } from "lucide-react/dist/esm/icons/circle-check-big.js";
@@ -290,3 +294,4 @@ export function getLayoutIconComponent(query: string): ComponentType<{ className
 export function getLayoutIconNode(query: string): IconNode {
   return ICON_DEFINITIONS[resolveLayoutIconKey(query)].node;
 }
+
