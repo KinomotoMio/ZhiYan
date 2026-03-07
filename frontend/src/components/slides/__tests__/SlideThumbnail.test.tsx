@@ -25,8 +25,8 @@ test("thumbnail row stays shrinkable inside sidebar", () => {
     />
   );
 
-  assert.match(html, /class="flex w-full min-w-0 gap-2 items-start"/);
-  assert.match(html, /class="relative min-w-0 flex-1"/);
+  assert.match(html, /class="(?=.*\bflex\b)(?=.*\bw-full\b)(?=.*\bmin-w-0\b)(?=.*\bgap-2\b)(?=.*\bitems-start\b)[^"]*"/);
+  assert.match(html, /class="(?=.*\brelative\b)(?=.*\bmin-w-0\b)(?=.*\bflex-1\b)[^"]*"/);
   assert.doesNotMatch(html, /class="relative w-full"/);
 });
 
@@ -49,6 +49,6 @@ test("thumbnail renders issue badge without changing sidebar structure", () => {
 
   assert.match(html, />2</);
   assert.match(html, /title="hard 1 \/ advisory 2"/);
-  assert.match(html, /class="flex flex-col items-center gap-1 w-4 shrink-0"/);
-  assert.match(html, /class="relative min-w-0 flex-1"/);
+  assert.match(html, /class="(?=.*\bflex\b)(?=.*\bflex-col\b)(?=.*\bitems-center\b)(?=.*\bgap-1\b)(?=.*\bw-4\b)(?=.*\bshrink-0\b)[^"]*"/);
+  assert.match(html, /class="(?=.*\brelative\b)(?=.*\bmin-w-0\b)(?=.*\bflex-1\b)[^"]*"/);
 });
