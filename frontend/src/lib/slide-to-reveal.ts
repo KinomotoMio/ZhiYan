@@ -7,6 +7,7 @@
  */
 
 import type { Component, Slide, Presentation, Style } from "@/types/slide";
+import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 
 // ---------- 旧版 Component → HTML ----------
 
@@ -442,12 +443,24 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
 
 // ---------- Slide → Section ----------
 
+function renderLayoutContent(layoutId: string, data: Record<string, unknown>): string {
+  const normalized = normalizeLayoutData(layoutId, data);
+  if (!normalized.recoverable) {
+    return `
+      <div style="display:flex;align-items:center;justify-content:center;height:100%;padding:48px;text-align:center;color:#6b7280;">
+        该页数据异常，演示模式暂时无法正确渲染
+      </div>`;
+  }
+
+  return contentDataToHTML(layoutId, normalized.data);
+}
+
 function slideToSection(slide: Slide): string {
   const useNewLayout = !!(slide.layoutId && slide.contentData);
 
   let content: string;
   if (useNewLayout) {
-    content = contentDataToHTML(slide.layoutId!, slide.contentData as Record<string, unknown>);
+    content = renderLayoutContent(slide.layoutId!, slide.contentData as Record<string, unknown>);
   } else {
     content = (slide.components ?? []).map(componentToHTML).join("\n    ");
   }
@@ -456,12 +469,18 @@ function slideToSection(slide: Slide): string {
     ? `\n    <aside class="notes">${escapeHtml(slide.speakerNotes)}</aside>`
     : "";
 
-  return `  <section data-slide-id="${slide.slideId}" style="position: relative; width: 100%; height: 100%;">
-    ${content}${notes}
+  return `  <section data-slide-id="${slide.slideId}">
+    <div class="slide-shell">
+      ${content}${notes}
+    </div>
   </section>`;
 }
 
-export function presentationToRevealHTML(pres: Presentation): string {
+export function presentationToRevealHTML(
+  pres: Presentation,
+  options?: { startSlide?: number },
+): string {
+  void options;
   const sections = pres.slides.map(slideToSection).join("\n\n");
 
   return `<!DOCTYPE html>
@@ -472,13 +491,33 @@ export function presentationToRevealHTML(pres: Presentation): string {
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/white.css" />
   <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: ${pres.theme?.backgroundColor || "#ffffff"};
+    }
     :root {
       --primary-color: ${pres.theme?.primaryColor || "#3b82f6"};
       --primary-text: #ffffff;
       --background-color: ${pres.theme?.backgroundColor || "#ffffff"};
       --background-text: #111827;
     }
+    .reveal {
+      width: 100%;
+      height: 100%;
+    }
     .reveal section { text-align: left; }
+    .reveal .slides section {
+      box-sizing: border-box;
+    }
+    .reveal .slides section .slide-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
     .reveal h1, .reveal h2, .reveal h3 { margin: 0; }
     .reveal ul { list-style: disc; padding-left: 1.5em; margin: 0; }
     .reveal p { margin: 0.3em 0; }
@@ -493,13 +532,27 @@ ${sections}
   </div>
   <script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"><\/script>
   <script>
-    Reveal.initialize({
+    const deck = new Reveal(document.querySelector('.reveal'));
+
+    const notifySlideChange = () => {
+      const { h } = deck.getIndices();
+      window.parent.postMessage(
+        { type: 'reveal-preview-slidechange', slideIndex: h },
+        '*'
+      );
+    };
+
+    deck.on('ready', notifySlideChange);
+    deck.on('slidechanged', notifySlideChange);
+
+    deck.initialize({
       hash: true,
       width: 1280,
       height: 720,
       margin: 0.04,
+      embedded: true,
     });
-  <\/script>
+  </script>
 </body>
 </html>`;
 }

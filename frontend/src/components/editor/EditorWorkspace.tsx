@@ -60,6 +60,7 @@ export default function EditorWorkspace({
     setPresentation,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
+  const [revealSlideIndex, setRevealSlideIndex] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [previewingFix, setPreviewingFix] = useState(false);
@@ -323,6 +324,13 @@ export default function EditorWorkspace({
     );
   }
 
+  const handleCloseReveal = () => {
+    if (revealSlideIndex !== currentSlideIndex) {
+      setCurrentSlideIndex(revealSlideIndex);
+    }
+    setShowReveal(false);
+  };
+
   const handleExport = async (format: "pptx" | "pdf") => {
     if (!presentation || exporting) return;
     setExporting(true);
@@ -354,14 +362,15 @@ export default function EditorWorkspace({
     return (
       <div className="fixed inset-0 z-50 bg-black">
         <button
-          onClick={() => setShowReveal(false)}
-          className="absolute top-4 right-4 z-50 px-3 py-1 bg-white/20 text-white rounded-md text-sm hover:bg-white/30"
+          onClick={handleCloseReveal}
+          className="absolute top-4 right-4 z-50 rounded-md border border-slate-300 bg-white/95 px-3 py-1 text-sm text-slate-900 shadow-sm backdrop-blur hover:bg-white"
         >
           退出演示
         </button>
         <RevealPreview
           presentation={presentation}
           startSlide={currentSlideIndex}
+          onSlideChange={setRevealSlideIndex}
         />
       </div>
     );
@@ -450,7 +459,10 @@ export default function EditorWorkspace({
             </button>
           )}
           <button
-            onClick={() => setShowReveal(true)}
+            onClick={() => {
+              setRevealSlideIndex(currentSlideIndex);
+              setShowReveal(true);
+            }}
             disabled={isGenerating}
             className="px-3 py-1 text-sm bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50 transition-all duration-200"
           >
