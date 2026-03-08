@@ -48,7 +48,7 @@ export function focusRevealPreviewFrame(frame: FocusableRevealFrame | null): voi
     try {
       frame.focus?.();
     } catch {
-      // Ignore frame focus failures in restricted environments.
+      // Ignore focus failures for sandboxed or not-yet-ready frames.
     }
   }
 
