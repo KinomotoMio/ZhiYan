@@ -964,6 +964,20 @@ export async function validateApiKey(
   return res.json();
 }
 
+export interface ProviderApiKeyResponse {
+  api_key: string;
+}
+
+export async function getSettingsProviderKey(
+  provider: "openai" | "anthropic" | "google" | "deepseek" | "openrouter"
+): Promise<ProviderApiKeyResponse> {
+  const query = new URLSearchParams({ provider });
+  const res = await fetch(`${API_BASE}/api/v1/settings/key?${query.toString()}`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) throw new Error(`获取 Provider Key 失败: ${res.statusText}`);
+  return res.json();
+}
 // ---------- TTS ----------
 
 export async function synthesizeSpeech(
