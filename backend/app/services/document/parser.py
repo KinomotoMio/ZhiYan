@@ -40,7 +40,7 @@ def create_markitdown_converter() -> "MarkItDown":
     return _get_markitdown_class()()
 
 
-def _get_shared_converter() -> Any:
+def _get_shared_converter() -> "MarkItDown":
     global _converter
 
     if _converter is None:
