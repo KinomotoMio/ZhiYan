@@ -94,6 +94,31 @@ def test_validate_openai_rejects_http_gateway(monkeypatch):
     assert "http://gateway.example.com/v1/models" in body["message"]
 
 
+def test_validate_google_sends_api_key_in_header(monkeypatch):
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["requested_url"] = str(request.url)
+        seen["api_key_header"] = request.headers.get("x-goog-api-key")
+        return httpx.Response(200, json={"models": []})
+
+    _install_mock_client(monkeypatch, handler)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/settings/validate",
+        json={
+            "provider": "google",
+            "api_key": "google-secret-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"valid": True, "message": "Google API Key ????"}
+    assert seen["requested_url"] == "https://generativelanguage.googleapis.com/v1beta/models"
+    assert seen["api_key_header"] == "google-secret-key"
+
+
 def test_validate_openai_maps_401_to_invalid_key(monkeypatch):
     async def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
         return httpx.Response(401, json={"error": {"message": "Unauthorized"}})

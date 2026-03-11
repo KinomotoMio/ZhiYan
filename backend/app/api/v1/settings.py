@@ -218,7 +218,8 @@ async def validate_api_key(req: ValidateRequest):
                 url_policy=_VALIDATION_URL_POLICY,
             ) as client:
                 resp = await client.get(
-                    f"https://generativelanguage.googleapis.com/v1beta/models?key={req.api_key}"
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    headers={"x-goog-api-key": req.api_key},
                 )
             return _validation_message_for_status(resp.status_code, "Google API Key 验证成功")
 
