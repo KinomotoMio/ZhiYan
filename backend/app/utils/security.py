@@ -118,12 +118,14 @@ def build_validate_url_hook(
     return _validate_url_hook
 
 
+_default_validate_url_hook = build_validate_url_hook()
+
+
 async def validate_url_hook(request: httpx.Request) -> None:
     """
     httpx request hook to validate the URL before sending the request.
     """
-    hook = build_validate_url_hook()
-    await hook(request)
+    await _default_validate_url_hook(request)
 
 
 def get_safe_httpx_client(
