@@ -47,6 +47,7 @@ const API_KEY_FIELDS: Record<ApiKeyProvider, "openai_api_key" | "anthropic_api_k
   deepseek: "deepseek_api_key",
   openrouter: "openrouter_api_key",
 };
+const API_KEY_PROVIDERS = Object.keys(API_KEY_FIELDS) as ApiKeyProvider[];
 
 const EMPTY_PROVIDER_KEY_DRAFTS: Record<ApiKeyProvider, ProviderKeyDraft> = {
   openai: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
@@ -67,6 +68,22 @@ function createProviderKeyDraft(maskedValue: string): ProviderKeyDraft {
 
 function getProviderKeyDisplayValue(state: ProviderKeyDraft): string {
   return state.showMasked ? "" : state.draftValue;
+}
+
+function clearProviderPlaintextDrafts(
+  drafts: Record<ApiKeyProvider, ProviderKeyDraft>
+): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return Object.fromEntries(
+    API_KEY_PROVIDERS.map((provider) => [
+      provider,
+      {
+        ...drafts[provider],
+        draftValue: "",
+        cachedPlainValue: null,
+        showMasked: Boolean(drafts[provider].maskedValue),
+      },
+    ])
+  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
 }
 
 interface ProviderStatus {
@@ -355,13 +372,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   };
 
   const clearProviderPlaintext = () => {
-    setProviderKeyDrafts((prev) => ({
-      openai: { ...prev.openai, draftValue: "", cachedPlainValue: null, showMasked: Boolean(prev.openai.maskedValue) },
-      anthropic: { ...prev.anthropic, draftValue: "", cachedPlainValue: null, showMasked: Boolean(prev.anthropic.maskedValue) },
-      google: { ...prev.google, draftValue: "", cachedPlainValue: null, showMasked: Boolean(prev.google.maskedValue) },
-      deepseek: { ...prev.deepseek, draftValue: "", cachedPlainValue: null, showMasked: Boolean(prev.deepseek.maskedValue) },
-      openrouter: { ...prev.openrouter, draftValue: "", cachedPlainValue: null, showMasked: Boolean(prev.openrouter.maskedValue) },
-    }));
+    setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
   };
 
   const [modelDrafts, setModelDrafts] =
