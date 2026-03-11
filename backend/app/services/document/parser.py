@@ -1,17 +1,54 @@
 """文档解析 — MarkItDown 封装 + 正则规范化 + 分块逻辑"""
 
+import logging
+import os
 import re
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from markitdown import MarkItDown
+
+logger = logging.getLogger(__name__)
+_converter: Any | None = None
 
 
-_converter = MarkItDown()
+def _ensure_path_env() -> None:
+    if "PATH" in os.environ:
+        return
+
+    fallback = os.environ.get("Path", "")
+    os.environ["PATH"] = fallback
+    logger.warning(
+        "PATH missing from process environment; defaulting to %r for MarkItDown",
+        fallback,
+    )
+
+
+@lru_cache(maxsize=1)
+def _get_markitdown_class():
+    _ensure_path_env()
+
+    from markitdown import MarkItDown
+
+    return MarkItDown
+
+
+def create_markitdown_converter() -> Any:
+    return _get_markitdown_class()()
+
+
+def _get_shared_converter() -> Any:
+    global _converter
+
+    if _converter is None:
+        _converter = create_markitdown_converter()
+
+    return _converter
 
 
 async def parse_document(file_path: str | Path) -> str:
     """将文档转换为 Markdown 文本，自动执行轻量规范化"""
-    result = _converter.convert(str(file_path))
+    result = _get_shared_converter().convert(str(file_path))
     return normalize_markdown(result.text_content)
 
 

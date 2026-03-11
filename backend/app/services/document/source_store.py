@@ -125,11 +125,12 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
 
 def _sync_parse(file_path: Path) -> str:
     """同步调用 MarkItDown 解析 + 正则规范化"""
-    from markitdown import MarkItDown
+    from app.services.document.parser import (
+        create_markitdown_converter,
+        normalize_markdown,
+    )
 
-    from app.services.document.parser import normalize_markdown
-
-    converter = MarkItDown()
+    converter = create_markitdown_converter()
     result = converter.convert(str(file_path))
     return normalize_markdown(result.text_content)
 
