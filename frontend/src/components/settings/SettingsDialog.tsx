@@ -361,7 +361,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const [providerEditorOpen, setProviderEditorOpen] = useState(false);
   const [providerEditorTab, setProviderEditorTab] = useState<KnownProvider>("openrouter");
 
-  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(DEFAULT_PROVIDER_STATUS);  const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(DEFAULT_PROVIDER_STATUS);
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
   const [providerKeyDrafts, setProviderKeyDrafts] =
     useState<Record<ApiKeyProvider, ProviderKeyDraft>>(EMPTY_PROVIDER_KEY_DRAFTS);
   const [enableVisionVerification, setEnableVisionVerification] = useState(true);
