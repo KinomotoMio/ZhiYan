@@ -1,17 +1,17 @@
-"""GET/PUT /api/v1/settings — 用户设置管理"""
+"""GET/PUT /api/v1/settings - 用户设置管理"""
 
 import logging
 
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.model_status import ModelStatus, build_model_status
-from app.utils.security import get_safe_httpx_client
+from app.utils.security import HTTPS_DOMAIN_POLICY_ERROR, get_safe_httpx_client
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 logger = logging.getLogger(__name__)
 
-# 可配置的字段白名单
 _ALLOWED_FIELDS = {
     "openai_api_key",
     "openai_base_url",
@@ -27,6 +27,9 @@ _ALLOWED_FIELDS = {
     "tts_voice",
     "enable_vision_verification",
 }
+
+_VALIDATION_URL_POLICY = "https_domain_only"
+_NETWORK_ERROR_PREFIX = "网络或运行环境异常，无法完成校验"
 
 
 def _mask_key(key: str) -> str:
@@ -90,7 +93,7 @@ class ValidateResponse(BaseModel):
 
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
-    """返回当前配置（API keys 脱敏显示）"""
+    """返回当前配置，API keys 脱敏显示。"""
     from app.core.config import settings
 
     default_model_status = build_model_status(settings.default_model, settings)
@@ -128,14 +131,17 @@ async def get_settings():
 
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdate):
-    """更新配置 → 持久化 + 使 agent 缓存失效"""
-    from app.core.settings_store import load_user_settings, save_user_settings, invalidate_agents
+    """更新配置并使 agent 缓存失效。"""
     from app.core.config import reload_settings
+    from app.core.settings_store import (
+        invalidate_agents,
+        load_user_settings,
+        save_user_settings,
+    )
 
     current = load_user_settings()
-
     updates = req.model_dump(exclude_none=True)
-    # 如果传入的是脱敏值（包含 ...），跳过不更新
+
     for key in list(updates.keys()):
         if key not in _ALLOWED_FIELDS:
             del updates[key]
@@ -150,23 +156,47 @@ async def update_settings(req: SettingsUpdate):
     return await get_settings()
 
 
+def _normalize_base_url(base_url: str | None, default: str) -> str:
+    candidate = (base_url or default).strip()
+    return candidate.rstrip("/")
+
+
+def _validation_message_for_status(status_code: int, success_message: str) -> ValidateResponse:
+    if status_code in (200, 529):
+        return ValidateResponse(valid=True, message=success_message)
+    if status_code == 401:
+        return ValidateResponse(valid=False, message="API Key 无效")
+    return ValidateResponse(valid=False, message=f"验证失败: HTTP {status_code}")
+
+
+def _network_error_message(error: Exception) -> str:
+    detail = str(error).strip()
+    if not detail:
+        return _NETWORK_ERROR_PREFIX
+    return f"{_NETWORK_ERROR_PREFIX}: {detail}"
+
+
 @router.post("/validate", response_model=ValidateResponse)
 async def validate_api_key(req: ValidateRequest):
-    """验证 API key — 向 provider 发送最小请求"""
+    """验证 API key，对不同 provider 发送最小请求。"""
     try:
         if req.provider == "openai":
-            base = req.base_url or "https://api.openai.com/v1"
-            async with get_safe_httpx_client(timeout=15) as client:
+            base = _normalize_base_url(req.base_url, "https://api.openai.com/v1")
+            async with get_safe_httpx_client(
+                timeout=15,
+                url_policy=_VALIDATION_URL_POLICY,
+            ) as client:
                 resp = await client.get(
                     f"{base}/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
                 )
-            if resp.status_code == 200:
-                return ValidateResponse(valid=True, message="OpenAI API Key 验证成功")
-            return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
+            return _validation_message_for_status(resp.status_code, "OpenAI API Key 验证成功")
 
-        elif req.provider == "anthropic":
-            async with get_safe_httpx_client(timeout=15) as client:
+        if req.provider == "anthropic":
+            async with get_safe_httpx_client(
+                timeout=15,
+                url_policy=_VALIDATION_URL_POLICY,
+            ) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -180,47 +210,50 @@ async def validate_api_key(req: ValidateRequest):
                         "messages": [{"role": "user", "content": "hi"}],
                     },
                 )
-            if resp.status_code in (200, 529):
-                return ValidateResponse(valid=True, message="Anthropic API Key 验证成功")
-            if resp.status_code == 401:
-                return ValidateResponse(valid=False, message="API Key 无效")
-            return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
+            return _validation_message_for_status(resp.status_code, "Anthropic API Key 验证成功")
 
-        elif req.provider == "google":
-            async with get_safe_httpx_client(timeout=15) as client:
+        if req.provider == "google":
+            async with get_safe_httpx_client(
+                timeout=15,
+                url_policy=_VALIDATION_URL_POLICY,
+            ) as client:
                 resp = await client.get(
                     f"https://generativelanguage.googleapis.com/v1beta/models?key={req.api_key}"
                 )
-            if resp.status_code == 200:
-                return ValidateResponse(valid=True, message="Google API Key 验证成功")
-            return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
+            return _validation_message_for_status(resp.status_code, "Google API Key 验证成功")
 
-        elif req.provider == "deepseek":
-            async with get_safe_httpx_client(timeout=15) as client:
+        if req.provider == "deepseek":
+            async with get_safe_httpx_client(
+                timeout=15,
+                url_policy=_VALIDATION_URL_POLICY,
+            ) as client:
                 resp = await client.get(
                     "https://api.deepseek.com/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
                 )
-            if resp.status_code == 200:
-                return ValidateResponse(valid=True, message="DeepSeek API Key 验证成功")
-            if resp.status_code == 401:
-                return ValidateResponse(valid=False, message="API Key 无效")
-            return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
+            return _validation_message_for_status(resp.status_code, "DeepSeek API Key 验证成功")
 
-        elif req.provider == "openrouter":
-            async with get_safe_httpx_client(timeout=15) as client:
+        if req.provider == "openrouter":
+            async with get_safe_httpx_client(
+                timeout=15,
+                url_policy=_VALIDATION_URL_POLICY,
+            ) as client:
                 resp = await client.get(
                     "https://openrouter.ai/api/v1/models",
                     headers={"Authorization": f"Bearer {req.api_key}"},
                 )
-            if resp.status_code == 200:
-                return ValidateResponse(valid=True, message="OpenRouter API Key 验证成功")
-            if resp.status_code == 401:
-                return ValidateResponse(valid=False, message="API Key 无效")
-            return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
+            return _validation_message_for_status(resp.status_code, "OpenRouter API Key 验证成功")
 
-        else:
-            return ValidateResponse(valid=False, message=f"不支持的 provider: {req.provider}")
-    except Exception as e:
-        logger.warning("API key validation error: %s", e)
-        return ValidateResponse(valid=False, message=f"验证出错: {e}")
+        return ValidateResponse(valid=False, message=f"不支持的 provider: {req.provider}")
+    except HTTPException as exc:
+        detail = str(exc.detail)
+        if exc.status_code == 400 and HTTPS_DOMAIN_POLICY_ERROR in detail:
+            return ValidateResponse(valid=False, message=detail)
+        logger.warning("API key validation blocked: %s", detail)
+        return ValidateResponse(valid=False, message=f"验证出错: {detail}")
+    except httpx.HTTPError as exc:
+        logger.warning("API key validation network error: %s", exc)
+        return ValidateResponse(valid=False, message=_network_error_message(exc))
+    except Exception as exc:
+        logger.warning("API key validation error: %s", exc)
+        return ValidateResponse(valid=False, message=_network_error_message(exc))
