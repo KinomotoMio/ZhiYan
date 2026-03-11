@@ -96,38 +96,3 @@ def test_cors_preflight_rejects_unknown_origin():
         },
     )
     assert resp.status_code == 400
-
-
-def test_settings_key_api_returns_plaintext_when_configured(monkeypatch):
-    from app.core.config import settings
-
-    original = settings.openai_api_key
-    settings.openai_api_key = "sk-test-plain-123456"
-    client = TestClient(app)
-    try:
-        resp = client.get("/api/v1/settings/key", params={"provider": "openai"})
-        assert resp.status_code == 200
-        assert resp.json() == {"api_key": "sk-test-plain-123456"}
-    finally:
-        settings.openai_api_key = original
-
-
-def test_settings_key_api_returns_empty_when_not_configured(monkeypatch):
-    from app.core.config import settings
-
-    original = settings.deepseek_api_key
-    settings.deepseek_api_key = ""
-    client = TestClient(app)
-    try:
-        resp = client.get("/api/v1/settings/key", params={"provider": "deepseek"})
-        assert resp.status_code == 200
-        assert resp.json() == {"api_key": ""}
-    finally:
-        settings.deepseek_api_key = original
-
-
-def test_settings_key_api_rejects_invalid_provider():
-    client = TestClient(app)
-    resp = client.get("/api/v1/settings/key", params={"provider": "unknown"})
-    assert resp.status_code == 400
-    assert resp.json().get("detail") == "不支持的 provider: unknown"

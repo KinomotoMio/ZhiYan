@@ -23,7 +23,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   getSettings,
-  getSettingsProviderKey,
   updateSettings,
   validateApiKey,
   type ModelStatus,
@@ -67,7 +66,7 @@ function createProviderKeyDraft(maskedValue: string): ProviderKeyDraft {
 }
 
 function getProviderKeyDisplayValue(state: ProviderKeyDraft): string {
-  return state.showMasked ? state.maskedValue : state.draftValue;
+  return state.showMasked ? "" : state.draftValue;
 }
 
 interface ProviderStatus {
@@ -240,9 +239,7 @@ interface KeyFieldProps {
   provider: "openai" | "anthropic" | "google" | "deepseek" | "openrouter";
   baseUrl?: string;
   placeholder?: string;
-  isMaskedValue?: boolean;
-  onRevealValue?: () => Promise<string>;
-  onHideMask?: () => void;
+  configured?: boolean;
 }
 
 function KeyField({
@@ -252,18 +249,15 @@ function KeyField({
   provider,
   baseUrl,
   placeholder,
-  isMaskedValue,
-  onRevealValue,
-  onHideMask,
+  configured,
 }: KeyFieldProps) {
   const [visible, setVisible] = useState(false);
-  const [revealing, setRevealing] = useState(false);
   const [validating, setValidating] = useState(false);
   const [status, setStatus] = useState<"idle" | "valid" | "invalid">("idle");
 
   const handleValidate = async () => {
-    if (!value || isMaskedValue || value.includes("...")) {
-      toast.error("当前是掩码值，请先显示明文或输入新 Key");
+    if (!value || value.includes("...")) {
+      toast.error("请先输入完整的 API Key");
       return;
     }
     setValidating(true);
@@ -281,29 +275,11 @@ function KeyField({
     }
   };
 
-  const handleToggleVisible = async () => {
-    if (visible) {
-      setVisible(false);
-      onHideMask?.();
-      return;
-    }
-
-    if ((isMaskedValue || !value || value.includes("...")) && onRevealValue) {
-      setRevealing(true);
-      try {
-        const plain = await onRevealValue();
-        onChange(plain || "");
-      } catch {
-        toast.error("获取明文 Key 失败");
-        return;
-      } finally {
-        setRevealing(false);
-      }
-    }
-
+  const handleToggleVisible = () => {
     setStatus("idle");
-    setVisible(true);
+    setVisible((prev) => !prev);
   };
+
   return (
     <div className="space-y-1.5">
       <Label className="text-sm">{label}</Label>
@@ -316,23 +292,23 @@ function KeyField({
               onChange(e.target.value);
               setStatus("idle");
             }}
-            placeholder={placeholder || "sk-..."}
+            placeholder={!value && configured ? "已配置 · 输入新值可覆盖" : placeholder || "sk-..."}
             className="pr-8"
           />
           <button
             type="button"
             onClick={handleToggleVisible}
-            disabled={revealing}
+            disabled={!value}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
             aria-label={visible ? "隐藏 API Key" : "显示 API Key"}
           >
-            {revealing ? <Loader2 className="h-4 w-4 animate-spin" /> : visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
         <button
           type="button"
           onClick={handleValidate}
-          disabled={validating || revealing || !value}
+          disabled={validating || !value}
           className="flex items-center gap-1 px-3 py-1.5 text-xs border rounded-md hover:bg-muted disabled:opacity-50 shrink-0"
         >
           {validating ? (
@@ -376,47 +352,6 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         showMasked: false,
       },
     }));
-  };
-
-  const hideProviderKey = (provider: ApiKeyProvider) => {
-    setProviderKeyDrafts((prev) => ({
-      ...prev,
-      [provider]: {
-        ...prev[provider],
-        showMasked: Boolean(prev[provider].maskedValue),
-      },
-    }));
-  };
-
-  const revealProviderKey = async (provider: ApiKeyProvider): Promise<string> => {
-    const current = providerKeyDrafts[provider];
-    if (!current.showMasked && current.draftValue) {
-      return current.draftValue;
-    }
-    if (current.cachedPlainValue !== null) {
-      setProviderKeyDrafts((prev) => ({
-        ...prev,
-        [provider]: {
-          ...prev[provider],
-          draftValue: current.cachedPlainValue || "",
-          showMasked: false,
-        },
-      }));
-      return current.cachedPlainValue || "";
-    }
-
-    const response = await getSettingsProviderKey(provider);
-    const plain = response.api_key || "";
-    setProviderKeyDrafts((prev) => ({
-      ...prev,
-      [provider]: {
-        ...prev[provider],
-        draftValue: plain,
-        cachedPlainValue: plain,
-        showMasked: false,
-      },
-    }));
-    return plain;
   };
 
   const clearProviderPlaintext = () => {
@@ -822,9 +757,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                 provider="openai"
                 baseUrl={openaiBaseUrl}
                 placeholder="sk-..."
-                isMaskedValue={providerKeyDrafts.openai.showMasked}
-                onRevealValue={() => revealProviderKey("openai")}
-                onHideMask={() => hideProviderKey("openai")}
+                configured={providerStatus.has_openai_key}
               />
               <div className="space-y-1.5">
                 <Label className="text-sm">Base URL</Label>
@@ -844,9 +777,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                 onChange={(value) => updateProviderKeyDraft("anthropic", value)}
                 provider="anthropic"
                 placeholder="sk-ant-..."
-                isMaskedValue={providerKeyDrafts.anthropic.showMasked}
-                onRevealValue={() => revealProviderKey("anthropic")}
-                onHideMask={() => hideProviderKey("anthropic")}
+                configured={providerStatus.has_anthropic_key}
               />
             </TabsContent>
 
@@ -857,9 +788,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                 onChange={(value) => updateProviderKeyDraft("google", value)}
                 provider="google"
                 placeholder="AIza..."
-                isMaskedValue={providerKeyDrafts.google.showMasked}
-                onRevealValue={() => revealProviderKey("google")}
-                onHideMask={() => hideProviderKey("google")}
+                configured={providerStatus.has_google_key}
               />
             </TabsContent>
 
@@ -870,9 +799,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                 onChange={(value) => updateProviderKeyDraft("deepseek", value)}
                 provider="deepseek"
                 placeholder="sk-..."
-                isMaskedValue={providerKeyDrafts.deepseek.showMasked}
-                onRevealValue={() => revealProviderKey("deepseek")}
-                onHideMask={() => hideProviderKey("deepseek")}
+                configured={providerStatus.has_deepseek_key}
               />
             </TabsContent>
 
@@ -883,9 +810,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                 onChange={(value) => updateProviderKeyDraft("openrouter", value)}
                 provider="openrouter"
                 placeholder="sk-or-..."
-                isMaskedValue={providerKeyDrafts.openrouter.showMasked}
-                onRevealValue={() => revealProviderKey("openrouter")}
-                onHideMask={() => hideProviderKey("openrouter")}
+                configured={providerStatus.has_openrouter_key}
               />
             </TabsContent>
           </Tabs>

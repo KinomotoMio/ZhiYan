@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.core.model_status import ModelStatus, build_model_status
@@ -26,15 +26,6 @@ _ALLOWED_FIELDS = {
     "tts_voice",
     "enable_vision_verification",
 }
-
-_PROVIDER_KEY_FIELDS = {
-    "openai": "openai_api_key",
-    "anthropic": "anthropic_api_key",
-    "google": "google_api_key",
-    "deepseek": "deepseek_api_key",
-    "openrouter": "openrouter_api_key",
-}
-
 
 def _mask_key(key: str) -> str:
     """脱敏 API key: sk-abc...xyz4"""
@@ -95,10 +86,6 @@ class ValidateResponse(BaseModel):
     message: str
 
 
-class ProviderKeyResponse(BaseModel):
-    api_key: str
-
-
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
     """返回当前配置（API keys 脱敏显示）"""
@@ -135,19 +122,6 @@ async def get_settings():
         vision_model_status=vision_model_status,
         fast_model_status=fast_model_status,
     )
-
-
-@router.get("/key", response_model=ProviderKeyResponse)
-async def get_provider_key(provider: str = Query(...)):
-    """按 provider 返回明文 API key。"""
-    from app.core.config import settings
-
-    field_name = _PROVIDER_KEY_FIELDS.get(provider)
-    if field_name is None:
-        raise HTTPException(status_code=400, detail=f"不支持的 provider: {provider}")
-    value = getattr(settings, field_name, "") or ""
-    return ProviderKeyResponse(api_key=value)
-
 
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdate):
