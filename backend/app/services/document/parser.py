@@ -5,11 +5,14 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from markitdown import MarkItDown
 
 
 logger = logging.getLogger(__name__)
-_converter: Any | None = None
+_converter: "MarkItDown | None" = None
 
 
 def _ensure_path_env() -> None:
