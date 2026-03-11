@@ -114,9 +114,34 @@ def test_validate_google_sends_api_key_in_header(monkeypatch):
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"valid": True, "message": "Google API Key ????"}
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["message"].startswith("Google API Key")
     assert seen["requested_url"] == "https://generativelanguage.googleapis.com/v1beta/models"
     assert seen["api_key_header"] == "google-secret-key"
+
+
+def test_validate_google_network_errors_do_not_leak_url_or_key(monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed", request=request)
+
+    _install_mock_client(monkeypatch, handler)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/settings/validate",
+        json={
+            "provider": "google",
+            "api_key": "google-secret-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is False
+    assert body["message"].startswith(settings_api._NETWORK_ERROR_PREFIX)
+    assert "google-secret-key" not in body["message"]
+    assert "generativelanguage.googleapis.com" not in body["message"]
 
 
 def test_validate_openai_maps_401_to_invalid_key(monkeypatch):

@@ -170,10 +170,11 @@ def _validation_message_for_status(status_code: int, success_message: str) -> Va
 
 
 def _network_error_message(error: Exception) -> str:
-    detail = str(error).strip()
-    if not detail:
-        return _NETWORK_ERROR_PREFIX
-    return f"{_NETWORK_ERROR_PREFIX}: {detail}"
+    if isinstance(error, httpx.TimeoutException):
+        return f"{_NETWORK_ERROR_PREFIX}??????"
+    if isinstance(error, httpx.NetworkError):
+        return f"{_NETWORK_ERROR_PREFIX}???????????"
+    return _NETWORK_ERROR_PREFIX
 
 
 @router.post("/validate", response_model=ValidateResponse)
