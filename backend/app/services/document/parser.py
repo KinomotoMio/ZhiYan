@@ -36,7 +36,7 @@ def _get_markitdown_class():
     return MarkItDown
 
 
-def create_markitdown_converter() -> Any:
+def create_markitdown_converter() -> "MarkItDown":
     return _get_markitdown_class()()
 
 
