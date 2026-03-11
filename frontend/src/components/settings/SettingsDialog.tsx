@@ -25,6 +25,7 @@ import {
   getSettings,
   updateSettings,
   validateApiKey,
+  type AppSettings,
   type ModelStatus,
 } from "@/lib/api";
 
@@ -47,6 +48,7 @@ const API_KEY_FIELDS: Record<ApiKeyProvider, "openai_api_key" | "anthropic_api_k
   deepseek: "deepseek_api_key",
   openrouter: "openrouter_api_key",
 };
+type ApiKeyField = (typeof API_KEY_FIELDS)[ApiKeyProvider];
 const API_KEY_PROVIDERS = Object.keys(API_KEY_FIELDS) as ApiKeyProvider[];
 
 const EMPTY_PROVIDER_KEY_DRAFTS: Record<ApiKeyProvider, ProviderKeyDraft> = {
@@ -83,6 +85,17 @@ function clearProviderPlaintextDrafts(
         showMasked: Boolean(drafts[provider].maskedValue),
       },
     ])
+  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
+}
+
+function createProviderKeyDraftsFromSettings(
+  settings: Pick<AppSettings, ApiKeyField>
+): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return Object.fromEntries(
+    API_KEY_PROVIDERS.map((provider) => {
+      const field = API_KEY_FIELDS[provider];
+      return [provider, createProviderKeyDraft(settings[field] || "")];
+    })
   ) as Record<ApiKeyProvider, ProviderKeyDraft>;
 }
 
@@ -410,13 +423,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     getSettings()
       .then((settings) => {
         setOpenaiBaseUrl(settings.openai_base_url || "https://api.openai.com/v1");
-        setProviderKeyDrafts({
-          openai: createProviderKeyDraft(settings.openai_api_key),
-          anthropic: createProviderKeyDraft(settings.anthropic_api_key),
-          google: createProviderKeyDraft(settings.google_api_key),
-          deepseek: createProviderKeyDraft(settings.deepseek_api_key),
-          openrouter: createProviderKeyDraft(settings.openrouter_api_key),
-        });
+        setProviderKeyDrafts(createProviderKeyDraftsFromSettings(settings));
         setEnableVisionVerification(settings.enable_vision_verification);
         setProviderStatus({
           has_openai_key: settings.has_openai_key,
@@ -491,13 +498,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         fast_model: parseModelDraft(response.fast_model),
       });
       setEnableVisionVerification(response.enable_vision_verification);
-      setProviderKeyDrafts({
-        openai: createProviderKeyDraft(response.openai_api_key),
-        anthropic: createProviderKeyDraft(response.anthropic_api_key),
-        google: createProviderKeyDraft(response.google_api_key),
-        deepseek: createProviderKeyDraft(response.deepseek_api_key),
-        openrouter: createProviderKeyDraft(response.openrouter_api_key),
-      });
+      setProviderKeyDrafts(createProviderKeyDraftsFromSettings(response));
 
       toast.success("设置已保存");
       window.dispatchEvent(new Event("settings:updated"));
