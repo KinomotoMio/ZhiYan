@@ -203,11 +203,14 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "bullet-icons-only":
-        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
-        item_count = len(items) if isinstance(items, list) else 0
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        item_count = len(items)
         compact = item_count >= 7
         cards: list[str] = []
-        for idx, item in enumerate(items if isinstance(items, list) else []):
+        for idx, item in enumerate(items):
             title = escape(_item_text(item))
             cards.append(
                 '<div style="position:relative;display:flex;align-items:center;min-height:92px;overflow:hidden;border-radius:28px;'
