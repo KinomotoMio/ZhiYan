@@ -171,12 +171,15 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "bullet-with-icons":
-        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
-        item_count = len(items) if isinstance(items, list) else 0
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        item_count = len(items)
         col_count = min(max(item_count, 1), 4)
         compact = col_count == 4
         cards: list[str] = []
-        for idx, item in enumerate(items if isinstance(items, list) else []):
+        for idx, item in enumerate(items):
             title = escape(_item_text(item))
             detail = escape(_item_detail(item))
             cards.append(
