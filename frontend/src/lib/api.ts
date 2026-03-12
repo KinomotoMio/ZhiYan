@@ -963,7 +963,6 @@ export async function validateApiKey(
   if (!res.ok) throw new Error(`验证失败: ${res.statusText}`);
   return res.json();
 }
-
 // ---------- TTS ----------
 
 export async function synthesizeSpeech(

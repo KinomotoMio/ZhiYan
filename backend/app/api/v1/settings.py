@@ -30,8 +30,6 @@ _ALLOWED_FIELDS = {
 
 _VALIDATION_URL_POLICY = "https_domain_only"
 _NETWORK_ERROR_PREFIX = "网络或运行环境异常，无法完成校验"
-
-
 def _mask_key(key: str) -> str:
     """脱敏 API key: sk-abc...xyz4"""
     if not key or len(key) < 8:
@@ -127,7 +125,6 @@ async def get_settings():
         vision_model_status=vision_model_status,
         fast_model_status=fast_model_status,
     )
-
 
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdate):

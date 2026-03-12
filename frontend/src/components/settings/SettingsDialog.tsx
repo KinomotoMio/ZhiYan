@@ -25,12 +25,79 @@ import {
   getSettings,
   updateSettings,
   validateApiKey,
+  type AppSettings,
   type ModelStatus,
 } from "@/lib/api";
 
 type ModelRoleField = "default_model" | "strong_model" | "vision_model" | "fast_model";
 type KnownProvider = "openai" | "anthropic" | "google-gla" | "deepseek" | "openrouter";
 type DraftProvider = KnownProvider | "custom";
+type ApiKeyProvider = "openai" | "anthropic" | "google" | "deepseek" | "openrouter";
+
+interface ProviderKeyDraft {
+  draftValue: string;
+  maskedValue: string;
+  showMasked: boolean;
+  cachedPlainValue: string | null;
+}
+
+const API_KEY_FIELDS: Record<ApiKeyProvider, "openai_api_key" | "anthropic_api_key" | "google_api_key" | "deepseek_api_key" | "openrouter_api_key"> = {
+  openai: "openai_api_key",
+  anthropic: "anthropic_api_key",
+  google: "google_api_key",
+  deepseek: "deepseek_api_key",
+  openrouter: "openrouter_api_key",
+};
+type ApiKeyField = (typeof API_KEY_FIELDS)[ApiKeyProvider];
+const API_KEY_PROVIDERS = Object.keys(API_KEY_FIELDS) as ApiKeyProvider[];
+
+const EMPTY_PROVIDER_KEY_DRAFTS: Record<ApiKeyProvider, ProviderKeyDraft> = {
+  openai: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
+  anthropic: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
+  google: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
+  deepseek: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
+  openrouter: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
+};
+
+function createProviderKeyDraft(maskedValue: string): ProviderKeyDraft {
+  return {
+    draftValue: "",
+    maskedValue,
+    showMasked: Boolean(maskedValue),
+    cachedPlainValue: null,
+  };
+}
+
+function getProviderKeyDisplayValue(state: ProviderKeyDraft): string {
+  return state.showMasked ? "" : state.draftValue;
+}
+
+function clearProviderPlaintextDrafts(
+  drafts: Record<ApiKeyProvider, ProviderKeyDraft>
+): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return Object.fromEntries(
+    API_KEY_PROVIDERS.map((provider) => [
+      provider,
+      {
+        ...drafts[provider],
+        draftValue: "",
+        cachedPlainValue: null,
+        showMasked: Boolean(drafts[provider].maskedValue),
+      },
+    ])
+  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
+}
+
+function createProviderKeyDraftsFromSettings(
+  settings: Pick<AppSettings, ApiKeyField>
+): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return Object.fromEntries(
+    API_KEY_PROVIDERS.map((provider) => {
+      const field = API_KEY_FIELDS[provider];
+      return [provider, createProviderKeyDraft(settings[field] || "")];
+    })
+  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
+}
 
 interface ProviderStatus {
   has_openai_key: boolean;
@@ -238,6 +305,11 @@ function KeyField({
     }
   };
 
+  const handleToggleVisible = () => {
+    setStatus("idle");
+    setVisible((prev) => !prev);
+  };
+
   return (
     <div className="space-y-1.5">
       <Label className="text-sm">{label}</Label>
@@ -255,8 +327,9 @@ function KeyField({
           />
           <button
             type="button"
-            onClick={() => setVisible(!visible)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            onClick={handleToggleVisible}
+            disabled={!value}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
             aria-label={visible ? "隐藏 API Key" : "显示 API Key"}
           >
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -295,14 +368,25 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const [providerEditorTab, setProviderEditorTab] = useState<KnownProvider>("openrouter");
 
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>(DEFAULT_PROVIDER_STATUS);
-
-  const [openaiKey, setOpenaiKey] = useState("");
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
-  const [anthropicKey, setAnthropicKey] = useState("");
-  const [googleKey, setGoogleKey] = useState("");
-  const [deepseekKey, setDeepseekKey] = useState("");
-  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [providerKeyDrafts, setProviderKeyDrafts] =
+    useState<Record<ApiKeyProvider, ProviderKeyDraft>>(EMPTY_PROVIDER_KEY_DRAFTS);
   const [enableVisionVerification, setEnableVisionVerification] = useState(true);
+
+  const updateProviderKeyDraft = (provider: ApiKeyProvider, nextValue: string) => {
+    setProviderKeyDrafts((prev) => ({
+      ...prev,
+      [provider]: {
+        ...prev[provider],
+        draftValue: nextValue,
+        showMasked: false,
+      },
+    }));
+  };
+
+  const clearProviderPlaintext = () => {
+    setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
+  };
 
   const [modelDrafts, setModelDrafts] =
     useState<Record<ModelRoleField, ModelDraft>>(EMPTY_MODEL_DRAFTS);
@@ -338,13 +422,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     setLoading(true);
     getSettings()
       .then((settings) => {
-        const unmask = (value: string) => (value.includes("...") ? "" : value);
-        setOpenaiKey(unmask(settings.openai_api_key));
         setOpenaiBaseUrl(settings.openai_base_url || "https://api.openai.com/v1");
-        setAnthropicKey(unmask(settings.anthropic_api_key));
-        setGoogleKey(unmask(settings.google_api_key));
-        setDeepseekKey(unmask(settings.deepseek_api_key));
-        setOpenrouterKey(unmask(settings.openrouter_api_key));
+        setProviderKeyDrafts(createProviderKeyDraftsFromSettings(settings));
         setEnableVisionVerification(settings.enable_vision_verification);
         setProviderStatus({
           has_openai_key: settings.has_openai_key,
@@ -363,6 +442,12 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
       .catch(() => toast.error("加载设置失败"))
       .finally(() => setLoading(false));
   }, [open]);
+  useEffect(() => {
+    if (!open) {
+      setProviderEditorOpen(false);
+      clearProviderPlaintext();
+    }
+  }, [open]);
 
   const updateDraft = (field: ModelRoleField, patch: Partial<ModelDraft>) => {
     setModelDrafts((prev) => ({
@@ -379,7 +464,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     setProviderEditorOpen(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const response = await updateSettings({
@@ -389,11 +474,14 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         vision_model: modelValues.vision_model,
         fast_model: modelValues.fast_model,
         enable_vision_verification: enableVisionVerification,
-        ...(openaiKey && { openai_api_key: openaiKey }),
-        ...(anthropicKey && { anthropic_api_key: anthropicKey }),
-        ...(googleKey && { google_api_key: googleKey }),
-        ...(deepseekKey && { deepseek_api_key: deepseekKey }),
-        ...(openrouterKey && { openrouter_api_key: openrouterKey }),
+        ...Object.entries(providerKeyDrafts).reduce<Record<string, string>>((acc, [provider, state]) => {
+          if (state.showMasked || !state.draftValue || state.draftValue.includes("...")) {
+            return acc;
+          }
+          const field = API_KEY_FIELDS[provider as ApiKeyProvider];
+          acc[field] = state.draftValue;
+          return acc;
+        }, {}),
       });
 
       setProviderStatus({
@@ -410,6 +498,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         fast_model: parseModelDraft(response.fast_model),
       });
       setEnableVisionVerification(response.enable_vision_verification);
+      setProviderKeyDrafts(createProviderKeyDraftsFromSettings(response));
 
       toast.success("设置已保存");
       window.dispatchEvent(new Event("settings:updated"));
@@ -425,16 +514,37 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
           description: warnings.map((status) => status.message).join("；"),
         });
       }
+      return true;
     } catch {
       toast.error("保存失败");
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  const handleProviderEditorSave = async () => {
+    const saved = await handleSave();
+    if (!saved) return;
+    setProviderEditorOpen(false);
+    clearProviderPlaintext();
+  };
+  const handleSettingsDialogOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setProviderEditorOpen(false);
+      clearProviderPlaintext();
+    }
+    onOpenChange(nextOpen);
+  };
 
+  const handleProviderEditorOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      clearProviderPlaintext();
+    }
+    setProviderEditorOpen(nextOpen);
+  };
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleSettingsDialogOpenChange}>
         <DialogContent className="sm:max-w-3xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>设置</DialogTitle>
@@ -635,11 +745,11 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         </DialogContent>
       </Dialog>
 
-      <Dialog open={providerEditorOpen} onOpenChange={setProviderEditorOpen}>
+      <Dialog open={providerEditorOpen} onOpenChange={handleProviderEditorOpenChange}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>API 信息</DialogTitle>
-            <DialogDescription>统一管理各 Provider 的 API Key，修改后点击外层“保存设置”生效</DialogDescription>
+            <DialogDescription>统一管理各 Provider 的 API Key，可在当前窗口直接保存生效</DialogDescription>
           </DialogHeader>
 
           <Tabs value={providerEditorTab} onValueChange={(value) => setProviderEditorTab(value as KnownProvider)}>
@@ -654,8 +764,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
             <TabsContent value="openai" className="space-y-3 mt-4">
               <KeyField
                 label="API Key"
-                value={openaiKey}
-                onChange={setOpenaiKey}
+                value={getProviderKeyDisplayValue(providerKeyDrafts.openai)}
+                onChange={(value) => updateProviderKeyDraft("openai", value)}
                 provider="openai"
                 baseUrl={openaiBaseUrl}
                 placeholder="sk-..."
@@ -675,8 +785,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
             <TabsContent value="anthropic" className="space-y-3 mt-4">
               <KeyField
                 label="API Key"
-                value={anthropicKey}
-                onChange={setAnthropicKey}
+                value={getProviderKeyDisplayValue(providerKeyDrafts.anthropic)}
+                onChange={(value) => updateProviderKeyDraft("anthropic", value)}
                 provider="anthropic"
                 placeholder="sk-ant-..."
                 configured={providerStatus.has_anthropic_key}
@@ -686,8 +796,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
             <TabsContent value="google-gla" className="space-y-3 mt-4">
               <KeyField
                 label="API Key"
-                value={googleKey}
-                onChange={setGoogleKey}
+                value={getProviderKeyDisplayValue(providerKeyDrafts.google)}
+                onChange={(value) => updateProviderKeyDraft("google", value)}
                 provider="google"
                 placeholder="AIza..."
                 configured={providerStatus.has_google_key}
@@ -697,8 +807,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
             <TabsContent value="deepseek" className="space-y-3 mt-4">
               <KeyField
                 label="API Key"
-                value={deepseekKey}
-                onChange={setDeepseekKey}
+                value={getProviderKeyDisplayValue(providerKeyDrafts.deepseek)}
+                onChange={(value) => updateProviderKeyDraft("deepseek", value)}
                 provider="deepseek"
                 placeholder="sk-..."
                 configured={providerStatus.has_deepseek_key}
@@ -708,14 +818,24 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
             <TabsContent value="openrouter" className="space-y-3 mt-4">
               <KeyField
                 label="API Key"
-                value={openrouterKey}
-                onChange={setOpenrouterKey}
+                value={getProviderKeyDisplayValue(providerKeyDrafts.openrouter)}
+                onChange={(value) => updateProviderKeyDraft("openrouter", value)}
                 provider="openrouter"
                 placeholder="sk-or-..."
                 configured={providerStatus.has_openrouter_key}
               />
             </TabsContent>
           </Tabs>
+
+          <button
+            type="button"
+            onClick={handleProviderEditorSave}
+            disabled={saving}
+            className="w-full py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存 API 信息
+          </button>
         </DialogContent>
       </Dialog>
     </>
