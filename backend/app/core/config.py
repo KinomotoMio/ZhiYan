@@ -6,7 +6,21 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _find_project_root() -> Path:
+    for candidate in Path(__file__).resolve().parents:
+        if (
+            (candidate / "backend" / "pyproject.toml").exists()
+            and (candidate / "frontend" / "package.json").exists()
+            and (candidate / "shared").exists()
+        ):
+            return candidate
+
+    raise RuntimeError("Could not determine project root from backend config location.")
+
+
+PROJECT_ROOT = _find_project_root()
 
 
 class Settings(BaseSettings):
