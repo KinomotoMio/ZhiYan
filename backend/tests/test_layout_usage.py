@@ -1,7 +1,11 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.models.layout_registry import get_layout, get_layout_catalog
+from app.models.layout_registry import (
+    get_layout,
+    get_layout_catalog,
+    get_layout_variant_catalog,
+)
 from app.services.pipeline.layout_roles import (
     format_role_contract_for_prompt,
     get_layout_role,
@@ -92,6 +96,13 @@ def test_get_layout_catalog_includes_usage_metadata():
     assert "学术汇报" in catalog
     assert "商业汇报" in catalog
     assert "图标要点 (icon-points)" in catalog
+
+
+def test_get_layout_variant_catalog_describes_role_to_variant_tracks():
+    catalog = get_layout_variant_catalog()
+    assert "角色 `narrative` / 变体 `icon-points`" in catalog
+    assert "`bullet-with-icons`(图标要点)" in catalog
+    assert "角色 `evidence` / 变体 `default`" in catalog
 
 
 def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups():
@@ -276,10 +287,13 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
 
         assert len(agent.prompts) == 1
         prompt = agent.prompts[0]
+        assert "变体轨道:" in prompt
         assert "文档级 Usage 推断: 学术汇报" in prompt
         assert "页内 Usage:" in prompt
         assert "角色: evidence" in prompt
         assert "角色匹配布局: `metrics-slide`, `metrics-with-image`, `chart-with-bullets`, `table-info`" in prompt
+        assert "候选变体:" in prompt
+        assert "`default`(标准论据页:" in prompt
         assert "优先候选布局:" in prompt
         assert "`chart-with-bullets`" in prompt
 
@@ -327,9 +341,27 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
 
         agent = _FakeLayoutSelectorAgent(
             [
-                {"slide_number": 1, "layout_id": "intro-slide", "reason": "封面"},
-                {"slide_number": 2, "layout_id": "metrics-slide", "reason": "模型误选了数据布局"},
-                {"slide_number": 3, "layout_id": "thank-you", "reason": "结束页"},
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "variant": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "evidence",
+                    "variant": "default",
+                    "layout_id": "metrics-slide",
+                    "reason": "模型误选了数据布局",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "variant": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
             ]
         )
         monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
@@ -366,7 +398,80 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
         await stage_select_layouts(state)
 
         assert state.layout_selections[0]["layout_id"] == "intro-slide"
+        assert state.layout_selections[0]["group"] == "cover"
+        assert state.layout_selections[0]["variant"] == "default"
+        assert state.layout_selections[1]["group"] == "narrative"
+        assert state.layout_selections[1]["variant"] == "icon-points"
         assert state.layout_selections[1]["layout_id"] == "bullet-with-icons"
         assert state.layout_selections[2]["layout_id"] == "thank-you"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_maps_narrative_variant_to_layout(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "variant": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "narrative",
+                    "variant": "visual-explainer",
+                    "layout_id": "bullet-with-icons",
+                    "reason": "这页需要图文案例说明",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "variant": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这里包含一个产品案例与界面截图说明。",
+            topic="案例说明",
+            num_pages=3,
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "封面",
+                        "suggested_slide_role": "cover",
+                        "key_points": ["欢迎页"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "案例展示",
+                        "content_brief": "通过产品界面截图和案例讲解说明主要价值。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["案例背景", "界面截图", "价值说明"],
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "结束",
+                        "suggested_slide_role": "closing",
+                        "key_points": ["谢谢"],
+                    },
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["group"] == "narrative"
+        assert state.layout_selections[1]["variant"] == "visual-explainer"
+        assert state.layout_selections[1]["layout_id"] == "image-and-description"
 
     asyncio.run(_case())
