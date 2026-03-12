@@ -290,6 +290,26 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
 GRAY_200 = RGBColor(0xDB, 0xE2, 0xEA)
 GRAY_900 = RGBColor(0x0F, 0x17, 0x2A)
 
+OUTLINE_ACCENT_LEFT = Inches(0.82)
+OUTLINE_ACCENT_TOP = Inches(0.62)
+OUTLINE_ACCENT_WIDTH = Inches(0.72)
+OUTLINE_ACCENT_HEIGHT = Inches(0.06)
+OUTLINE_TITLE_TOP = Inches(0.90)
+OUTLINE_TITLE_WIDTH = Inches(5.4)
+OUTLINE_TITLE_HEIGHT = Inches(0.70)
+OUTLINE_SUBTITLE_TOP = Inches(1.62)
+OUTLINE_SUBTITLE_WIDTH = Inches(5.2)
+OUTLINE_SUBTITLE_HEIGHT = Inches(0.58)
+OUTLINE_DIVIDER_LEFT = Inches(6.25)
+OUTLINE_DIVIDER_TOP = Inches(1.18)
+OUTLINE_DIVIDER_WIDTH = Inches(6.0)
+OUTLINE_DIVIDER_HEIGHT = Inches(0.02)
+OUTLINE_LEFT_COLUMN_LEFT = Inches(0.82)
+OUTLINE_RIGHT_COLUMN_LEFT = Inches(6.90)
+OUTLINE_CONTENT_TOP = Inches(2.18)
+OUTLINE_COLUMN_WIDTH = Inches(5.45)
+OUTLINE_COLUMN_HEIGHT = Inches(4.75)
+
 
 def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RGBColor):
     shape = slide_obj.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
@@ -402,34 +422,34 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
     elif layout_id == "outline-slide":
         outline = normalize_outline_slide_data(d)
         left_sections, right_sections = split_outline_sections(outline["sections"])
-        _add_rule(slide_obj, Inches(0.82), Inches(0.62), Inches(0.72), Inches(0.06), color)
+        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
         _add_textbox(slide_obj,
-                     Inches(0.82), Inches(0.90), Inches(5.4), Inches(0.70),
+                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
                      _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
         subtitle = _as_text(outline.get("subtitle"))
         if subtitle:
             _add_textbox(slide_obj,
-                         Inches(0.82), Inches(1.62), Inches(5.2), Inches(0.58),
+                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
                          subtitle, font_size=14, color=GRAY_600)
-        _add_rule(slide_obj, Inches(6.25), Inches(1.18), Inches(6.0), Inches(0.02), GRAY_200)
+        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
         _render_outline_column(
             slide_obj,
             left_sections,
             0,
-            Inches(0.82),
-            Inches(2.18),
-            Inches(5.45),
-            Inches(4.75),
+            OUTLINE_LEFT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
             color,
         )
         _render_outline_column(
             slide_obj,
             right_sections,
             len(left_sections),
-            Inches(6.90),
-            Inches(2.18),
-            Inches(5.45),
-            Inches(4.75),
+            OUTLINE_RIGHT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
             color,
         )
     elif layout_id in ("bullet-with-icons", "bullet-icons-only"):
