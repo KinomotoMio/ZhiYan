@@ -100,10 +100,8 @@ def is_variant_pilot_role(role: str | None) -> bool:
 def format_role_contract_for_prompt() -> str:
     lines: list[str] = []
     for role in ROLE_ORDER:
-        pilot_note = "（首个 variant 试点组）" if is_variant_pilot_role(role) else ""
-        lines.append(
-            f"- `{role}`: {get_layout_role_label(role)}，{get_layout_role_description(role)}{pilot_note}"
-        )
+        pilot_note = "（首个 variant 试点组）" if role in VARIANT_PILOT_ROLES else ""
+        lines.append(f"- `{role}`: {ROLE_LABELS[role]}，{ROLE_DESCRIPTIONS[role]}{pilot_note}")
     return "\n".join(lines)
 
 
