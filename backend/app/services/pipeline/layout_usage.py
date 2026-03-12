@@ -5,16 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-USAGE_LABELS: dict[str, str] = {
-    "academic-report": "学术汇报",
-    "business-report": "商业汇报",
-    "sales-pitch": "销售提案",
-    "investor-pitch": "融资路演",
-    "training-workshop": "培训教学",
-    "conference-keynote": "会议演讲",
-    "project-status": "项目汇报",
-    "product-demo": "产品演示",
-}
+from app.services.pipeline.layout_metadata import get_layout_metadata_entry, load_layout_metadata
+
+USAGE_LABELS: dict[str, str] = dict(load_layout_metadata()["usageLabels"])
 
 USAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "academic-report": (
@@ -143,6 +136,12 @@ USAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 def get_usage_label(tag: str) -> str:
     return USAGE_LABELS.get(tag, tag)
+
+
+def get_layout_usage_tags(layout_id: str) -> tuple[str, ...]:
+    entry = get_layout_metadata_entry(layout_id)
+    usage = entry.get("usage", [])
+    return tuple(str(tag) for tag in usage)
 
 
 def format_usage_tags(tags: Sequence[str]) -> str:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
+from app.services.pipeline.layout_metadata import load_layout_metadata
+
 LayoutRole = Literal[
     "cover",
     "agenda",
@@ -16,47 +18,20 @@ LayoutRole = Literal[
     "closing",
 ]
 
-ROLE_ORDER: tuple[LayoutRole, ...] = (
-    "cover",
-    "agenda",
-    "section-divider",
-    "narrative",
-    "evidence",
-    "comparison",
-    "process",
-    "highlight",
-    "closing",
+_SHARED_METADATA = load_layout_metadata()
+
+ROLE_ORDER: tuple[LayoutRole, ...] = tuple(
+    cast(LayoutRole, role) for role in _SHARED_METADATA["roleOrder"]
 )
 
 ROLE_LABELS: dict[LayoutRole, str] = {
-    "cover": "封面",
-    "agenda": "目录",
-    "section-divider": "章节过渡",
-    "narrative": "叙述",
-    "evidence": "论据/数据",
-    "comparison": "对比",
-    "process": "流程",
-    "highlight": "强调",
-    "closing": "结尾",
+    cast(LayoutRole, role): label
+    for role, label in _SHARED_METADATA["roleLabels"].items()
 }
 
 LAYOUT_ID_TO_ROLE: dict[str, LayoutRole] = {
-    "intro-slide": "cover",
-    "outline-slide": "agenda",
-    "section-header": "section-divider",
-    "bullet-with-icons": "narrative",
-    "bullet-icons-only": "narrative",
-    "image-and-description": "narrative",
-    "metrics-slide": "evidence",
-    "metrics-with-image": "evidence",
-    "chart-with-bullets": "evidence",
-    "table-info": "evidence",
-    "two-column-compare": "comparison",
-    "challenge-outcome": "comparison",
-    "numbered-bullets": "process",
-    "timeline": "process",
-    "quote-slide": "highlight",
-    "thank-you": "closing",
+    layout_id: cast(LayoutRole, metadata["role"])
+    for layout_id, metadata in _SHARED_METADATA["layouts"].items()
 }
 
 LEGACY_CATEGORY_TO_ROLE: dict[str, LayoutRole] = {

@@ -1,0 +1,197 @@
+{
+  "roleOrder": [
+    "cover",
+    "agenda",
+    "section-divider",
+    "narrative",
+    "evidence",
+    "comparison",
+    "process",
+    "highlight",
+    "closing"
+  ],
+  "roleLabels": {
+    "cover": "封面",
+    "agenda": "目录",
+    "section-divider": "章节过渡",
+    "narrative": "叙述",
+    "evidence": "论据/数据",
+    "comparison": "对比",
+    "process": "流程",
+    "highlight": "强调",
+    "closing": "结尾"
+  },
+  "usageLabels": {
+    "academic-report": "学术汇报",
+    "business-report": "商业汇报",
+    "sales-pitch": "销售提案",
+    "investor-pitch": "融资路演",
+    "training-workshop": "培训教学",
+    "conference-keynote": "会议演讲",
+    "project-status": "项目汇报",
+    "product-demo": "产品演示"
+  },
+  "layouts": {
+    "intro-slide": {
+      "role": "cover",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "outline-slide": {
+      "role": "agenda",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "investor-pitch"
+      ]
+    },
+    "section-header": {
+      "role": "section-divider",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "bullet-with-icons": {
+      "role": "narrative",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo",
+        "conference-keynote"
+      ]
+    },
+    "bullet-icons-only": {
+      "role": "narrative",
+      "usage": [
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "product-demo"
+      ]
+    },
+    "image-and-description": {
+      "role": "narrative",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "conference-keynote",
+        "product-demo"
+      ]
+    },
+    "metrics-slide": {
+      "role": "evidence",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "project-status"
+      ]
+    },
+    "metrics-with-image": {
+      "role": "evidence",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo"
+      ]
+    },
+    "chart-with-bullets": {
+      "role": "evidence",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "project-status"
+      ]
+    },
+    "table-info": {
+      "role": "evidence",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "project-status"
+      ]
+    },
+    "two-column-compare": {
+      "role": "comparison",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo"
+      ]
+    },
+    "challenge-outcome": {
+      "role": "comparison",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "numbered-bullets": {
+      "role": "process",
+      "usage": [
+        "training-workshop",
+        "project-status",
+        "business-report",
+        "product-demo"
+      ]
+    },
+    "timeline": {
+      "role": "process",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status"
+      ]
+    },
+    "quote-slide": {
+      "role": "highlight",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "conference-keynote"
+      ]
+    },
+    "thank-you": {
+      "role": "closing",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    }
+  }
+}
