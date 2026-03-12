@@ -481,9 +481,12 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
             d.get("title", ""), font_size=36, bold=True
         )
-        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
-        compact = len(items) >= 7 if isinstance(items, list) else False
-        if isinstance(items, list):
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        compact = len(items) >= 7
+        if items:
             card_width = 5.45
             card_height = 0.98 if compact else 1.08
             start_y = 1.85
