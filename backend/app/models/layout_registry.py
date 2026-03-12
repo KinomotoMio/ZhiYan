@@ -232,27 +232,20 @@ def get_layout_catalog() -> str:
 
 def get_layout_variant_catalog() -> str:
     """生成 role -> variant -> layout 的决策清单文本。"""
-    lines: list[str] = []
-    seen_pairs: set[tuple[str, str]] = set()
-
+    grouped_layouts: dict[tuple[str, str], list[LayoutEntry]] = {}
     for entry in _LAYOUTS:
         key = (entry.group, entry.variant)
-        if key in seen_pairs:
-            continue
-        seen_pairs.add(key)
+        grouped_layouts.setdefault(key, []).append(entry)
 
-        variant_entries = [
-            candidate
-            for candidate in _LAYOUTS
-            if candidate.group == entry.group and candidate.variant == entry.variant
-        ]
-        variant_label = get_layout_variant_label(entry.group, entry.variant)
-        variant_description = get_layout_variant_description(entry.group, entry.variant)
+    lines: list[str] = []
+    for (group, variant), variant_entries in grouped_layouts.items():
+        variant_label = get_layout_variant_label(group, variant)
+        variant_description = get_layout_variant_description(group, variant)
         layouts_text = ", ".join(
             f"`{candidate.id}`({candidate.name})" for candidate in variant_entries
         )
         lines.append(
-            f"- 角色 `{entry.group}` / 变体 `{entry.variant}` ({variant_label}): "
+            f"- 角色 `{group}` / 变体 `{variant}` ({variant_label}): "
             f"{variant_description} 可用布局: {layouts_text}"
         )
 
