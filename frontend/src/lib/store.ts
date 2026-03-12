@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type { SessionSummary, WorkspaceId } from "@/lib/api";
+import type { LayoutRole } from "@/lib/layout-role";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
 import {
   buildShellSlides,
@@ -29,7 +30,8 @@ function shouldSyncGeneratedSessionTitle(
 export interface OutlineItem {
   slide_number: number;
   title: string;
-  suggested_slide_role: string;
+  suggested_slide_role: LayoutRole;
+  // Legacy compatibility for persisted local state or older API payloads.
   suggested_layout_category?: string;
 }
 
