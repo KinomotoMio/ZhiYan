@@ -1,4 +1,4 @@
-import layoutMetadataJson from "../../../shared/layout-metadata.json";
+import layoutMetadataJson from "@/generated/layout-metadata.json";
 
 export type LayoutUsageTag =
   | "academic-report"
