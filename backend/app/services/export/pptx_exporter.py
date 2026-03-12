@@ -404,15 +404,18 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
             d.get("title", ""), font_size=36, bold=True
         )
-        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
-        count = min(max(len(items), 1), 4) if isinstance(items, list) else 1
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        count = min(max(len(items), 1), 4)
         compact = count == 4
         gutter = 0.18 if compact else 0.28
         content_width = 11.4
         column_width = (content_width - gutter * (count - 1)) / count
         base_left = 0.8
 
-        for idx, item in enumerate(items[:count] if isinstance(items, list) else []):
+        for idx, item in enumerate(items[:count]):
             left = base_left + idx * (column_width + gutter)
             title = _item_text(item)
             desc = _item_description(item)
