@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.services.pipeline.layout_roles import get_layout_role
 from app.services.pipeline.layout_variants import (
     get_layout_variant,
+    get_layout_variant_description,
     get_layout_variant_label,
 )
 from app.services.pipeline.layout_usage import format_usage_tags, get_layout_usage_tags
@@ -227,6 +228,43 @@ def get_layout_catalog() -> str:
             f"{entry.description}"
         )
     return "\n".join(lines)
+
+
+def get_layout_variant_catalog() -> str:
+    """生成 role -> variant -> layout 的决策清单文本。"""
+    lines: list[str] = []
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for entry in _LAYOUTS:
+        key = (entry.group, entry.variant)
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+
+        variant_entries = [
+            candidate
+            for candidate in _LAYOUTS
+            if candidate.group == entry.group and candidate.variant == entry.variant
+        ]
+        variant_label = get_layout_variant_label(entry.group, entry.variant)
+        variant_description = get_layout_variant_description(entry.group, entry.variant)
+        layouts_text = ", ".join(
+            f"`{candidate.id}`({candidate.name})" for candidate in variant_entries
+        )
+        lines.append(
+            f"- 角色 `{entry.group}` / 变体 `{entry.variant}` ({variant_label}): "
+            f"{variant_description} 可用布局: {layouts_text}"
+        )
+
+    return "\n".join(lines)
+
+
+def get_layouts_for_role(role: str) -> list[LayoutEntry]:
+    return [entry for entry in _LAYOUTS if entry.group == role]
+
+
+def get_layouts_for_role_variant(role: str, variant: str) -> list[LayoutEntry]:
+    return [entry for entry in _LAYOUTS if entry.group == role and entry.variant == variant]
 
 
 def get_layout_ids() -> list[str]:
