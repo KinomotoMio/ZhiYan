@@ -35,70 +35,6 @@
   "variantPilotRoles": [
     "narrative"
   ],
-  "variantsByRole": {
-    "cover": {
-      "default": {
-        "label": "标准封面",
-        "description": "当前仅保留一个封面变体，用于建立开场身份与主题信息。"
-      }
-    },
-    "agenda": {
-      "default": {
-        "label": "标准目录",
-        "description": "当前仅保留一个目录变体，用于交代章节骨架。"
-      }
-    },
-    "section-divider": {
-      "default": {
-        "label": "标准章节过渡",
-        "description": "当前仅保留一个章节过渡变体，用于大章节切换。"
-      }
-    },
-    "narrative": {
-      "icon-points": {
-        "label": "图标要点",
-        "description": "以 3-4 个图标化要点展开正文，适合能力、优势或结论分点说明。"
-      },
-      "visual-explainer": {
-        "label": "图文说明",
-        "description": "以单张主视觉配合说明文字展开正文，适合案例、场景或产品特性介绍。"
-      },
-      "capability-grid": {
-        "label": "能力网格",
-        "description": "以多图标标签矩阵展示并列能力点，适合能力清单、模块总览或功能地图。"
-      }
-    },
-    "evidence": {
-      "default": {
-        "label": "标准论据页",
-        "description": "当前仅保留一个论据页变体，统一承载数据、指标或表格内容。"
-      }
-    },
-    "comparison": {
-      "default": {
-        "label": "标准对比页",
-        "description": "当前仅保留一个对比页变体，用于表达方案或结论之间的对照。"
-      }
-    },
-    "process": {
-      "default": {
-        "label": "标准流程页",
-        "description": "当前仅保留一个流程页变体，用于表达步骤与时间顺序。"
-      }
-    },
-    "highlight": {
-      "default": {
-        "label": "标准强调页",
-        "description": "当前仅保留一个强调页变体，用于突出单句观点或引用。"
-      }
-    },
-    "closing": {
-      "default": {
-        "label": "标准结尾页",
-        "description": "当前仅保留一个结尾页变体，用于收尾与致谢。"
-      }
-    }
-  },
   "usageLabels": {
     "academic-report": "学术汇报",
     "business-report": "商业汇报",
@@ -112,7 +48,6 @@
   "layouts": {
     "intro-slide": {
       "role": "cover",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -126,7 +61,6 @@
     },
     "outline-slide": {
       "role": "agenda",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -138,7 +72,6 @@
     },
     "section-header": {
       "role": "section-divider",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -150,7 +83,6 @@
     },
     "bullet-with-icons": {
       "role": "narrative",
-      "variant": "icon-points",
       "usage": [
         "business-report",
         "sales-pitch",
@@ -161,7 +93,6 @@
     },
     "bullet-icons-only": {
       "role": "narrative",
-      "variant": "capability-grid",
       "usage": [
         "business-report",
         "training-workshop",
@@ -171,7 +102,6 @@
     },
     "image-and-description": {
       "role": "narrative",
-      "variant": "visual-explainer",
       "usage": [
         "business-report",
         "sales-pitch",
@@ -182,7 +112,6 @@
     },
     "metrics-slide": {
       "role": "evidence",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -192,7 +121,6 @@
     },
     "metrics-with-image": {
       "role": "evidence",
-      "variant": "default",
       "usage": [
         "business-report",
         "sales-pitch",
@@ -202,7 +130,6 @@
     },
     "chart-with-bullets": {
       "role": "evidence",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -212,7 +139,6 @@
     },
     "table-info": {
       "role": "evidence",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -222,7 +148,6 @@
     },
     "two-column-compare": {
       "role": "comparison",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -233,7 +158,6 @@
     },
     "challenge-outcome": {
       "role": "comparison",
-      "variant": "default",
       "usage": [
         "business-report",
         "sales-pitch",
@@ -244,7 +168,6 @@
     },
     "numbered-bullets": {
       "role": "process",
-      "variant": "default",
       "usage": [
         "training-workshop",
         "project-status",
@@ -254,7 +177,6 @@
     },
     "timeline": {
       "role": "process",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -265,7 +187,6 @@
     },
     "quote-slide": {
       "role": "highlight",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",
@@ -275,7 +196,6 @@
     },
     "thank-you": {
       "role": "closing",
-      "variant": "default",
       "usage": [
         "academic-report",
         "business-report",

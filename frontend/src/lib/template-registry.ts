@@ -25,14 +25,12 @@ import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLa
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
 import { getLayoutRole, type LayoutRole } from "@/lib/layout-role";
 import { getLayoutUsage, type LayoutUsageTag } from "@/lib/layout-usage";
-import { getLayoutVariant, type LayoutVariant } from "@/lib/layout-variant";
 
 export interface LayoutEntry {
   id: string;
   name: string;
   description: string;
   group: LayoutRole;
-  variant: LayoutVariant;
   usage: LayoutUsageTag[];
   component: ComponentType<{ data: Record<string, unknown> }>;
 }
@@ -77,7 +75,6 @@ function ensureInitialized() {
       name: mod.layoutName || mod.layoutId,
       description: mod.layoutDescription || "",
       group: getLayoutRole(mod.layoutId),
-      variant: getLayoutVariant(mod.layoutId),
       usage: getLayoutUsage(mod.layoutId),
       component: mod.default,
     });

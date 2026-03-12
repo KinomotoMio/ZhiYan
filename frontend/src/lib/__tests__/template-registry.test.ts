@@ -10,7 +10,6 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   const outline = getLayout("outline-slide");
   assert.ok(outline);
   assert.equal(outline.group, "agenda");
-  assert.equal(outline.variant, "default");
   assert.deepEqual(outline.usage, [
     "academic-report",
     "business-report",
@@ -24,31 +23,18 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   const metrics = layouts.find((entry) => entry.id === "metrics-slide");
   assert.ok(metrics);
   assert.equal(metrics.group, "evidence");
-  assert.equal(metrics.variant, "default");
   assert.equal(metrics.usage.includes("academic-report"), true);
   assert.equal(metrics.usage.includes("project-status"), true);
-
-  const narrative = layouts.find((entry) => entry.id === "bullet-with-icons");
-  assert.ok(narrative);
-  assert.equal(narrative.group, "narrative");
-  assert.equal(narrative.variant, "icon-points");
 });
 
-test("layout catalog renders role-based group and variant metadata", () => {
+test("layout catalog renders role-based group column and usage chips", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /<th[^>]*>Group<\/th>/);
-  assert.match(html, /<th[^>]*>Variant<\/th>/);
   assert.match(html, /Role Contract/);
-  assert.match(html, /Narrative Variant Pilot/);
   assert.match(html, /封面/);
   assert.match(html, /目录/);
   assert.match(html, /Variant pilot/);
-  assert.match(html, /图标要点/);
-  assert.match(html, /图文说明/);
-  assert.match(html, /能力网格/);
-  assert.match(html, /icon-points/);
-  assert.match(html, /default/);
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
