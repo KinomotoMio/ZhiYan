@@ -4,10 +4,14 @@
   "private": true,
   "packageManager": "pnpm@10.29.2",
   "scripts": {
+    "predev": "node ./scripts/sync-layout-metadata.mjs",
     "dev": "next dev",
+    "prebuild": "node ./scripts/sync-layout-metadata.mjs",
     "build": "next build",
     "start": "next start",
+    "prelint": "node ./scripts/sync-layout-metadata.mjs",
     "lint": "eslint",
+    "pretest": "node ./scripts/sync-layout-metadata.mjs",
     "test": "node ./scripts/run-tests.mjs"
   },
   "dependencies": {
@@ -40,5 +44,4 @@
     "typescript": "^5"
   }
 }
-
 

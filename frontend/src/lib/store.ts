@@ -28,7 +28,8 @@ function shouldSyncGeneratedSessionTitle(
 export interface OutlineItem {
   slide_number: number;
   title: string;
-  suggested_layout_category: string;
+  suggested_slide_role: string;
+  suggested_layout_category?: string;
 }
 
 export interface ChatMessage {

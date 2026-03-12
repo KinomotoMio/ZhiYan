@@ -75,6 +75,7 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     from app.core.config import settings
     from app.services.document.parser import estimate_tokens
     from app.services.agents.outline_synthesizer import outline_synthesizer_agent
+    from app.services.pipeline.layout_roles import normalize_outline_items_roles
 
     if progress:
         await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
@@ -112,7 +113,12 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     try:
         result = await outline_synthesizer_agent.run(prompt)
         usage = result.usage()
-        state.outline = result.output.model_dump()
+        outline = result.output.model_dump()
+        outline["items"] = normalize_outline_items_roles(
+            outline.get("items", []),
+            num_pages=state.num_pages,
+        )
+        state.outline = outline
         logger.info(
             "Outline call done",
             extra={
@@ -147,19 +153,57 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
     t0 = time.monotonic()
 
-    from app.models.layout_registry import get_layout_catalog, get_layout_ids
+    from app.models.layout_registry import get_all_layouts, get_layout_catalog, get_layout_ids
+    from app.services.pipeline.layout_roles import (
+        get_default_layout_for_role,
+        get_layout_role,
+        get_outline_item_role,
+        normalize_outline_items_roles,
+    )
+    from app.services.pipeline.layout_usage import (
+        format_usage_tags,
+        infer_document_and_slide_usage,
+        rank_layouts_by_usage,
+    )
 
-    outline_items = state.outline.get("items", [])
+    outline_items = normalize_outline_items_roles(
+        state.outline.get("items", []),
+        num_pages=state.num_pages,
+    )
+    state.outline["items"] = outline_items
     valid_ids = set(get_layout_ids())
+    layout_entries = get_all_layouts()
+    document_usage_tags, slide_usage_tags = infer_document_and_slide_usage(
+        state.topic,
+        state.raw_content,
+        outline_items,
+    )
+    state.document_metadata["layout_usage"] = {
+        "document_tags": list(document_usage_tags),
+        "slide_tags": {str(k): list(v) for k, v in slide_usage_tags.items()},
+    }
 
     items_text = "\n".join(
-        f"- 第{item['slide_number']}页: {item['title']} "
-        f"(类别: {item.get('suggested_layout_category', 'bullets')}, "
-        f"要点: {', '.join(item.get('key_points', [])[:3])})"
+        _format_outline_item_for_layout_prompt(
+            item,
+            document_usage_tags=document_usage_tags,
+            slide_usage_tags=slide_usage_tags,
+            layout_entries=layout_entries,
+            format_usage_tags_fn=format_usage_tags,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage,
+        )
         for item in outline_items
     )
+    document_usage_text = format_usage_tags(document_usage_tags)
     prompt = (
         f"可用布局列表:\n{get_layout_catalog()}\n\n"
+        f"文档级 Usage 推断: {document_usage_text}\n"
+        "选择规则:\n"
+        "- 必须先满足每页的 suggested_slide_role 页面角色\n"
+        "- 先在角色匹配的布局中做选择，再参考 usage 排序\n"
+        "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
+        "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
+        "- 当 usage 未命中时，按内容结构与叙事节奏选择\n\n"
         f"大纲:\n{items_text}\n\n"
         f"请为每页选择最合适的 layout_id。"
     )
@@ -173,10 +217,23 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         selections = result.output.model_dump()["slides"]
 
         for sel in selections:
-            if sel["layout_id"] not in valid_ids:
-                item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
-                sel["layout_id"] = _category_to_layout(
-                    item.get("suggested_layout_category", "bullets") if item else "bullets"
+            item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
+            role = get_outline_item_role(item or {})
+            effective_usage = slide_usage_tags.get(sel["slide_number"], ()) or document_usage_tags
+            candidate_entries = _rank_role_matched_layouts(
+                layout_entries,
+                role=role,
+                usage_tags=effective_usage,
+                rank_layouts_by_usage_fn=rank_layouts_by_usage,
+            )
+            candidate_ids = {entry.id for entry in candidate_entries}
+            if (
+                sel["layout_id"] not in valid_ids
+                or sel["layout_id"] not in candidate_ids
+                or get_layout_role(sel["layout_id"]) != role
+            ):
+                sel["layout_id"] = (
+                    candidate_entries[0].id if candidate_entries else get_default_layout_for_role(role)
                 )
 
         state.layout_selections = selections
@@ -194,18 +251,62 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         )
     except Exception as e:
         logger.warning(
-            "Layout selection failed: %s, using category mapping",
+            "Layout selection failed: %s, using role mapping",
             e,
             extra={"job_id": state.job_id, "stage": "layout", "error_type": type(e).__name__},
         )
         state.layout_selections = [
             {
                 "slide_number": item["slide_number"],
-                "layout_id": _category_to_layout(item.get("suggested_layout_category", "bullets")),
+                "layout_id": _role_to_default_layout(get_outline_item_role(item)),
                 "reason": "fallback",
             }
             for item in outline_items
         ]
+
+
+def _format_outline_item_for_layout_prompt(
+    item: dict[str, Any],
+    *,
+    document_usage_tags: tuple[str, ...],
+    slide_usage_tags: dict[int, tuple[str, ...]],
+    layout_entries: list[Any],
+    format_usage_tags_fn,
+    rank_layouts_by_usage_fn,
+) -> str:
+    from app.services.pipeline.layout_roles import get_default_layout_for_role, get_outline_item_role
+
+    slide_number = int(item.get("slide_number", 0))
+    key_points = item.get("key_points", [])
+    preview_points = ", ".join(str(point) for point in key_points[:3])
+    role = get_outline_item_role(item)
+    current_usage = slide_usage_tags.get(slide_number, ())
+    effective_usage = current_usage or document_usage_tags
+    usage_text = format_usage_tags_fn(current_usage)
+    if not current_usage and document_usage_tags:
+        usage_text = f"继承文档级({format_usage_tags_fn(document_usage_tags)})"
+
+    role_matched = [entry for entry in layout_entries if str(entry.group) == role]
+    if not role_matched:
+        fallback_layout = get_default_layout_for_role(role)
+        role_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+    preferred = (
+        rank_layouts_by_usage_fn(role_matched, effective_usage, limit=4) if effective_usage else []
+    )
+    role_matched_text = ", ".join(f"`{entry.id}`" for entry in role_matched) or "无角色匹配布局"
+    if preferred:
+        preferred_text = ", ".join(f"`{entry.id}`({entry.name})" for entry in preferred)
+    else:
+        preferred_text = "无明确 usage 候选，按结构选择"
+
+    return (
+        f"- 第{slide_number}页: {item['title']} "
+        f"(角色: {role}, "
+        f"要点: {preview_points}, "
+        f"页内 Usage: {usage_text}, "
+        f"角色匹配布局: {role_matched_text}, "
+        f"优先候选布局: {preferred_text})"
+    )
 
 
 async def stage_generate_slides(
@@ -490,24 +591,31 @@ async def stage_fix_slides_once(
                 }
             )
 
+def _rank_role_matched_layouts(
+    layout_entries: list[Any],
+    *,
+    role: str,
+    usage_tags: tuple[str, ...],
+    rank_layouts_by_usage_fn,
+) -> list[Any]:
+    from app.services.pipeline.layout_roles import get_default_layout_for_role
+
+    role_matched = [entry for entry in layout_entries if str(entry.group) == role]
+    if not role_matched:
+        fallback_layout = get_default_layout_for_role(role)
+        role_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+
+    if usage_tags:
+        ranked = rank_layouts_by_usage_fn(role_matched, usage_tags, limit=len(role_matched))
+        if ranked:
+            return ranked
+    return role_matched
 
 
-def _category_to_layout(category: str) -> str:
-    mapping = {
-        "intro": "intro-slide",
-        "section": "section-header",
-        "bullets": "bullet-with-icons",
-        "metrics": "metrics-slide",
-        "comparison": "two-column-compare",
-        "chart": "chart-with-bullets",
-        "table": "table-info",
-        "timeline": "timeline",
-        "quote": "quote-slide",
-        "image": "image-and-description",
-        "challenge": "challenge-outcome",
-        "thankyou": "thank-you",
-    }
-    return mapping.get(category, "bullet-with-icons")
+def _role_to_default_layout(role: str) -> str:
+    from app.services.pipeline.layout_roles import get_default_layout_for_role
+
+    return get_default_layout_for_role(role)
 
 
 def _extract_slide_context(

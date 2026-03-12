@@ -251,7 +251,7 @@ def test_verify_timeout_persists_partial_presentation_and_emits_payload(monkeypa
                     {
                         "slide_number": 1,
                         "title": "封面",
-                        "suggested_layout_category": "intro",
+                        "suggested_slide_role": "cover",
                         "key_points": [],
                     }
                 ]
