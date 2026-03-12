@@ -57,3 +57,32 @@ test("two-column-compare string columns are repaired", () => {
   assert.doesNotMatch(html, /该页数据异常，可重新生成/);
   assert.match(html, /比较维度|要点 A|要点 B/);
 });
+
+test("bullet-with-icons placeholder cards collapse into an explicit status panel", () => {
+  const placeholderSlide: Slide = {
+    slideId: "slide-4",
+    layoutType: "bullet-with-icons",
+    layoutId: "bullet-with-icons",
+    contentData: {
+      title: "关键发现",
+      items: [
+        {
+          icon: { query: "star" },
+          title: "内容生成中",
+          description: "内容生成中",
+        },
+        {
+          icon: { query: "star" },
+          title: "内容生成中",
+          description: "内容生成中",
+        },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={placeholderSlide} />);
+  assert.match(html, /内容暂未就绪/);
+  assert.match(html, /该页正在生成或已回退，可稍后重试/);
+  assert.equal((html.match(/内容生成中/g) ?? []).length, 0);
+});

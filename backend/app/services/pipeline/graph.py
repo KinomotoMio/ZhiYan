@@ -729,10 +729,51 @@ def _score_paragraph(
     return score
 
 
+def _normalize_fallback_points(raw_points: Any) -> list[str]:
+    if not isinstance(raw_points, list):
+        return []
+    points: list[str] = []
+    for value in raw_points:
+        text = str(value).strip() if value is not None else ""
+        if text:
+            points.append(text)
+    return points
+
+
+def _is_placeholder_point(text: str) -> bool:
+    return text.strip() in {"内容生成中", "待补充", "自动回退生成"}
+
+
+def _bullet_with_icons_fallback(item_title: str, points: list[str]) -> dict[str, Any]:
+    meaningful_points = [point for point in points if not _is_placeholder_point(point)]
+    if not meaningful_points:
+        return {
+            "title": item_title,
+            "items": [],
+            "status": {
+                "title": "内容暂未就绪",
+                "message": "该页正在生成或已回退，可稍后重试。",
+            },
+        }
+
+    items = meaningful_points[:4]
+    return {
+        "title": item_title,
+        "items": [
+            {
+                "icon": {"query": "star"},
+                "title": point[:25],
+                "description": point,
+            }
+            for point in items
+        ],
+    }
+
+
 
 def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     title = item.get("title", "幻灯片")
-    points = item.get("key_points", ["内容生成中"])
+    points = _normalize_fallback_points(item.get("key_points"))
 
     if layout_id == "intro-slide":
         return {"title": title, "subtitle": "由知演 AI 智能生成"}
@@ -741,16 +782,7 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     if layout_id == "section-header":
         return {"title": title}
     if layout_id == "bullet-with-icons":
-        items = points[:4] if points else ["内容生成中"]
-        while len(items) < 3:
-            items.append("内容生成中")
-        return {
-            "title": title,
-            "items": [
-                {"icon": {"query": "star"}, "title": p[:25], "description": p}
-                for p in items
-            ],
-        }
+        return _bullet_with_icons_fallback(title, points)
     if layout_id == "numbered-bullets":
         items = points[:5] if points else ["内容生成中"]
         while len(items) < 3:
