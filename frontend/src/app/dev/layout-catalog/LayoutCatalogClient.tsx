@@ -28,6 +28,7 @@ import {
   getUsageLabel,
   type LayoutUsageTag,
 } from "@/lib/layout-usage";
+import { compareLayoutNames } from "@/lib/sort";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -415,7 +416,12 @@ const entries: CatalogEntry[] = [
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
   if (roleDelta !== 0) return roleDelta;
-  return left.module.layoutName.localeCompare(right.module.layoutName);
+  return compareLayoutNames(
+    left.module.layoutName,
+    right.module.layoutName,
+    left.module.layoutId,
+    right.module.layoutId,
+  );
 });
 
 function PreviewFrame({

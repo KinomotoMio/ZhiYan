@@ -17,6 +17,7 @@ import {
   setSessionTopicDraft,
   type SessionTopicDrafts,
 } from "@/lib/session-topic-drafts";
+import { compareUpdatedAt } from "@/lib/sort";
 
 function shouldSyncGeneratedSessionTitle(
   session: SessionSummary | undefined,
@@ -187,7 +188,7 @@ export const useAppStore = create<AppState>()(
             : [session, ...state.sessions];
           next.sort((a, b) => {
             if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-            return b.updated_at.localeCompare(a.updated_at);
+            return compareUpdatedAt(a.updated_at, b.updated_at);
           });
           return { sessions: next };
         }),
