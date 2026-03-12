@@ -32,6 +32,13 @@ import {
   getUsageLabel,
   type LayoutUsageTag,
 } from "@/lib/layout-usage";
+import {
+  getLayoutVariant,
+  getLayoutVariantDescription,
+  getLayoutVariantLabel,
+  getLayoutVariantsForRole,
+  type LayoutVariant,
+} from "@/lib/layout-variant";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -45,6 +52,7 @@ type CatalogEntry = {
   fileName: string;
   schemaName: string;
   group: LayoutRole;
+  variant: LayoutVariant;
   usage: LayoutUsageTag[];
   keyFields: string[];
   data: Record<string, unknown>;
@@ -77,6 +85,7 @@ const entries: CatalogEntry[] = [
     fileName: "IntroSlideLayout.tsx",
     schemaName: "IntroSlideData",
     group: getLayoutRole("intro-slide"),
+    variant: getLayoutVariant("intro-slide"),
     usage: getLayoutUsage("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
     data: {
@@ -91,6 +100,7 @@ const entries: CatalogEntry[] = [
     fileName: "OutlineSlideLayout.tsx",
     schemaName: "OutlineSlideData",
     group: getLayoutRole("outline-slide"),
+    variant: getLayoutVariant("outline-slide"),
     usage: getLayoutUsage("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
     data: {
@@ -122,6 +132,7 @@ const entries: CatalogEntry[] = [
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
     group: getLayoutRole("section-header"),
+    variant: getLayoutVariant("section-header"),
     usage: getLayoutUsage("section-header"),
     keyFields: ["title", "subtitle?"],
     data: {
@@ -134,6 +145,7 @@ const entries: CatalogEntry[] = [
     fileName: "BulletWithIconsLayout.tsx",
     schemaName: "BulletWithIconsData",
     group: getLayoutRole("bullet-with-icons"),
+    variant: getLayoutVariant("bullet-with-icons"),
     usage: getLayoutUsage("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
     data: {
@@ -164,6 +176,7 @@ const entries: CatalogEntry[] = [
     fileName: "ImageAndDescriptionLayout.tsx",
     schemaName: "ImageAndDescriptionData",
     group: getLayoutRole("image-and-description"),
+    variant: getLayoutVariant("image-and-description"),
     usage: getLayoutUsage("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
     data: {
@@ -183,6 +196,7 @@ const entries: CatalogEntry[] = [
     fileName: "BulletIconsOnlyLayout.tsx",
     schemaName: "BulletIconsOnlyData",
     group: getLayoutRole("bullet-icons-only"),
+    variant: getLayoutVariant("bullet-icons-only"),
     usage: getLayoutUsage("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
     data: {
@@ -202,6 +216,7 @@ const entries: CatalogEntry[] = [
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
     group: getLayoutRole("metrics-slide"),
+    variant: getLayoutVariant("metrics-slide"),
     usage: getLayoutUsage("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
     data: {
@@ -218,6 +233,7 @@ const entries: CatalogEntry[] = [
     fileName: "MetricsWithImageLayout.tsx",
     schemaName: "MetricsWithImageData",
     group: getLayoutRole("metrics-with-image"),
+    variant: getLayoutVariant("metrics-with-image"),
     usage: getLayoutUsage("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
     data: {
@@ -247,6 +263,7 @@ const entries: CatalogEntry[] = [
     fileName: "ChartWithBulletsLayout.tsx",
     schemaName: "ChartWithBulletsData",
     group: getLayoutRole("chart-with-bullets"),
+    variant: getLayoutVariant("chart-with-bullets"),
     usage: getLayoutUsage("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
     data: {
@@ -268,6 +285,7 @@ const entries: CatalogEntry[] = [
     fileName: "TableInfoLayout.tsx",
     schemaName: "TableInfoData",
     group: getLayoutRole("table-info"),
+    variant: getLayoutVariant("table-info"),
     usage: getLayoutUsage("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
     data: {
@@ -286,6 +304,7 @@ const entries: CatalogEntry[] = [
     fileName: "TwoColumnCompareLayout.tsx",
     schemaName: "TwoColumnCompareData",
     group: getLayoutRole("two-column-compare"),
+    variant: getLayoutVariant("two-column-compare"),
     usage: getLayoutUsage("two-column-compare"),
     keyFields: ["title", "left", "right"],
     data: {
@@ -311,6 +330,7 @@ const entries: CatalogEntry[] = [
     fileName: "ChallengeOutcomeLayout.tsx",
     schemaName: "ChallengeOutcomeData",
     group: getLayoutRole("challenge-outcome"),
+    variant: getLayoutVariant("challenge-outcome"),
     usage: getLayoutUsage("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
     data: {
@@ -332,6 +352,7 @@ const entries: CatalogEntry[] = [
     fileName: "NumberedBulletsLayout.tsx",
     schemaName: "NumberedBulletsData",
     group: getLayoutRole("numbered-bullets"),
+    variant: getLayoutVariant("numbered-bullets"),
     usage: getLayoutUsage("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
     data: {
@@ -359,6 +380,7 @@ const entries: CatalogEntry[] = [
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
     group: getLayoutRole("timeline"),
+    variant: getLayoutVariant("timeline"),
     usage: getLayoutUsage("timeline"),
     keyFields: ["title", "events[3-6]"],
     data: {
@@ -392,6 +414,7 @@ const entries: CatalogEntry[] = [
     fileName: "QuoteSlideLayout.tsx",
     schemaName: "QuoteSlideData",
     group: getLayoutRole("quote-slide"),
+    variant: getLayoutVariant("quote-slide"),
     usage: getLayoutUsage("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
     data: {
@@ -406,6 +429,7 @@ const entries: CatalogEntry[] = [
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
     group: getLayoutRole("thank-you"),
+    variant: getLayoutVariant("thank-you"),
     usage: getLayoutUsage("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
     data: {
@@ -419,8 +443,15 @@ const entries: CatalogEntry[] = [
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
   if (roleDelta !== 0) return roleDelta;
+  const variantDelta = getLayoutVariantLabel(
+    left.group,
+    left.variant,
+  ).localeCompare(getLayoutVariantLabel(right.group, right.variant));
+  if (variantDelta !== 0) return variantDelta;
   return left.module.layoutName.localeCompare(right.module.layoutName);
 });
+
+const narrativeVariants = getLayoutVariantsForRole("narrative");
 
 function PreviewFrame({
   Component,
@@ -466,6 +497,26 @@ function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
   );
 }
 
+function VariantBadge({
+  role,
+  variant,
+}: {
+  role: LayoutRole;
+  variant: LayoutVariant;
+}) {
+  return (
+    <div>
+      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+        {getLayoutVariantLabel(role, variant)}
+      </span>
+      <code className="mt-2 block text-xs text-slate-500">{variant}</code>
+      <p className="mt-2 text-sm leading-6 text-slate-700">
+        {getLayoutVariantDescription(role, variant)}
+      </p>
+    </div>
+  );
+}
+
 export function LayoutCatalogClientPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-900">
@@ -489,8 +540,9 @@ export function LayoutCatalogClientPage() {
             <h2 className="text-lg font-semibold text-slate-900">Role Contract</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               `group` here means the page&apos;s function in the whole deck
-              skeleton, not just its visual style. Narrative is the first role
-              that will be split into variants in the next stage.
+              skeleton, not just its visual style. `variant` sits under the
+              group and describes the reusable structure track inside that page
+              role. Narrative is the first role piloting this extra layer.
             </p>
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -518,6 +570,30 @@ export function LayoutCatalogClientPage() {
           </div>
         </section>
 
+        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Narrative Variant Pilot
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Narrative is the first group that now exposes multiple formal
+              variants. Other groups stay on a single `default` variant for now
+              so the registry shape is already consistent before selector logic
+              is upgraded.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-4 xl:grid-cols-3">
+            {narrativeVariants.map((variant) => (
+              <article
+                key={variant}
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <VariantBadge role="narrative" variant={variant} />
+              </article>
+            ))}
+          </div>
+        </section>
+
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full table-fixed border-collapse">
             <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -526,7 +602,8 @@ export function LayoutCatalogClientPage() {
                 <th className="w-[190px] px-5 py-4">Layout</th>
                 <th className="w-[250px] px-5 py-4">TSX File</th>
                 <th className="w-[210px] px-5 py-4">Schema</th>
-                <th className="w-[120px] px-5 py-4">Group</th>
+                <th className="w-[140px] px-5 py-4">Group</th>
+                <th className="w-[240px] px-5 py-4">Variant</th>
                 <th className="w-[280px] px-5 py-4">Usage</th>
                 <th className="px-5 py-4">Notes</th>
               </tr>
@@ -577,6 +654,9 @@ export function LayoutCatalogClientPage() {
                       <code className="mt-2 block text-xs text-slate-500">
                         {entry.group}
                       </code>
+                    </td>
+                    <td className="px-5 py-5">
+                      <VariantBadge role={entry.group} variant={entry.variant} />
                     </td>
                     <td className="px-5 py-5">
                       <UsageChips usage={entry.usage} />
