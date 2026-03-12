@@ -11,7 +11,6 @@ from app.utils.security import get_safe_httpx_client
 router = APIRouter(prefix="/settings", tags=["settings"])
 logger = logging.getLogger(__name__)
 
-# 可配置的字段白名单
 _ALLOWED_FIELDS = {
     "openai_api_key",
     "openai_base_url",
@@ -27,7 +26,6 @@ _ALLOWED_FIELDS = {
     "tts_voice",
     "enable_vision_verification",
 }
-
 
 def _mask_key(key: str) -> str:
     """脱敏 API key: sk-abc...xyz4"""
@@ -125,12 +123,15 @@ async def get_settings():
         fast_model_status=fast_model_status,
     )
 
-
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdate):
-    """更新配置 → 持久化 + 使 agent 缓存失效"""
-    from app.core.settings_store import load_user_settings, save_user_settings, invalidate_agents
+    """更新配置 -> 持久化 + 使 agent 缓存失效"""
     from app.core.config import reload_settings
+    from app.core.settings_store import (
+        invalidate_agents,
+        load_user_settings,
+        save_user_settings,
+    )
 
     current = load_user_settings()
 
@@ -165,7 +166,7 @@ async def validate_api_key(req: ValidateRequest):
                 return ValidateResponse(valid=True, message="OpenAI API Key 验证成功")
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
-        elif req.provider == "anthropic":
+        if req.provider == "anthropic":
             async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
@@ -186,7 +187,7 @@ async def validate_api_key(req: ValidateRequest):
                 return ValidateResponse(valid=False, message="API Key 无效")
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
-        elif req.provider == "google":
+        if req.provider == "google":
             async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     f"https://generativelanguage.googleapis.com/v1beta/models?key={req.api_key}"
@@ -195,7 +196,7 @@ async def validate_api_key(req: ValidateRequest):
                 return ValidateResponse(valid=True, message="Google API Key 验证成功")
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
-        elif req.provider == "deepseek":
+        if req.provider == "deepseek":
             async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     "https://api.deepseek.com/models",
@@ -207,7 +208,7 @@ async def validate_api_key(req: ValidateRequest):
                 return ValidateResponse(valid=False, message="API Key 无效")
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
-        elif req.provider == "openrouter":
+        if req.provider == "openrouter":
             async with get_safe_httpx_client(timeout=15) as client:
                 resp = await client.get(
                     "https://openrouter.ai/api/v1/models",
@@ -219,8 +220,7 @@ async def validate_api_key(req: ValidateRequest):
                 return ValidateResponse(valid=False, message="API Key 无效")
             return ValidateResponse(valid=False, message=f"验证失败: HTTP {resp.status_code}")
 
-        else:
-            return ValidateResponse(valid=False, message=f"不支持的 provider: {req.provider}")
+        return ValidateResponse(valid=False, message=f"不支持的 provider: {req.provider}")
     except Exception as e:
         logger.warning("API key validation error: %s", e)
         return ValidateResponse(valid=False, message=f"验证出错: {e}")
