@@ -21,6 +21,20 @@
     "highlight": "强调",
     "closing": "结尾"
   },
+  "roleDescriptions": {
+    "cover": "定义演示开场身份，建立主题、对象与第一印象，不承担正文展开。",
+    "agenda": "交代整份演示的章节骨架，帮助观众预期接下来的叙事顺序。",
+    "section-divider": "在大章节之间做结构切换，强调叙事阶段变化，不承载大量新信息。",
+    "narrative": "承接常规正文叙述，解释背景、能力、案例或图文说明，是首个 variant 试点组。",
+    "evidence": "承载指标、图表、表格和实验结果，用事实或数据支撑前文观点。",
+    "comparison": "用对照关系帮助判断取舍，适合优劣分析、方案比较或问题-方案映射。",
+    "process": "表达步骤、时间线或方法路径，让观众理解先后顺序与执行流程。",
+    "highlight": "单独强调一句关键结论、观点或引用，用来收束注意力。",
+    "closing": "完成收尾与致谢，结束叙事，不再引入新的核心信息。"
+  },
+  "variantPilotRoles": [
+    "narrative"
+  ],
   "usageLabels": {
     "academic-report": "学术汇报",
     "business-report": "商业汇报",
