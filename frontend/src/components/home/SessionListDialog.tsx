@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import type { SessionSummary } from "@/lib/api";
+import { compareUpdatedAt } from "@/lib/sort";
 import { cn } from "@/lib/utils";
 import RenameDialog from "@/components/create/RenameDialog";
 
@@ -52,11 +53,6 @@ interface SessionListDialogProps {
 }
 
 type SortOrder = "latest" | "earliest";
-
-function toTimestamp(iso: string): number {
-  const time = Date.parse(iso);
-  return Number.isNaN(time) ? 0 : time;
-}
 
 export default function SessionListDialog({
   open,
@@ -113,9 +109,11 @@ export default function SessionListDialog({
 
     return [...items].sort((a, b) => {
       if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-      const left = toTimestamp(a.updated_at);
-      const right = toTimestamp(b.updated_at);
-      return sortOrder === "latest" ? right - left : left - right;
+      return compareUpdatedAt(
+        a.updated_at,
+        b.updated_at,
+        sortOrder === "latest" ? "desc" : "asc"
+      );
     });
   }, [getSessionTitle, searchTerm, sessions, sortOrder]);
 
