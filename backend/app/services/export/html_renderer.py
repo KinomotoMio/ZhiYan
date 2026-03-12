@@ -10,6 +10,12 @@ import re
 from html import escape
 from typing import Any
 
+from app.services.export.layout_rules import (
+    get_bullet_with_icons_columns,
+    get_outline_slide_columns,
+    is_bullet_icons_only_compact,
+)
+
 
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
     slides = presentation_dict.get("slides", [])
@@ -142,7 +148,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
 
     if layout_id == "outline-slide":
         sections = d.get("sections") if isinstance(d.get("sections"), list) else []
-        cols = 3 if len(sections) >= 5 else 2
+        cols = get_outline_slide_columns(len(sections))
         cards: list[str] = []
         for idx, item in enumerate(sections[:6]):
             if not isinstance(item, dict):
@@ -175,8 +181,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
-        item_count = len(items)
-        col_count = min(max(item_count, 1), 4)
+        col_count = get_bullet_with_icons_columns(len(items))
         compact = col_count == 4
         cards: list[str] = []
         for idx, item in enumerate(items):
@@ -209,8 +214,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
-        item_count = len(items)
-        compact = item_count >= 7
+        compact = is_bullet_icons_only_compact(len(items))
         cards: list[str] = []
         for idx, item in enumerate(items):
             title = escape(_item_text(item))

@@ -2,6 +2,11 @@ import io
 import zipfile
 
 from app.models.slide import Presentation
+from app.services.export.layout_rules import (
+    get_bullet_with_icons_columns,
+    get_outline_slide_columns,
+    is_bullet_icons_only_compact,
+)
 from app.services.export.pdf_exporter import build_presentation_html
 from app.services.export.pptx_exporter import export_pptx
 
@@ -108,6 +113,7 @@ def test_build_presentation_html_renders_editorial_bullet_columns():
     assert "font-size:21px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:#3b82f6" in html
     assert "background:rgba(59,130,246,0.08);border-radius:3px;padding:0.05em 0.22em 0.12em;box-decoration-break:clone" in html
     assert "减少重复动作" in html
+    assert "grid-template-columns:repeat(3,1fr)" in html
 
 
 def test_build_presentation_html_renders_bullet_icons_only_icon_tokens():
@@ -231,6 +237,16 @@ def test_export_pptx_renders_bullet_with_icons_as_columns():
     assert "SH" in xml_text
     assert "3B82F6" in xml_text
     assert "EFF5FE" in xml_text
+
+
+def test_export_layout_rules_match_preview_thresholds():
+    assert get_outline_slide_columns(4) == 2
+    assert get_outline_slide_columns(5) == 3
+    assert get_bullet_with_icons_columns(1) == 3
+    assert get_bullet_with_icons_columns(3) == 3
+    assert get_bullet_with_icons_columns(4) == 4
+    assert is_bullet_icons_only_compact(6) is False
+    assert is_bullet_icons_only_compact(7) is True
 
 
 def test_export_pptx_renders_bullet_icons_only_icon_tokens():

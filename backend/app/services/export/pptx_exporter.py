@@ -17,6 +17,11 @@ from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
 from app.models.slide import Presentation, Component
+from app.services.export.layout_rules import (
+    get_bullet_with_icons_columns,
+    get_outline_slide_columns,
+    is_bullet_icons_only_compact,
+)
 
 # 16:9 宽屏尺寸
 SLIDE_WIDTH = Inches(13.333)
@@ -363,7 +368,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         sections = d.get("sections") if isinstance(d.get("sections"), list) else []
         count = min(max(len(sections), 0), 6)
         if count > 0:
-            cols = 3 if count >= 5 else 2
+            cols = get_outline_slide_columns(count)
             rows = (count + cols - 1) // cols
             card_width = 3.9 if cols == 3 else 5.95
             card_height = 2.0 if rows >= 2 else 2.35
@@ -425,14 +430,14 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
-        count = min(max(len(items), 1), 4)
-        compact = count == 4
+        columns = get_bullet_with_icons_columns(len(items))
+        compact = columns == 4
         gutter = 0.18 if compact else 0.28
         content_width = 11.4
-        column_width = (content_width - gutter * (count - 1)) / count
+        column_width = (content_width - gutter * (columns - 1)) / columns
         base_left = 0.8
 
-        for idx, item in enumerate(items[:count]):
+        for idx, item in enumerate(items[:4]):
             left = base_left + idx * (column_width + gutter)
             title = _item_text(item)
             desc = _item_description(item)
@@ -527,7 +532,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
-        compact = len(items) >= 7
+        compact = is_bullet_icons_only_compact(len(items))
         if items:
             card_width = 5.45
             card_height = 0.98 if compact else 1.08
