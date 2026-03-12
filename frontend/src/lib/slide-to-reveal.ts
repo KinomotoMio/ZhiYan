@@ -5,7 +5,11 @@
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
-import { getBulletWithIconsColumns, getOutlineSlideColumns } from "@/lib/layout-rules";
+import {
+  getBulletWithIconsColumns,
+  getOutlineSlideColumns,
+  isBulletIconsOnlyCompact,
+} from "@/lib/layout-rules";
 import type { Component, Presentation, Slide, Style } from "@/types/slide";
 
 function escapeHtml(str: string): string {
@@ -614,7 +618,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     }
     case "bullet-icons-only": {
       const items = Array.isArray(d.items) ? d.items : Array.isArray(d.features) ? d.features : [];
-      const compact = items.length >= 7;
+      const compact = isBulletIconsOnlyCompact(items.length);
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
           <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 32px;">${escapeHtml(asText(d.title))}</h2>

@@ -1,5 +1,6 @@
 "use client";
 
+import { isBulletIconsOnlyCompact } from "@/lib/layout-rules";
 import type { BulletIconsOnlyData } from "@/types/layout-data";
 import { LayoutIcon } from "./_shared";
 
@@ -8,7 +9,7 @@ export const layoutName = "纯图标网格";
 export const layoutDescription = "4-8 个图标标签的两列能力矩阵，适合技术栈、特性一览";
 
 export default function BulletIconsOnlyLayout({ data }: { data: BulletIconsOnlyData }) {
-  const compact = data.items.length >= 7;
+  const compact = isBulletIconsOnlyCompact(data.items.length);
 
   return (
     <div className="flex h-full flex-col px-16 py-14">
