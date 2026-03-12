@@ -110,6 +110,8 @@ test("bullet-with-icons uses editorial columns with bottom indices", () => {
   assert.match(html, /自动化协同/);
   assert.match(html, /absolute left-0 top-1\/2/);
   assert.match(html, /height:50%/);
+  assert.match(html, /mb-4 flex h-10 w-10 items-center justify-center rounded-full/);
+  assert.match(html, /h-5 w-5 text-\[var\(--primary-color,#3b82f6\)\]/);
   assert.match(html, /background-color:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, white\)/);
   assert.match(html, /box-decoration-break:clone/);
   assert.match(html, /font-weight:700/);

@@ -1,6 +1,7 @@
 "use client";
 
 import type { BulletWithIconsData } from "@/types/layout-data";
+import { LayoutIcon } from "./_shared";
 
 export const layoutId = "bullet-with-icons";
 export const layoutName = "图标要点";
@@ -9,7 +10,7 @@ export const layoutDescription = "带图标的 3-4 个要点，适合功能介�
 export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsData }) {
   const columns = data.items.length <= 3 ? 3 : 4;
   const compact = columns === 4;
-  
+
   return (
     <div className="flex h-full flex-col px-16 py-14">
       <h2
@@ -39,6 +40,12 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
               }}
             />
             <div className="flex min-h-0 flex-1 flex-col justify-center py-2">
+              <div
+                className="mb-4 flex h-10 w-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: "color-mix(in srgb, var(--primary-color,#3b82f6) 12%, white)" }}
+              >
+                <LayoutIcon query={item.icon.query} className="h-5 w-5 text-[var(--primary-color,#3b82f6)]" />
+              </div>
               <h3
                 style={{ fontSize: compact ? 19 : 21, fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.04em" }}
                 className="mb-2 min-w-0 text-[var(--primary-color,#3b82f6)]"

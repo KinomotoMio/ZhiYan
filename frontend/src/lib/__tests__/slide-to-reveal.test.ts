@@ -145,9 +145,10 @@ test("presentationToRevealHTML renders restrained accent blocks for bullet-with-
   assert.match(html, /grid-template-columns:repeat\(1,minmax\(0,1fr\)\)/);
   assert.match(html, /position:absolute;left:0;top:50%/);
   assert.match(html, /height:50%/);
+  assert.match(html, /width:40px;height:40px;border-radius:9999px;background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 12%, transparent\)/);
+  assert.match(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="20" height="20"/);
   assert.match(html, /font-size:21px;font-weight:700;line-height:1\.08;letter-spacing:-0\.04em;color:var\(--primary-color,#3b82f6\)/);
   assert.match(html, /background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, transparent\);border-radius:3px;padding:0\.05em 0\.22em 0\.12em;box-decoration-break:clone/);
-  assert.doesNotMatch(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="14" height="14"/);
   assert.doesNotMatch(html, /width:56px;height:56px/);
 });
 

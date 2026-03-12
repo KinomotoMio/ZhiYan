@@ -372,10 +372,16 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
           <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));column-gap:${compact ? 18 : 26}px;flex:1;min-height:0;">
             ${raw.map((item, index) => {
+              const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+              const icon = row.icon && typeof row.icon === "object" ? row.icon as Record<string, unknown> : {};
+              const query = asText(icon.query, itemText(item) || "star");
               return `
                 <div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">
                   <div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:${compact ? "46%" : "50%"};background-color:${backgroundTextMix(12)};"></div>
                   <div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:8px 0;">
+                    <div style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:9999px;background:${primaryMix(12)};color:var(--primary-color,#3b82f6);margin-bottom:16px;flex-shrink:0;">
+                      ${renderIconSvg(query, 20)}
+                    </div>
                     <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
                       <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
                         <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
