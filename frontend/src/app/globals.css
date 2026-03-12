@@ -143,6 +143,19 @@
       );
   }
 
+  .dark .zy-bg-home {
+    background:
+      radial-gradient(circle at 14% 12%, rgba(var(--zy-brand-red), 0.24), transparent 44%),
+      radial-gradient(circle at 84% 10%, rgba(var(--zy-brand-blue), 0.2), transparent 38%),
+      radial-gradient(circle at 56% 84%, rgba(var(--zy-brand-blue), 0.12), transparent 34%),
+      linear-gradient(
+        160deg,
+        rgba(18, 20, 34, 0.97) 8%,
+        rgba(14, 22, 40, 0.96) 48%,
+        rgba(12, 28, 58, 0.93) 100%
+      );
+  }
+
   /* 页面渐变背景（比首页更轻，用于工作区页面） */
   .zy-bg-page {
     background:
