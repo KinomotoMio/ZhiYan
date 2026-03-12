@@ -28,6 +28,9 @@ _ALLOWED_FIELDS = {
     "enable_vision_verification",
 }
 
+# Settings validation is a user-triggered connectivity check. We allow HTTPS
+# domain gateways here to avoid false negatives in proxy/DNS-mapped environments;
+# other server-side fetch flows keep the stricter resolved_ip policy by default.
 _VALIDATION_URL_POLICY = "https_domain_only"
 _NETWORK_ERROR_PREFIX = "网络或运行环境异常，无法完成校验"
 def _mask_key(key: str) -> str:
