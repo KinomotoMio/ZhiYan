@@ -10,6 +10,7 @@ const DEFAULT_RIGHT_HEADING = "要点 B";
 const DEFAULT_FILLER = "内容生成中";
 
 type RecordLike = Record<string, unknown>;
+type OutlineSection = { title: string; description?: string };
 
 function isRecordLike(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -295,17 +296,17 @@ function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
   const sections = sectionsRaw
     .map((entry) => {
       if (typeof entry === "string" && entry.trim()) {
-        return { title: entry.trim() };
+        return { title: entry.trim() } satisfies OutlineSection;
       }
       if (!isRecordLike(entry)) return null;
       const sectionTitle = asText(entry.title) || asText(entry.heading) || asText(entry.label);
       if (!sectionTitle) return null;
       const sectionDescription = asText(entry.description) || asText(entry.text);
       return sectionDescription
-        ? { title: sectionTitle, description: sectionDescription }
-        : { title: sectionTitle };
+        ? ({ title: sectionTitle, description: sectionDescription } satisfies OutlineSection)
+        : ({ title: sectionTitle } satisfies OutlineSection);
     })
-    .filter((entry): entry is RecordLike => entry !== null);
+    .filter((entry): entry is OutlineSection => entry !== null);
 
   if (sections.length < 4) {
     return { data, recoverable: false, changed: false, reason: "insufficient outline sections" };
