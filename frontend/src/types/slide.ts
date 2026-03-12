@@ -20,6 +20,7 @@ export type LayoutType =
   | "blank"
   // 新版 layout IDs
   | "intro-slide"
+  | "outline-slide"
   | "bullet-with-icons"
   | "numbered-bullets"
   | "metrics-slide"
