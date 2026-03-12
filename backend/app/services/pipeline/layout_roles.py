@@ -29,6 +29,15 @@ ROLE_LABELS: dict[LayoutRole, str] = {
     for role, label in _SHARED_METADATA["roleLabels"].items()
 }
 
+ROLE_DESCRIPTIONS: dict[LayoutRole, str] = {
+    cast(LayoutRole, role): description
+    for role, description in _SHARED_METADATA["roleDescriptions"].items()
+}
+
+VARIANT_PILOT_ROLES: frozenset[LayoutRole] = frozenset(
+    cast(LayoutRole, role) for role in _SHARED_METADATA.get("variantPilotRoles", [])
+)
+
 LAYOUT_ID_TO_ROLE: dict[str, LayoutRole] = {
     layout_id: cast(LayoutRole, metadata["role"])
     for layout_id, metadata in _SHARED_METADATA["layouts"].items()
@@ -76,6 +85,26 @@ def get_layout_role(layout_id: str) -> LayoutRole:
 
 def get_layout_role_label(role: LayoutRole) -> str:
     return ROLE_LABELS[role]
+
+
+def get_layout_role_description(role: str | None) -> str:
+    normalized = normalize_slide_role(role)
+    return ROLE_DESCRIPTIONS[normalized]
+
+
+def is_variant_pilot_role(role: str | None) -> bool:
+    normalized = normalize_slide_role(role)
+    return normalized in VARIANT_PILOT_ROLES
+
+
+def format_role_contract_for_prompt() -> str:
+    lines: list[str] = []
+    for role in ROLE_ORDER:
+        pilot_note = "（首个 variant 试点组）" if is_variant_pilot_role(role) else ""
+        lines.append(
+            f"- `{role}`: {get_layout_role_label(role)}，{get_layout_role_description(role)}{pilot_note}"
+        )
+    return "\n".join(lines)
 
 
 def get_default_layout_for_role(role: str | None) -> str:
