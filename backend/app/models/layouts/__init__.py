@@ -14,6 +14,7 @@ from app.models.layouts.schemas import (
     MetricsSlideData,
     MetricsWithImageData,
     NumberedBulletsData,
+    OutlineSlideData,
     QuoteSlideData,
     SectionHeaderData,
     TableInfoData,
@@ -25,6 +26,7 @@ from app.models.layouts.schemas import (
 __all__ = [
     "IntroSlideData",
     "SectionHeaderData",
+    "OutlineSlideData",
     "BulletWithIconsData",
     "NumberedBulletsData",
     "MetricsSlideData",

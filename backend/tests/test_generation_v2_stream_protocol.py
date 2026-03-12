@@ -42,13 +42,13 @@ def _patch_fast_pipeline(monkeypatch):
                 {
                     "slide_number": 1,
                     "title": "封面",
-                    "suggested_layout_category": "intro",
+                    "suggested_slide_role": "cover",
                     "key_points": [],
                 },
                 {
                     "slide_number": 2,
                     "title": "内容",
-                    "suggested_layout_category": "bullets",
+                    "suggested_slide_role": "narrative",
                     "key_points": ["要点一", "要点二"],
                 },
             ]

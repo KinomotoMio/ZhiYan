@@ -9,6 +9,7 @@ import type { ComponentType } from "react";
 
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
+import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
 import * as BulletWithIcons from "@/components/slide-layouts/BulletWithIconsLayout";
 import * as NumberedBullets from "@/components/slide-layouts/NumberedBulletsLayout";
 import * as MetricsSlide from "@/components/slide-layouts/MetricsSlideLayout";
@@ -22,12 +23,15 @@ import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
+import { getLayoutRole, type LayoutRole } from "@/lib/layout-role";
+import { getLayoutUsage, type LayoutUsageTag } from "@/lib/layout-usage";
 
 export interface LayoutEntry {
   id: string;
   name: string;
   description: string;
-  group: string;
+  group: LayoutRole;
+  usage: LayoutUsageTag[];
   component: ComponentType<{ data: Record<string, unknown> }>;
 }
 
@@ -41,6 +45,7 @@ interface LayoutModule {
 const allModules: LayoutModule[] = [
   IntroSlide as unknown as LayoutModule,
   SectionHeader as unknown as LayoutModule,
+  OutlineSlide as unknown as LayoutModule,
   BulletWithIcons as unknown as LayoutModule,
   NumberedBullets as unknown as LayoutModule,
   MetricsSlide as unknown as LayoutModule,
@@ -69,7 +74,8 @@ function ensureInitialized() {
       id: mod.layoutId,
       name: mod.layoutName || mod.layoutId,
       description: mod.layoutDescription || "",
-      group: "general",
+      group: getLayoutRole(mod.layoutId),
+      usage: getLayoutUsage(mod.layoutId),
       component: mod.default,
     });
   }

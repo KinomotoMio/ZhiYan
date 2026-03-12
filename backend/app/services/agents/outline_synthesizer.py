@@ -4,10 +4,10 @@
 小文档（< 8000 tokens）全文直接喂给 Agent。
 大文档使用 Layer 2 摘要 + Layer 3 精选段落。
 
-输出包含 suggested_layout_category 用于后续 LayoutSelection。
+输出包含 suggested_slide_role 用于后续 LayoutSelection。
 """
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class OutlineItem(BaseModel):
@@ -24,9 +24,13 @@ class OutlineItem(BaseModel):
         default_factory=list,
         description="引用的文档段落标识（source_id 或 chunk 引用）",
     )
-    suggested_layout_category: str = Field(
-        default="bullets",
-        description="布局类别建议: metrics / comparison / bullets / chart / timeline / quote / image / intro / section / thankyou",
+    suggested_slide_role: str = Field(
+        default="narrative",
+        validation_alias=AliasChoices("suggested_slide_role", "suggested_layout_category"),
+        description=(
+            "页面角色建议: cover / agenda / section-divider / narrative / "
+            "evidence / comparison / process / highlight / closing"
+        ),
     )
 
 
@@ -60,26 +64,27 @@ def get_outline_synthesizer_agent():
                 "2. **现状分析**（占总页数 30%）：数据、案例、痛点\n"
                 "3. **解决方案**（占总页数 40%）：核心方法、技术细节、优势\n"
                 "4. **总结展望**（1-2页）：核心结论 + 致谢页\n\n"
-                "## 布局类别选择\n"
-                "为每页设置 suggested_layout_category，帮助后续精确选择布局：\n"
-                "- `intro`: 第一页标题页\n"
-                "- `section`: 章节过渡页\n"
-                "- `bullets`: 一般要点列举\n"
-                "- `metrics`: 包含数字/KPI/百分比\n"
-                "- `comparison`: 对比/优劣分析\n"
-                "- `chart`: 数据图表\n"
-                "- `table`: 表格数据\n"
-                "- `timeline`: 时间线/里程碑\n"
-                "- `quote`: 重要引述/结论\n"
-                "- `image`: 需要配图的内容\n"
-                "- `challenge`: 问题→方案模式\n"
-                "- `thankyou`: 致谢/结束页\n\n"
+                "## 页面角色规划\n"
+                "为每页设置 suggested_slide_role，帮助后续先确定页面角色，再选择具体布局：\n"
+                "- `cover`: 第一页封面\n"
+                "- `agenda`: 目录/导航页\n"
+                "- `section-divider`: 章节过渡页\n"
+                "- `narrative`: 一般叙述、图文说明、能力介绍\n"
+                "- `evidence`: 指标、图表、表格、实验结果、事实支撑\n"
+                "- `comparison`: 对比、优劣分析、问题-方案\n"
+                "- `process`: 步骤、流程、时间线、方法路径\n"
+                "- `highlight`: 金句、结论、重点强调\n"
+                "- `closing`: 结束页/致谢页\n\n"
+                "## 结构规则\n"
+                "- 第 1 页必须是 `cover`\n"
+                "- 最后一页必须是 `closing`\n"
+                "- 当总页数 >= 5 时，前 3 页内应包含 1 页 `agenda`，默认优先第 2 页\n"
+                "- `section-divider` 只能出现在 `agenda` 之后、`closing` 之前，且不能连续出现\n"
+                "- 当总页数 >= 7 时，可使用 1-2 页 `section-divider` 划分大章节\n\n"
                 "## 内容简述要求\n"
                 "content_brief 应具体说明这一页要展示什么内容（100-200字），\n"
                 "包括要用到的具体数据、案例或论点。这将作为后续内容生成的指导。\n\n"
                 "## 质量要求\n"
-                "- 第 1 页必须是 intro 类别\n"
-                "- 最后一页必须是 thankyou 类别\n"
                 "- 每页只承载一个核心观点\n"
                 "- 相关内容按逻辑顺序排列\n"
                 "- 避免信息重复\n"

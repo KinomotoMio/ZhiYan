@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
+import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
 import * as BulletWithIcons from "@/components/slide-layouts/BulletWithIconsLayout";
 import * as NumberedBullets from "@/components/slide-layouts/NumberedBulletsLayout";
 import * as MetricsSlide from "@/components/slide-layouts/MetricsSlideLayout";
@@ -17,6 +18,16 @@ import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
+import {
+  compareLayoutRoles,
+  getLayoutRole,
+  type LayoutRole,
+} from "@/lib/layout-role";
+import {
+  getLayoutUsage,
+  getUsageLabel,
+  type LayoutUsageTag,
+} from "@/lib/layout-usage";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -29,7 +40,8 @@ type CatalogEntry = {
   module: LayoutModule;
   fileName: string;
   schemaName: string;
-  group: "general" | "data";
+  group: LayoutRole;
+  usage: LayoutUsageTag[];
   keyFields: string[];
   data: Record<string, unknown>;
 };
@@ -60,7 +72,8 @@ const entries: CatalogEntry[] = [
     module: IntroSlide as unknown as LayoutModule,
     fileName: "IntroSlideLayout.tsx",
     schemaName: "IntroSlideData",
-    group: "general",
+    group: getLayoutRole("intro-slide"),
+    usage: getLayoutUsage("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
     data: {
       title: "ZhiYan Layout Catalog",
@@ -70,10 +83,42 @@ const entries: CatalogEntry[] = [
     },
   },
   {
+    module: OutlineSlide as unknown as LayoutModule,
+    fileName: "OutlineSlideLayout.tsx",
+    schemaName: "OutlineSlideData",
+    group: getLayoutRole("outline-slide"),
+    usage: getLayoutUsage("outline-slide"),
+    keyFields: ["title", "subtitle?", "sections[4-6]"],
+    data: {
+      title: "Presentation Outline",
+      subtitle:
+        "A navigation page that frames the full report structure before the detailed sections begin.",
+      sections: [
+        {
+          title: "Background",
+          description: "Business context and project motivation",
+        },
+        {
+          title: "Method",
+          description: "Approach, data sources, and evaluation logic",
+        },
+        {
+          title: "Findings",
+          description: "Key observations and critical metrics",
+        },
+        {
+          title: "Results",
+          description: "Outcome summary and measurable impact",
+        },
+      ],
+    },
+  },
+  {
     module: SectionHeader as unknown as LayoutModule,
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
-    group: "general",
+    group: getLayoutRole("section-header"),
+    usage: getLayoutUsage("section-header"),
     keyFields: ["title", "subtitle?"],
     data: {
       title: "Platform Overview",
@@ -84,7 +129,8 @@ const entries: CatalogEntry[] = [
     module: BulletWithIcons as unknown as LayoutModule,
     fileName: "BulletWithIconsLayout.tsx",
     schemaName: "BulletWithIconsData",
-    group: "general",
+    group: getLayoutRole("bullet-with-icons"),
+    usage: getLayoutUsage("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
     data: {
       title: "Why Teams Use This Layout",
@@ -110,28 +156,40 @@ const entries: CatalogEntry[] = [
     },
   },
   {
-    module: NumberedBullets as unknown as LayoutModule,
-    fileName: "NumberedBulletsLayout.tsx",
-    schemaName: "NumberedBulletsData",
-    group: "general",
-    keyFields: ["title", "items[3-5]"],
+    module: ImageAndDescription as unknown as LayoutModule,
+    fileName: "ImageAndDescriptionLayout.tsx",
+    schemaName: "ImageAndDescriptionData",
+    group: getLayoutRole("image-and-description"),
+    usage: getLayoutUsage("image-and-description"),
+    keyFields: ["title", "image", "description", "bullets?"],
     data: {
-      title: "Rollout Plan",
+      title: "Feature Spotlight",
+      image: { prompt: "hero product mockup", url: photoA, alt: "product preview" },
+      description:
+        "This layout works when one image should do most of the emotional work, with the text explaining why it matters.",
+      bullets: [
+        "Strong for demos and case studies",
+        "Keeps the message focused",
+        "Easy to theme with photography",
+      ],
+    },
+  },
+  {
+    module: BulletIconsOnly as unknown as LayoutModule,
+    fileName: "BulletIconsOnlyLayout.tsx",
+    schemaName: "BulletIconsOnlyData",
+    group: getLayoutRole("bullet-icons-only"),
+    usage: getLayoutUsage("bullet-icons-only"),
+    keyFields: ["title", "items[4-8]"],
+    data: {
+      title: "Capability Grid",
       items: [
-        {
-          title: "Collect input",
-          description:
-            "Gather source docs, goals, and constraints from the team.",
-        },
-        {
-          title: "Draft structure",
-          description:
-            "Turn raw material into a short narrative with a clear order.",
-        },
-        {
-          title: "Polish visuals",
-          description: "Pick a layout, tune wording, and verify readability.",
-        },
+        { icon: { query: "database" }, label: "Source ingest" },
+        { icon: { query: "message-square" }, label: "Chat edits" },
+        { icon: { query: "image" }, label: "Asset prompts" },
+        { icon: { query: "file-chart-column" }, label: "Export" },
+        { icon: { query: "sparkles" }, label: "Themeing" },
+        { icon: { query: "shield-check" }, label: "Verification" },
       ],
     },
   },
@@ -139,7 +197,8 @@ const entries: CatalogEntry[] = [
     module: MetricsSlide as unknown as LayoutModule,
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
-    group: "data",
+    group: getLayoutRole("metrics-slide"),
+    usage: getLayoutUsage("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
     data: {
       title: "Quarterly Snapshot",
@@ -154,7 +213,8 @@ const entries: CatalogEntry[] = [
     module: MetricsWithImage as unknown as LayoutModule,
     fileName: "MetricsWithImageLayout.tsx",
     schemaName: "MetricsWithImageData",
-    group: "data",
+    group: getLayoutRole("metrics-with-image"),
+    usage: getLayoutUsage("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
     data: {
       title: "Impact + Product Shot",
@@ -182,7 +242,8 @@ const entries: CatalogEntry[] = [
     module: ChartWithBullets as unknown as LayoutModule,
     fileName: "ChartWithBulletsLayout.tsx",
     schemaName: "ChartWithBulletsData",
-    group: "data",
+    group: getLayoutRole("chart-with-bullets"),
+    usage: getLayoutUsage("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
     data: {
       title: "Trend + Commentary",
@@ -202,7 +263,8 @@ const entries: CatalogEntry[] = [
     module: TableInfo as unknown as LayoutModule,
     fileName: "TableInfoLayout.tsx",
     schemaName: "TableInfoData",
-    group: "data",
+    group: getLayoutRole("table-info"),
+    usage: getLayoutUsage("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
     data: {
       title: "Option Comparison",
@@ -219,7 +281,8 @@ const entries: CatalogEntry[] = [
     module: TwoColumnCompare as unknown as LayoutModule,
     fileName: "TwoColumnCompareLayout.tsx",
     schemaName: "TwoColumnCompareData",
-    group: "general",
+    group: getLayoutRole("two-column-compare"),
+    usage: getLayoutUsage("two-column-compare"),
     keyFields: ["title", "left", "right"],
     data: {
       title: "Manual vs Assisted Workflow",
@@ -240,20 +303,50 @@ const entries: CatalogEntry[] = [
     },
   },
   {
-    module: ImageAndDescription as unknown as LayoutModule,
-    fileName: "ImageAndDescriptionLayout.tsx",
-    schemaName: "ImageAndDescriptionData",
-    group: "general",
-    keyFields: ["title", "image", "description", "bullets?"],
+    module: ChallengeOutcome as unknown as LayoutModule,
+    fileName: "ChallengeOutcomeLayout.tsx",
+    schemaName: "ChallengeOutcomeData",
+    group: getLayoutRole("challenge-outcome"),
+    usage: getLayoutUsage("challenge-outcome"),
+    keyFields: ["title", "items[2-4]"],
     data: {
-      title: "Feature Spotlight",
-      image: { prompt: "hero product mockup", url: photoA, alt: "product preview" },
-      description:
-        "This layout works when one image should do most of the emotional work, with the text explaining why it matters.",
-      bullets: [
-        "Strong for demos and case studies",
-        "Keeps the message focused",
-        "Easy to theme with photography",
+      title: "Problems and Fixes",
+      items: [
+        {
+          challenge: "Slides feel visually inconsistent across authors.",
+          outcome: "Use a constrained layout library with schema-guided content.",
+        },
+        {
+          challenge: "Reviewers spend time fixing spacing and hierarchy.",
+          outcome: "Push style decisions into reusable TSX layouts.",
+        },
+      ],
+    },
+  },
+  {
+    module: NumberedBullets as unknown as LayoutModule,
+    fileName: "NumberedBulletsLayout.tsx",
+    schemaName: "NumberedBulletsData",
+    group: getLayoutRole("numbered-bullets"),
+    usage: getLayoutUsage("numbered-bullets"),
+    keyFields: ["title", "items[3-5]"],
+    data: {
+      title: "Rollout Plan",
+      items: [
+        {
+          title: "Collect input",
+          description:
+            "Gather source docs, goals, and constraints from the team.",
+        },
+        {
+          title: "Draft structure",
+          description:
+            "Turn raw material into a short narrative with a clear order.",
+        },
+        {
+          title: "Polish visuals",
+          description: "Pick a layout, tune wording, and verify readability.",
+        },
       ],
     },
   },
@@ -261,7 +354,8 @@ const entries: CatalogEntry[] = [
     module: Timeline as unknown as LayoutModule,
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
-    group: "general",
+    group: getLayoutRole("timeline"),
+    usage: getLayoutUsage("timeline"),
     keyFields: ["title", "events[3-6]"],
     data: {
       title: "Delivery Timeline",
@@ -293,7 +387,8 @@ const entries: CatalogEntry[] = [
     module: QuoteSlide as unknown as LayoutModule,
     fileName: "QuoteSlideLayout.tsx",
     schemaName: "QuoteSlideData",
-    group: "general",
+    group: getLayoutRole("quote-slide"),
+    usage: getLayoutUsage("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
     data: {
       quote:
@@ -303,48 +398,11 @@ const entries: CatalogEntry[] = [
     },
   },
   {
-    module: BulletIconsOnly as unknown as LayoutModule,
-    fileName: "BulletIconsOnlyLayout.tsx",
-    schemaName: "BulletIconsOnlyData",
-    group: "general",
-    keyFields: ["title", "items[4-8]"],
-    data: {
-      title: "Capability Grid",
-      items: [
-        { icon: { query: "database" }, label: "Source ingest" },
-        { icon: { query: "message-square" }, label: "Chat edits" },
-        { icon: { query: "image" }, label: "Asset prompts" },
-        { icon: { query: "file-chart-column" }, label: "Export" },
-        { icon: { query: "sparkles" }, label: "Themeing" },
-        { icon: { query: "shield-check" }, label: "Verification" },
-      ],
-    },
-  },
-  {
-    module: ChallengeOutcome as unknown as LayoutModule,
-    fileName: "ChallengeOutcomeLayout.tsx",
-    schemaName: "ChallengeOutcomeData",
-    group: "general",
-    keyFields: ["title", "items[2-4]"],
-    data: {
-      title: "Problems and Fixes",
-      items: [
-        {
-          challenge: "Slides feel visually inconsistent across authors.",
-          outcome: "Use a constrained layout library with schema-guided content.",
-        },
-        {
-          challenge: "Reviewers spend time fixing spacing and hierarchy.",
-          outcome: "Push style decisions into reusable TSX layouts.",
-        },
-      ],
-    },
-  },
-  {
     module: ThankYou as unknown as LayoutModule,
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
-    group: "general",
+    group: getLayoutRole("thank-you"),
+    usage: getLayoutUsage("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
     data: {
       title: "Thanks",
@@ -353,6 +411,12 @@ const entries: CatalogEntry[] = [
     },
   },
 ];
+
+const sortedEntries = [...entries].sort((left, right) => {
+  const roleDelta = compareLayoutRoles(left.group, right.group);
+  if (roleDelta !== 0) return roleDelta;
+  return left.module.layoutName.localeCompare(right.module.layoutName);
+});
 
 function PreviewFrame({
   Component,
@@ -383,10 +447,25 @@ function PreviewFrame({
   );
 }
 
+function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {usage.map((tag) => (
+        <span
+          key={tag}
+          className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+        >
+          {getUsageLabel(tag)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function LayoutCatalogClientPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-900">
-      <div className="mx-auto max-w-[1680px]">
+      <div className="mx-auto max-w-[1880px]">
         <header className="mb-8">
           <p className="mb-2 text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
             Local Catalog
@@ -410,11 +489,12 @@ export function LayoutCatalogClientPage() {
                 <th className="w-[250px] px-5 py-4">TSX File</th>
                 <th className="w-[210px] px-5 py-4">Schema</th>
                 <th className="w-[120px] px-5 py-4">Group</th>
+                <th className="w-[280px] px-5 py-4">Usage</th>
                 <th className="px-5 py-4">Notes</th>
               </tr>
             </thead>
             <tbody>
-              {entries.map((entry) => {
+              {sortedEntries.map((entry) => {
                 const Component = entry.module.default;
                 return (
                   <tr
@@ -456,6 +536,9 @@ export function LayoutCatalogClientPage() {
                       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                         {entry.group}
                       </span>
+                    </td>
+                    <td className="px-5 py-5">
+                      <UsageChips usage={entry.usage} />
                     </td>
                     <td className="px-5 py-5">
                       <p className="text-sm leading-6 text-slate-700">
