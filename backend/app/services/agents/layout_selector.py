@@ -61,7 +61,11 @@ def get_layout_selector_agent():
     return _agent
 
 
-def __getattr__(name):
-    if name == "layout_selector_agent":
-        return get_layout_selector_agent()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+class _LazyLayoutSelectorAgent:
+    """Proxy that keeps runtime lazy-loading without breaking test monkeypatching."""
+
+    def __getattr__(self, name):
+        return getattr(get_layout_selector_agent(), name)
+
+
+layout_selector_agent = _LazyLayoutSelectorAgent()
