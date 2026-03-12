@@ -21,6 +21,14 @@ class LayoutSelectionResult(BaseModel):
     slides: list[SlideLayoutChoice]
 
 
+class _LazyLayoutSelectorAgent:
+    async def run(self, *args, **kwargs):
+        return await get_layout_selector_agent().run(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(get_layout_selector_agent(), name)
+
+
 def get_layout_selector_agent():
     """延迟创建 Agent"""
     global _agent
@@ -61,7 +69,4 @@ def get_layout_selector_agent():
     return _agent
 
 
-def __getattr__(name):
-    if name == "layout_selector_agent":
-        return get_layout_selector_agent()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+layout_selector_agent = _LazyLayoutSelectorAgent()
