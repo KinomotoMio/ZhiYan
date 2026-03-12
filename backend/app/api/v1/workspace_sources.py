@@ -40,11 +40,12 @@ def _snippet(text: str, max_len: int = 200) -> str:
 
 
 def _sync_parse_file(path: Path) -> str:
-    from markitdown import MarkItDown
+    from app.services.document.parser import (
+        create_markitdown_converter,
+        normalize_markdown,
+    )
 
-    from app.services.document.parser import normalize_markdown
-
-    converter = MarkItDown()
+    converter = create_markitdown_converter()
     result = converter.convert(str(path))
     return normalize_markdown(result.text_content)
 
