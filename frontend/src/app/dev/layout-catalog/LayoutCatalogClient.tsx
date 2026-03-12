@@ -34,6 +34,7 @@ import {
 } from "@/lib/layout-usage";
 import { compareLayoutNames } from "@/lib/sort";
 import {
+  compareLayoutVariants,
   getLayoutVariant,
   getLayoutVariantDescription,
   getLayoutVariantLabel,
@@ -444,10 +445,11 @@ const entries: CatalogEntry[] = [
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
   if (roleDelta !== 0) return roleDelta;
-  const variantDelta = getLayoutVariantLabel(
+  const variantDelta = compareLayoutVariants(
     left.group,
     left.variant,
-  ).localeCompare(getLayoutVariantLabel(right.group, right.variant));
+    right.variant,
+  );
   if (variantDelta !== 0) return variantDelta;
   return compareLayoutNames(
     left.module.layoutName,

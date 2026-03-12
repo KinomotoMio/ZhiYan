@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { compareLayoutNames, compareUpdatedAt } from "@/lib/sort";
+import { compareLayoutVariants } from "@/lib/layout-variant";
 
 test("compareLayoutNames uses explicit Chinese collation with a stable id fallback", () => {
   const entries = [
@@ -76,4 +77,34 @@ test("compareUpdatedAt uses the ASCII fallback for invalid and equal timestamp t
 
   assert.deepEqual(equalValidDesc, ["beta", "alpha"]);
   assert.deepEqual(equalValidAsc, ["alpha", "beta"]);
+});
+
+test("compareLayoutVariants follows metadata order instead of localized labels", () => {
+  const variants = [
+    "capability-grid",
+    "icon-points",
+    "visual-explainer",
+  ] as const;
+
+  const sorted = [...variants].sort((left, right) =>
+    compareLayoutVariants("narrative", left, right)
+  );
+
+  assert.deepEqual(sorted, [
+    "icon-points",
+    "visual-explainer",
+    "capability-grid",
+  ]);
+});
+
+test("compareLayoutVariants falls back to a stable ASCII order for unknown variants", () => {
+  const sorted = ["zeta", "alpha"].sort((left, right) =>
+    compareLayoutVariants(
+      "narrative",
+      left as never,
+      right as never,
+    )
+  );
+
+  assert.deepEqual(sorted, ["alpha", "zeta"]);
 });

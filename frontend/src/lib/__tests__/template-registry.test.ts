@@ -64,6 +64,6 @@ test("layout catalog renders role-based group and variant metadata", () => {
   assert.notEqual(bulletIconsOnly, -1);
   assert.notEqual(bulletWithIcons, -1);
   assert.notEqual(imageAndDescription, -1);
-  assert.ok(imageAndDescription < bulletWithIcons);
-  assert.ok(bulletWithIcons < bulletIconsOnly);
+  assert.ok(bulletWithIcons < imageAndDescription);
+  assert.ok(imageAndDescription < bulletIconsOnly);
 });
