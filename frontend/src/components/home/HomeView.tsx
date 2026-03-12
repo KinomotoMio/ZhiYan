@@ -420,10 +420,10 @@ export default function HomeView() {
     `更新时间：${formatUpdatedAt(session.updated_at)}`;
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,rgba(56,189,248,0.26),transparent_46%),radial-gradient(circle_at_86%_8%,rgba(20,184,166,0.2),transparent_36%),radial-gradient(circle_at_58%_86%,rgba(251,191,36,0.16),transparent_42%),linear-gradient(165deg,rgba(248,250,252,0.95)_10%,rgba(239,246,255,0.94)_48%,rgba(236,253,245,0.9)_100%)] lg:h-screen lg:overflow-hidden">
+    <div className="zy-bg-home min-h-screen lg:h-screen lg:overflow-hidden">
       <main className="relative mx-auto h-full w-full max-w-[1480px] px-4 py-8 md:px-6 lg:px-8 lg:py-5">
-        <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-cyan-200/40 blur-3xl" />
-        <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-teal-200/40 blur-3xl" />
+        <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-blue-300/35 blur-3xl" />
+        <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-rose-300/35 blur-3xl" />
 
         <section className="grid h-full gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
           <article
@@ -451,7 +451,7 @@ export default function HomeView() {
               <div className="mt-5 grid gap-2 sm:grid-cols-3">
                 <button
                   onClick={handlePrimaryAction}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/70"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
                 >
                   {hasResultSessions ? (
                     <ArrowRight className="h-4 w-4" />
@@ -464,14 +464,14 @@ export default function HomeView() {
                   onClick={() => {
                     void handleNewPpt();
                   }}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60"
                 >
                   <FilePlus2 className="h-4 w-4" />
                   新建演示稿
                 </button>
                 <button
                   onClick={() => router.push("/assets")}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/70 px-4 text-sm font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60"
                 >
                   <Library className="h-4 w-4" />
                   素材库管理
@@ -481,7 +481,7 @@ export default function HomeView() {
               <div className="mt-5 grid grid-cols-3 gap-2">
                 <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <Presentation className="h-4 w-4 text-emerald-600" />
+                    <Presentation className="h-4 w-4 text-rose-600" />
                     已生成文稿
                   </div>
                   <p className="text-xl font-semibold text-slate-900">
@@ -490,7 +490,7 @@ export default function HomeView() {
                 </article>
                 <article className="flex items-center justify-between rounded-xl border border-white/80 bg-white/75 px-3 py-2.5">
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <FolderOpenDot className="h-4 w-4 text-sky-600" />
+                    <FolderOpenDot className="h-4 w-4 text-blue-700" />
                     待完善草稿
                   </div>
                   <p className="text-xl font-semibold text-slate-900">
@@ -538,7 +538,7 @@ export default function HomeView() {
                       <button
                         key={session.id}
                         onClick={() => handleOpenSession(session)}
-                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60"
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-slate-900">
@@ -583,7 +583,7 @@ export default function HomeView() {
                       <button
                         key={session.id}
                         onClick={() => handleOpenSession(session)}
-                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60"
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-slate-900">
@@ -612,9 +612,9 @@ export default function HomeView() {
             </div>
           </article>
 
-          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-cyan-100/80 bg-gradient-to-br from-white/90 via-white/80 to-emerald-50/70 p-5 shadow-[0_20px_45px_-35px_rgba(2,132,199,0.55)] lg:min-h-0">
+          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-blue-100/80 bg-gradient-to-br from-white/92 via-rose-50/60 to-blue-50/80 p-5 shadow-[0_20px_45px_-35px_rgba(30,64,175,0.35)] lg:min-h-0">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
-              <FileText className="h-4 w-4 text-cyan-600" />
+              <FileText className="h-4 w-4 text-blue-700" />
               最近成果预览
             </div>
             {loading ? (
@@ -643,7 +643,7 @@ export default function HomeView() {
                     />
                   </div>
                 ) : (
-                  <div className="flex flex-1 items-center rounded-xl border border-cyan-100/80 bg-white/70 px-4 text-sm leading-6 text-slate-600">
+                  <div className="flex flex-1 items-center rounded-xl border border-rose-100/80 bg-white/75 px-4 text-sm leading-6 text-slate-600">
                     暂时无法加载该成果的页面预览，你仍可直接进入编辑器继续修改。
                   </div>
                 )}
@@ -655,7 +655,7 @@ export default function HomeView() {
                 </p>
                 <button
                   onClick={() => router.push("/create")}
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-cyan-200 bg-white/80 px-3 text-sm font-medium text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-blue-200 bg-white/85 px-3 text-sm font-medium text-blue-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60"
                 >
                   去创建工作台
                   <ArrowRight className="h-4 w-4" />
