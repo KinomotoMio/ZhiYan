@@ -21,10 +21,6 @@ import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
 import {
   compareLayoutRoles,
   getLayoutRole,
-  getLayoutRoleDescription,
-  getLayoutRoleLabel,
-  isVariantPilotRole,
-  LAYOUT_ROLE_ORDER,
   type LayoutRole,
 } from "@/lib/layout-role";
 import {
@@ -484,40 +480,6 @@ export function LayoutCatalogClientPage() {
           </p>
         </header>
 
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="max-w-3xl">
-            <h2 className="text-lg font-semibold text-slate-900">Role Contract</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              `group` here means the page&apos;s function in the whole deck
-              skeleton, not just its visual style. Narrative is the first role
-              that will be split into variants in the next stage.
-            </p>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {LAYOUT_ROLE_ORDER.map((role) => (
-              <article
-                key={role}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                    {getLayoutRoleLabel(role)}
-                  </span>
-                  {isVariantPilotRole(role) ? (
-                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                      Variant pilot
-                    </span>
-                  ) : null}
-                </div>
-                <code className="mt-3 block text-xs text-slate-500">{role}</code>
-                <p className="mt-2 text-sm leading-6 text-slate-700">
-                  {getLayoutRoleDescription(role)}
-                </p>
-              </article>
-            ))}
-          </div>
-        </section>
-
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full table-fixed border-collapse">
             <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -572,11 +534,8 @@ export function LayoutCatalogClientPage() {
                     </td>
                     <td className="px-5 py-5">
                       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                        {getLayoutRoleLabel(entry.group)}
-                      </span>
-                      <code className="mt-2 block text-xs text-slate-500">
                         {entry.group}
-                      </code>
+                      </span>
                     </td>
                     <td className="px-5 py-5">
                       <UsageChips usage={entry.usage} />

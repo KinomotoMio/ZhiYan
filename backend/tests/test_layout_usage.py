@@ -3,10 +3,7 @@ from types import SimpleNamespace
 
 from app.models.layout_registry import get_layout_catalog
 from app.services.pipeline.layout_roles import (
-    format_role_contract_for_prompt,
     get_layout_role,
-    get_layout_role_description,
-    is_variant_pilot_role,
     normalize_outline_items_roles,
 )
 from app.services.pipeline.graph import PipelineState, stage_select_layouts
@@ -95,18 +92,6 @@ def test_layout_role_mapping_matches_expected_layout_roles():
     assert get_layout_role("timeline") == "process"
     assert get_layout_role("quote-slide") == "highlight"
     assert get_layout_role("thank-you") == "closing"
-
-
-def test_layout_role_contract_describes_page_function_and_variant_pilot():
-    assert get_layout_role_description("cover").startswith("定义演示开场身份")
-    assert get_layout_role_description("narrative").startswith("承接常规正文叙述")
-    assert is_variant_pilot_role("narrative") is True
-    assert is_variant_pilot_role("evidence") is False
-
-    contract = format_role_contract_for_prompt()
-    assert "`cover`" in contract
-    assert "`agenda`" in contract
-    assert "首个 variant 试点组" in contract
 
 
 def test_normalize_outline_items_roles_handles_legacy_categories_and_structure_rules():
