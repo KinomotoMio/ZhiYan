@@ -1,13 +1,19 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.models.layout_registry import get_layout_catalog
+from app.models.layout_registry import get_layout, get_layout_catalog
 from app.services.pipeline.layout_roles import (
     format_role_contract_for_prompt,
     get_layout_role,
     get_layout_role_description,
     is_variant_pilot_role,
     normalize_outline_items_roles,
+)
+from app.services.pipeline.layout_variants import (
+    get_layout_variant,
+    get_layout_variant_description,
+    get_layout_variant_label,
+    get_variants_for_role,
 )
 from app.services.pipeline.graph import PipelineState, stage_select_layouts
 from app.services.pipeline.layout_usage import infer_document_and_slide_usage, infer_usage_tags
@@ -81,9 +87,23 @@ def test_infer_document_and_slide_usage_keeps_slide_tags_local_to_the_slide():
 def test_get_layout_catalog_includes_usage_metadata():
     catalog = get_layout_catalog()
     assert "角色:" in catalog
+    assert "变体:" in catalog
     assert "适用领域" in catalog
     assert "学术汇报" in catalog
     assert "商业汇报" in catalog
+    assert "图标要点 (icon-points)" in catalog
+
+
+def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups():
+    bullet_layout = get_layout("bullet-with-icons")
+    assert bullet_layout is not None
+    assert bullet_layout.group == "narrative"
+    assert bullet_layout.variant == "icon-points"
+
+    outline_layout = get_layout("outline-slide")
+    assert outline_layout is not None
+    assert outline_layout.group == "agenda"
+    assert outline_layout.variant == "default"
 
 
 def test_layout_role_mapping_matches_expected_layout_roles():
@@ -95,6 +115,22 @@ def test_layout_role_mapping_matches_expected_layout_roles():
     assert get_layout_role("timeline") == "process"
     assert get_layout_role("quote-slide") == "highlight"
     assert get_layout_role("thank-you") == "closing"
+
+
+def test_layout_variant_mapping_matches_expected_layout_variants():
+    assert get_layout_variant("bullet-with-icons") == "icon-points"
+    assert get_layout_variant("image-and-description") == "visual-explainer"
+    assert get_layout_variant("bullet-icons-only") == "capability-grid"
+    assert get_layout_variant("metrics-slide") == "default"
+
+    assert get_layout_variant_label("narrative", "icon-points") == "图标要点"
+    assert get_layout_variant_description("narrative", "visual-explainer").startswith("以单张主视觉")
+    assert get_variants_for_role("narrative") == (
+        "icon-points",
+        "visual-explainer",
+        "capability-grid",
+    )
+    assert get_variants_for_role("cover") == ("default",)
 
 
 def test_layout_role_contract_describes_page_function_and_variant_pilot():

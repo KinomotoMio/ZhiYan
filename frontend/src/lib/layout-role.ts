@@ -16,7 +16,14 @@ type SharedLayoutMetadata = {
   roleLabels: Record<LayoutRole, string>;
   roleDescriptions: Record<LayoutRole, string>;
   variantPilotRoles: LayoutRole[];
-  layouts: Record<string, { role: LayoutRole; usage: string[] }>;
+  variantsByRole: Record<
+    LayoutRole,
+    Record<string, { label: string; description: string }>
+  >;
+  layouts: Record<
+    string,
+    { role: LayoutRole; variant: string; usage: string[] }
+  >;
 };
 
 const layoutMetadata = layoutMetadataJson as SharedLayoutMetadata;
