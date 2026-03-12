@@ -5,7 +5,7 @@
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
-import { getBulletWithIconsColumns } from "@/lib/layout-rules";
+import { getBulletWithIconsColumns, getOutlineSlideColumns } from "@/lib/layout-rules";
 import type { Component, Presentation, Slide, Style } from "@/types/slide";
 
 function escapeHtml(str: string): string {
@@ -336,7 +336,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
 
     case "outline-slide": {
       const sections = Array.isArray(d.sections) ? d.sections : [];
-      const columns = sections.length >= 5 ? 3 : 2;
+      const columns = getOutlineSlideColumns(sections.length);
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;color:var(--background-text,#111827);">
           <div style="max-width:640px;">
