@@ -315,6 +315,34 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
   return pairs.length > 0 ? pairs : [{ challenge: "Content unavailable", outcome: "Pending" }];
 }
 
+
+function splitOutlineSections<T>(sections: T[]): [T[], T[]] {
+  const midpoint = Math.ceil(sections.length / 2);
+  return [sections.slice(0, midpoint), sections.slice(midpoint)];
+}
+
+function renderOutlineColumn(column: Array<Record<string, unknown>>, startIndex: number): string {
+  if (column.length === 0) return "";
+
+  return `
+    <div style="flex:1;display:grid;grid-template-rows:repeat(${column.length},minmax(0,1fr));gap:24px;min-height:0;">
+      ${column.map((section, index) => {
+        const sectionIndex = startIndex + index;
+        const title = asText(section.title, `Section ${sectionIndex + 1}`);
+        const description = asText(section.description);
+        return `
+          <article style="border-top:1px solid ${backgroundTextMix(12)};padding-top:18px;display:flex;gap:20px;">
+            <div style="width:48px;flex-shrink:0;padding-top:4px;">
+              <div style="font-size:13px;font-weight:700;letter-spacing:0.18em;color:var(--primary-color,#3b82f6);">${String(sectionIndex + 1).padStart(2, "0")}</div>
+            </div>
+            <div style="min-width:0;">
+              <h3 style="font-size:28px;font-weight:600;line-height:1.05;color:var(--background-text,#111827);margin:0;letter-spacing:-0.04em;">${escapeHtml(title)}</h3>
+              ${description ? `<p style="font-size:15px;line-height:1.6;color:${backgroundTextMix(58)};margin:12px 0 0;max-width:420px;">${escapeHtml(description)}</p>` : ""}
+            </div>
+          </article>`;
+      }).join("")}
+    </div>`;
+}
 function contentDataToHTML(layoutId: string, data: Record<string, unknown>): string {
   const d = data as Record<string, unknown>;
 
@@ -340,6 +368,27 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
+    case "outline-slide": {
+      const sections = Array.isArray(d.sections)
+        ? d.sections.filter((section): section is Record<string, unknown> => !!section && typeof section === "object")
+        : [];
+      const [leftColumn, rightColumn] = splitOutlineSections(sections);
+      return `
+        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);">
+          <div style="display:flex;align-items:flex-end;gap:40px;">
+            <div style="max-width:560px;">
+              <div style="width:64px;height:6px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:20px;"></div>
+              <h2 style="font-size:42px;font-weight:700;line-height:1.12;letter-spacing:-0.045em;color:var(--background-text,#111827);margin:0 0 16px;">${escapeHtml(asText(d.title))}</h2>
+              ${asText(d.subtitle) ? `<p style="font-size:17px;line-height:1.6;color:${backgroundTextMix(60)};margin:0;max-width:520px;">${escapeHtml(asText(d.subtitle))}</p>` : ""}
+            </div>
+            <div style="height:1px;flex:1;background:${backgroundTextMix(12)};margin-bottom:12px;"></div>
+          </div>
+          <div style="display:flex;gap:56px;flex:1;margin-top:48px;">
+            ${renderOutlineColumn(leftColumn, 0)}
+            ${renderOutlineColumn(rightColumn, leftColumn.length)}
+          </div>
+        </div>`;
+    }
     case "bullet-with-icons": {
       const raw = Array.isArray(d.items) ? d.items : [];
       const columns = Math.min(Math.max(raw.length, 1), 4);

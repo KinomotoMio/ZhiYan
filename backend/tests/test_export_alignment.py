@@ -93,3 +93,73 @@ def test_export_pptx_accepts_alias_fields():
     assert "hello@example.com" in xml_text
     assert "问题A" in xml_text
     assert "方案A" in xml_text
+
+
+def test_build_presentation_html_renders_outline_slide_structure():
+    payload = {
+        "presentationId": "pres-outline",
+        "title": "Outline Test",
+        "slides": [
+            {
+                "slideId": "slide-outline",
+                "layoutType": "outline-slide",
+                "layoutId": "outline-slide",
+                "contentData": {
+                    "title": "Project Outline",
+                    "subtitle": "Used to verify outline export structure.",
+                    "sections": [
+                        {"title": "Background", "description": "Project context and motivation"},
+                        {"title": "Method", "description": "Research and execution approach"},
+                        {"title": "Findings", "description": "Core observations and metrics"},
+                        {"title": "Results", "description": "Outcome and impact"},
+                        {"title": "Next Steps", "description": "Follow-up actions"},
+                    ],
+                },
+                "components": [],
+            }
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "Project Outline" in html
+    assert "Used to verify outline export structure." in html
+    assert "Background" in html
+    assert "Next Steps" in html
+    assert "01" in html
+    assert "05" in html
+
+
+def test_export_pptx_renders_outline_slide_text():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-outline-pptx",
+            "title": "Outline Export",
+            "slides": [
+                {
+                    "slideId": "slide-outline",
+                    "layoutType": "outline-slide",
+                    "layoutId": "outline-slide",
+                    "contentData": {
+                        "title": "Project Outline",
+                        "subtitle": "Used to verify PPTX export.",
+                        "sections": [
+                            {"title": "Background", "description": "Project context and motivation"},
+                            {"title": "Method", "description": "Research and execution approach"},
+                            {"title": "Findings", "description": "Core observations and metrics"},
+                            {"title": "Results", "description": "Outcome and impact"},
+                            {"title": "Next Steps", "description": "Follow-up actions"},
+                        ],
+                    },
+                    "components": [],
+                }
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "Project Outline" in xml_text
+    assert "Used to verify PPTX export." in xml_text
+    assert "Background" in xml_text
+    assert "Next Steps" in xml_text

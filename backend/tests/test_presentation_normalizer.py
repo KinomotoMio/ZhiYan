@@ -200,3 +200,33 @@ def test_normalize_two_column_compare_from_string_columns():
     assert content["right"]["heading"] == "要点 B"
     assert isinstance(content["right"]["items"], list)
     assert len(content["right"]["items"]) >= 1
+
+
+def test_normalize_outline_slide_from_items_alias_and_pad_sections():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-outline",
+                "layoutId": "outline-slide",
+                "contentData": {
+                    "title": "Outline",
+                    "items": [
+                        {"title": "Background", "description": "Project context"},
+                        {"label": "Method"},
+                        "Findings",
+                    ],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "outline-slide-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["sections"] == [
+        {"title": "Background", "description": "Project context"},
+        {"title": "Method"},
+        {"title": "Findings"},
+        {"title": "\u7ed3\u8bba"},
+    ]
