@@ -5,6 +5,7 @@
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import { getBulletWithIconsColumns } from "@/lib/layout-rules";
 import type { Component, Presentation, Slide, Style } from "@/types/slide";
 
 function escapeHtml(str: string): string {
@@ -365,7 +366,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
 
     case "bullet-with-icons": {
       const raw = Array.isArray(d.items) ? d.items : [];
-      const columns = Math.min(Math.max(raw.length, 1), 4);
+      const columns = getBulletWithIconsColumns(raw.length);
       const compact = columns === 4;
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">

@@ -1,5 +1,6 @@
 "use client";
 
+import { getBulletWithIconsColumns } from "@/lib/layout-rules";
 import type { BulletWithIconsData } from "@/types/layout-data";
 import { LayoutIcon } from "./_shared";
 
@@ -8,7 +9,7 @@ export const layoutName = "图标要点";
 export const layoutDescription = "带图标的 3-4 个要点，适合功能介绍、优势列举";
 
 export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsData }) {
-  const columns = data.items.length <= 3 ? 3 : 4;
+  const columns = getBulletWithIconsColumns(data.items.length);
   const compact = columns === 4;
 
   return (

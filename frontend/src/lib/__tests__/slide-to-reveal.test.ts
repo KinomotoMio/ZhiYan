@@ -116,7 +116,7 @@ test("presentationToRevealHTML renders outline-slide as a card grid", () => {
   assert.match(html, /Background/);
   assert.match(html, /Results/);
 });
-test("presentationToRevealHTML renders restrained accent blocks for bullet-with-icons layouts", () => {
+test("presentationToRevealHTML keeps bullet-with-icons columns aligned with the preview layout", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,
     slides: [
@@ -142,7 +142,7 @@ test("presentationToRevealHTML renders restrained accent blocks for bullet-with-
   assert.match(html, /Capabilities/);
   assert.match(html, /font-size:36px;font-weight:700;line-height:1\.3/);
   assert.match(html, /Automation[\s\S]*Automates repeated work[\s\S]*01/);
-  assert.match(html, /grid-template-columns:repeat\(1,minmax\(0,1fr\)\)/);
+  assert.match(html, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(html, /position:absolute;left:0;top:50%/);
   assert.match(html, /height:50%/);
   assert.match(html, /width:40px;height:40px;border-radius:9999px;background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 12%, transparent\)/);
