@@ -24,6 +24,38 @@ OUTLINE_FALLBACK_TITLES = (
 )
 
 
+def normalize_outline_slide_data(
+    data: dict[str, Any],
+    *,
+    title_default: str = "\u76ee\u5f55",
+    fallback_titles: tuple[str, ...] = OUTLINE_FALLBACK_TITLES,
+) -> dict[str, Any]:
+    title = _as_text(data.get("title"), title_default)
+    subtitle = _as_text(data.get("subtitle"), "")
+    raw_sections = data.get("sections") if isinstance(data.get("sections"), list) else data.get("items")
+    raw_sections = raw_sections if isinstance(raw_sections, list) else []
+
+    sections: list[dict[str, str]] = []
+    for index, section in enumerate(raw_sections):
+        normalized = _normalize_outline_section(section, index, fallback_titles=fallback_titles)
+        if normalized is not None:
+            sections.append(normalized)
+
+    sections = sections[:6]
+    while len(sections) < 4:
+        sections.append({"title": fallback_titles[len(sections)]})
+
+    normalized: dict[str, Any] = {"title": title, "sections": sections}
+    if subtitle:
+        normalized["subtitle"] = subtitle
+    return normalized
+
+
+def split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    midpoint = (len(sections) + 1) // 2
+    return sections[:midpoint], sections[midpoint:]
+
+
 def normalize_presentation_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any]]:
     """Normalize persisted presentation payload."""
     normalized = deepcopy(payload)
@@ -139,25 +171,7 @@ def _normalize_thank_you(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bo
 
 
 def _normalize_outline_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "\u76ee\u5f55")
-    subtitle = _as_text(data.get("subtitle"), "")
-    raw_sections = data.get("sections") if isinstance(data.get("sections"), list) else data.get("items")
-    raw_sections = raw_sections if isinstance(raw_sections, list) else []
-
-    sections: list[dict[str, str]] = []
-    for index, section in enumerate(raw_sections):
-        normalized = _normalize_outline_section(section, index)
-        if normalized is not None:
-            sections.append(normalized)
-
-    sections = sections[:6]
-    while len(sections) < 4:
-        sections.append({"title": OUTLINE_FALLBACK_TITLES[len(sections)]})
-
-    normalized: dict[str, Any] = {"title": title, "sections": sections}
-    if subtitle:
-        normalized["subtitle"] = subtitle
-
+    normalized = normalize_outline_slide_data(data)
     changed = normalized != data
     return normalized, changed, True, "outline-slide-shape" if changed else ""
 
@@ -273,7 +287,12 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
     return normalized, changed, True, "challenge-outcome-shape" if changed else ""
 
 
-def _normalize_outline_section(raw: Any, index: int) -> dict[str, str] | None:
+def _normalize_outline_section(
+    raw: Any,
+    index: int,
+    *,
+    fallback_titles: tuple[str, ...] = OUTLINE_FALLBACK_TITLES,
+) -> dict[str, str] | None:
     if isinstance(raw, str):
         title = raw.strip()
         return {"title": title} if title else None
@@ -296,7 +315,7 @@ def _normalize_outline_section(raw: Any, index: int) -> dict[str, str] | None:
     if not title and not description:
         return None
 
-    normalized = {"title": title or OUTLINE_FALLBACK_TITLES[index]}
+    normalized = {"title": title or fallback_titles[index]}
     if description:
         normalized["description"] = description
     return normalized

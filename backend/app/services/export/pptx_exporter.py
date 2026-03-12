@@ -18,6 +18,7 @@ from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
 from app.models.slide import Presentation, Component
+from app.services.presentations.normalizer import normalize_outline_slide_data, split_outline_sections
 
 # 16:9 宽屏尺寸
 SLIDE_WIDTH = Inches(13.333)
@@ -288,7 +289,6 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
 
 GRAY_200 = RGBColor(0xDB, 0xE2, 0xEA)
 GRAY_900 = RGBColor(0x0F, 0x17, 0x2A)
-OUTLINE_FALLBACK_TITLES = ("Background", "Analysis", "Solution", "Conclusion", "Implementation", "Summary")
 
 
 def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RGBColor):
@@ -297,49 +297,6 @@ def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RG
     shape.fill.fore_color.rgb = color
     shape.line.fill.background()
     return shape
-
-
-def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
-    if not isinstance(raw, list):
-        raw = []
-
-    sections: list[dict[str, str]] = []
-    for index, item in enumerate(raw):
-        title = ""
-        description = ""
-        if isinstance(item, str):
-            title = item.strip()
-        elif isinstance(item, dict):
-            title = (
-                _as_text(item.get("title"))
-                or _as_text(item.get("text"))
-                or _as_text(item.get("label"))
-                or _as_text(item.get("heading"))
-                or _as_text(item.get("name"))
-            )
-            description = (
-                _as_text(item.get("description"))
-                or _as_text(item.get("summary"))
-                or _as_text(item.get("detail"))
-            )
-
-        if not title and not description:
-            continue
-
-        section = {"title": title or OUTLINE_FALLBACK_TITLES[index]}
-        if description:
-            section["description"] = description
-        sections.append(section)
-
-    sections = sections[:6]
-    while len(sections) < 4:
-        sections.append({"title": OUTLINE_FALLBACK_TITLES[len(sections)]})
-    return sections
-
-
-def _split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    midpoint = (len(sections) + 1) // 2
-    return sections[:midpoint], sections[midpoint:]
 
 
 def _render_outline_column(
@@ -443,13 +400,13 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          alignment=PP_ALIGN.CENTER)
 
     elif layout_id == "outline-slide":
-        sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
-        left_sections, right_sections = _split_outline_sections(sections)
+        outline = normalize_outline_slide_data(d)
+        left_sections, right_sections = split_outline_sections(outline["sections"])
         _add_rule(slide_obj, Inches(0.82), Inches(0.62), Inches(0.72), Inches(0.06), color)
         _add_textbox(slide_obj,
                      Inches(0.82), Inches(0.90), Inches(5.4), Inches(0.70),
-                     _as_text(d.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
-        subtitle = _as_text(d.get("subtitle"))
+                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
+        subtitle = _as_text(outline.get("subtitle"))
         if subtitle:
             _add_textbox(slide_obj,
                          Inches(0.82), Inches(1.62), Inches(5.2), Inches(0.58),
