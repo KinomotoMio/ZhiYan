@@ -185,13 +185,6 @@ function renderIconSvg(query: string, size = 24): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${children}</svg>`;
 }
 
-function renderIconBadge(query: string, size: number, boxSize: number): string {
-  return `
-    <div style="width:${boxSize}px;height:${boxSize}px;border-radius:${Math.round(boxSize * 0.28)}px;background:${primaryMix(10)};display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--primary-color,#3b82f6);flex-shrink:0;">
-      ${renderIconSvg(query, size)}
-    </div>`;
-}
-
 function renderSimpleImagePlaceholder(prompt: string, extraStyle = ""): string {
   return `
     <div style="${extraStyle}background:#f3f4f6;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9ca3af;overflow:hidden;">
@@ -340,22 +333,67 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
+    case "outline-slide": {
+      const sections = Array.isArray(d.sections) ? d.sections : [];
+      const columns = sections.length >= 5 ? 3 : 2;
+      return `
+        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;color:var(--background-text,#111827);">
+          <div style="max-width:640px;">
+            <h2 style="font-size:42px;font-weight:700;line-height:1.15;letter-spacing:-0.04em;margin:0 0 16px;">${escapeHtml(asText(d.title))}</h2>
+            ${asText(d.subtitle) ? `<p style="font-size:17px;line-height:1.55;color:${backgroundTextMix(60)};margin:0;">${escapeHtml(asText(d.subtitle))}</p>` : ""}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));column-gap:22px;row-gap:24px;flex:1;align-content:start;margin-top:40px;">
+            ${sections.map((section, index) => {
+              const row = section && typeof section === "object" ? section as Record<string, unknown> : {};
+              const title = asText(row.title, `Section ${index + 1}`);
+              const description = asText(row.description) || title;
+              return `
+                <article style="overflow:hidden;border-radius:18px;border:1px solid rgba(15,23,42,0.06);background:#ffffff;box-shadow:0 12px 30px rgba(15,23,42,0.06);">
+                  <div style="border-bottom:1px solid rgba(15,23,42,0.06);padding:24px 28px;">
+                    <div style="font-size:14px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:${backgroundTextMix(42)};margin-bottom:16px;">${String(index + 1).padStart(2, "0")}</div>
+                    <h3 style="font-size:30px;font-weight:500;line-height:0.96;letter-spacing:-0.06em;color:var(--background-text,#111827);margin:0;min-height:58px;">${escapeHtml(title)}</h3>
+                  </div>
+                  <div style="height:132px;background:linear-gradient(135deg, color-mix(in srgb, var(--primary-color,#3b82f6) 16%, white), color-mix(in srgb, var(--background-text,#111827) 10%, white));"></div>
+                  <div style="padding:16px 28px;background:${backgroundTextMix(84)};color:#fff;">
+                    <div style="font-size:14px;line-height:1.45;min-height:40px;color:rgba(255,255,255,0.88);">${escapeHtml(description)}</div>
+                  </div>
+                </article>`;
+            }).join("")}
+          </div>
+        </div>`;
+    }
+
     case "bullet-with-icons": {
       const raw = Array.isArray(d.items) ? d.items : [];
       const columns = Math.min(Math.max(raw.length, 1), 4);
+      const compact = columns === 4;
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
           <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:32px;flex:1;">
-            ${raw.map((item) => {
-              const record = item as Record<string, unknown>;
-              const icon = record.icon && typeof record.icon === "object" ? (record.icon as Record<string, unknown>) : null;
-              const query = asText(icon?.query, itemText(item) || "star");
+          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));column-gap:${compact ? 18 : 26}px;flex:1;min-height:0;">
+            ${raw.map((item, index) => {
               return `
-                <div style="display:flex;flex-direction:column;align-items:flex-start;">
-                  ${renderIconBadge(query, 28, 56)}
-                  <h3 style="font-size:20px;font-weight:600;line-height:1.4;color:var(--background-text,#111827);margin:0 0 8px;">${escapeHtml(itemText(item))}</h3>
-                  <p style="font-size:16px;line-height:1.5;color:${backgroundTextMix(60)};margin:0;">${escapeHtml(itemDescription(item))}</p>
+                <div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">
+                  <div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:${compact ? "46%" : "50%"};background-color:${backgroundTextMix(12)};"></div>
+                  <div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:8px 0;">
+                    <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
+                      <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                        <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
+                          ${escapeHtml(itemText(item))}
+                        </span>
+                      </span>
+                    </h3>
+                    ${itemDescription(item)
+                      ? `<p style="font-size:${compact ? 11.5 : 12.5}px;line-height:1.42;color:${backgroundTextMix(72)};margin:0;max-width:240px;">
+                          <span style="display:-webkit-box;-webkit-line-clamp:${compact ? 4 : 5};-webkit-box-orient:vertical;overflow:hidden;">
+                            ${escapeHtml(itemDescription(item))}
+                          </span>
+                        </p>`
+                      : ""}
+                    <div style="padding-top:16px;font-size:${compact ? 52 : 60}px;font-weight:400;line-height:0.92;letter-spacing:-0.06em;color:var(--background-text,#111827);">
+                      ${String(index + 1).padStart(2, "0")}
+                    </div>
+                  </div>
                 </div>`;
             }).join("")}
           </div>
@@ -569,22 +607,28 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     }
     case "bullet-icons-only": {
       const items = Array.isArray(d.items) ? d.items : Array.isArray(d.features) ? d.features : [];
-      const cols = items.length <= 4 ? 4 : items.length <= 6 ? 3 : 4;
+      const compact = items.length >= 7;
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
-          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:32px;align-items:center;flex:1;">
-            ${items.map((item) => {
+          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 32px;">${escapeHtml(asText(d.title))}</h2>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:${compact ? 28 : 40}px;row-gap:${compact ? 18 : 22}px;align-content:center;flex:1;min-height:0;">
+            ${items.map((item, index) => {
               const record = item as Record<string, unknown>;
               const icon = record.icon && typeof record.icon === "object" ? (record.icon as Record<string, unknown>) : null;
               const query = asText(icon?.query, itemText(item) || "star");
               const label = asText(record.label) || itemText(item);
               return `
-                <div style="display:flex;flex-direction:column;align-items:center;text-align:center;">
-                  <div style="width:64px;height:64px;border-radius:16px;background:${primaryMix(10)};display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--primary-color,#3b82f6);flex-shrink:0;">
-                    ${renderIconSvg(query, 32)}
+                <div style="position:relative;display:flex;align-items:center;min-height:92px;overflow:hidden;border-radius:28px;background:color-mix(in srgb, var(--background-text,#111827) 3%, white);padding:20px 24px;">
+                  <div style="position:absolute;left:28px;top:50%;width:96px;height:48px;border-radius:16px;background:${primaryMix(16)};transform:translateY(-50%) skewX(-22deg);"></div>
+                  <div style="position:relative;z-index:1;width:72px;height:72px;border-radius:22px;border:1px solid ${primaryMix(14)};background:#fff;box-shadow:0 12px 32px rgba(15,23,42,0.08);display:flex;align-items:center;justify-content:center;color:var(--primary-color,#3b82f6);flex-shrink:0;">
+                    ${renderIconSvg(query, 40)}
                   </div>
-                  <span style="font-size:16px;font-weight:600;line-height:1.5;color:var(--background-text,#111827);">${escapeHtml(label)}</span>
+                  <div style="position:relative;z-index:1;min-width:0;margin-left:24px;">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.24em;line-height:1;color:${backgroundTextMix(42)};margin-bottom:8px;">${String(index + 1).padStart(2, "0")}</div>
+                    <div style="font-size:${compact ? 21 : 24}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--background-text,#111827);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                      ${escapeHtml(label)}
+                    </div>
+                  </div>
                 </div>`;
             }).join("")}
           </div>

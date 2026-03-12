@@ -86,7 +86,37 @@ test("presentationToRevealHTML keeps intro-slide title on background text colors
   assert.match(html, /color:color-mix\(in srgb, var\(--background-text,#111827\) 60%, transparent\)/);
 });
 
-test("presentationToRevealHTML renders inline svg icons for bullet-with-icons layouts", () => {
+test("presentationToRevealHTML renders outline-slide as a card grid", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-outline",
+        layoutType: "outline-slide",
+        layoutId: "outline-slide",
+        contentData: {
+          title: "Report Outline",
+          subtitle: "Background, method, findings, results, and conclusions.",
+          sections: [
+            { title: "Background", description: "Context and problem framing" },
+            { title: "Method", description: "Approach and data collection" },
+            { title: "Findings", description: "Patterns and notable changes" },
+            { title: "Results", description: "Business impact and recommendations" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Report Outline/);
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(html, /Context and problem framing/);
+  assert.match(html, /height:132px;background:linear-gradient/);
+  assert.match(html, /Background/);
+  assert.match(html, /Results/);
+});
+test("presentationToRevealHTML renders restrained accent blocks for bullet-with-icons layouts", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,
     slides: [
@@ -110,10 +140,15 @@ test("presentationToRevealHTML renders inline svg icons for bullet-with-icons la
   });
 
   assert.match(html, /Capabilities/);
-  assert.match(html, /Automation/);
-  assert.match(html, /Automates repeated work/);
-  assert.match(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="28" height="28"/);
-  assert.doesNotMatch(html, /<p style="font-size:22px;font-weight:600;margin-bottom:8px;">Automation<\/p>/);
+  assert.match(html, /font-size:36px;font-weight:700;line-height:1\.3/);
+  assert.match(html, /Automation[\s\S]*Automates repeated work[\s\S]*01/);
+  assert.match(html, /grid-template-columns:repeat\(1,minmax\(0,1fr\)\)/);
+  assert.match(html, /position:absolute;left:0;top:50%/);
+  assert.match(html, /height:50%/);
+  assert.match(html, /font-size:21px;font-weight:700;line-height:1\.08;letter-spacing:-0\.04em;color:var\(--primary-color,#3b82f6\)/);
+  assert.match(html, /background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, transparent\);border-radius:3px;padding:0\.05em 0\.22em 0\.12em;box-decoration-break:clone/);
+  assert.doesNotMatch(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="14" height="14"/);
+  assert.doesNotMatch(html, /width:56px;height:56px/);
 });
 
 test("presentationToRevealHTML preserves icon-bearing compare columns and section decorations", () => {
@@ -158,6 +193,40 @@ test("presentationToRevealHTML preserves icon-bearing compare columns and sectio
   assert.match(html, /Current/);
   assert.match(html, /Future/);
   assert.ok((html.match(/<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="24" height="24"/g) ?? []).length >= 2);
+});
+
+test("presentationToRevealHTML renders bullet-icons-only as a denser matrix with oversized icon blocks", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-icons-only",
+        layoutType: "bullet-icons-only",
+        layoutId: "bullet-icons-only",
+        contentData: {
+          title: "Platform Capabilities",
+          items: [
+            { icon: { query: "database" }, label: "Unified Data Layer" },
+            { icon: { query: "shield" }, label: "Access Control" },
+            { icon: { query: "bot" }, label: "Agent Orchestration" },
+            { icon: { query: "workflow" }, label: "Process Automation" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Platform Capabilities/);
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(html, /column-gap:40px;row-gap:22px/);
+  assert.match(html, /min-height:92px/);
+  assert.match(html, /width:72px;height:72px/);
+  assert.match(html, /width="40" height="40"/);
+  assert.match(html, /letter-spacing:0.24em/);
+  assert.match(html, /Unified Data Layer/);
+  assert.match(html, /Agent Orchestration/);
+  assert.match(html, />01<\/div>/);
 });
 
 test("presentationToRevealHTML normalizes malformed compare layout data", () => {
