@@ -162,7 +162,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     from app.services.pipeline.layout_roles import (
         get_layout_role,
         get_outline_item_role,
-        is_variant_pilot_role,
         normalize_outline_items_roles,
     )
     from app.services.pipeline.layout_variants import (
@@ -264,8 +263,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
             sel["group"] = role
             sel["variant"] = resolved_variant
-            if not is_variant_pilot_role(role):
-                sel["variant"] = "default"
 
         state.layout_selections = selections
         logger.info(
