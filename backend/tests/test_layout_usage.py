@@ -78,9 +78,11 @@ def test_infer_document_and_slide_usage_keeps_slide_tags_local_to_the_slide():
 def test_get_layout_catalog_includes_usage_metadata():
     catalog = get_layout_catalog()
     assert "角色:" in catalog
+    assert "注记:" in catalog
     assert "适用领域" in catalog
     assert "学术汇报" in catalog
     assert "商业汇报" in catalog
+    assert "【图标要点】带图标的 3-4 个要点，适合功能介绍、优势列举" in catalog
 
 
 def test_layout_role_mapping_matches_expected_layout_roles():
@@ -266,6 +268,7 @@ def test_stage_select_layouts_prompt_falls_back_when_usage_missing(monkeypatch):
         prompt = agent.prompts[0]
         assert "文档级 Usage 推断: 未命中" in prompt
         assert "无明确 usage 候选，按结构选择" in prompt
+        assert "narrative_note_tag:" in prompt
 
     asyncio.run(_case())
 
@@ -316,6 +319,57 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
 
         assert state.layout_selections[0]["layout_id"] == "intro-slide"
         assert state.layout_selections[1]["layout_id"] == "bullet-with-icons"
+        assert state.layout_selections[2]["layout_id"] == "thank-you"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_rejects_narrative_layout_when_note_tag_mismatched(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {"slide_number": 1, "layout_id": "intro-slide", "reason": "封面"},
+                {"slide_number": 2, "layout_id": "bullet-icons-only", "reason": "误选了网格布局"},
+                {"slide_number": 3, "layout_id": "thank-you", "reason": "结束页"},
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这里是产品演示场景，强调界面截图与视觉展示。",
+            topic="产品演示",
+            num_pages=3,
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "封面",
+                        "suggested_slide_role": "cover",
+                        "key_points": ["欢迎页"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "产品亮点",
+                        "content_brief": "展示产品图片、界面截图和视觉信息。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["产品截图", "视觉展示", "核心亮点"],
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "结束",
+                        "suggested_slide_role": "closing",
+                        "key_points": ["谢谢"],
+                    },
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[0]["layout_id"] == "intro-slide"
+        assert state.layout_selections[1]["layout_id"] == "image-and-description"
         assert state.layout_selections[2]["layout_id"] == "thank-you"
 
     asyncio.run(_case())

@@ -165,7 +165,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         infer_document_and_slide_usage,
         rank_layouts_by_usage,
     )
-
     outline_items = normalize_outline_items_roles(
         state.outline.get("items", []),
         num_pages=state.num_pages,
@@ -200,6 +199,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         f"文档级 Usage 推断: {document_usage_text}\n"
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色\n"
+        "- narrative 页面必须先判断 narrative_note_tag，再落到具体 layout_id\n"
         "- 先在角色匹配的布局中做选择，再参考 usage 排序\n"
         "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
@@ -220,11 +220,21 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
             role = get_outline_item_role(item or {})
             effective_usage = slide_usage_tags.get(sel["slide_number"], ()) or document_usage_tags
+            title = str((item or {}).get("title") or "")
+            content_brief = str((item or {}).get("content_brief") or "")
+            key_points = [
+                str(point)
+                for point in ((item or {}).get("key_points") or [])
+                if isinstance(point, str) and point.strip()
+            ]
             candidate_entries = _rank_role_matched_layouts(
                 layout_entries,
                 role=role,
                 usage_tags=effective_usage,
                 rank_layouts_by_usage_fn=rank_layouts_by_usage,
+                title=title,
+                content_brief=content_brief,
+                key_points=key_points,
             )
             candidate_ids = {entry.id for entry in candidate_entries}
             if (
@@ -275,6 +285,10 @@ def _format_outline_item_for_layout_prompt(
     rank_layouts_by_usage_fn,
 ) -> str:
     from app.services.pipeline.layout_roles import get_default_layout_for_role, get_outline_item_role
+    from app.services.pipeline.layout_notes import (
+        get_layout_note_tag,
+        infer_narrative_note_tag,
+    )
 
     slide_number = int(item.get("slide_number", 0))
     key_points = item.get("key_points", [])
@@ -290,6 +304,20 @@ def _format_outline_item_for_layout_prompt(
     if not role_matched:
         fallback_layout = get_default_layout_for_role(role)
         role_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+    selected_note_tag: str | None = None
+    if role == "narrative":
+        selected_note_tag = infer_narrative_note_tag(
+            str(item.get("title") or ""),
+            str(item.get("content_brief") or ""),
+            [str(point) for point in key_points if str(point).strip()],
+        )
+        note_matched = [
+            entry
+            for entry in role_matched
+            if get_layout_note_tag(getattr(entry, "id", "")) == selected_note_tag
+        ]
+        if note_matched:
+            role_matched = note_matched
     preferred = (
         rank_layouts_by_usage_fn(role_matched, effective_usage, limit=4) if effective_usage else []
     )
@@ -303,6 +331,7 @@ def _format_outline_item_for_layout_prompt(
         f"- 第{slide_number}页: {item['title']} "
         f"(角色: {role}, "
         f"要点: {preview_points}, "
+        f"narrative_note_tag: {selected_note_tag or 'none'}, "
         f"页内 Usage: {usage_text}, "
         f"角色匹配布局: {role_matched_text}, "
         f"优先候选布局: {preferred_text})"
@@ -597,13 +626,28 @@ def _rank_role_matched_layouts(
     role: str,
     usage_tags: tuple[str, ...],
     rank_layouts_by_usage_fn,
+    title: str,
+    content_brief: str,
+    key_points: list[str],
 ) -> list[Any]:
     from app.services.pipeline.layout_roles import get_default_layout_for_role
+    from app.services.pipeline.layout_notes import (
+        get_layout_ids_for_note_tag,
+        infer_narrative_note_tag,
+    )
 
     role_matched = [entry for entry in layout_entries if str(entry.group) == role]
     if not role_matched:
         fallback_layout = get_default_layout_for_role(role)
         role_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+
+    if role == "narrative":
+        selected_note_tag = infer_narrative_note_tag(title, content_brief, key_points)
+        note_candidates = set(get_layout_ids_for_note_tag(selected_note_tag))
+        if note_candidates:
+            note_matched = [entry for entry in role_matched if getattr(entry, "id", "") in note_candidates]
+            if note_matched:
+                role_matched = note_matched
 
     if usage_tags:
         ranked = rank_layouts_by_usage_fn(role_matched, usage_tags, limit=len(role_matched))

@@ -9,6 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pydantic import BaseModel
 
+from app.services.pipeline.layout_notes import (
+    format_layout_note,
+    get_layout_note_tag,
+    get_layout_note_text,
+)
 from app.services.pipeline.layout_roles import get_layout_role
 from app.services.pipeline.layout_usage import format_usage_tags, get_layout_usage_tags
 from app.models.layouts.schemas import (
@@ -39,6 +44,14 @@ class LayoutEntry:
     group: str
     usage_tags: tuple[str, ...]
     output_model: type[BaseModel]
+    note_tag: str | None = None
+    note_text: str | None = None
+
+    def __post_init__(self):
+        if self.note_tag is None:
+            object.__setattr__(self, "note_tag", get_layout_note_tag(self.id))
+        if self.note_text is None:
+            object.__setattr__(self, "note_text", get_layout_note_text(self.id))
 
 
 # 所有可用布局
@@ -199,8 +212,17 @@ def get_layout_catalog() -> str:
     """生成供 LLM 参考的布局清单文本（用于 SelectLayouts prompt）"""
     lines: list[str] = []
     for entry in _LAYOUTS:
+        note_text = (
+            format_layout_note(entry.id, entry.description)
+            if entry.note_tag and entry.note_text
+            else entry.description
+        )
         lines.append(
-            f"- `{entry.id}` ({entry.name}, 角色: {entry.group}, 适用领域: {format_usage_tags(entry.usage_tags)}): "
+            f"- `{entry.id}` ("
+            f"{entry.name}, "
+            f"角色: {entry.group}, "
+            f"注记: {note_text}, "
+            f"适用领域: {format_usage_tags(entry.usage_tags)}): "
             f"{entry.description}"
         )
     return "\n".join(lines)

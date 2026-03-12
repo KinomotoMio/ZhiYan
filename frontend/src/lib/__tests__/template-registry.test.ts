@@ -27,13 +27,18 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   assert.equal(metrics.usage.includes("project-status"), true);
 });
 
-test("layout catalog renders role-based group column and usage chips", () => {
+test("layout catalog renders role/notes columns and usage chips", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /<th[^>]*>Group<\/th>/);
+  assert.doesNotMatch(html, /<th[^>]*>Variant<\/th>/);
+  assert.match(html, /<th[^>]*>Notes<\/th>/);
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
+  assert.match(html, /【图标要点】/);
+  assert.match(html, /【纯图标网格】/);
+  assert.match(html, /【图文混排】/);
   assert.match(html, /<th[^>]*>Usage<\/th>/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);

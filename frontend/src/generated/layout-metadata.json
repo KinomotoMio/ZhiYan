@@ -69,6 +69,8 @@
     },
     "bullet-with-icons": {
       "role": "narrative",
+      "noteTag": "图标要点",
+      "noteText": "带图标的 3-4 个要点，适合功能介绍、优势列举",
       "usage": [
         "business-report",
         "sales-pitch",
@@ -79,6 +81,8 @@
     },
     "bullet-icons-only": {
       "role": "narrative",
+      "noteTag": "纯图标网格",
+      "noteText": "4-8 个图标+标签的网格，适合技术栈、特性一览",
       "usage": [
         "business-report",
         "training-workshop",
@@ -88,6 +92,8 @@
     },
     "image-and-description": {
       "role": "narrative",
+      "noteTag": "图文混排",
+      "noteText": "图片+描述文字，适合产品展示、案例说明",
       "usage": [
         "business-report",
         "sales-pitch",

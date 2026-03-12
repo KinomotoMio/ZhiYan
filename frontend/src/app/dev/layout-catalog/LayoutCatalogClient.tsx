@@ -18,11 +18,8 @@ import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
-import {
-  compareLayoutRoles,
-  getLayoutRole,
-  type LayoutRole,
-} from "@/lib/layout-role";
+import { compareLayoutRoles, getLayoutRole, type LayoutRole } from "@/lib/layout-role";
+import { formatLayoutNote } from "@/lib/layout-note";
 import {
   getLayoutUsage,
   getUsageLabel,
@@ -476,7 +473,7 @@ export function LayoutCatalogClientPage() {
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
             This page renders every current TSX layout with sample data. Treat it
             as the fastest way to compare structure, inspect file names, and
-            decide where to add a new variant.
+            decide where to add or refine notes.
           </p>
         </header>
 
@@ -542,7 +539,10 @@ export function LayoutCatalogClientPage() {
                     </td>
                     <td className="px-5 py-5">
                       <p className="text-sm leading-6 text-slate-700">
-                        {entry.module.layoutDescription}
+                        {formatLayoutNote(
+                          entry.module.layoutId,
+                          entry.module.layoutDescription,
+                        )}
                       </p>
                     </td>
                   </tr>
