@@ -56,6 +56,25 @@ def test_infer_document_and_slide_usage_uses_outline_context():
     assert slide_tags[2] == ("academic-report",)
 
 
+def test_infer_document_and_slide_usage_keeps_slide_tags_local_to_the_slide():
+    document_tags, slide_tags = infer_document_and_slide_usage(
+        "Q2 商业复盘",
+        "整份文档主要讲商业复盘、经营分析和增长策略。",
+        [
+            {
+                "slide_number": 2,
+                "title": "实验结果",
+                "content_brief": "展示实验数据、模型评估与论文结论",
+                "key_points": ["实验结果", "模型评估"],
+            }
+        ],
+    )
+
+    assert document_tags == ("business-report",)
+    assert slide_tags[2][0] == "academic-report"
+    assert "business-report" in slide_tags[2]
+
+
 def test_get_layout_catalog_includes_usage_metadata():
     catalog = get_layout_catalog()
     assert "角色:" in catalog

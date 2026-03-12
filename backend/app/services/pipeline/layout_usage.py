@@ -199,7 +199,6 @@ def infer_document_and_slide_usage(
         tags = infer_usage_tags(
             (
                 topic,
-                content,
                 str(item.get("title") or ""),
                 str(item.get("content_brief") or ""),
                 key_point_text,
