@@ -103,9 +103,40 @@ def test_build_presentation_html_renders_editorial_bullet_columns():
     assert "自动化协同" in html
     assert "position:absolute;left:0;top:50%" in html
     assert "height:50%" in html
+    assert 'width="20" height="20"' in html
+    assert "ZA" in html
     assert "font-size:21px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:#3b82f6" in html
     assert "background:rgba(59,130,246,0.08);border-radius:3px;padding:0.05em 0.22em 0.12em;box-decoration-break:clone" in html
     assert "减少重复动作" in html
+
+
+def test_build_presentation_html_renders_bullet_icons_only_icon_tokens():
+    payload = {
+        "presentationId": "pres-icons-html",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "bullet-icons-only",
+                "layoutId": "bullet-icons-only",
+                "contentData": {
+                    "title": "能力矩阵",
+                    "items": [
+                        {"icon": {"query": "database"}, "label": "数据中台"},
+                        {"icon": {"query": "shield"}, "label": "权限治理"},
+                    ],
+                },
+                "components": [],
+            }
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "能力矩阵" in html
+    assert 'width="40" height="40"' in html
+    assert "DA" in html
+    assert "SH" in html
+    assert "数据中台" in html
 
 
 def test_export_pptx_accepts_alias_fields():
@@ -196,8 +227,42 @@ def test_export_pptx_renders_bullet_with_icons_as_columns():
     assert "自动化协同" in xml_text
     assert "减少重复动作" in xml_text
     assert "• 自动化协同" not in xml_text
+    assert "ZA" in xml_text
+    assert "SH" in xml_text
     assert "3B82F6" in xml_text
     assert "EFF5FE" in xml_text
+
+
+def test_export_pptx_renders_bullet_icons_only_icon_tokens():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-icons-pptx",
+            "title": "能力矩阵导出",
+            "slides": [
+                {
+                    "slideId": "slide-1",
+                    "layoutType": "bullet-icons-only",
+                    "layoutId": "bullet-icons-only",
+                    "contentData": {
+                        "title": "能力矩阵",
+                        "items": [
+                            {"icon": {"query": "database"}, "label": "数据中台"},
+                            {"icon": {"query": "shield"}, "label": "权限治理"},
+                        ],
+                    },
+                    "components": [],
+                }
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "能力矩阵" in xml_text
+    assert "DA" in xml_text
+    assert "SH" in xml_text
+    assert "数据中台" in xml_text
 
 
 def test_export_pptx_renders_outline_slide_cards():

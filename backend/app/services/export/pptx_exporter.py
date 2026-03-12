@@ -217,6 +217,23 @@ def _item_description(item: Any) -> str:
     return ""
 
 
+def _item_icon_query(item: Any) -> str:
+    if isinstance(item, dict):
+        icon = item.get("icon")
+        if isinstance(icon, dict):
+            query = _as_text(icon.get("query"))
+            if query:
+                return query
+    return _item_text(item)
+
+
+def _icon_token(query: str) -> str:
+    cleaned = "".join(ch for ch in query if ch.isalnum())
+    if not cleaned:
+        return "IC"
+    return cleaned[:2].upper()
+
+
 def _table_headers_and_rows(data: dict[str, Any]) -> tuple[list[str], list[list[str]]]:
     headers_raw = data.get("headers")
     if not isinstance(headers_raw, list):
@@ -419,6 +436,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             left = base_left + idx * (column_width + gutter)
             title = _item_text(item)
             desc = _item_description(item)
+            icon_token = _icon_token(_item_icon_query(item))
 
             rule = slide_obj.shapes.add_shape(
                 1,
@@ -441,6 +459,30 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             title_bg.fill.solid()
             title_bg.fill.fore_color.rgb = RGBColor(0xEF, 0xF5, 0xFE)
             title_bg.line.fill.background()
+
+            icon_box = slide_obj.shapes.add_shape(
+                1,
+                Inches(left + 0.18),
+                Inches(1.22),
+                Inches(0.42),
+                Inches(0.42),
+            )
+            icon_box.fill.solid()
+            icon_box.fill.fore_color.rgb = RGBColor(0xEF, 0xF6, 0xFF)
+            icon_box.line.color.rgb = RGBColor(0xBF, 0xDB, 0xFE)
+
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.19),
+                Inches(1.31),
+                Inches(0.40),
+                Inches(0.18),
+                icon_token,
+                font_size=10,
+                bold=True,
+                color=PRIMARY_COLOR,
+                alignment=PP_ALIGN.CENTER,
+            )
 
             _add_textbox(
                 slide_obj,
@@ -496,6 +538,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                 row_idx = idx // 2
                 left = 0.8 + col_idx * 5.75
                 top = start_y + row_idx * (card_height + gap_y)
+                icon_token = _icon_token(_item_icon_query(item))
 
                 card = slide_obj.shapes.add_shape(
                     1, Inches(left), Inches(top), Inches(card_width), Inches(card_height)
@@ -508,7 +551,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                     1, Inches(left + 0.28), Inches(top + 0.28), Inches(1.0), Inches(0.48)
                 )
                 accent.fill.solid()
-                accent.fill.fore_color.rgb = RGBColor(0xDB, 0xEAFE)
+                accent.fill.fore_color.rgb = RGBColor(0xDB, 0xEA, 0xFE)
                 accent.line.fill.background()
 
                 number_box = slide_obj.shapes.add_shape(
@@ -516,12 +559,12 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                 )
                 number_box.fill.solid()
                 number_box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                number_box.line.color.rgb = RGBColor(0xDB, 0xEAFE)
+                number_box.line.color.rgb = RGBColor(0xDB, 0xEA, 0xFE)
 
                 _add_textbox(
                     slide_obj,
                     Inches(left + 0.39), Inches(top + 0.34), Inches(0.62), Inches(0.2),
-                    str(idx + 1).zfill(2), font_size=12, bold=True, color=PRIMARY_COLOR,
+                    icon_token, font_size=12, bold=True, color=PRIMARY_COLOR,
                     alignment=PP_ALIGN.CENTER,
                 )
                 _add_textbox(
