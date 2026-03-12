@@ -27,6 +27,12 @@ VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
     for role, variants in _SHARED_METADATA["variantsByRole"].items()
 }
 
+ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
+    cast(LayoutVariant, variant)
+    for role_variants in VARIANTS_BY_ROLE.values()
+    for variant in role_variants
+)
+
 LAYOUT_ID_TO_VARIANT: dict[str, LayoutVariant] = {
     layout_id: cast(LayoutVariant, metadata.get("variant", "default"))
     for layout_id, metadata in _SHARED_METADATA["layouts"].items()
@@ -35,7 +41,7 @@ LAYOUT_ID_TO_VARIANT: dict[str, LayoutVariant] = {
 
 def normalize_layout_variant(value: str | None) -> LayoutVariant:
     token = (value or "").strip()
-    if token in {"default", "icon-points", "visual-explainer", "capability-grid"}:
+    if token in ALL_LAYOUT_VARIANTS:
         return cast(LayoutVariant, token)
     return "default"
 
