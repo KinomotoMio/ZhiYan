@@ -8,6 +8,21 @@ from pydantic_settings import BaseSettings
 logger = logging.getLogger(__name__)
 
 
+def _find_project_root() -> Path:
+    for candidate in Path(__file__).resolve().parents:
+        if (
+            (candidate / "backend" / "pyproject.toml").exists()
+            and (candidate / "frontend" / "package.json").exists()
+            and (candidate / "shared").exists()
+        ):
+            return candidate
+
+    raise RuntimeError("Could not determine project root from backend config location.")
+
+
+PROJECT_ROOT = _find_project_root()
+
+
 class Settings(BaseSettings):
     # LLM 配置
     openai_api_key: str = ""
@@ -24,10 +39,10 @@ class Settings(BaseSettings):
     fast_model: str = ""  # 用于清洗/分块分析等简单任务，空值时回退到 default_model
 
     # 路径
-    project_root: Path = Path(__file__).resolve().parents[3]
-    skills_dir: Path = Path(__file__).resolve().parents[3] / "skills"
-    db_path: Path = Path(__file__).resolve().parents[3] / "data" / "zhiyan.db"
-    uploads_dir: Path = Path(__file__).resolve().parents[3] / "data" / "uploads"
+    project_root: Path = PROJECT_ROOT
+    skills_dir: Path = PROJECT_ROOT / "skills"
+    db_path: Path = PROJECT_ROOT / "data" / "zhiyan.db"
+    uploads_dir: Path = PROJECT_ROOT / "data" / "uploads"
 
     # 文件大小 / 页数限制
     max_upload_size_mb: int = 50
@@ -62,7 +77,10 @@ class Settings(BaseSettings):
     ]
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": PROJECT_ROOT / ".env",
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()
