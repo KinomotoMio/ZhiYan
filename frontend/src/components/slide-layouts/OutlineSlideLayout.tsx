@@ -1,5 +1,6 @@
 "use client";
 
+import { getOutlineSlideColumns } from "@/lib/layout-rules";
 import type { OutlineSlideData } from "@/types/layout-data";
 
 export const layoutId = "outline-slide";
@@ -7,7 +8,7 @@ export const layoutName = "目录导航页";
 export const layoutDescription = "展示整体汇报框架的目录页，使用 4-6 个网格卡片呈现章节结构。";
 
 export default function OutlineSlideLayout({ data }: { data: OutlineSlideData }) {
-  const columns = data.sections.length >= 5 ? 3 : 2;
+  const columns = getOutlineSlideColumns(data.sections.length);
 
   return (
     <div className="flex h-full flex-col px-16 py-14 text-[var(--background-text,#111827)]">

@@ -12,6 +12,7 @@ const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
 const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
 type RecordLike = Record<string, unknown>;
+type OutlineSection = { title: string; description?: string };
 
 function isRecordLike(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -353,6 +354,44 @@ function normalizeIntroSlide(data: RecordLike): LayoutNormalizeResult {
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize intro shape" : null };
 }
 
+function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "目录导航");
+  const subtitle = asText(data.subtitle);
+  const sectionsRaw = Array.isArray(data.sections)
+    ? data.sections
+    : Array.isArray(data.items)
+      ? data.items
+      : [];
+
+  const sections = sectionsRaw
+    .map((entry) => {
+      if (typeof entry === "string" && entry.trim()) {
+        return { title: entry.trim() } satisfies OutlineSection;
+      }
+      if (!isRecordLike(entry)) return null;
+      const sectionTitle = asText(entry.title) || asText(entry.heading) || asText(entry.label);
+      if (!sectionTitle) return null;
+      const sectionDescription = asText(entry.description) || asText(entry.text);
+      return sectionDescription
+        ? ({ title: sectionTitle, description: sectionDescription } satisfies OutlineSection)
+        : ({ title: sectionTitle } satisfies OutlineSection);
+    })
+    .filter((entry): entry is OutlineSection => entry !== null);
+
+  if (sections.length < 4) {
+    return { data, recoverable: false, changed: false, reason: "insufficient outline sections" };
+  }
+
+  const repaired: RecordLike = {
+    title,
+    sections: sections.slice(0, 6),
+  };
+  if (subtitle) repaired.subtitle = subtitle;
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize outline shape" : null };
+}
+
 function normalizeQuoteSlide(data: RecordLike): LayoutNormalizeResult {
   const quote = asText(data.quote) || asText(data.title);
   if (!quote) {
@@ -388,6 +427,9 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
   }
   if (layoutId === "bullet-with-icons") {
     return normalizeBulletWithIcons(data);
+  }
+  if (layoutId === "outline-slide") {
+    return normalizeOutlineSlide(data);
   }
   if (layoutId === "quote-slide") {
     return normalizeQuoteSlide(data);
