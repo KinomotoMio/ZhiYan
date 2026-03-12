@@ -1,6 +1,7 @@
 import layoutMetadataJson from "@/generated/layout-metadata.json";
 import type { LayoutRole } from "@/lib/layout-role";
 
+// Keep this union in sync with shared/layout-metadata.json when new variants land.
 export type LayoutVariant =
   | "default"
   | "icon-points"
