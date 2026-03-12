@@ -32,7 +32,7 @@ export function compareUpdatedAt(
   const left = parseTimestamp(leftIso);
   const right = parseTimestamp(rightIso);
 
-  if (left === null && right === null) {
+  if (left === right) {
     return direction === "desc"
       ? ASCII_COLLATOR.compare(rightIso, leftIso)
       : ASCII_COLLATOR.compare(leftIso, rightIso);

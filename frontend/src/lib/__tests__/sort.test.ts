@@ -41,3 +41,39 @@ test("compareUpdatedAt sorts ISO timestamps by actual time instead of locale-sen
 
   assert.deepEqual(sorted, ["march", "january", "invalid"]);
 });
+
+test("compareUpdatedAt uses the ASCII fallback for invalid and equal timestamp ties", () => {
+  const invalidTies = [
+    { id: "beta", updated_at: "not-a-date-beta" },
+    { id: "alpha", updated_at: "not-a-date-alpha" },
+  ];
+
+  const invalidDesc = [...invalidTies]
+    .sort((left, right) => compareUpdatedAt(left.updated_at, right.updated_at))
+    .map((session) => session.id);
+  const invalidAsc = [...invalidTies]
+    .sort((left, right) =>
+      compareUpdatedAt(left.updated_at, right.updated_at, "asc")
+    )
+    .map((session) => session.id);
+
+  assert.deepEqual(invalidDesc, ["beta", "alpha"]);
+  assert.deepEqual(invalidAsc, ["alpha", "beta"]);
+
+  const equalValidTies = [
+    { id: "beta", updated_at: "2026-03-12T09:30:00Z" },
+    { id: "alpha", updated_at: "2026-03-12T09:30:00.000Z" },
+  ];
+
+  const equalValidDesc = [...equalValidTies]
+    .sort((left, right) => compareUpdatedAt(left.updated_at, right.updated_at))
+    .map((session) => session.id);
+  const equalValidAsc = [...equalValidTies]
+    .sort((left, right) =>
+      compareUpdatedAt(left.updated_at, right.updated_at, "asc")
+    )
+    .map((session) => session.id);
+
+  assert.deepEqual(equalValidDesc, ["beta", "alpha"]);
+  assert.deepEqual(equalValidAsc, ["alpha", "beta"]);
+});
