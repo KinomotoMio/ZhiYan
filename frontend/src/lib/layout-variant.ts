@@ -1,5 +1,6 @@
 import layoutMetadataJson from "@/generated/layout-metadata.json";
 import type { LayoutRole } from "@/lib/layout-role";
+import { compareLayoutNames } from "@/lib/sort";
 
 // Keep this union in sync with shared/layout-metadata.json when new variants land.
 export type LayoutVariant =
@@ -49,6 +50,24 @@ export function getLayoutVariantDescription(
 
 export function getLayoutVariantsForRole(role: LayoutRole): LayoutVariant[] {
   return Object.keys(VARIANTS_BY_ROLE[role] ?? {}) as LayoutVariant[];
+}
+
+export function compareLayoutVariants(
+  role: LayoutRole,
+  leftVariant: LayoutVariant,
+  rightVariant: LayoutVariant,
+): number {
+  const variants = getLayoutVariantsForRole(role);
+  const leftIndex = variants.indexOf(leftVariant);
+  const rightIndex = variants.indexOf(rightVariant);
+
+  if (leftIndex !== rightIndex) {
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  }
+
+  return compareLayoutNames(leftVariant, rightVariant, leftVariant, rightVariant);
 }
 
 export function isDefaultLayoutVariant(variant: LayoutVariant): boolean {

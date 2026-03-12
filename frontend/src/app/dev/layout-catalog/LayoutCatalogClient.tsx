@@ -32,7 +32,9 @@ import {
   getUsageLabel,
   type LayoutUsageTag,
 } from "@/lib/layout-usage";
+import { compareLayoutNames } from "@/lib/sort";
 import {
+  compareLayoutVariants,
   getLayoutVariant,
   getLayoutVariantDescription,
   getLayoutVariantLabel,
@@ -443,12 +445,18 @@ const entries: CatalogEntry[] = [
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
   if (roleDelta !== 0) return roleDelta;
-  const variantDelta = getLayoutVariantLabel(
+  const variantDelta = compareLayoutVariants(
     left.group,
     left.variant,
-  ).localeCompare(getLayoutVariantLabel(right.group, right.variant));
+    right.variant,
+  );
   if (variantDelta !== 0) return variantDelta;
-  return left.module.layoutName.localeCompare(right.module.layoutName);
+  return compareLayoutNames(
+    left.module.layoutName,
+    right.module.layoutName,
+    left.module.layoutId,
+    right.module.layoutId,
+  );
 });
 
 const narrativeVariants = getLayoutVariantsForRole("narrative");

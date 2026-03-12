@@ -56,4 +56,14 @@ test("layout catalog renders role-based group and variant metadata", () => {
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
+
+  const bulletIconsOnly = html.indexOf("bullet-icons-only");
+  const bulletWithIcons = html.indexOf("bullet-with-icons");
+  const imageAndDescription = html.indexOf("image-and-description");
+
+  assert.notEqual(bulletIconsOnly, -1);
+  assert.notEqual(bulletWithIcons, -1);
+  assert.notEqual(imageAndDescription, -1);
+  assert.ok(bulletWithIcons < imageAndDescription);
+  assert.ok(imageAndDescription < bulletIconsOnly);
 });
