@@ -20,6 +20,36 @@ logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 6
 _SLIDE_CONTEXT_MAX_CHARS = 2000
+_VISUAL_EXPLAINER_KEYWORDS = (
+    "图片",
+    "配图",
+    "图文",
+    "案例",
+    "场景",
+    "界面",
+    "截图",
+    "视觉",
+    "照片",
+    "hero",
+    "image",
+    "photo",
+    "visual",
+    "screenshot",
+    "case study",
+    "showcase",
+)
+_CAPABILITY_GRID_KEYWORDS = (
+    "模块",
+    "矩阵",
+    "清单",
+    "一览",
+    "分类",
+    "grid",
+    "matrix",
+    "capability map",
+    "feature set",
+    "stack",
+)
 
 ProgressHook = Callable[[str, int, int, str], Awaitable[None]]
 SlideHook = Callable[[dict[str, Any]], Awaitable[None]]
@@ -728,44 +758,10 @@ def _suggest_variant_for_outline_item(item: dict[str, Any], role: str) -> str:
     key_point_text = "\n".join(key_points)
     combined = "\n".join([title, content_brief, key_point_text])
 
-    if any(
-        token in combined
-        for token in (
-            "图片",
-            "配图",
-            "图文",
-            "案例",
-            "场景",
-            "界面",
-            "截图",
-            "视觉",
-            "照片",
-            "hero",
-            "image",
-            "photo",
-            "visual",
-            "screenshot",
-            "case study",
-            "showcase",
-        )
-    ):
+    if any(token in combined for token in _VISUAL_EXPLAINER_KEYWORDS):
         return "visual-explainer"
 
-    if len(key_points) >= 5 or any(
-        token in combined
-        for token in (
-            "模块",
-            "矩阵",
-            "清单",
-            "一览",
-            "分类",
-            "grid",
-            "matrix",
-            "capability map",
-            "feature set",
-            "stack",
-        )
-    ):
+    if len(key_points) >= 5 or any(token in combined for token in _CAPABILITY_GRID_KEYWORDS):
         return "capability-grid"
 
     return "icon-points"
