@@ -190,8 +190,8 @@
   /* Dark mode 变体 */
   .dark .zy-bg-page {
     background:
-      radial-gradient(circle at 12% 10%, rgba(var(--zy-brand-red), 0.12), transparent 46%),
-      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.1), transparent 38%),
+      radial-gradient(circle at 12% 10%, rgba(var(--zy-brand-red), 0.08), transparent 46%),
+      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.06), transparent 38%),
       linear-gradient(
         165deg,
         rgba(18, 20, 34, 0.97) 10%,
