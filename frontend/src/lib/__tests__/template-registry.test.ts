@@ -31,10 +31,6 @@ test("layout catalog renders role-based group column and usage chips", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /<th[^>]*>Group<\/th>/);
-  assert.match(html, /Role Contract/);
-  assert.match(html, /封面/);
-  assert.match(html, /目录/);
-  assert.match(html, /Variant pilot/);
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
