@@ -328,25 +328,206 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          d["subtitle"], font_size=22, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
 
-    elif layout_id in ("bullet-with-icons", "bullet-icons-only"):
-        _add_textbox(slide_obj,
-                     Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
-                     d.get("title", ""), font_size=36, bold=True)
-        items = d.get("items") or d.get("features") or []
-        y = Inches(1.8)
-        for item in items[:6]:
-            text = _item_text(item)
+    elif layout_id == "outline-slide":
+        _add_textbox(
+            slide_obj,
+            Inches(0.7), Inches(0.5), Inches(6.0), Inches(0.9),
+            _as_text(d.get("title"), "目录导航"),
+            font_size=32, bold=True
+        )
+        subtitle = _as_text(d.get("subtitle"))
+        if subtitle:
+            _add_textbox(
+                slide_obj,
+                Inches(0.7), Inches(1.15), Inches(6.0), Inches(0.8),
+                subtitle, font_size=14, color=GRAY_600
+            )
+
+        sections = d.get("sections") if isinstance(d.get("sections"), list) else []
+        count = min(max(len(sections), 0), 6)
+        if count > 0:
+            cols = 3 if count >= 5 else 2
+            rows = (count + cols - 1) // cols
+            card_width = 3.9 if cols == 3 else 5.95
+            card_height = 2.0 if rows >= 2 else 2.35
+            start_y = 2.1
+            gap_x = 0.25
+            gap_y = 0.28
+
+            for idx, section in enumerate(sections[:6]):
+                if not isinstance(section, dict):
+                    continue
+                col_idx = idx % cols
+                row_idx = idx // cols
+                left = Inches(0.7 + col_idx * (card_width + gap_x))
+                top = Inches(start_y + row_idx * (card_height + gap_y))
+
+                card = slide_obj.shapes.add_shape(
+                    1, left, top, Inches(card_width), Inches(card_height)
+                )
+                card.fill.solid()
+                card.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                card.line.color.rgb = RGBColor(0xEA, 0xEC, 0xF0)
+
+                _add_textbox(
+                    slide_obj,
+                    left + Inches(0.2), top + Inches(0.15), Inches(0.6), Inches(0.25),
+                    str(idx + 1).zfill(2), font_size=10, bold=True, color=GRAY_600
+                )
+                _add_textbox(
+                    slide_obj,
+                    left + Inches(0.2), top + Inches(0.48), Inches(card_width - 0.4), Inches(0.5),
+                    _as_text(section.get("title"), f"章节{idx + 1}"), font_size=22, bold=False
+                )
+
+                banner = slide_obj.shapes.add_shape(
+                    1,
+                    left + Inches(0.02),
+                    top + Inches(card_height - 0.72),
+                    Inches(card_width - 0.04),
+                    Inches(0.7),
+                )
+                banner.fill.solid()
+                banner.fill.fore_color.rgb = RGBColor(0x2F, 0x36, 0x42)
+                banner.line.fill.background()
+
+                _add_textbox(
+                    slide_obj,
+                    left + Inches(0.2), top + Inches(card_height - 0.58), Inches(card_width - 0.4), Inches(0.32),
+                    _as_text(section.get("description")) or _as_text(section.get("title"), f"章节{idx + 1}"),
+                    font_size=10, color=RGBColor(0xFF, 0xFF, 0xFF)
+                )
+
+    elif layout_id == "bullet-with-icons":
+        _add_textbox(
+            slide_obj,
+            Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+            d.get("title", ""), font_size=36, bold=True
+        )
+        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
+        count = min(max(len(items), 1), 4) if isinstance(items, list) else 1
+        compact = count == 4
+        gutter = 0.18 if compact else 0.28
+        content_width = 11.4
+        column_width = (content_width - gutter * (count - 1)) / count
+        base_left = 0.8
+
+        for idx, item in enumerate(items[:count] if isinstance(items, list) else []):
+            left = base_left + idx * (column_width + gutter)
+            title = _item_text(item)
             desc = _item_description(item)
-            _add_textbox(slide_obj,
-                         Inches(1.2), y, Inches(10), Inches(0.5),
-                         f"• {text}", font_size=22, bold=True)
+
+            rule = slide_obj.shapes.add_shape(
+                1,
+                Inches(left),
+                Inches(2.55),
+                Inches(0.015),
+                Inches(2.25 if compact else 2.45),
+            )
+            rule.fill.solid()
+            rule.fill.fore_color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+            rule.line.fill.background()
+
+            title_bg = slide_obj.shapes.add_shape(
+                1,
+                Inches(left + 0.18),
+                Inches(2.0),
+                Inches(max(column_width - 0.28, 0.8)),
+                Inches(0.34),
+            )
+            title_bg.fill.solid()
+            title_bg.fill.fore_color.rgb = RGBColor(0xEF, 0xF5, 0xFE)
+            title_bg.line.fill.background()
+
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.18),
+                Inches(1.9),
+                Inches(max(column_width - 0.24, 0.8)),
+                Inches(0.7),
+                title,
+                font_size=19 if compact else 21,
+                bold=True,
+                color=PRIMARY_COLOR,
+            )
             if desc:
-                _add_textbox(slide_obj,
-                             Inches(1.5), y + Inches(0.5), Inches(10), Inches(0.4),
-                             desc, font_size=16, color=GRAY_600)
-                y += Inches(1.1)
-            else:
-                y += Inches(0.7)
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.18),
+                    Inches(2.72),
+                    Inches(max(column_width - 0.24, 0.8)),
+                    Inches(1.15 if compact else 1.35),
+                    desc,
+                    font_size=11.5 if compact else 12.5,
+                    color=GRAY_600,
+                )
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.18),
+                Inches(5.42),
+                Inches(max(column_width - 0.24, 0.8)),
+                Inches(0.65),
+                str(idx + 1).zfill(2),
+                font_size=40 if compact else 46,
+                color=RGBColor(0x11, 0x18, 0x27),
+            )
+
+    elif layout_id == "bullet-icons-only":
+        _add_textbox(
+            slide_obj,
+            Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+            d.get("title", ""), font_size=36, bold=True
+        )
+        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
+        compact = len(items) >= 7 if isinstance(items, list) else False
+        if isinstance(items, list):
+            card_width = 5.45
+            card_height = 0.98 if compact else 1.08
+            start_y = 1.85
+            gap_y = 0.22 if compact else 0.26
+            for idx, item in enumerate(items[:8]):
+                col_idx = idx % 2
+                row_idx = idx // 2
+                left = 0.8 + col_idx * 5.75
+                top = start_y + row_idx * (card_height + gap_y)
+
+                card = slide_obj.shapes.add_shape(
+                    1, Inches(left), Inches(top), Inches(card_width), Inches(card_height)
+                )
+                card.fill.solid()
+                card.fill.fore_color.rgb = RGBColor(0xF9, 0xFA, 0xFB)
+                card.line.fill.background()
+
+                accent = slide_obj.shapes.add_shape(
+                    1, Inches(left + 0.28), Inches(top + 0.28), Inches(1.0), Inches(0.48)
+                )
+                accent.fill.solid()
+                accent.fill.fore_color.rgb = RGBColor(0xDB, 0xEAFE)
+                accent.line.fill.background()
+
+                number_box = slide_obj.shapes.add_shape(
+                    1, Inches(left + 0.34), Inches(top + 0.18), Inches(0.72), Inches(0.72)
+                )
+                number_box.fill.solid()
+                number_box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                number_box.line.color.rgb = RGBColor(0xDB, 0xEAFE)
+
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.39), Inches(top + 0.34), Inches(0.62), Inches(0.2),
+                    str(idx + 1).zfill(2), font_size=12, bold=True, color=PRIMARY_COLOR,
+                    alignment=PP_ALIGN.CENTER,
+                )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 1.28), Inches(top + 0.2), Inches(card_width - 1.5), Inches(0.18),
+                    str(idx + 1).zfill(2), font_size=9, bold=True, color=GRAY_600,
+                )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 1.28), Inches(top + 0.42), Inches(card_width - 1.5), Inches(0.38),
+                    _item_text(item), font_size=21 if compact else 24, bold=True,
+                )
 
     elif layout_id == "numbered-bullets":
         _add_textbox(slide_obj,
