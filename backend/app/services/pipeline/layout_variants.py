@@ -6,6 +6,7 @@ from typing import Literal, cast
 
 from app.services.pipeline.layout_roles import LayoutRole, normalize_slide_role
 from app.services.pipeline.layout_taxonomy import (
+    get_group_order,
     get_layout_taxonomy,
     get_sub_group_description,
     get_sub_group_label,
@@ -31,17 +32,7 @@ VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
             else ("default",)
         )
     }
-    for role in (
-        "cover",
-        "agenda",
-        "section-divider",
-        "narrative",
-        "evidence",
-        "comparison",
-        "process",
-        "highlight",
-        "closing",
-    )
+    for role in get_group_order()
 }
 
 ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
