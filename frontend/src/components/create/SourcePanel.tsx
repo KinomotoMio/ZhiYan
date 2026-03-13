@@ -342,7 +342,12 @@ export default function SourcePanel() {
               migratedSessionId,
               "本地迁移快照",
               legacyPresentation as unknown as Presentation
-            ).catch((err) => { console.error("Failed to create session snapshot:", err); });
+            ).catch((err) => {
+              console.error(
+                `Failed to create session snapshot for session ${migratedSessionId}:`,
+                err
+              );
+            });
           }
           for (const msg of legacyChats) {
             const role = msg.role === "assistant" ? "assistant" : "user";
