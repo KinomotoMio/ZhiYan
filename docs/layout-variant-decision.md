@@ -166,6 +166,7 @@ type LayoutVariant = {
 
 ### 对 `#75`
 - notes 应消费 `variant` 对象中的四个维度，分别承接适用场景与排除条件
+- notes 的固定槽位合同由 [layout-notes-decision.md](./layout-notes-decision.md) 承接
 
 ### 对 `#76`
 - selector 不应再直接围绕单值 `variant` 做硬匹配，而应把四个字段作为排序与筛选输入
