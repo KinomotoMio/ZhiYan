@@ -156,4 +156,5 @@
 ## 状态
 本记录是当前阶段的决策依据。
 `variant` 的详细对象结构、首批值域与 template 级归属，继续由 [layout-variant-decision.md](./layout-variant-decision.md) 承接。
+notes 的固定槽位合同与 template 级 notes 基线，继续由 [layout-notes-decision.md](./layout-notes-decision.md) 承接。
 若后续在 `#62` 审校或 `#71` 定版中发现需要调整个别命名或边界，应通过新的决策记录或 issue 更新，而不是在实现 PR 中静默改写。
