@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import layoutMetadataJson from "@/generated/layout-metadata.json";
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
@@ -537,6 +537,23 @@ function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
   );
 }
 
+function MetaBlock({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+        {label}
+      </h3>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
 function VariantBadge({
   role,
   variant,
@@ -627,191 +644,188 @@ export function LayoutCatalogClientPage() {
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
-            <article className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full table-fixed border-collapse">
-                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Group</th>
-                    <th className="px-4 py-3">Meaning</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {LAYOUT_ROLE_ORDER.map((role) => (
-                    <tr key={role} className="border-t border-slate-200 align-top">
-                      <td className="px-4 py-4">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {getLayoutRoleLabel(role)}
-                        </div>
-                        <code className="mt-1 block text-xs text-slate-500">{role}</code>
-                      </td>
-                      <td className="px-4 py-4 text-sm leading-6 text-slate-700">
-                        {getLayoutRoleDescription(role)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Group
+              </h3>
+              <div className="mt-4 space-y-4">
+                {LAYOUT_ROLE_ORDER.map((role) => (
+                  <div key={role} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {getLayoutRoleLabel(role)}
+                      </span>
+                      <code className="text-xs text-slate-500">{role}</code>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">
+                      {getLayoutRoleDescription(role)}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </article>
-            <article className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full table-fixed border-collapse">
-                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Group</th>
-                    <th className="px-4 py-3">Sub-group</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {LAYOUT_ROLE_ORDER.flatMap((role) =>
-                    Object.keys(layoutMetadataJson.subGroupsByGroup[role]).map((subGroup) => (
-                      <tr
-                        key={`${role}-${subGroup}`}
-                        className="border-t border-slate-200 align-top"
-                      >
-                        <td className="px-4 py-4">
-                          <div className="text-sm font-semibold text-slate-900">
-                            {getLayoutRoleLabel(role)}
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Sub-group
+              </h3>
+              <div className="mt-4 space-y-4">
+                {LAYOUT_ROLE_ORDER.map((role) => (
+                  <div key={role} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {getLayoutRoleLabel(role)}
+                      </span>
+                      <code className="text-xs text-slate-500">{role}</code>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {Object.keys(layoutMetadataJson.subGroupsByGroup[role]).map((subGroup) => (
+                        <div
+                          key={`${role}-${subGroup}`}
+                          className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {getLayoutSubGroupLabel(role, subGroup as LayoutSubGroup)}
+                            </span>
+                            <code className="text-xs text-slate-500">{subGroup}</code>
                           </div>
-                          <code className="mt-1 block text-xs text-slate-500">{role}</code>
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="text-sm font-semibold text-slate-900">
-                            {getLayoutSubGroupLabel(role, subGroup as LayoutSubGroup)}
-                          </div>
-                          <code className="mt-1 block text-xs text-slate-500">
-                            {subGroup}
-                          </code>
                           <p className="mt-2 text-sm leading-6 text-slate-700">
-                            {getLayoutSubGroupDescription(
-                              role,
-                              subGroup as LayoutSubGroup,
+                            {getLayoutSubGroupDescription(role, subGroup as LayoutSubGroup)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Variant axes
+              </h3>
+              <div className="mt-4 space-y-4">
+                {Object.entries(variantAxes).map(([axis, values]) => (
+                  <div key={axis} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.08em] text-violet-700">
+                        {axis}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {Object.keys(values).map((value) => (
+                        <div
+                          key={`${axis}-${value}`}
+                          className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {getLayoutVariantAxisLabel(
+                                axis as keyof typeof variantAxes,
+                                value,
+                              )}
+                            </span>
+                            <code className="text-xs text-slate-500">{value}</code>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {getLayoutVariantAxisDescription(
+                              axis as keyof typeof variantAxes,
+                              value,
                             )}
                           </p>
-                        </td>
-                      </tr>
-                    )),
-                  )}
-                </tbody>
-              </table>
-            </article>
-            <article className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full table-fixed border-collapse">
-                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Axis</th>
-                    <th className="px-4 py-3">Variants</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(variantAxes).map(([axis, values]) => (
-                    <tr key={axis} className="border-t border-slate-200 align-top">
-                      <td className="px-4 py-4">
-                        <div className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-900">
-                          {axis}
                         </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="space-y-3">
-                          {Object.keys(values).map((value) => (
-                            <div key={`${axis}-${value}`}>
-                              <div className="text-sm font-semibold text-slate-900">
-                                {getLayoutVariantAxisLabel(axis as keyof typeof variantAxes, value)}
-                              </div>
-                              <code className="mt-1 block text-xs text-slate-500">
-                                {value}
-                              </code>
-                              <p className="mt-1 text-sm leading-6 text-slate-700">
-                                {getLayoutVariantAxisDescription(axis as keyof typeof variantAxes, value)}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </article>
           </div>
         </section>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-[2140px] table-fixed border-collapse">
-            <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-              <tr>
-                <th className="w-[360px] px-5 py-4">Preview</th>
-                <th className="w-[190px] px-5 py-4">Layout</th>
-                <th className="w-[250px] px-5 py-4">TSX File</th>
-                <th className="w-[210px] px-5 py-4">Schema</th>
-                <th className="w-[140px] px-5 py-4">Group</th>
-                <th className="w-[240px] px-5 py-4">Runtime Variant</th>
-                <th className="w-[280px] px-5 py-4">Usage</th>
-                <th className="px-5 py-4">Notes</th>
-              </tr>
-            </thead>
-              <tbody>
-                {sortedEntries.map((entry) => {
-                  const Component = entry.module.default;
-                  return (
-                    <tr
-                      key={entry.module.layoutId}
-                      className="border-t border-slate-200 align-top"
-                    >
-                      <td className="px-5 py-5">
-                        <PreviewFrame Component={Component} data={entry.data} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {entry.module.layoutName}
+        <section className="space-y-6">
+          {sortedEntries.map((entry) => {
+            const Component = entry.module.default;
+            return (
+              <article
+                key={entry.module.layoutId}
+                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+              >
+                <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <div>
+                    <PreviewFrame Component={Component} data={entry.data} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                      <div className="space-y-6">
+                        <MetaBlock label="Layout">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-lg font-semibold text-slate-900">
+                              {entry.module.layoutName}
+                            </div>
+                            <code className="mt-2 inline-block rounded bg-white px-2.5 py-1 text-xs text-slate-700 ring-1 ring-slate-200">
+                              {entry.module.layoutId}
+                            </code>
+                            <code className="mt-3 block rounded bg-white px-3 py-2 text-xs text-slate-700 ring-1 ring-slate-200">
+                              frontend/src/components/slide-layouts/{entry.fileName}
+                            </code>
+                          </div>
+                        </MetaBlock>
+
+                        <MetaBlock label="Schema">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-sm font-semibold text-slate-900">
+                              {entry.schemaName}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {entry.keyFields.map((field) => (
+                                <span
+                                  key={field}
+                                  className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200"
+                                >
+                                  {field}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </MetaBlock>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <MetaBlock label="Group">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                                {getLayoutRoleLabel(entry.group)}
+                              </span>
+                              <code className="mt-2 block text-xs text-slate-500">
+                                {entry.group}
+                              </code>
+                            </div>
+                          </MetaBlock>
+                          <MetaBlock label="Runtime Variant">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <VariantBadge role={entry.group} variant={entry.variant} />
+                            </div>
+                          </MetaBlock>
                         </div>
-                        <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                          {entry.module.layoutId}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <code className="block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                          frontend/src/components/slide-layouts/{entry.fileName}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <div className="text-sm font-medium text-slate-900">
-                          {entry.schemaName}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {entry.keyFields.map((field) => (
-                            <span
-                              key={field}
-                              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
-                            >
-                              {field}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-5 py-5">
-                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                          {getLayoutRoleLabel(entry.group)}
-                        </span>
-                        <code className="mt-2 block text-xs text-slate-500">
-                          {entry.group}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <VariantBadge role={entry.group} variant={entry.variant} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <UsageChips usage={entry.usage} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <NotesCard notes={entry.notes} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+
+                        <MetaBlock label="Usage">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <UsageChips usage={entry.usage} />
+                          </div>
+                        </MetaBlock>
+                      </div>
+
+                      <div className="min-w-0">
+                        <MetaBlock label="Notes">
+                          <NotesCard notes={entry.notes} />
+                        </MetaBlock>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </section>
       </div>
     </main>
   );
