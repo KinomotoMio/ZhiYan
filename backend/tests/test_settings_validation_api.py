@@ -43,7 +43,10 @@ def test_validate_openai_accepts_https_gateway_without_dns_global_resolution(mon
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"valid": True, "message": "OpenAI API Key 验证成功"}
+    assert resp.json() == {
+        "valid": True,
+        "message": "OpenAI API Key \u9a8c\u8bc1\u6210\u529f",
+    }
     assert seen["url_policy"] == "https_domain_only"
     assert seen["requested_url"] == "https://gateway.public-gateway.dev/v1/models"
 
@@ -67,7 +70,10 @@ def test_validate_openai_rejects_ip_literal_base_url(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["valid"] is False
-    assert "仅支持使用 https 的域名地址进行校验" in body["message"]
+    assert (
+        "\u4ec5\u652f\u6301\u4f7f\u7528 https \u7684\u57df\u540d\u5730\u5740"
+        "\u8fdb\u884c\u6821\u9a8c"
+    ) in body["message"]
     assert "127.0.0.1:8000" in body["message"]
 
 
@@ -90,7 +96,10 @@ def test_validate_openai_rejects_http_gateway(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["valid"] is False
-    assert "仅支持使用 https 的域名地址进行校验" in body["message"]
+    assert (
+        "\u4ec5\u652f\u6301\u4f7f\u7528 https \u7684\u57df\u540d\u5730\u5740"
+        "\u8fdb\u884c\u6821\u9a8c"
+    ) in body["message"]
     assert "http://gateway.example.com/v1/models" in body["message"]
 
 
@@ -113,7 +122,10 @@ def test_validate_openai_rejects_private_use_hostname_suffix(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["valid"] is False
-    assert "仅支持使用 https 的域名地址进行校验" in body["message"]
+    assert (
+        "\u4ec5\u652f\u6301\u4f7f\u7528 https \u7684\u57df\u540d\u5730\u5740"
+        "\u8fdb\u884c\u6821\u9a8c"
+    ) in body["message"]
     assert "proxy.internal" in body["message"]
 
 
@@ -184,4 +196,7 @@ def test_validate_openai_maps_401_to_invalid_key(monkeypatch):
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"valid": False, "message": "API Key 无效"}
+    assert resp.json() == {
+        "valid": False,
+        "message": "API Key \u65e0\u6548",
+    }

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type { SessionSummary, WorkspaceId } from "@/lib/api";
+import type { LayoutRole } from "@/lib/layout-role";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
 import {
   buildShellSlides,
@@ -17,6 +18,7 @@ import {
   setSessionTopicDraft,
   type SessionTopicDrafts,
 } from "@/lib/session-topic-drafts";
+import { compareUpdatedAt } from "@/lib/sort";
 
 function shouldSyncGeneratedSessionTitle(
   session: SessionSummary | undefined,
@@ -28,7 +30,9 @@ function shouldSyncGeneratedSessionTitle(
 export interface OutlineItem {
   slide_number: number;
   title: string;
-  suggested_layout_category: string;
+  suggested_slide_role: LayoutRole;
+  // Legacy compatibility for persisted local state or older API payloads.
+  suggested_layout_category?: string;
 }
 
 export interface ChatMessage {
@@ -186,7 +190,7 @@ export const useAppStore = create<AppState>()(
             : [session, ...state.sessions];
           next.sort((a, b) => {
             if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-            return b.updated_at.localeCompare(a.updated_at);
+            return compareUpdatedAt(a.updated_at, b.updated_at);
           });
           return { sessions: next };
         }),

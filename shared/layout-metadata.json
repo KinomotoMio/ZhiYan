@@ -1,0 +1,291 @@
+{
+  "roleOrder": [
+    "cover",
+    "agenda",
+    "section-divider",
+    "narrative",
+    "evidence",
+    "comparison",
+    "process",
+    "highlight",
+    "closing"
+  ],
+  "roleLabels": {
+    "cover": "封面",
+    "agenda": "目录",
+    "section-divider": "章节过渡",
+    "narrative": "叙述",
+    "evidence": "论据/数据",
+    "comparison": "对比",
+    "process": "流程",
+    "highlight": "强调",
+    "closing": "结尾"
+  },
+  "roleDescriptions": {
+    "cover": "定义演示开场身份，建立主题、对象与第一印象，不承担正文展开。",
+    "agenda": "交代整份演示的章节骨架，帮助观众预期接下来的叙事顺序。",
+    "section-divider": "在大章节之间做结构切换，强调叙事阶段变化，不承载大量新信息。",
+    "narrative": "承接常规正文叙述，解释背景、能力、案例或图文说明，是首个 variant 试点组。",
+    "evidence": "承载指标、图表、表格和实验结果，用事实或数据支撑前文观点。",
+    "comparison": "用对照关系帮助判断取舍，适合优劣分析、方案比较或问题-方案映射。",
+    "process": "表达步骤、时间线或方法路径，让观众理解先后顺序与执行流程。",
+    "highlight": "单独强调一句关键结论、观点或引用，用来收束注意力。",
+    "closing": "完成收尾与致谢，结束叙事，不再引入新的核心信息。"
+  },
+  "variantPilotRoles": [
+    "narrative"
+  ],
+  "variantsByRole": {
+    "cover": {
+      "default": {
+        "label": "标准封面",
+        "description": "当前仅保留一个封面变体，用于建立开场身份与主题信息。"
+      }
+    },
+    "agenda": {
+      "default": {
+        "label": "标准目录",
+        "description": "当前仅保留一个目录变体，用于交代章节骨架。"
+      }
+    },
+    "section-divider": {
+      "default": {
+        "label": "标准章节过渡",
+        "description": "当前仅保留一个章节过渡变体，用于大章节切换。"
+      }
+    },
+    "narrative": {
+      "icon-points": {
+        "label": "图标要点",
+        "description": "以 3-4 个图标化要点展开正文，适合能力、优势或结论分点说明。"
+      },
+      "visual-explainer": {
+        "label": "图文说明",
+        "description": "以单张主视觉配合说明文字展开正文，适合案例、场景或产品特性介绍。"
+      },
+      "capability-grid": {
+        "label": "能力网格",
+        "description": "以多图标标签矩阵展示并列能力点，适合能力清单、模块总览或功能地图。"
+      }
+    },
+    "evidence": {
+      "default": {
+        "label": "标准论据页",
+        "description": "当前仅保留一个论据页变体，统一承载数据、指标或表格内容。"
+      }
+    },
+    "comparison": {
+      "default": {
+        "label": "标准对比页",
+        "description": "当前仅保留一个对比页变体，用于表达方案或结论之间的对照。"
+      }
+    },
+    "process": {
+      "default": {
+        "label": "标准流程页",
+        "description": "当前仅保留一个流程页变体，用于表达步骤与时间顺序。"
+      }
+    },
+    "highlight": {
+      "default": {
+        "label": "标准强调页",
+        "description": "当前仅保留一个强调页变体，用于突出单句观点或引用。"
+      }
+    },
+    "closing": {
+      "default": {
+        "label": "标准结尾页",
+        "description": "当前仅保留一个结尾页变体，用于收尾与致谢。"
+      }
+    }
+  },
+  "usageLabels": {
+    "academic-report": "学术汇报",
+    "business-report": "商业汇报",
+    "sales-pitch": "销售提案",
+    "investor-pitch": "融资路演",
+    "training-workshop": "培训教学",
+    "conference-keynote": "会议演讲",
+    "project-status": "项目汇报",
+    "product-demo": "产品演示"
+  },
+  "layouts": {
+    "intro-slide": {
+      "role": "cover",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "outline-slide": {
+      "role": "agenda",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "investor-pitch"
+      ]
+    },
+    "section-header": {
+      "role": "section-divider",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "bullet-with-icons": {
+      "role": "narrative",
+      "variant": "icon-points",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo",
+        "conference-keynote"
+      ]
+    },
+    "bullet-icons-only": {
+      "role": "narrative",
+      "variant": "capability-grid",
+      "usage": [
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "product-demo"
+      ]
+    },
+    "image-and-description": {
+      "role": "narrative",
+      "variant": "visual-explainer",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "conference-keynote",
+        "product-demo"
+      ]
+    },
+    "metrics-slide": {
+      "role": "evidence",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "project-status"
+      ]
+    },
+    "metrics-with-image": {
+      "role": "evidence",
+      "variant": "default",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo"
+      ]
+    },
+    "chart-with-bullets": {
+      "role": "evidence",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "project-status"
+      ]
+    },
+    "table-info": {
+      "role": "evidence",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "project-status"
+      ]
+    },
+    "two-column-compare": {
+      "role": "comparison",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "product-demo"
+      ]
+    },
+    "challenge-outcome": {
+      "role": "comparison",
+      "variant": "default",
+      "usage": [
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "project-status",
+        "product-demo"
+      ]
+    },
+    "numbered-bullets": {
+      "role": "process",
+      "variant": "default",
+      "usage": [
+        "training-workshop",
+        "project-status",
+        "business-report",
+        "product-demo"
+      ]
+    },
+    "timeline": {
+      "role": "process",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "training-workshop",
+        "conference-keynote",
+        "project-status"
+      ]
+    },
+    "quote-slide": {
+      "role": "highlight",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "investor-pitch",
+        "conference-keynote"
+      ]
+    },
+    "thank-you": {
+      "role": "closing",
+      "variant": "default",
+      "usage": [
+        "academic-report",
+        "business-report",
+        "sales-pitch",
+        "investor-pitch",
+        "training-workshop",
+        "conference-keynote",
+        "project-status",
+        "product-demo"
+      ]
+    }
+  }
+}

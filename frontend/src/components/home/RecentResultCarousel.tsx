@@ -77,7 +77,7 @@ export default function RecentResultCarousel({
 
   if (!currentSlide) {
     return (
-      <div className="flex aspect-video items-center justify-center rounded-xl border border-cyan-100/70 bg-white/75 text-sm text-slate-500">
+      <div className="flex aspect-video items-center justify-center rounded-xl border border-blue-100/70 bg-white/80 text-sm text-slate-500">
         暂无可预览页面
       </div>
     );
@@ -94,7 +94,7 @@ export default function RecentResultCarousel({
       <button
         type="button"
         onClick={onOpenCurrentSlide}
-        className="group relative block min-w-0 w-full overflow-hidden rounded-xl border border-cyan-100/80 bg-white/70 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/70"
+        className="group relative block min-w-0 w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
         aria-label={`打开编辑器并定位到第 ${normalizedSlideIndex + 1} 页`}
       >
         <SlidePreview slide={currentSlide} className="w-full border-0 shadow-none" />
@@ -116,9 +116,9 @@ export default function RecentResultCarousel({
                 onClick={() => setPreviewSlideIndex(index)}
                 aria-label={`跳转到第 ${index + 1} 页`}
                 aria-current={isActive ? "true" : undefined}
-                className={`group shrink-0 rounded-lg border bg-white/80 p-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60 ${
+                className={`group shrink-0 rounded-lg border bg-white/85 p-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/60 ${
                   isActive
-                    ? "border-cyan-300 ring-2 ring-cyan-200/80"
+                    ? "border-rose-300 ring-2 ring-blue-200/80"
                     : "border-white/60 opacity-75 hover:opacity-100"
                 }`}
               >

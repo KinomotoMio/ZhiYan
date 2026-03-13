@@ -33,6 +33,18 @@ export interface SectionHeaderData {
   subtitle?: string | null;
 }
 
+// 3. outline-slide
+export interface OutlineSectionItem {
+  title: string;
+  description?: string | null;
+}
+
+export interface OutlineSlideData {
+  title: string;
+  subtitle?: string | null;
+  sections: OutlineSectionItem[];
+}
+
 // 3. bullet-with-icons
 export interface BulletIconItem {
   icon: IconRef;
@@ -40,9 +52,15 @@ export interface BulletIconItem {
   description: string;
 }
 
+export interface LayoutStatusState {
+  title: string;
+  message: string;
+}
+
 export interface BulletWithIconsData {
   title: string;
   items: BulletIconItem[];
+  status?: LayoutStatusState | null;
 }
 
 // 4. numbered-bullets
@@ -164,6 +182,7 @@ export interface ThankYouData {
 export type LayoutContentData =
   | IntroSlideData
   | SectionHeaderData
+  | OutlineSlideData
   | BulletWithIconsData
   | NumberedBulletsData
   | MetricsSlideData

@@ -27,6 +27,10 @@ _ALLOWED_FIELDS = {
     "tts_voice",
     "enable_vision_verification",
 }
+
+# Settings validation is a user-triggered connectivity check. We allow HTTPS
+# domain gateways here to avoid false negatives in proxy/DNS-mapped environments;
+# other server-side fetch flows keep the stricter resolved_ip policy by default.
 _VALIDATION_URL_POLICY = "https_domain_only"
 _NETWORK_ERROR_PREFIX = (
     "\u7f51\u7edc\u6216\u8fd0\u884c\u73af\u5883\u5f02\u5e38\uff0c\u65e0\u6cd5\u5b8c\u6210\u6821\u9a8c"
@@ -165,8 +169,11 @@ def _validation_message_for_status(
     if status_code in (200, 529):
         return ValidateResponse(valid=True, message=success_message)
     if status_code == 401:
-        return ValidateResponse(valid=False, message="\u0041\u0050\u0049\u0020\u004b\u0065\u0079\u0020\u65e0\u6548")
-    return ValidateResponse(valid=False, message=f"\u9a8c\u8bc1\u5931\u8d25: HTTP {status_code}")
+        return ValidateResponse(valid=False, message="API Key \u65e0\u6548")
+    return ValidateResponse(
+        valid=False,
+        message=f"\u9a8c\u8bc1\u5931\u8d25: HTTP {status_code}",
+    )
 
 
 def _network_error_message(error: Exception) -> str:

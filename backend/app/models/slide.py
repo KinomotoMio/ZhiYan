@@ -36,6 +36,7 @@ class LayoutType(str, Enum):
     BLANK = "blank"
     # 新版 layout IDs（与 layout_registry 一致）
     INTRO_SLIDE = "intro-slide"
+    OUTLINE_SLIDE = "outline-slide"
     BULLET_WITH_ICONS = "bullet-with-icons"
     NUMBERED_BULLETS = "numbered-bullets"
     METRICS_SLIDE = "metrics-slide"

@@ -13,10 +13,16 @@ from typing import Any
 from pptx import Presentation as PptxPresentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
 from app.models.slide import Presentation, Component
+from app.services.presentations.normalizer import normalize_outline_slide_data, split_outline_sections
+from app.services.export.layout_rules import (
+    get_bullet_with_icons_columns,
+    is_bullet_icons_only_compact,
+)
 
 # 16:9 宽屏尺寸
 SLIDE_WIDTH = Inches(13.333)
@@ -217,6 +223,23 @@ def _item_description(item: Any) -> str:
     return ""
 
 
+def _item_icon_query(item: Any) -> str:
+    if isinstance(item, dict):
+        icon = item.get("icon")
+        if isinstance(icon, dict):
+            query = _as_text(icon.get("query"))
+            if query:
+                return query
+    return _item_text(item)
+
+
+def _icon_token(query: str) -> str:
+    cleaned = "".join(ch for ch in query if ch.isalnum())
+    if not cleaned:
+        return "IC"
+    return cleaned[:2].upper()
+
+
 def _table_headers_and_rows(data: dict[str, Any]) -> tuple[list[str], list[list[str]]]:
     headers_raw = data.get("headers")
     if not isinstance(headers_raw, list):
@@ -285,6 +308,95 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
     return pairs
 
 
+GRAY_200 = RGBColor(0xDB, 0xE2, 0xEA)
+GRAY_900 = RGBColor(0x0F, 0x17, 0x2A)
+
+OUTLINE_ACCENT_LEFT = Inches(0.82)
+OUTLINE_ACCENT_TOP = Inches(0.62)
+OUTLINE_ACCENT_WIDTH = Inches(0.72)
+OUTLINE_ACCENT_HEIGHT = Inches(0.06)
+OUTLINE_TITLE_TOP = Inches(0.90)
+OUTLINE_TITLE_WIDTH = Inches(5.4)
+OUTLINE_TITLE_HEIGHT = Inches(0.70)
+OUTLINE_SUBTITLE_TOP = Inches(1.62)
+OUTLINE_SUBTITLE_WIDTH = Inches(5.2)
+OUTLINE_SUBTITLE_HEIGHT = Inches(0.58)
+OUTLINE_DIVIDER_LEFT = Inches(6.25)
+OUTLINE_DIVIDER_TOP = Inches(1.18)
+OUTLINE_DIVIDER_WIDTH = Inches(6.0)
+OUTLINE_DIVIDER_HEIGHT = Inches(0.02)
+OUTLINE_LEFT_COLUMN_LEFT = Inches(0.82)
+OUTLINE_RIGHT_COLUMN_LEFT = Inches(6.90)
+OUTLINE_CONTENT_TOP = Inches(2.18)
+OUTLINE_COLUMN_WIDTH = Inches(5.45)
+OUTLINE_COLUMN_HEIGHT = Inches(4.75)
+
+
+def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RGBColor):
+    shape = slide_obj.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = color
+    shape.line.fill.background()
+    return shape
+
+
+def _render_outline_column(
+    slide_obj,
+    sections: list[dict[str, str]],
+    start_index: int,
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+    accent_color: RGBColor,
+) -> None:
+    if not sections:
+        return
+
+    row_height = height // len(sections)
+    number_width = Inches(0.55)
+    gap_width = Inches(0.18)
+    title_left = left + number_width + gap_width
+    title_width = width - number_width - gap_width
+
+    for offset, section in enumerate(sections):
+        item_top = top + row_height * offset
+        _add_rule(slide_obj, left, item_top, width, Inches(0.02), GRAY_200)
+        _add_textbox(
+            slide_obj,
+            left,
+            item_top + Inches(0.10),
+            number_width,
+            Inches(0.25),
+            f"{start_index + offset + 1:02d}",
+            font_size=11,
+            bold=True,
+            color=accent_color,
+        )
+        _add_textbox(
+            slide_obj,
+            title_left,
+            item_top + Inches(0.05),
+            title_width,
+            Inches(0.45),
+            section.get("title", f"Section {start_index + offset + 1}"),
+            font_size=21,
+            bold=True,
+            color=GRAY_900,
+        )
+        description = section.get("description", "")
+        if description:
+            _add_textbox(
+                slide_obj,
+                title_left,
+                item_top + Inches(0.55),
+                title_width,
+                max(row_height - Inches(0.7), Inches(0.3)),
+                description,
+                font_size=12,
+                color=GRAY_600,
+            )
+
 def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGBColor | None = None) -> None:
     """根据 layout_id 和 contentData 渲染幻灯片内容"""
     color = theme_color or PRIMARY_COLOR
@@ -328,25 +440,199 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          d["subtitle"], font_size=22, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
 
-    elif layout_id in ("bullet-with-icons", "bullet-icons-only"):
+    elif layout_id == "outline-slide":
+        outline = normalize_outline_slide_data(d)
+        left_sections, right_sections = split_outline_sections(outline["sections"])
+        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
         _add_textbox(slide_obj,
-                     Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
-                     d.get("title", ""), font_size=36, bold=True)
-        items = d.get("items") or d.get("features") or []
-        y = Inches(1.8)
-        for item in items[:6]:
-            text = _item_text(item)
-            desc = _item_description(item)
+                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
+                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
+        subtitle = _as_text(outline.get("subtitle"))
+        if subtitle:
             _add_textbox(slide_obj,
-                         Inches(1.2), y, Inches(10), Inches(0.5),
-                         f"• {text}", font_size=22, bold=True)
+                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
+                         subtitle, font_size=14, color=GRAY_600)
+        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
+        _render_outline_column(
+            slide_obj,
+            left_sections,
+            0,
+            OUTLINE_LEFT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
+            color,
+        )
+        _render_outline_column(
+            slide_obj,
+            right_sections,
+            len(left_sections),
+            OUTLINE_RIGHT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
+            color,
+        )
+    elif layout_id == "bullet-with-icons":
+        _add_textbox(slide_obj,
+                     Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+                     d.get("title", ""), font_size=36, bold=True)
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        columns = get_bullet_with_icons_columns(len(items))
+        compact = columns == 4
+        gutter = 0.18 if compact else 0.28
+        content_width = 11.4
+        column_width = (content_width - gutter * (columns - 1)) / columns
+        base_left = 0.8
+
+        for idx, item in enumerate(items[:4]):
+            left = base_left + idx * (column_width + gutter)
+            title = _item_text(item)
+            desc = _item_description(item)
+            icon_token = _icon_token(_item_icon_query(item))
+
+            rule = slide_obj.shapes.add_shape(
+                1,
+                Inches(left),
+                Inches(2.55),
+                Inches(0.015),
+                Inches(2.25 if compact else 2.45),
+            )
+            rule.fill.solid()
+            rule.fill.fore_color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+            rule.line.fill.background()
+
+            title_bg = slide_obj.shapes.add_shape(
+                1,
+                Inches(left + 0.18),
+                Inches(2.0),
+                Inches(max(column_width - 0.28, 0.8)),
+                Inches(0.34),
+            )
+            title_bg.fill.solid()
+            title_bg.fill.fore_color.rgb = RGBColor(0xEF, 0xF5, 0xFE)
+            title_bg.line.fill.background()
+
+            icon_box = slide_obj.shapes.add_shape(
+                1,
+                Inches(left + 0.18),
+                Inches(1.22),
+                Inches(0.42),
+                Inches(0.42),
+            )
+            icon_box.fill.solid()
+            icon_box.fill.fore_color.rgb = RGBColor(0xEF, 0xF6, 0xFF)
+            icon_box.line.color.rgb = RGBColor(0xBF, 0xDB, 0xFE)
+
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.19),
+                Inches(1.31),
+                Inches(0.40),
+                Inches(0.18),
+                icon_token,
+                font_size=10,
+                bold=True,
+                color=PRIMARY_COLOR,
+                alignment=PP_ALIGN.CENTER,
+            )
+
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.18),
+                Inches(1.9),
+                Inches(max(column_width - 0.24, 0.8)),
+                Inches(0.7),
+                title,
+                font_size=19 if compact else 21,
+                bold=True,
+                color=PRIMARY_COLOR,
+            )
             if desc:
-                _add_textbox(slide_obj,
-                             Inches(1.5), y + Inches(0.5), Inches(10), Inches(0.4),
-                             desc, font_size=16, color=GRAY_600)
-                y += Inches(1.1)
-            else:
-                y += Inches(0.7)
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.18),
+                    Inches(2.72),
+                    Inches(max(column_width - 0.24, 0.8)),
+                    Inches(1.15 if compact else 1.35),
+                    desc,
+                    font_size=11.5 if compact else 12.5,
+                    color=GRAY_600,
+                )
+            _add_textbox(
+                slide_obj,
+                Inches(left + 0.18),
+                Inches(5.42),
+                Inches(max(column_width - 0.24, 0.8)),
+                Inches(0.65),
+                str(idx + 1).zfill(2),
+                font_size=40 if compact else 46,
+                color=RGBColor(0x11, 0x18, 0x27),
+            )
+
+    elif layout_id == "bullet-icons-only":
+        _add_textbox(
+            slide_obj,
+            Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+            d.get("title", ""), font_size=36, bold=True
+        )
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        compact = is_bullet_icons_only_compact(len(items))
+        if items:
+            card_width = 5.45
+            card_height = 0.98 if compact else 1.08
+            start_y = 1.85
+            gap_y = 0.22 if compact else 0.26
+            for idx, item in enumerate(items[:8]):
+                col_idx = idx % 2
+                row_idx = idx // 2
+                left = 0.8 + col_idx * 5.75
+                top = start_y + row_idx * (card_height + gap_y)
+                icon_token = _icon_token(_item_icon_query(item))
+
+                card = slide_obj.shapes.add_shape(
+                    1, Inches(left), Inches(top), Inches(card_width), Inches(card_height)
+                )
+                card.fill.solid()
+                card.fill.fore_color.rgb = RGBColor(0xF9, 0xFA, 0xFB)
+                card.line.fill.background()
+
+                accent = slide_obj.shapes.add_shape(
+                    1, Inches(left + 0.28), Inches(top + 0.28), Inches(1.0), Inches(0.48)
+                )
+                accent.fill.solid()
+                accent.fill.fore_color.rgb = RGBColor(0xDB, 0xEA, 0xFE)
+                accent.line.fill.background()
+
+                number_box = slide_obj.shapes.add_shape(
+                    1, Inches(left + 0.34), Inches(top + 0.18), Inches(0.72), Inches(0.72)
+                )
+                number_box.fill.solid()
+                number_box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                number_box.line.color.rgb = RGBColor(0xDB, 0xEA, 0xFE)
+
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.39), Inches(top + 0.34), Inches(0.62), Inches(0.2),
+                    icon_token, font_size=12, bold=True, color=PRIMARY_COLOR,
+                    alignment=PP_ALIGN.CENTER,
+                )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 1.28), Inches(top + 0.2), Inches(card_width - 1.5), Inches(0.18),
+                    str(idx + 1).zfill(2), font_size=9, bold=True, color=GRAY_600,
+                )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 1.28), Inches(top + 0.42), Inches(card_width - 1.5), Inches(0.38),
+                    _item_text(item), font_size=21 if compact else 24, bold=True,
+                )
 
     elif layout_id == "numbered-bullets":
         _add_textbox(slide_obj,

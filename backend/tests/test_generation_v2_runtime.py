@@ -251,7 +251,7 @@ def test_verify_timeout_persists_partial_presentation_and_emits_payload(monkeypa
                     {
                         "slide_number": 1,
                         "title": "封面",
-                        "suggested_layout_category": "intro",
+                        "suggested_slide_role": "cover",
                         "key_points": [],
                     }
                 ]
@@ -387,6 +387,25 @@ def test_two_column_compare_fallback_shape_on_slide_generation_error(monkeypatch
         assert isinstance(content["right"].get("items"), list)
 
     asyncio.run(_case())
+
+
+def test_bullet_with_icons_fallback_uses_explicit_status_when_points_are_missing():
+    from app.services.pipeline.graph import _fallback_content
+
+    content = _fallback_content(
+        {
+            "title": "关键结论",
+            "key_points": [],
+        },
+        "bullet-with-icons",
+    )
+
+    assert content["title"] == "关键结论"
+    assert content["items"] == []
+    assert content["status"] == {
+        "title": "内容暂未就绪",
+        "message": "该页正在生成或已回退，可稍后重试。",
+    }
 
 
 def test_stage_generate_slides_uses_per_slide_context(monkeypatch):

@@ -49,6 +49,8 @@
 
 :root {
   --radius: 0.625rem;
+  --zy-brand-red: 159, 34, 65;
+  --zy-brand-blue: 28, 72, 167;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -83,6 +85,11 @@
 }
 
 .dark {
+  --zy-brand-red: 214, 48, 88;
+  --zy-brand-blue: 78, 128, 255;
+  --zy-dark-bg-start: 18, 20, 34;
+  --zy-dark-bg-mid: 14, 22, 40;
+  --zy-dark-bg-end: 12, 28, 58;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -126,12 +133,43 @@
 }
 
 @layer utilities {
+  .zy-bg-home {
+    background:
+      radial-gradient(circle at 14% 12%, rgba(var(--zy-brand-red), 0.24), transparent 44%),
+      radial-gradient(circle at 84% 10%, rgba(var(--zy-brand-blue), 0.2), transparent 38%),
+      radial-gradient(circle at 56% 84%, rgba(var(--zy-brand-blue), 0.12), transparent 34%),
+      linear-gradient(
+        160deg,
+        rgba(255, 247, 248, 0.97) 8%,
+        rgba(245, 246, 255, 0.95) 48%,
+        rgba(236, 242, 255, 0.93) 100%
+      );
+  }
+
+  .dark .zy-bg-home {
+    background:
+      radial-gradient(circle at 14% 12%, rgba(var(--zy-brand-red), 0.24), transparent 44%),
+      radial-gradient(circle at 84% 10%, rgba(var(--zy-brand-blue), 0.2), transparent 38%),
+      radial-gradient(circle at 56% 84%, rgba(var(--zy-brand-blue), 0.12), transparent 34%),
+      linear-gradient(
+        160deg,
+        rgba(var(--zy-dark-bg-start), 0.97) 8%,
+        rgba(var(--zy-dark-bg-mid), 0.96) 48%,
+        rgba(var(--zy-dark-bg-end), 0.93) 100%
+      );
+  }
+
   /* 页面渐变背景（比首页更轻，用于工作区页面） */
   .zy-bg-page {
     background:
-      radial-gradient(circle at 12% 10%, rgba(56,189,248,0.10), transparent 46%),
-      radial-gradient(circle at 86% 8%, rgba(20,184,166,0.08), transparent 36%),
-      linear-gradient(165deg, rgba(248,250,252,0.97) 10%, rgba(239,246,255,0.96) 48%, rgba(236,253,245,0.94) 100%);
+      radial-gradient(circle at 12% 10%, rgba(var(--zy-brand-red), 0.12), transparent 46%),
+      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.1), transparent 38%),
+      linear-gradient(
+        165deg,
+        rgba(251, 246, 248, 0.97) 10%,
+        rgba(244, 246, 255, 0.96) 48%,
+        rgba(236, 241, 255, 0.94) 100%
+      );
   }
 
   /* 毛玻璃卡片 */
@@ -155,9 +193,14 @@
   /* Dark mode 变体 */
   .dark .zy-bg-page {
     background:
-      radial-gradient(circle at 12% 10%, rgba(56,189,248,0.06), transparent 46%),
-      radial-gradient(circle at 86% 8%, rgba(20,184,166,0.04), transparent 36%),
-      linear-gradient(165deg, rgba(15,23,42,0.97) 10%, rgba(15,23,42,0.96) 48%, rgba(15,23,42,0.94) 100%);
+      radial-gradient(circle at 12% 10%, rgba(var(--zy-brand-red), 0.08), transparent 46%),
+      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.06), transparent 38%),
+      linear-gradient(
+        165deg,
+        rgba(var(--zy-dark-bg-start), 0.97) 10%,
+        rgba(var(--zy-dark-bg-mid), 0.96) 48%,
+        rgba(var(--zy-dark-bg-end), 0.94) 100%
+      );
   }
 
   .dark .zy-card-glass {

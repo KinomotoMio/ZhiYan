@@ -47,7 +47,21 @@ class SectionHeaderData(BaseModel):
     subtitle: str | None = Field(None, max_length=60, description="章节简述")
 
 
-# ---------- 3. bullet-with-icons ----------
+# ---------- 3. outline-slide ----------
+
+class OutlineSectionItem(BaseModel):
+    title: str = Field(min_length=2, max_length=20, description="目录章节标题")
+    description: str | None = Field(None, max_length=36, description="章节一句话说明")
+
+
+class OutlineSlideData(BaseModel):
+    """目录导航页"""
+    title: str = Field(min_length=2, max_length=32, description="目录页标题")
+    subtitle: str | None = Field(None, max_length=120, description="目录页说明")
+    sections: list[OutlineSectionItem] = Field(min_length=4, max_length=6, description="目录章节列表")
+
+
+# ---------- 4. bullet-with-icons ----------
 
 class BulletIconItem(BaseModel):
     icon: IconRef

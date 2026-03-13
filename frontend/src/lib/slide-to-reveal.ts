@@ -5,6 +5,10 @@
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import {
+  getBulletWithIconsColumns,
+  isBulletIconsOnlyCompact,
+} from "@/lib/layout-rules";
 import type { Component, Presentation, Slide, Style } from "@/types/slide";
 
 function escapeHtml(str: string): string {
@@ -185,13 +189,6 @@ function renderIconSvg(query: string, size = 24): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${children}</svg>`;
 }
 
-function renderIconBadge(query: string, size: number, boxSize: number): string {
-  return `
-    <div style="width:${boxSize}px;height:${boxSize}px;border-radius:${Math.round(boxSize * 0.28)}px;background:${primaryMix(10)};display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--primary-color,#3b82f6);flex-shrink:0;">
-      ${renderIconSvg(query, size)}
-    </div>`;
-}
-
 function renderSimpleImagePlaceholder(prompt: string, extraStyle = ""): string {
   return `
     <div style="${extraStyle}background:#f3f4f6;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9ca3af;overflow:hidden;">
@@ -315,6 +312,34 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
   return pairs.length > 0 ? pairs : [{ challenge: "Content unavailable", outcome: "Pending" }];
 }
 
+
+function splitOutlineSections<T>(sections: T[]): [T[], T[]] {
+  const midpoint = Math.ceil(sections.length / 2);
+  return [sections.slice(0, midpoint), sections.slice(midpoint)];
+}
+
+function renderOutlineColumn(column: Array<Record<string, unknown>>, startIndex: number): string {
+  if (column.length === 0) return "";
+
+  return `
+    <div style="flex:1;display:grid;grid-template-rows:repeat(${column.length},minmax(0,1fr));gap:24px;min-height:0;">
+      ${column.map((section, index) => {
+        const sectionIndex = startIndex + index;
+        const title = asText(section.title, `Section ${sectionIndex + 1}`);
+        const description = asText(section.description);
+        return `
+          <article style="border-top:1px solid ${backgroundTextMix(12)};padding-top:18px;display:flex;gap:20px;">
+            <div style="width:48px;flex-shrink:0;padding-top:4px;">
+              <div style="font-size:13px;font-weight:700;letter-spacing:0.18em;color:var(--primary-color,#3b82f6);">${String(sectionIndex + 1).padStart(2, "0")}</div>
+            </div>
+            <div style="min-width:0;">
+              <h3 style="font-size:28px;font-weight:600;line-height:1.05;color:var(--background-text,#111827);margin:0;letter-spacing:-0.04em;">${escapeHtml(title)}</h3>
+              ${description ? `<p style="font-size:15px;line-height:1.6;color:${backgroundTextMix(58)};margin:12px 0 0;max-width:420px;">${escapeHtml(description)}</p>` : ""}
+            </div>
+          </article>`;
+      }).join("")}
+    </div>`;
+}
 function contentDataToHTML(layoutId: string, data: Record<string, unknown>): string {
   const d = data as Record<string, unknown>;
 
@@ -340,22 +365,64 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
+    case "outline-slide": {
+      const sections = Array.isArray(d.sections)
+        ? d.sections.filter((section): section is Record<string, unknown> => !!section && typeof section === "object")
+        : [];
+      const [leftColumn, rightColumn] = splitOutlineSections(sections);
+      return `
+        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);">
+          <div style="display:flex;align-items:flex-end;gap:40px;">
+            <div style="max-width:560px;">
+              <div style="width:64px;height:6px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:20px;"></div>
+              <h2 style="font-size:42px;font-weight:700;line-height:1.12;letter-spacing:-0.045em;color:var(--background-text,#111827);margin:0 0 16px;">${escapeHtml(asText(d.title))}</h2>
+              ${asText(d.subtitle) ? `<p style="font-size:17px;line-height:1.6;color:${backgroundTextMix(60)};margin:0;max-width:520px;">${escapeHtml(asText(d.subtitle))}</p>` : ""}
+            </div>
+            <div style="height:1px;flex:1;background:${backgroundTextMix(12)};margin-bottom:12px;"></div>
+          </div>
+          <div style="display:flex;gap:56px;flex:1;margin-top:48px;">
+            ${renderOutlineColumn(leftColumn, 0)}
+            ${renderOutlineColumn(rightColumn, leftColumn.length)}
+          </div>
+        </div>`;
+    }
     case "bullet-with-icons": {
       const raw = Array.isArray(d.items) ? d.items : [];
-      const columns = Math.min(Math.max(raw.length, 1), 4);
+      const columns = getBulletWithIconsColumns(raw.length);
+      const compact = columns === 4;
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
           <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:32px;flex:1;">
-            ${raw.map((item) => {
-              const record = item as Record<string, unknown>;
-              const icon = record.icon && typeof record.icon === "object" ? (record.icon as Record<string, unknown>) : null;
-              const query = asText(icon?.query, itemText(item) || "star");
+          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));column-gap:${compact ? 18 : 26}px;flex:1;min-height:0;">
+            ${raw.map((item, index) => {
+              const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+              const icon = row.icon && typeof row.icon === "object" ? row.icon as Record<string, unknown> : {};
+              const query = asText(icon.query, itemText(item) || "star");
               return `
-                <div style="display:flex;flex-direction:column;align-items:flex-start;">
-                  ${renderIconBadge(query, 28, 56)}
-                  <h3 style="font-size:20px;font-weight:600;line-height:1.4;color:var(--background-text,#111827);margin:0 0 8px;">${escapeHtml(itemText(item))}</h3>
-                  <p style="font-size:16px;line-height:1.5;color:${backgroundTextMix(60)};margin:0;">${escapeHtml(itemDescription(item))}</p>
+                <div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">
+                  <div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:${compact ? "46%" : "50%"};background-color:${backgroundTextMix(12)};"></div>
+                  <div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:8px 0;">
+                    <div style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:9999px;background:${primaryMix(12)};color:var(--primary-color,#3b82f6);margin-bottom:16px;flex-shrink:0;">
+                      ${renderIconSvg(query, 20)}
+                    </div>
+                    <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
+                      <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                        <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
+                          ${escapeHtml(itemText(item))}
+                        </span>
+                      </span>
+                    </h3>
+                    ${itemDescription(item)
+                      ? `<p style="font-size:${compact ? 11.5 : 12.5}px;line-height:1.42;color:${backgroundTextMix(72)};margin:0;max-width:240px;">
+                          <span style="display:-webkit-box;-webkit-line-clamp:${compact ? 4 : 5};-webkit-box-orient:vertical;overflow:hidden;">
+                            ${escapeHtml(itemDescription(item))}
+                          </span>
+                        </p>`
+                      : ""}
+                    <div style="padding-top:16px;font-size:${compact ? 52 : 60}px;font-weight:400;line-height:0.92;letter-spacing:-0.06em;color:var(--background-text,#111827);">
+                      ${String(index + 1).padStart(2, "0")}
+                    </div>
+                  </div>
                 </div>`;
             }).join("")}
           </div>
@@ -569,22 +636,28 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     }
     case "bullet-icons-only": {
       const items = Array.isArray(d.items) ? d.items : Array.isArray(d.features) ? d.features : [];
-      const cols = items.length <= 4 ? 4 : items.length <= 6 ? 3 : 4;
+      const compact = isBulletIconsOnlyCompact(items.length);
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
-          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:32px;align-items:center;flex:1;">
-            ${items.map((item) => {
+          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 32px;">${escapeHtml(asText(d.title))}</h2>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:${compact ? 28 : 40}px;row-gap:${compact ? 18 : 22}px;align-content:center;flex:1;min-height:0;">
+            ${items.map((item, index) => {
               const record = item as Record<string, unknown>;
               const icon = record.icon && typeof record.icon === "object" ? (record.icon as Record<string, unknown>) : null;
               const query = asText(icon?.query, itemText(item) || "star");
               const label = asText(record.label) || itemText(item);
               return `
-                <div style="display:flex;flex-direction:column;align-items:center;text-align:center;">
-                  <div style="width:64px;height:64px;border-radius:16px;background:${primaryMix(10)};display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--primary-color,#3b82f6);flex-shrink:0;">
-                    ${renderIconSvg(query, 32)}
+                <div style="position:relative;display:flex;align-items:center;min-height:92px;overflow:hidden;border-radius:28px;background:color-mix(in srgb, var(--background-text,#111827) 3%, white);padding:20px 24px;">
+                  <div style="position:absolute;left:28px;top:50%;width:96px;height:48px;border-radius:16px;background:${primaryMix(16)};transform:translateY(-50%) skewX(-22deg);"></div>
+                  <div style="position:relative;z-index:1;width:72px;height:72px;border-radius:22px;border:1px solid ${primaryMix(14)};background:#fff;box-shadow:0 12px 32px rgba(15,23,42,0.08);display:flex;align-items:center;justify-content:center;color:var(--primary-color,#3b82f6);flex-shrink:0;">
+                    ${renderIconSvg(query, 40)}
                   </div>
-                  <span style="font-size:16px;font-weight:600;line-height:1.5;color:var(--background-text,#111827);">${escapeHtml(label)}</span>
+                  <div style="position:relative;z-index:1;min-width:0;margin-left:24px;">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:0.24em;line-height:1;color:${backgroundTextMix(42)};margin-bottom:8px;">${String(index + 1).padStart(2, "0")}</div>
+                    <div style="font-size:${compact ? 21 : 24}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--background-text,#111827);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                      ${escapeHtml(label)}
+                    </div>
+                  </div>
                 </div>`;
             }).join("")}
           </div>

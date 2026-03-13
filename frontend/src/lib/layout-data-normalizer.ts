@@ -8,8 +8,12 @@ export interface LayoutNormalizeResult {
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
 const DEFAULT_FILLER = "内容生成中";
+const OUTLINE_FALLBACK_TITLES = ["背景", "分析", "方案", "结论", "实施", "总结"] as const;
+const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
+const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
 type RecordLike = Record<string, unknown>;
+type OutlineSection = { title: string; description?: string };
 
 function isRecordLike(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -58,7 +62,7 @@ function extractTextItemsFromText(rawText: string): string[] {
 
 function cleanMarkdownText(raw: string): string {
   return raw
-    .replace(/^\s*[-*•]+\s*/, "")
+    .replace(/^\s*[-*•+]\s*/, "")
     .replace(/^\s*\d+[.)]\s*/, "")
     .replace(/^\|+|\|+$/g, "")
     .replace(/\*\*/g, "")
@@ -82,6 +86,74 @@ function normalizeIcon(value: unknown): RecordLike | null {
   }
   if (typeof value === "string" && value.trim()) return { query: value.trim() };
   return null;
+}
+
+function isPlaceholderText(text: string): boolean {
+  return ["内容生成中", "待补充", "自动回退生成"].includes(text.trim());
+}
+
+function normalizeStatus(raw: unknown): RecordLike | null {
+  if (!isRecordLike(raw)) return null;
+  const title = asText(raw.title, BULLET_PLACEHOLDER_TITLE);
+  const message = asText(raw.message, BULLET_PLACEHOLDER_MESSAGE);
+  return { title, message };
+}
+
+function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "要点概览");
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  const items: RecordLike[] = [];
+
+  for (const rawItem of rawItems) {
+    if (!isRecordLike(rawItem)) continue;
+    const itemTitle = asText(rawItem.title);
+    const itemDescription = asText(rawItem.description);
+    const text = itemTitle || itemDescription;
+
+    if (!text) continue;
+
+    const repeatedPlaceholder =
+      itemTitle &&
+      itemDescription &&
+      itemTitle === itemDescription &&
+      isPlaceholderText(itemTitle);
+    if (repeatedPlaceholder) {
+      continue;
+    }
+
+    const icon = normalizeIcon(rawItem.icon) ?? { query: "star" };
+    items.push({
+      icon,
+      title: itemTitle || text.slice(0, 25),
+      description: itemDescription || text,
+    });
+  }
+
+  const explicitStatus = normalizeStatus(data.status);
+  const inferredStatus =
+    items.length === 0
+      ? {
+          title: BULLET_PLACEHOLDER_TITLE,
+          message: BULLET_PLACEHOLDER_MESSAGE,
+        }
+      : null;
+
+  const repaired: RecordLike = {
+    title,
+    items,
+  };
+  const status = explicitStatus ?? inferredStatus;
+  if (status) {
+    repaired.status = status;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize bullet-with-icons fallback state" : null,
+  };
 }
 
 function extractTextItems(value: unknown): string[] {
@@ -172,6 +244,74 @@ function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize compare shape" : null };
 }
 
+function normalizeOutlineSection(value: unknown, index: number): RecordLike | null {
+  if (typeof value === "string") {
+    const title = asText(value);
+    if (!title) return null;
+    return { title };
+  }
+
+  if (!isRecordLike(value)) return null;
+
+  const title =
+    asText(value.title) ||
+    asText(value.text) ||
+    asText(value.label) ||
+    asText(value.heading) ||
+    asText(value.name);
+  const description = asText(value.description) || asText(value.summary) || asText(value.detail);
+
+  if (!title && !description) return null;
+
+  const section: RecordLike = {
+    title: title || OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}`,
+  };
+  if (description) {
+    section.description = description;
+  }
+  return section;
+}
+
+function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "目录");
+  const subtitle = asText(data.subtitle);
+  const sourceSections = Array.isArray(data.sections)
+    ? data.sections
+    : Array.isArray(data.items)
+      ? data.items
+      : [];
+
+  const sections: RecordLike[] = [];
+  for (const [index, section] of sourceSections.entries()) {
+    const normalized = normalizeOutlineSection(section, index);
+    if (normalized) {
+      sections.push(normalized);
+    }
+  }
+
+  const repairedSections = sections.slice(0, 6);
+  while (repairedSections.length < 4) {
+    const index = repairedSections.length;
+    repairedSections.push({ title: OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}` });
+  }
+
+  const repaired: RecordLike = {
+    title,
+    sections: repairedSections,
+  };
+  if (subtitle) {
+    repaired.subtitle = subtitle;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize outline shape" : null,
+  };
+}
+
 function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
   const headers = extractTextItems(data.headers).length > 0
     ? extractTextItems(data.headers)
@@ -196,7 +336,7 @@ function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
 
   const resolvedHeaders = headers.length > 0
     ? headers
-    : (rows[0] ? rows[0].map((_, i) => `列${i + 1}`) : []);
+    : (rows[0] ? rows[0].map((_, i) => `列 ${i + 1}`) : []);
   if (resolvedHeaders.length === 0 || rows.length === 0) {
     return { data, recoverable: false, changed: false, reason: "invalid table shape" };
   }
@@ -316,11 +456,20 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
   if (layoutId === "intro-slide") {
     return normalizeIntroSlide(data);
   }
+  if (layoutId === "bullet-with-icons") {
+    return normalizeBulletWithIcons(data);
+  }
+  if (layoutId === "outline-slide") {
+    return normalizeOutlineSlide(data);
+  }
   if (layoutId === "quote-slide") {
     return normalizeQuoteSlide(data);
   }
   if (layoutId === "thank-you") {
     return normalizeThankYou(data);
+  }
+  if (layoutId === "outline-slide") {
+    return normalizeOutlineSlide(data);
   }
   if (layoutId === "two-column-compare") {
     return normalizeTwoColumnCompare(data);

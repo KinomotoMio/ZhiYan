@@ -11,9 +11,14 @@ from fastapi import HTTPException
 
 URLPolicy = Literal["resolved_ip", "https_domain_only"]
 
-STRICT_POLICY_ERROR = "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4e0d\u5141\u8bb8\u5411\u5185\u90e8\u6216\u79c1\u6709\u5730\u5740\u53d1\u9001\u8bf7\u6c42"
+STRICT_POLICY_ERROR = (
+    "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4e0d\u5141\u8bb8\u5411\u5185\u90e8\u6216"
+    "\u79c1\u6709\u5730\u5740\u53d1\u9001\u8bf7\u6c42"
+)
 HTTPS_DOMAIN_POLICY_ERROR = (
-    "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4ec5\u652f\u6301\u4f7f\u7528 https \u7684\u57df\u540d\u5730\u5740\u8fdb\u884c\u6821\u9a8c\uff0c\u4e0d\u5141\u8bb8 localhost \u6216 IP \u5730\u5740"
+    "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4ec5\u652f\u6301\u4f7f\u7528 https \u7684"
+    "\u57df\u540d\u5730\u5740\u8fdb\u884c\u6821\u9a8c\uff0c\u4e0d\u5141\u8bb8"
+    " localhost \u6216 IP \u5730\u5740"
 )
 
 _DOMAIN_LABEL_RE = re.compile(r"^[A-Za-z0-9-]{1,63}$")
@@ -117,7 +122,11 @@ async def is_safe_url(url: str, url_policy: URLPolicy = "resolved_ip") -> bool:
 
 
 def _build_policy_error(request: httpx.Request, url_policy: URLPolicy) -> str:
-    prefix = STRICT_POLICY_ERROR if url_policy == "resolved_ip" else HTTPS_DOMAIN_POLICY_ERROR
+    prefix = (
+        STRICT_POLICY_ERROR
+        if url_policy == "resolved_ip"
+        else HTTPS_DOMAIN_POLICY_ERROR
+    )
     return f"{prefix} ({request.url})"
 
 
@@ -142,7 +151,9 @@ async def validate_url_hook(request: httpx.Request) -> None:
 
 
 def get_safe_httpx_client(
-    *, url_policy: URLPolicy = "resolved_ip", **kwargs
+    *,
+    url_policy: URLPolicy = "resolved_ip",
+    **kwargs,
 ) -> httpx.AsyncClient:
     hooks = kwargs.pop("event_hooks", {}).copy()
     request_hooks = hooks.get("request", []).copy()

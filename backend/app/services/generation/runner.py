@@ -200,8 +200,8 @@ class GenerationRunner:
                                 {
                                     "slide_number": item.get("slide_number"),
                                     "title": item.get("title"),
-                                    "suggested_layout_category": item.get(
-                                        "suggested_layout_category", "bullets"
+                                    "suggested_slide_role": item.get(
+                                        "suggested_slide_role", "narrative"
                                     ),
                                 }
                                 for item in state.outline.get("items", [])

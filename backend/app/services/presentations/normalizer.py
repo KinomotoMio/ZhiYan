@@ -6,24 +6,58 @@ from copy import deepcopy
 import re
 from typing import Any
 
-_RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*•]+\s*")
+_RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*\u2022+]\s*")
 _RE_ORDERED_LIST_PREFIX = re.compile(r"^\s*\d+[.)]\s*")
 _RE_WHITESPACE = re.compile(r"\s+")
 _RE_TABLE_SEPARATOR = re.compile(r"[-:]+")
 
-DEFAULT_LEFT_HEADING = "要点 A"
-DEFAULT_RIGHT_HEADING = "要点 B"
-DEFAULT_FILLER_TEXT = "内容生成中"
+DEFAULT_LEFT_HEADING = "\u8981\u70b9 A"
+DEFAULT_RIGHT_HEADING = "\u8981\u70b9 B"
+DEFAULT_FILLER_TEXT = "\u5185\u5bb9\u751f\u6210\u4e2d"
+OUTLINE_FALLBACK_TITLES = (
+    "\u80cc\u666f",
+    "\u5206\u6790",
+    "\u65b9\u6848",
+    "\u7ed3\u8bba",
+    "\u5b9e\u65bd",
+    "\u603b\u7ed3",
+)
+
+
+def normalize_outline_slide_data(
+    data: dict[str, Any],
+    *,
+    title_default: str = "\u76ee\u5f55",
+    fallback_titles: tuple[str, ...] = OUTLINE_FALLBACK_TITLES,
+) -> dict[str, Any]:
+    title = _as_text(data.get("title"), title_default)
+    subtitle = _as_text(data.get("subtitle"), "")
+    raw_sections = data.get("sections") if isinstance(data.get("sections"), list) else data.get("items")
+    raw_sections = raw_sections if isinstance(raw_sections, list) else []
+
+    sections: list[dict[str, str]] = []
+    for index, section in enumerate(raw_sections):
+        normalized = _normalize_outline_section(section, index, fallback_titles=fallback_titles)
+        if normalized is not None:
+            sections.append(normalized)
+
+    sections = sections[:6]
+    while len(sections) < 4:
+        sections.append({"title": fallback_titles[len(sections)]})
+
+    normalized: dict[str, Any] = {"title": title, "sections": sections}
+    if subtitle:
+        normalized["subtitle"] = subtitle
+    return normalized
+
+
+def split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    midpoint = (len(sections) + 1) // 2
+    return sections[:midpoint], sections[midpoint:]
 
 
 def normalize_presentation_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any]]:
-    """Normalize persisted presentation payload.
-
-    Returns:
-        normalized_payload: normalized payload copy (or original shape if untouched).
-        changed: whether normalized payload differs from input payload.
-        repair_report: summary of changes and unrecoverable slide count.
-    """
+    """Normalize persisted presentation payload."""
     normalized = deepcopy(payload)
     slides = normalized.get("slides")
     if not isinstance(slides, list):
@@ -74,6 +108,8 @@ def _normalize_layout_content(
         return _normalize_quote_slide(data)
     if layout_id == "thank-you":
         return _normalize_thank_you(data)
+    if layout_id == "outline-slide":
+        return _normalize_outline_slide(data)
     if layout_id == "two-column-compare":
         return _normalize_two_column_compare(data)
     if layout_id == "table-info":
@@ -84,7 +120,7 @@ def _normalize_layout_content(
 
 
 def _normalize_intro_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "未命名演示")
+    title = _as_text(data.get("title"), "\u672a\u547d\u540d\u6f14\u793a")
     subtitle = _as_text(data.get("subtitle"), "")
     author = _as_text(data.get("author") or data.get("presenter"), "")
     date = _as_text(data.get("date"), "")
@@ -102,9 +138,7 @@ def _normalize_intro_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, 
 
 
 def _normalize_quote_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    quote = _as_text(data.get("quote"), "")
-    if not quote:
-        quote = _as_text(data.get("title"), "")
+    quote = _as_text(data.get("quote"), "") or _as_text(data.get("title"), "")
     if not quote:
         return data, False, False, "quote-slide-unrecoverable"
 
@@ -122,7 +156,7 @@ def _normalize_quote_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, 
 
 
 def _normalize_thank_you(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "谢谢")
+    title = _as_text(data.get("title"), "\u8c22\u8c22")
     subtitle = _as_text(data.get("subtitle"), "")
     contact = _as_text(data.get("contact") or data.get("contact_info"), "")
 
@@ -136,8 +170,14 @@ def _normalize_thank_you(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bo
     return normalized, changed, True, "thank-you-shape" if changed else ""
 
 
+def _normalize_outline_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    normalized = normalize_outline_slide_data(data)
+    changed = normalized != data
+    return normalized, changed, True, "outline-slide-shape" if changed else ""
+
+
 def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "对比分析")
+    title = _as_text(data.get("title"), "\u5bf9\u6bd4\u5206\u6790")
 
     left = _normalize_compare_column(data.get("left"), DEFAULT_LEFT_HEADING)
     right = _normalize_compare_column(data.get("right"), DEFAULT_RIGHT_HEADING)
@@ -170,7 +210,7 @@ def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any],
 
 
 def _normalize_table_info(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "信息表")
+    title = _as_text(data.get("title"), "\u4fe1\u606f\u8868")
     headers = _extract_text_items(data.get("headers")) or _extract_text_items(data.get("columns"))
 
     rows_raw = data.get("rows")
@@ -185,7 +225,7 @@ def _normalize_table_info(data: dict[str, Any]) -> tuple[dict[str, Any], bool, b
                 normalized_rows.append([_as_text(row.get(header), "") for header in headers])
 
     if not headers and normalized_rows:
-        headers = [f"列{i + 1}" for i in range(max(len(row) for row in normalized_rows))]
+        headers = [f"\u5217 {i + 1}" for i in range(max(len(row) for row in normalized_rows))]
 
     if not headers or not normalized_rows:
         return data, False, False, "table-info-unrecoverable"
@@ -205,7 +245,7 @@ def _normalize_table_info(data: dict[str, Any]) -> tuple[dict[str, Any], bool, b
 
 
 def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    title = _as_text(data.get("title"), "问题与方案")
+    title = _as_text(data.get("title"), "\u95ee\u9898\u4e0e\u65b9\u6848")
 
     items: list[dict[str, str]] = []
     raw_items = data.get("items")
@@ -218,13 +258,13 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
                     items.append(
                         {
                             "challenge": challenge or DEFAULT_FILLER_TEXT,
-                            "outcome": outcome or "待补充",
+                            "outcome": outcome or "\u5f85\u8865\u5145",
                         }
                     )
             elif isinstance(item, str):
                 text = item.strip()
                 if text:
-                    items.append({"challenge": text, "outcome": "待补充"})
+                    items.append({"challenge": text, "outcome": "\u5f85\u8865\u5145"})
 
     if not items:
         challenges = _extract_side_texts(data.get("challenge"))
@@ -235,7 +275,7 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
                 items.append(
                     {
                         "challenge": challenges[idx] if idx < len(challenges) else DEFAULT_FILLER_TEXT,
-                        "outcome": outcomes[idx] if idx < len(outcomes) else "待补充",
+                        "outcome": outcomes[idx] if idx < len(outcomes) else "\u5f85\u8865\u5145",
                     }
                 )
 
@@ -245,6 +285,40 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
     normalized = {"title": title, "items": items}
     changed = normalized != data
     return normalized, changed, True, "challenge-outcome-shape" if changed else ""
+
+
+def _normalize_outline_section(
+    raw: Any,
+    index: int,
+    *,
+    fallback_titles: tuple[str, ...] = OUTLINE_FALLBACK_TITLES,
+) -> dict[str, str] | None:
+    if isinstance(raw, str):
+        title = raw.strip()
+        return {"title": title} if title else None
+
+    if not isinstance(raw, dict):
+        return None
+
+    title = (
+        _as_text(raw.get("title"), "")
+        or _as_text(raw.get("text"), "")
+        or _as_text(raw.get("label"), "")
+        or _as_text(raw.get("heading"), "")
+        or _as_text(raw.get("name"), "")
+    )
+    description = (
+        _as_text(raw.get("description"), "")
+        or _as_text(raw.get("summary"), "")
+        or _as_text(raw.get("detail"), "")
+    )
+    if not title and not description:
+        return None
+
+    normalized = {"title": title or fallback_titles[index]}
+    if description:
+        normalized["description"] = description
+    return normalized
 
 
 def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any] | None:
@@ -353,7 +427,7 @@ def _should_keep_cell(text: str) -> bool:
         return False
     if _RE_TABLE_SEPARATOR.fullmatch(text):
         return False
-    if text in {"栏目", "新增内容"}:
+    if text in {"\u680f\u76ee", "\u65b0\u589e\u5185\u5bb9"}:
         return False
     return True
 
