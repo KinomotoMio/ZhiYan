@@ -588,3 +588,81 @@ def test_stage_select_layouts_normalizes_invalid_sub_group_before_layout_fallbac
         assert state.layout_selections[1]["variant"]["style"] == "editorial"
 
     asyncio.run(_case())
+
+
+def test_stage_select_layouts_uses_safety_layout_when_default_layout_is_missing(monkeypatch):
+    async def _case():
+        from app.models import layout_registry as layout_registry_mod
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        original_get_layout = layout_registry_mod.get_layout
+
+        def _fake_get_layout(layout_id: str):
+            if layout_id == "image-and-description":
+                return None
+            return original_get_layout(layout_id)
+
+        monkeypatch.setattr(layout_registry_mod, "get_layout", _fake_get_layout)
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "narrative",
+                    "sub_group": "visual-explainer",
+                    "layout_id": "image-and-description",
+                    "reason": "需要图文案例说明",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这一页需要通过产品界面截图和案例说明来解释能力价值。",
+            topic="案例说明",
+            num_pages=3,
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "封面",
+                        "suggested_slide_role": "cover",
+                        "key_points": ["欢迎页"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "案例展示",
+                        "content_brief": "通过产品界面截图和案例讲解说明主要价值。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["案例背景", "界面截图", "价值说明"],
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "结束",
+                        "suggested_slide_role": "closing",
+                        "key_points": ["谢谢"],
+                    },
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["layout_id"] == "bullet-with-icons"
+        assert state.layout_selections[1]["variant"]["composition"] == "icon-columns"
+
+    asyncio.run(_case())

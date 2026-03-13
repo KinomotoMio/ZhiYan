@@ -285,6 +285,23 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             if final_entry is None:
                 final_layout_id = _group_sub_group_to_default_layout(role, resolved_sub_group)
                 final_entry = get_layout(final_layout_id)
+            if final_entry is None:
+                logger.error(
+                    "Layout selection fallback resolved to unknown layout, using safety default",
+                    extra={
+                        "job_id": state.job_id,
+                        "stage": "layout",
+                        "group": role,
+                        "sub_group": resolved_sub_group,
+                        "requested_layout_id": requested_layout_id,
+                        "fallback_layout_id": final_layout_id,
+                        "safety_layout_id": "bullet-with-icons",
+                    },
+                )
+                final_layout_id = "bullet-with-icons"
+                final_entry = get_layout(final_layout_id)
+                if final_entry is None:
+                    raise KeyError("Safety default layout 'bullet-with-icons' is unavailable")
 
             sel["layout_id"] = final_layout_id
             sel["group"] = role
