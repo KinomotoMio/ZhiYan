@@ -62,19 +62,20 @@ test("layout catalog renders role-based group and variant metadata", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /<th[^>]*>Group<\/th>/);
-  assert.match(html, /<th[^>]*>Sub-group<\/th>/);
-  assert.match(html, /<th[^>]*>Variant<\/th>/);
   assert.match(html, /<th[^>]*>Runtime Variant<\/th>/);
-  assert.match(html, /Taxonomy-first review workspace/);
-  assert.match(html, /Compatibility runtime view/);
-  assert.match(html, /Current runtime notes source/);
+  assert.match(html, /<th[^>]*>Reviewed Sub-group<\/th>/);
+  assert.match(html, /<th[^>]*>Reviewed Variant<\/th>/);
+  assert.match(html, /Role Contract/);
+  assert.match(html, /Narrative Variant Pilot/);
+  assert.match(html, /Reviewed Taxonomy Baseline/);
   assert.match(html, /封面/);
   assert.match(html, /目录/);
+  assert.match(html, /Variant pilot/);
   assert.match(html, /图标要点/);
   assert.match(html, /图文说明/);
   assert.match(html, /能力网格/);
-  assert.match(html, /Compatibility shim/);
-  assert.match(html, /Canonical variant/);
+  assert.match(html, /Reviewed sub-group/);
+  assert.match(html, /Reviewed variant baseline/);
   assert.match(html, /composition/);
   assert.match(html, /tone/);
   assert.match(html, /style/);
@@ -90,7 +91,6 @@ test("layout catalog renders role-based group and variant metadata", () => {
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
   assert.match(html, /<th[^>]*>Usage<\/th>/);
-  assert.match(html, /#75/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
