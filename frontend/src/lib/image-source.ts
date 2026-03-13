@@ -20,8 +20,8 @@ export function getImageSource(image: ImageLike): ImageSource {
   const url = asText(image && typeof image === "object" ? (image as Record<string, unknown>).url : undefined);
   if (url) return "existing";
 
-  const prompt = asText(image && typeof image === "object" ? (image as Record<string, unknown>).prompt : undefined);
-  if (prompt) return "ai";
+  const imageRecord = image && typeof image === "object" ? (image as Record<string, unknown>) : undefined;
+  if (imageRecord && "prompt" in imageRecord) return "ai";
 
   return "user";
 }
