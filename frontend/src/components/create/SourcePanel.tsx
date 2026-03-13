@@ -353,12 +353,7 @@ export default function SourcePanel() {
             const role = msg.role === "assistant" ? "assistant" : "user";
             const content = typeof msg.content === "string" ? msg.content : "";
             if (!content.trim()) continue;
-            await appendSessionChat(migratedSessionId, { role, content }).catch((err) => {
-              console.error(
-                `Failed to append session chat for session ${migratedSessionId}:`,
-                err
-              );
-            });
+            await appendSessionChat(migratedSessionId, { role, content }).catch((err) => { console.error("Failed to append session chat:", err); });
           }
           if (typeof window !== "undefined") {
             window.localStorage.setItem(MIGRATION_FLAG_KEY, "1");
