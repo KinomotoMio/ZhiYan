@@ -68,12 +68,31 @@ type CatalogEntry = {
   data: Record<string, unknown>;
 };
 
+type CatalogEntryConfig = Omit<
+  CatalogEntry,
+  "group" | "subGroup" | "variant" | "runtimeVariant" | "usage"
+>;
+
 function getCatalogLayout(layoutId: string): RegistryLayoutEntry {
   const entry = getLayout(layoutId);
   if (!entry) {
     throw new Error(`Missing registry entry for layout ${layoutId}`);
   }
   return entry;
+}
+
+function createCatalogEntry(config: CatalogEntryConfig): CatalogEntry {
+  const layoutId = config.module.layoutId;
+  const layout = getCatalogLayout(layoutId);
+
+  return {
+    ...config,
+    group: layout.group,
+    subGroup: layout.subGroup,
+    variant: layout.variant,
+    runtimeVariant: getLayoutVariant(layoutId),
+    usage: getLayoutUsage(layoutId),
+  };
 }
 
 function svgDataUrl(stops: string[], label: string): string {
@@ -98,15 +117,10 @@ const photoA = svgDataUrl(["#1d4ed8", "#06b6d4"], "Product View");
 const photoB = svgDataUrl(["#0f766e", "#65a30d"], "Dashboard");
 
 const entries: CatalogEntry[] = [
-  {
+  createCatalogEntry({
     module: IntroSlide as unknown as LayoutModule,
     fileName: "IntroSlideLayout.tsx",
     schemaName: "IntroSlideData",
-    group: getCatalogLayout("intro-slide").group,
-    subGroup: getCatalogLayout("intro-slide").subGroup,
-    variant: getCatalogLayout("intro-slide").variant,
-    runtimeVariant: getLayoutVariant("intro-slide"),
-    usage: getLayoutUsage("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
     data: {
       title: "ZhiYan Layout Catalog",
@@ -114,16 +128,11 @@ const entries: CatalogEntry[] = [
       author: "Codex",
       date: "2026-03-11",
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: OutlineSlide as unknown as LayoutModule,
     fileName: "OutlineSlideLayout.tsx",
     schemaName: "OutlineSlideData",
-    group: getCatalogLayout("outline-slide").group,
-    subGroup: getCatalogLayout("outline-slide").subGroup,
-    variant: getCatalogLayout("outline-slide").variant,
-    runtimeVariant: getLayoutVariant("outline-slide"),
-    usage: getLayoutUsage("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
     data: {
       title: "Presentation Outline",
@@ -148,31 +157,21 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: SectionHeader as unknown as LayoutModule,
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
-    group: getCatalogLayout("section-header").group,
-    subGroup: getCatalogLayout("section-header").subGroup,
-    variant: getCatalogLayout("section-header").variant,
-    runtimeVariant: getLayoutVariant("section-header"),
-    usage: getLayoutUsage("section-header"),
     keyFields: ["title", "subtitle?"],
     data: {
       title: "Platform Overview",
       subtitle: "A clean transition slide between major chapters.",
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: BulletWithIcons as unknown as LayoutModule,
     fileName: "BulletWithIconsLayout.tsx",
     schemaName: "BulletWithIconsData",
-    group: getCatalogLayout("bullet-with-icons").group,
-    subGroup: getCatalogLayout("bullet-with-icons").subGroup,
-    variant: getCatalogLayout("bullet-with-icons").variant,
-    runtimeVariant: getLayoutVariant("bullet-with-icons"),
-    usage: getLayoutUsage("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
     data: {
       title: "Why Teams Use This Layout",
@@ -196,16 +195,11 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: ImageAndDescription as unknown as LayoutModule,
     fileName: "ImageAndDescriptionLayout.tsx",
     schemaName: "ImageAndDescriptionData",
-    group: getCatalogLayout("image-and-description").group,
-    subGroup: getCatalogLayout("image-and-description").subGroup,
-    variant: getCatalogLayout("image-and-description").variant,
-    runtimeVariant: getLayoutVariant("image-and-description"),
-    usage: getLayoutUsage("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
     data: {
       title: "Feature Spotlight",
@@ -218,16 +212,11 @@ const entries: CatalogEntry[] = [
         "Easy to theme with photography",
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: BulletIconsOnly as unknown as LayoutModule,
     fileName: "BulletIconsOnlyLayout.tsx",
     schemaName: "BulletIconsOnlyData",
-    group: getCatalogLayout("bullet-icons-only").group,
-    subGroup: getCatalogLayout("bullet-icons-only").subGroup,
-    variant: getCatalogLayout("bullet-icons-only").variant,
-    runtimeVariant: getLayoutVariant("bullet-icons-only"),
-    usage: getLayoutUsage("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
     data: {
       title: "Capability Grid",
@@ -240,16 +229,11 @@ const entries: CatalogEntry[] = [
         { icon: { query: "shield-check" }, label: "Verification" },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: MetricsSlide as unknown as LayoutModule,
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
-    group: getCatalogLayout("metrics-slide").group,
-    subGroup: getCatalogLayout("metrics-slide").subGroup,
-    variant: getCatalogLayout("metrics-slide").variant,
-    runtimeVariant: getLayoutVariant("metrics-slide"),
-    usage: getLayoutUsage("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
     data: {
       title: "Quarterly Snapshot",
@@ -259,16 +243,11 @@ const entries: CatalogEntry[] = [
         { value: "3.6x", label: "Reuse", description: "template leverage" },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: MetricsWithImage as unknown as LayoutModule,
     fileName: "MetricsWithImageLayout.tsx",
     schemaName: "MetricsWithImageData",
-    group: getCatalogLayout("metrics-with-image").group,
-    subGroup: getCatalogLayout("metrics-with-image").subGroup,
-    variant: getCatalogLayout("metrics-with-image").variant,
-    runtimeVariant: getLayoutVariant("metrics-with-image"),
-    usage: getLayoutUsage("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
     data: {
       title: "Impact + Product Shot",
@@ -291,16 +270,11 @@ const entries: CatalogEntry[] = [
         alt: "dashboard preview",
       },
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: ChartWithBullets as unknown as LayoutModule,
     fileName: "ChartWithBulletsLayout.tsx",
     schemaName: "ChartWithBulletsData",
-    group: getCatalogLayout("chart-with-bullets").group,
-    subGroup: getCatalogLayout("chart-with-bullets").subGroup,
-    variant: getCatalogLayout("chart-with-bullets").variant,
-    runtimeVariant: getLayoutVariant("chart-with-bullets"),
-    usage: getLayoutUsage("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
     data: {
       title: "Trend + Commentary",
@@ -315,16 +289,11 @@ const entries: CatalogEntry[] = [
         { text: "Best used when one chart needs 2-3 plain-language takeaways." },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: TableInfo as unknown as LayoutModule,
     fileName: "TableInfoLayout.tsx",
     schemaName: "TableInfoData",
-    group: getCatalogLayout("table-info").group,
-    subGroup: getCatalogLayout("table-info").subGroup,
-    variant: getCatalogLayout("table-info").variant,
-    runtimeVariant: getLayoutVariant("table-info"),
-    usage: getLayoutUsage("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
     data: {
       title: "Option Comparison",
@@ -336,16 +305,11 @@ const entries: CatalogEntry[] = [
       ],
       caption: "A compact matrix for structured comparisons.",
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: TwoColumnCompare as unknown as LayoutModule,
     fileName: "TwoColumnCompareLayout.tsx",
     schemaName: "TwoColumnCompareData",
-    group: getCatalogLayout("two-column-compare").group,
-    subGroup: getCatalogLayout("two-column-compare").subGroup,
-    variant: getCatalogLayout("two-column-compare").variant,
-    runtimeVariant: getLayoutVariant("two-column-compare"),
-    usage: getLayoutUsage("two-column-compare"),
     keyFields: ["title", "left", "right"],
     data: {
       title: "Manual vs Assisted Workflow",
@@ -364,16 +328,11 @@ const entries: CatalogEntry[] = [
         ],
       },
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: ChallengeOutcome as unknown as LayoutModule,
     fileName: "ChallengeOutcomeLayout.tsx",
     schemaName: "ChallengeOutcomeData",
-    group: getCatalogLayout("challenge-outcome").group,
-    subGroup: getCatalogLayout("challenge-outcome").subGroup,
-    variant: getCatalogLayout("challenge-outcome").variant,
-    runtimeVariant: getLayoutVariant("challenge-outcome"),
-    usage: getLayoutUsage("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
     data: {
       title: "Problems and Fixes",
@@ -388,16 +347,11 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: NumberedBullets as unknown as LayoutModule,
     fileName: "NumberedBulletsLayout.tsx",
     schemaName: "NumberedBulletsData",
-    group: getCatalogLayout("numbered-bullets").group,
-    subGroup: getCatalogLayout("numbered-bullets").subGroup,
-    variant: getCatalogLayout("numbered-bullets").variant,
-    runtimeVariant: getLayoutVariant("numbered-bullets"),
-    usage: getLayoutUsage("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
     data: {
       title: "Rollout Plan",
@@ -418,16 +372,11 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: Timeline as unknown as LayoutModule,
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
-    group: getCatalogLayout("timeline").group,
-    subGroup: getCatalogLayout("timeline").subGroup,
-    variant: getCatalogLayout("timeline").variant,
-    runtimeVariant: getLayoutVariant("timeline"),
-    usage: getLayoutUsage("timeline"),
     keyFields: ["title", "events[3-6]"],
     data: {
       title: "Delivery Timeline",
@@ -454,16 +403,11 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: QuoteSlide as unknown as LayoutModule,
     fileName: "QuoteSlideLayout.tsx",
     schemaName: "QuoteSlideData",
-    group: getCatalogLayout("quote-slide").group,
-    subGroup: getCatalogLayout("quote-slide").subGroup,
-    variant: getCatalogLayout("quote-slide").variant,
-    runtimeVariant: getLayoutVariant("quote-slide"),
-    usage: getLayoutUsage("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
     data: {
       quote:
@@ -471,23 +415,18 @@ const entries: CatalogEntry[] = [
       author: "Design review note",
       context: "internal principle",
     },
-  },
-  {
+  }),
+  createCatalogEntry({
     module: ThankYou as unknown as LayoutModule,
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
-    group: getCatalogLayout("thank-you").group,
-    subGroup: getCatalogLayout("thank-you").subGroup,
-    variant: getCatalogLayout("thank-you").variant,
-    runtimeVariant: getLayoutVariant("thank-you"),
-    usage: getLayoutUsage("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
     data: {
       title: "Thanks",
       subtitle: "Questions, feedback, or layout ideas are welcome.",
       contact: "design-system@zhiyan.local",
     },
-  },
+  }),
 ];
 
 const sortedEntries = [...entries].sort((left, right) => {
