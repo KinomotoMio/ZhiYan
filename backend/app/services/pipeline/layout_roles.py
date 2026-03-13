@@ -1,49 +1,34 @@
-"""Layout role helpers for outline normalization and layout selection."""
+"""Compatibility role helpers backed by the formal layout taxonomy."""
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from app.services.pipeline.layout_metadata import load_layout_metadata
-
-LayoutRole = Literal[
-    "cover",
-    "agenda",
-    "section-divider",
-    "narrative",
-    "evidence",
-    "comparison",
-    "process",
-    "highlight",
-    "closing",
-]
-
-_SHARED_METADATA = load_layout_metadata()
-
-ROLE_ORDER: tuple[LayoutRole, ...] = tuple(
-    cast(LayoutRole, role) for role in _SHARED_METADATA["groupOrder"]
+from app.services.pipeline.layout_taxonomy import (
+    LayoutGroup,
+    get_group_order,
+    get_layout_group_description,
+    get_layout_group_label,
+    get_layout_taxonomy,
+    get_sub_groups_for_group,
 )
+LayoutRole = LayoutGroup
+
+ROLE_ORDER: tuple[LayoutRole, ...] = get_group_order()
 
 ROLE_LABELS: dict[LayoutRole, str] = {
-    cast(LayoutRole, role): label
-    for role, label in _SHARED_METADATA["groupLabels"].items()
+    role: get_layout_group_label(role) for role in ROLE_ORDER
 }
 
 ROLE_DESCRIPTIONS: dict[LayoutRole, str] = {
-    cast(LayoutRole, role): description
-    for role, description in _SHARED_METADATA["groupDescriptions"].items()
+    role: get_layout_group_description(role) for role in ROLE_ORDER
 }
 
 VARIANT_PILOT_ROLES: frozenset[LayoutRole] = frozenset(
-    cast(LayoutRole, role)
-    for role, sub_groups in _SHARED_METADATA["subGroupsByGroup"].items()
-    if len(sub_groups) > 1 or any(key != "default" for key in sub_groups)
+    role
+    for role in ROLE_ORDER
+    if any(sub_group != "default" for sub_group in get_sub_groups_for_group(role))
 )
-
-LAYOUT_ID_TO_ROLE: dict[str, LayoutRole] = {
-    layout_id: cast(LayoutRole, metadata["group"])
-    for layout_id, metadata in _SHARED_METADATA["layouts"].items()
-}
 
 LEGACY_CATEGORY_TO_ROLE: dict[str, LayoutRole] = {
     "intro": "cover",
@@ -82,7 +67,8 @@ CONTENT_LAYOUT_ROLES: frozenset[LayoutRole] = frozenset(
 
 
 def get_layout_role(layout_id: str) -> LayoutRole:
-    return LAYOUT_ID_TO_ROLE.get(layout_id, "narrative")
+    taxonomy = get_layout_taxonomy(layout_id)
+    return taxonomy.group if taxonomy else "narrative"
 
 
 def get_layout_role_label(role: LayoutRole) -> str:

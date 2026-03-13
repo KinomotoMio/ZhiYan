@@ -357,6 +357,7 @@ def _format_outline_item_for_layout_prompt(
 ) -> str:
     from app.services.pipeline.layout_roles import get_default_layout_for_role, get_outline_item_role
     from app.services.pipeline.layout_variants import (
+        get_layout_variant,
         get_layout_variant_description,
         get_layout_variant_label,
         get_variants_for_role,
@@ -381,7 +382,9 @@ def _format_outline_item_for_layout_prompt(
     )
     variant_candidates = []
     for variant in get_variants_for_role(role):
-        variant_entries = [entry for entry in role_matched if str(entry.variant) == variant]
+        variant_entries = [
+            entry for entry in role_matched if get_layout_variant(entry.id) == variant
+        ]
         layouts_text = ", ".join(f"`{entry.id}`" for entry in variant_entries) or "无"
         variant_candidates.append(
             f"`{variant}`({get_layout_variant_label(role, variant)}: "
@@ -696,11 +699,12 @@ def _rank_role_variant_layouts(
     rank_layouts_by_usage_fn,
 ) -> list[Any]:
     from app.services.pipeline.layout_roles import get_default_layout_for_role
+    from app.services.pipeline.layout_variants import get_layout_variant
 
     variant_matched = [
         entry
         for entry in layout_entries
-        if str(entry.group) == role and str(entry.variant) == variant
+        if str(entry.group) == role and get_layout_variant(entry.id) == variant
     ]
     if not variant_matched:
         variant_matched = [entry for entry in layout_entries if str(entry.group) == role]
