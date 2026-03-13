@@ -1,12 +1,15 @@
-// Layout content data types — 与 backend/app/models/layouts/schemas.py 保持同步
-// 每个 layout 的结构化内容数据
+// Layout content data types 鈥?涓?backend/app/models/layouts/schemas.py 淇濇寔鍚屾
+// 姣忎釜 layout 鐨勭粨鏋勫寲鍐呭鏁版嵁
 
 export interface IconRef {
   query: string;
   resolvedSvg?: string | null;
 }
 
+export type ImageSource = "ai" | "user" | "existing";
+
 export interface ImageRef {
+  source?: ImageSource;
   prompt: string;
   url?: string | null;
   alt?: string;

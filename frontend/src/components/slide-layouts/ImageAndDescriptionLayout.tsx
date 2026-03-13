@@ -11,7 +11,7 @@ export default function ImageAndDescriptionLayout({ data }: { data: ImageAndDesc
   return (
     <div className="flex h-full">
       <div className="w-[48%] shrink-0 overflow-hidden rounded-r-3xl">
-        <ImagePlaceholder prompt={data.image.prompt} url={data.image.url} alt={data.image.alt} />
+        <ImagePlaceholder image={data.image} />
       </div>
       <div className="flex-1 flex flex-col justify-center px-14 py-14">
         <h2 style={{ fontSize: 36, fontWeight: 700, lineHeight: 1.3 }} className="text-[var(--background-text,#111827)] mb-6">

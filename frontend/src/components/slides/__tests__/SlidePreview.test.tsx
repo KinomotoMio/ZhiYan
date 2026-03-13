@@ -176,3 +176,41 @@ test("bullet-icons-only uses a denser two-column matrix with larger icon anchors
   assert.match(html, />01<\/div>/);
   assert.match(html, /智能助手编排/);
 });
+
+test("image source placeholders render explicit user guidance", () => {
+  const userSlide: Slide = {
+    slideId: "slide-user-image",
+    layoutType: "image-and-description",
+    layoutId: "image-and-description",
+    contentData: {
+      title: "\u7528\u6237\u8865\u56fe",
+      description: "\u9700\u8981\u7ebf\u4e0b\u5b9e\u62cd\u3002",
+      image: { source: "user", prompt: "\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247" },
+    },
+    components: [],
+  };
+
+  const existingSlide: Slide = {
+    slideId: "slide-existing-image",
+    layoutType: "metrics-with-image",
+    layoutId: "metrics-with-image",
+    contentData: {
+      title: "\u73b0\u6709\u7d20\u6750",
+      metrics: [{ value: "12", label: "Assets" }],
+      image: { source: "existing", prompt: "\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe" },
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <div>
+      <SlidePreview slide={userSlide} />
+      <SlidePreview slide={existingSlide} />
+    </div>
+  );
+
+  assert.match(html, /\u5f85\u7528\u6237\u8865\u56fe\/\u4e0a\u4f20/);
+  assert.match(html, /\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247/);
+  assert.match(html, /\u5f85\u7ed1\u5b9a\u73b0\u6709\u7d20\u6750/);
+  assert.match(html, /\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe/);
+});

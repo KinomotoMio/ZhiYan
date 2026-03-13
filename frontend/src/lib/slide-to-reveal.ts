@@ -4,6 +4,7 @@
  * Supports both layoutId/contentData payloads and legacy component payloads.
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
+import { getImagePlaceholderCopy } from "@/lib/image-source";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 import {
   getBulletWithIconsColumns,
@@ -189,11 +190,12 @@ function renderIconSvg(query: string, size = 24): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${children}</svg>`;
 }
 
-function renderSimpleImagePlaceholder(prompt: string, extraStyle = ""): string {
+function renderSimpleImagePlaceholder(title: string, detail = "", extraStyle = ""): string {
   return `
     <div style="${extraStyle}background:#f3f4f6;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9ca3af;overflow:hidden;">
       <div style="opacity:0.5;margin-bottom:8px;line-height:0;">${renderIconSvg("image", 40)}</div>
-      <span style="font-size:13px;opacity:0.7;text-align:center;padding:0 24px;">${escapeHtml(prompt)}</span>
+      <span style="font-size:13px;font-weight:600;opacity:0.8;text-align:center;padding:0 24px;">${escapeHtml(title)}</span>
+      ${detail ? `<span style="font-size:12px;opacity:0.7;text-align:center;padding:4px 24px 0;">${escapeHtml(detail)}</span>` : ""}
     </div>`;
 }
 
@@ -472,6 +474,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     case "metrics-with-image": {
       const metrics = Array.isArray(d.metrics) ? d.metrics : [];
       const image = d.image && typeof d.image === "object" ? (d.image as Record<string, unknown>) : {};
+      const placeholder = getImagePlaceholderCopy(image);
       const url = sanitizeImageSrc(image.url);
       return `
         <div style="display:flex;height:100%;">
@@ -492,7 +495,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
             </div>
           </div>
           <div style="width:45%;flex-shrink:0;overflow:hidden;background:#f3f4f6;">
-            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt), "") : renderSimpleImagePlaceholder(asText(image.prompt), "height:100%;")}
+            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || placeholder.title, "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
           </div>
         </div>`;
     }
@@ -572,12 +575,13 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
 
     case "image-and-description": {
       const image = d.image && typeof d.image === "object" ? (d.image as Record<string, unknown>) : {};
+      const placeholder = getImagePlaceholderCopy(image);
       const url = sanitizeImageSrc(image.url);
       const bullets = Array.isArray(d.bullets) ? d.bullets.map((bullet) => asText(bullet)).filter(Boolean) : [];
       return `
         <div style="display:flex;height:100%;">
           <div style="width:48%;flex-shrink:0;overflow:hidden;border-top-right-radius:24px;border-bottom-right-radius:24px;">
-            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt), "") : renderSimpleImagePlaceholder(asText(image.prompt), "height:100%;")}
+            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || placeholder.title, "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
           </div>
           <div style="display:flex;flex-direction:column;justify-content:center;flex:1;padding:56px;">
             <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 24px;">${escapeHtml(asText(d.title))}</h2>

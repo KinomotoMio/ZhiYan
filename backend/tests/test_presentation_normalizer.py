@@ -230,3 +230,51 @@ def test_normalize_outline_slide_from_items_alias_and_pad_sections():
         {"title": "Findings"},
         {"title": "\u7ed3\u8bba"},
     ]
+
+def test_normalize_image_layout_backfills_source_from_url():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-image-url",
+                "layoutId": "metrics-with-image",
+                "contentData": {
+                    "title": "Existing Asset",
+                    "metrics": [{"value": "1", "label": "Asset"}],
+                    "image": {
+                        "prompt": "brand gallery cover",
+                        "url": "https://example.com/cover.png",
+                    },
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "image-ref-source" in report["repair_types"]
+    image = normalized["slides"][0]["contentData"]["image"]
+    assert image["source"] == "existing"
+
+
+def test_normalize_image_layout_backfills_source_from_prompt_only():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-image-prompt",
+                "layoutId": "image-and-description",
+                "contentData": {
+                    "title": "AI Image",
+                    "description": "Prompt-only image",
+                    "image": {
+                        "prompt": "modern office with analytics dashboard",
+                    },
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "image-ref-source" in report["repair_types"]
+    image = normalized["slides"][0]["contentData"]["image"]
+    assert image["source"] == "ai"

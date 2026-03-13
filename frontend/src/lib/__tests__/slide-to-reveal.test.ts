@@ -309,3 +309,76 @@ test("presentationToRevealHTML renders outline-slide as a two-column agenda layo
   assert.doesNotMatch(html, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(html, /shadow-\[/);
 });
+
+test("presentationToRevealHTML distinguishes ai, user, and existing image placeholders", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-ai",
+        layoutType: "metrics-with-image",
+        layoutId: "metrics-with-image",
+        contentData: {
+          title: "AI Image",
+          metrics: [{ value: "92%", label: "Match" }],
+          image: { source: "ai", prompt: "modern office with analytics dashboard" },
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-user",
+        layoutType: "image-and-description",
+        layoutId: "image-and-description",
+        contentData: {
+          title: "User Image",
+          description: "Needs a real-world photo.",
+          image: { source: "user", prompt: "\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247" },
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-existing",
+        layoutType: "image-and-description",
+        layoutId: "image-and-description",
+        contentData: {
+          title: "Existing Asset",
+          description: "Should bind an existing gallery asset.",
+          image: { source: "existing", prompt: "\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe" },
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /\u5f85\u7528\u6237\u8865\u56fe\/\u4e0a\u4f20/);
+  assert.match(html, /\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247/);
+  assert.match(html, /\u5f85\u7ed1\u5b9a\u73b0\u6709\u7d20\u6750/);
+  assert.match(html, /\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe/);
+  assert.match(html, /modern office with analytics dashboard/);
+});
+
+test("presentationToRevealHTML prioritizes image urls over source placeholders", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-url",
+        layoutType: "metrics-with-image",
+        layoutId: "metrics-with-image",
+        contentData: {
+          title: "Resolved Image",
+          metrics: [{ value: "42", label: "Score" }],
+          image: {
+            source: "user",
+            prompt: "\u8fd9\u884c\u6587\u6848\u4e0d\u5e94\u663e\u793a",
+            url: "https://example.com/image.png",
+          },
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /<img src="https:\/\/example\.com\/image\.png"/);
+  assert.doesNotMatch(html, /\u5f85\u7528\u6237\u8865\u56fe\/\u4e0a\u4f20/);
+});
