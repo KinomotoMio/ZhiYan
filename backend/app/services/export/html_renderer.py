@@ -19,10 +19,9 @@ from app.services.export.layout_rules import (
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
     slides = presentation_dict.get("slides", [])
     total = len(slides)
-    slides_html = ""
-
-    for idx, slide in enumerate(slides):
-        slides_html += _render_single_slide(slide, idx + 1, total)
+    slides_html = "".join(
+        _render_single_slide(slide, idx + 1, total) for idx, slide in enumerate(slides)
+    )
 
     return f"""<!DOCTYPE html>
 <html>
