@@ -77,7 +77,14 @@ class MetricItem(BaseModel):
 
 
 class MetricsSlideData(BaseModel):
+    """Metrics slide with executive summary support."""
     title: str = Field(min_length=2, max_length=40, description="Slide title")
+    conclusion: str = Field(min_length=2, max_length=80, description="Executive-summary conclusion")
+    conclusionBrief: str = Field(
+        min_length=5,
+        max_length=180,
+        description="Supporting sentence that expands the conclusion",
+    )
     metrics: list[MetricItem] = Field(min_length=2, max_length=4, description="Metric cards")
 
 
@@ -161,6 +168,6 @@ class ChallengeOutcomeData(BaseModel):
 
 
 class ThankYouData(BaseModel):
-    title: str = Field(default="谢谢", min_length=2, max_length=20, description="Thank-you title")
+    title: str = Field(default="\u8c22\u8c22", min_length=2, max_length=20, description="Thank-you title")
     subtitle: str | None = Field(None, max_length=60, description="Thank-you subtitle")
     contact: str | None = Field(None, max_length=60, description="Contact info")

@@ -1019,8 +1019,16 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
         metrics = points[:3] if points else ["内容生成中", "内容生成中"]
         if len(metrics) < 2:
             metrics.append("内容生成中")
+        conclusion = points[0] if points else f"{title}的核心指标整体可读。"
+        conclusion_brief = (
+            points[1]
+            if len(points) > 1
+            else "详细指标如下，可作为结论的量化支撑。"
+        )
         return {
             "title": title,
+            "conclusion": conclusion,
+            "conclusionBrief": conclusion_brief,
             "metrics": [
                 {"value": f"{(i + 1) * 10}%", "label": f"指标 {i + 1}", "description": p}
                 for i, p in enumerate(metrics)

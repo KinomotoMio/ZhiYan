@@ -387,3 +387,94 @@ def test_export_pptx_renders_outline_slide_cards():
     assert "结论" in xml_text
     assert "01" in xml_text
     assert "04" in xml_text
+
+def test_build_presentation_html_renders_metrics_slide_executive_summary_and_legacy_fallback():
+    payload = {
+        "presentationId": "pres-metrics-html",
+        "title": "Metrics Test",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "metrics-slide",
+                "layoutId": "metrics-slide",
+                "contentData": {
+                    "title": "Quarterly Snapshot",
+                    "conclusion": "Enterprise adoption is no longer the bottleneck.",
+                    "conclusionBrief": "Coverage expanded across the org, so review latency is the next constraint.",
+                    "metrics": [
+                        {"value": "92%", "label": "Adoption", "description": "active team usage"},
+                        {"value": "14d", "label": "Lead Time", "description": "from brief to deck"},
+                    ],
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-2",
+                "layoutType": "metrics-slide",
+                "layoutId": "metrics-slide",
+                "contentData": {
+                    "title": "Legacy Snapshot",
+                    "metrics": [
+                        {"value": "3.6x", "label": "Reuse", "description": "template leverage"},
+                        {"value": "11", "label": "Teams", "description": "pilot rollout"},
+                    ],
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "Enterprise adoption is no longer the bottleneck." in html
+    assert "Coverage expanded across the org, so review latency is the next constraint." in html
+    assert "min-height:168px" in html
+    assert "Legacy Snapshot" in html
+    assert "template leverage" in html
+
+
+def test_export_pptx_renders_metrics_slide_executive_summary_and_legacy_fallback():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-metrics-pptx",
+            "title": "Metrics Export",
+            "slides": [
+                {
+                    "slideId": "slide-1",
+                    "layoutType": "metrics-slide",
+                    "layoutId": "metrics-slide",
+                    "contentData": {
+                        "title": "Quarterly Snapshot",
+                        "conclusion": "Enterprise adoption is no longer the bottleneck.",
+                        "conclusionBrief": "Coverage expanded across the org, so review latency is the next constraint.",
+                        "metrics": [
+                            {"value": "92%", "label": "Adoption", "description": "active team usage"},
+                            {"value": "14d", "label": "Lead Time", "description": "from brief to deck"},
+                        ],
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-2",
+                    "layoutType": "metrics-slide",
+                    "layoutId": "metrics-slide",
+                    "contentData": {
+                        "title": "Legacy Snapshot",
+                        "metrics": [
+                            {"value": "3.6x", "label": "Reuse", "description": "template leverage"},
+                            {"value": "11", "label": "Teams", "description": "pilot rollout"},
+                        ],
+                    },
+                    "components": [],
+                },
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "Quarterly Snapshot" in xml_text
+    assert "Enterprise adoption is no longer the bottleneck." in xml_text
+    assert "Coverage expanded across the org, so review latency is the next constraint." in xml_text
+    assert "Legacy Snapshot" in xml_text
+    assert "template leverage" in xml_text

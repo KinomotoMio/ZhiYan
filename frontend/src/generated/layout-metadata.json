@@ -393,12 +393,12 @@
         "density": "medium"
       },
       "notes": {
-        "purpose": "用于展示少量核心 KPI 或指标摘要，不负责完整趋势解读。",
-        "structure_signal": "evidence / default 在证据页中以指标卡片作为主载体，突出关键数字。",
-        "design_signal": "stat-grid + formal + data-first + medium 适合用少量数据建立可信度和概览感。",
-        "use_when": "当结论可以被 2-4 个核心数字直接支撑时使用。",
-        "avoid_when": "不适合需要详细趋势分析、表格参数或图片说明并重的内容。",
-        "usage_bias": "强偏 business-report、investor-pitch、project-status，对 academic-report 也适用。"
+        "purpose": "\u7528\u4e8e\u5148\u7ed9\u51fa\u4e00\u53e5 executive summary \u7ed3\u8bba\uff0c\u518d\u7528 2-4 \u4e2a\u6838\u5fc3\u6307\u6807\u652f\u6491\uff1b\u540c\u65f6\u517c\u5bb9\u5386\u53f2 metrics-only \u6570\u636e\u3002",
+        "structure_signal": "evidence / default \u5728\u8bc1\u636e\u9875\u4e2d\u4ee5\u6307\u6807\u5361\u7247\u4f5c\u4e3a\u4e3b\u8f7d\u4f53\uff0c\u7a81\u51fa\u5173\u952e\u6570\u5b57\u3002",
+        "design_signal": "stat-grid + formal + data-first + medium \u9002\u5408\u7528\u5c11\u91cf\u6570\u636e\u5efa\u7acb\u53ef\u4fe1\u5ea6\u548c\u6982\u89c8\u611f\u3002",
+        "use_when": "\u5f53\u4f60\u9700\u8981\u5148\u8bf4\u7ed3\u8bba\uff0c\u518d\u8ba9 2-4 \u4e2a\u6570\u5b57\u4f5c\u4e3a\u91cf\u5316\u8bc1\u636e\u652f\u6491\u65f6\u4f7f\u7528\u3002",
+        "avoid_when": "\u4e0d\u9002\u5408\u9700\u8981\u8be6\u7ec6\u8d8b\u52bf\u5206\u6790\u3001\u8868\u683c\u53c2\u6570\u3001\u590d\u6742\u56fe\u8868\uff0c\u6216\u56fe\u6587\u5e76\u91cd\u7684\u8bf4\u660e\u9875\u3002",
+        "usage_bias": "\u5f3a\u504f business-report\u3001investor-pitch\u3001project-status\uff0c\u5bf9 academic-report \u4e5f\u9002\u7528\uff1b\u5386\u53f2 metrics-only \u5185\u5bb9\u53ef\u517c\u5bb9\u5c55\u793a\u3002"
       },
       "usage": [
         "academic-report",
