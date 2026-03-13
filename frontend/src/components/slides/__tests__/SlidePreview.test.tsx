@@ -53,6 +53,30 @@ test("outline-slide renders a two-column agenda page", () => {
   assert.match(html, />01<\/div>/);
 });
 
+test("outline-slide malformed sections do not crash preview rendering", () => {
+  const malformedSlide: Slide = {
+    slideId: "slide-outline-broken",
+    layoutType: "outline-slide",
+    layoutId: "outline-slide",
+    contentData: {
+      title: "Agenda broken",
+      sections: "not-an-array",
+    } as unknown as Slide["contentData"],
+    components: [],
+  };
+
+  let html = "";
+  assert.doesNotThrow(() => {
+    html = renderToStaticMarkup(<SlidePreview slide={malformedSlide} />);
+  });
+  assert.doesNotMatch(html, /璇ラ〉鏁版嵁寮傚父锛屽彲閲嶆柊鐢熸垚/);
+  assert.match(html, /Agenda broken/);
+  assert.match(html, /\u80cc\u666f/);
+  assert.match(html, /\u5206\u6790/);
+  assert.match(html, /\u65b9\u6848/);
+  assert.match(html, /\u7ed3\u8bba/);
+});
+
 test("unrecoverable layout data renders fallback card", () => {
   const brokenSlide: Slide = {
     slideId: "slide-2",

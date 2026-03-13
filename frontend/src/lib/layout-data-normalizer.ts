@@ -13,7 +13,6 @@ const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
 const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
 type RecordLike = Record<string, unknown>;
-type OutlineSection = { title: string; description?: string };
 
 function isRecordLike(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -467,9 +466,6 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
   }
   if (layoutId === "thank-you") {
     return normalizeThankYou(data);
-  }
-  if (layoutId === "outline-slide") {
-    return normalizeOutlineSlide(data);
   }
   if (layoutId === "two-column-compare") {
     return normalizeTwoColumnCompare(data);
