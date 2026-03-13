@@ -1,5 +1,5 @@
-// Layout content data types 鈥?涓?backend/app/models/layouts/schemas.py 淇濇寔鍚屾
-// 姣忎釜 layout 鐨勭粨鏋勫寲鍐呭鏁版嵁
+// Layout content data types -- keep in sync with backend/app/models/layouts/schemas.py
+// Structured content data for each layout
 
 export interface IconRef {
   query: string;
