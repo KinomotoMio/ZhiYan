@@ -100,6 +100,32 @@ def test_stage_resolve_assets_preserves_explicit_sources():
     asyncio.run(_case())
 
 
+def test_stage_resolve_assets_treats_empty_prompt_key_as_ai_source():
+    async def _case() -> None:
+        state = PipelineState(
+            slide_contents=[
+                {
+                    "slide_number": 1,
+                    "layout_id": "image-and-description",
+                    "content_data": {
+                        "title": "Legacy AI",
+                        "description": "Empty prompt still means AI placeholder",
+                        "image": {
+                            "prompt": "",
+                        },
+                    },
+                }
+            ]
+        )
+
+        await stage_resolve_assets(state)
+
+        image = state.slides[0].content_data["image"]
+        assert image["source"] == "ai"
+
+    asyncio.run(_case())
+
+
 def test_slide_generator_instructions_require_image_source_semantics():
     assert "`source`" in SLIDE_GEN_INSTRUCTIONS
     assert "ai" in SLIDE_GEN_INSTRUCTIONS

@@ -33,7 +33,7 @@ def infer_image_source(image: Mapping[str, Any]) -> ImageSource:
 
     if _as_text(image.get("url")):
         return "existing"
-    if _as_text(image.get("prompt")):
+    if "prompt" in image:
         return "ai"
     return "user"
 
