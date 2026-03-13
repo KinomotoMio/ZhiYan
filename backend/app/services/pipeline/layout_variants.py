@@ -17,14 +17,32 @@ LayoutVariant = Literal[
 _SHARED_METADATA = load_layout_metadata()
 
 VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
-    cast(LayoutRole, role): {
+    role: {
         cast(LayoutVariant, variant): {
             "label": str(definition["label"]),
             "description": str(definition["description"]),
         }
         for variant, definition in variants.items()
     }
-    for role, variants in _SHARED_METADATA["variantsByRole"].items()
+    for role, variants in (
+        (
+            cast(LayoutRole, role),
+            (
+                sub_groups
+                if role == "narrative"
+                else {
+                    "default": sub_groups.get(
+                        "default",
+                        {
+                            "label": "默认变体",
+                            "description": "当前组尚未展开正式的结构型兼容变体。",
+                        },
+                    )
+                }
+            ),
+        )
+        for role, sub_groups in _SHARED_METADATA["subGroupsByGroup"].items()
+    )
 }
 
 ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
@@ -34,7 +52,12 @@ ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
 )
 
 LAYOUT_ID_TO_VARIANT: dict[str, LayoutVariant] = {
-    layout_id: cast(LayoutVariant, metadata.get("variant", "default"))
+    layout_id: cast(
+        LayoutVariant,
+        metadata.get("subGroup", "default")
+        if metadata.get("group") == "narrative"
+        else "default",
+    )
     for layout_id, metadata in _SHARED_METADATA["layouts"].items()
 }
 

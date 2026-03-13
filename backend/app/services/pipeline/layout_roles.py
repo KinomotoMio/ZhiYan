@@ -21,25 +21,27 @@ LayoutRole = Literal[
 _SHARED_METADATA = load_layout_metadata()
 
 ROLE_ORDER: tuple[LayoutRole, ...] = tuple(
-    cast(LayoutRole, role) for role in _SHARED_METADATA["roleOrder"]
+    cast(LayoutRole, role) for role in _SHARED_METADATA["groupOrder"]
 )
 
 ROLE_LABELS: dict[LayoutRole, str] = {
     cast(LayoutRole, role): label
-    for role, label in _SHARED_METADATA["roleLabels"].items()
+    for role, label in _SHARED_METADATA["groupLabels"].items()
 }
 
 ROLE_DESCRIPTIONS: dict[LayoutRole, str] = {
     cast(LayoutRole, role): description
-    for role, description in _SHARED_METADATA["roleDescriptions"].items()
+    for role, description in _SHARED_METADATA["groupDescriptions"].items()
 }
 
 VARIANT_PILOT_ROLES: frozenset[LayoutRole] = frozenset(
-    cast(LayoutRole, role) for role in _SHARED_METADATA.get("variantPilotRoles", [])
+    cast(LayoutRole, role)
+    for role, sub_groups in _SHARED_METADATA["subGroupsByGroup"].items()
+    if len(sub_groups) > 1 or any(key != "default" for key in sub_groups)
 )
 
 LAYOUT_ID_TO_ROLE: dict[str, LayoutRole] = {
-    layout_id: cast(LayoutRole, metadata["role"])
+    layout_id: cast(LayoutRole, metadata["group"])
     for layout_id, metadata in _SHARED_METADATA["layouts"].items()
 }
 

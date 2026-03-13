@@ -1,5 +1,5 @@
 {
-  "roleOrder": [
+  "groupOrder": [
     "cover",
     "agenda",
     "section-divider",
@@ -10,7 +10,7 @@
     "highlight",
     "closing"
   ],
-  "roleLabels": {
+  "groupLabels": {
     "cover": "封面",
     "agenda": "目录",
     "section-divider": "章节过渡",
@@ -21,37 +21,34 @@
     "highlight": "强调",
     "closing": "结尾"
   },
-  "roleDescriptions": {
+  "groupDescriptions": {
     "cover": "定义演示开场身份，建立主题、对象与第一印象，不承担正文展开。",
     "agenda": "交代整份演示的章节骨架，帮助观众预期接下来的叙事顺序。",
     "section-divider": "在大章节之间做结构切换，强调叙事阶段变化，不承载大量新信息。",
-    "narrative": "承接常规正文叙述，解释背景、能力、案例或图文说明，是首个 variant 试点组。",
+    "narrative": "承接常规正文叙述，解释背景、能力、案例或图文说明。",
     "evidence": "承载指标、图表、表格和实验结果，用事实或数据支撑前文观点。",
     "comparison": "用对照关系帮助判断取舍，适合优劣分析、方案比较或问题-方案映射。",
     "process": "表达步骤、时间线或方法路径，让观众理解先后顺序与执行流程。",
     "highlight": "单独强调一句关键结论、观点或引用，用来收束注意力。",
     "closing": "完成收尾与致谢，结束叙事，不再引入新的核心信息。"
   },
-  "variantPilotRoles": [
-    "narrative"
-  ],
-  "variantsByRole": {
+  "subGroupsByGroup": {
     "cover": {
       "default": {
         "label": "标准封面",
-        "description": "当前仅保留一个封面变体，用于建立开场身份与主题信息。"
+        "description": "当前仅保留一个封面子类，用于建立开场身份与主题信息。"
       }
     },
     "agenda": {
       "default": {
         "label": "标准目录",
-        "description": "当前仅保留一个目录变体，用于交代章节骨架。"
+        "description": "当前仅保留一个目录子类，用于交代章节骨架。"
       }
     },
     "section-divider": {
       "default": {
         "label": "标准章节过渡",
-        "description": "当前仅保留一个章节过渡变体，用于大章节切换。"
+        "description": "当前仅保留一个章节过渡子类，用于大章节切换。"
       }
     },
     "narrative": {
@@ -71,31 +68,153 @@
     "evidence": {
       "default": {
         "label": "标准论据页",
-        "description": "当前仅保留一个论据页变体，统一承载数据、指标或表格内容。"
+        "description": "当前先保留一个默认子类，用于统一承载数据、指标或表格内容。"
       }
     },
     "comparison": {
       "default": {
         "label": "标准对比页",
-        "description": "当前仅保留一个对比页变体，用于表达方案或结论之间的对照。"
+        "description": "当前先保留一个默认子类，用于表达方案或结论之间的对照。"
       }
     },
     "process": {
       "default": {
         "label": "标准流程页",
-        "description": "当前仅保留一个流程页变体，用于表达步骤与时间顺序。"
+        "description": "当前先保留一个默认子类，用于表达步骤与时间顺序。"
       }
     },
     "highlight": {
       "default": {
         "label": "标准强调页",
-        "description": "当前仅保留一个强调页变体，用于突出单句观点或引用。"
+        "description": "当前先保留一个默认子类，用于突出单句观点或引用。"
       }
     },
     "closing": {
       "default": {
         "label": "标准结尾页",
-        "description": "当前仅保留一个结尾页变体，用于收尾与致谢。"
+        "description": "当前先保留一个默认子类，用于收尾与致谢。"
+      }
+    }
+  },
+  "variantAxes": {
+    "composition": {
+      "hero-center": {
+        "label": "中心主叙事",
+        "description": "居中主标题或主视觉的开场型版式骨架。"
+      },
+      "card-grid": {
+        "label": "卡片网格",
+        "description": "以多个卡片块组织内容的网格骨架。"
+      },
+      "section-break": {
+        "label": "章节切换",
+        "description": "以大标题为主的章节过渡骨架。"
+      },
+      "icon-columns": {
+        "label": "图标列",
+        "description": "以图标驱动的多列要点骨架。"
+      },
+      "media-split": {
+        "label": "图文分栏",
+        "description": "视觉内容与说明内容左右分栏的骨架。"
+      },
+      "capability-grid": {
+        "label": "能力网格",
+        "description": "多能力点并列展开的网格骨架。"
+      },
+      "stat-grid": {
+        "label": "指标网格",
+        "description": "核心指标卡片并列展示的骨架。"
+      },
+      "analysis-split": {
+        "label": "分析分栏",
+        "description": "图表与分析要点并置的骨架。"
+      },
+      "table-dominant": {
+        "label": "表格主导",
+        "description": "表格占主导的证据型骨架。"
+      },
+      "dual-columns": {
+        "label": "双栏对照",
+        "description": "左右两栏并列对照的骨架。"
+      },
+      "step-list": {
+        "label": "步骤清单",
+        "description": "按顺序展开步骤说明的骨架。"
+      },
+      "timeline-band": {
+        "label": "时间轴带",
+        "description": "按时间推进展示事件与里程碑的骨架。"
+      },
+      "quote-focus": {
+        "label": "引述聚焦",
+        "description": "用单句引述或结论作为视觉焦点的骨架。"
+      },
+      "closing-hero": {
+        "label": "结尾主屏",
+        "description": "收尾与致谢用的中心主导骨架。"
+      }
+    },
+    "tone": {
+      "formal": {
+        "label": "正式",
+        "description": "整体气质稳健、克制，适合汇报和说明。"
+      },
+      "neutral": {
+        "label": "中性",
+        "description": "整体气质中性，偏方法说明和过程解释。"
+      },
+      "assertive": {
+        "label": "强调",
+        "description": "整体气质更强调推进感和结论导向。"
+      },
+      "approachable": {
+        "label": "亲和",
+        "description": "整体气质更易讲解，适合案例展示和说明。"
+      },
+      "celebratory": {
+        "label": "收尾",
+        "description": "整体气质更强调结束感、致谢感和庆祝感。"
+      }
+    },
+    "style": {
+      "minimal": {
+        "label": "简洁",
+        "description": "以简洁留白和基础层级为主的视觉风格。"
+      },
+      "card-based": {
+        "label": "卡片化",
+        "description": "通过卡片容器来组织信息的视觉风格。"
+      },
+      "editorial": {
+        "label": "图文编排",
+        "description": "强调封面感和图文编排感的视觉风格。"
+      },
+      "icon-led": {
+        "label": "图标驱动",
+        "description": "以图标作为主要视觉引导的风格。"
+      },
+      "data-first": {
+        "label": "数据优先",
+        "description": "以指标、图表或表格作为主要视觉主体的风格。"
+      },
+      "statement": {
+        "label": "观点陈述",
+        "description": "以单句观点或引用作为主要视觉焦点的风格。"
+      }
+    },
+    "density": {
+      "low": {
+        "label": "低密度",
+        "description": "单页元素较少，强调留白和单点焦点。"
+      },
+      "medium": {
+        "label": "中密度",
+        "description": "单页元素适中，兼顾阅读和呈现节奏。"
+      },
+      "high": {
+        "label": "高密度",
+        "description": "单页承载信息更密集，强调覆盖面与完整度。"
       }
     }
   },
@@ -111,8 +230,14 @@
   },
   "layouts": {
     "intro-slide": {
-      "role": "cover",
-      "variant": "default",
+      "group": "cover",
+      "subGroup": "default",
+      "variant": {
+        "composition": "hero-center",
+        "tone": "formal",
+        "style": "editorial",
+        "density": "low"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -125,8 +250,14 @@
       ]
     },
     "outline-slide": {
-      "role": "agenda",
-      "variant": "default",
+      "group": "agenda",
+      "subGroup": "default",
+      "variant": {
+        "composition": "card-grid",
+        "tone": "formal",
+        "style": "card-based",
+        "density": "medium"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -137,8 +268,14 @@
       ]
     },
     "section-header": {
-      "role": "section-divider",
-      "variant": "default",
+      "group": "section-divider",
+      "subGroup": "default",
+      "variant": {
+        "composition": "section-break",
+        "tone": "assertive",
+        "style": "minimal",
+        "density": "low"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -149,8 +286,14 @@
       ]
     },
     "bullet-with-icons": {
-      "role": "narrative",
-      "variant": "icon-points",
+      "group": "narrative",
+      "subGroup": "icon-points",
+      "variant": {
+        "composition": "icon-columns",
+        "tone": "assertive",
+        "style": "icon-led",
+        "density": "medium"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -160,8 +303,14 @@
       ]
     },
     "bullet-icons-only": {
-      "role": "narrative",
-      "variant": "capability-grid",
+      "group": "narrative",
+      "subGroup": "capability-grid",
+      "variant": {
+        "composition": "capability-grid",
+        "tone": "assertive",
+        "style": "icon-led",
+        "density": "high"
+      },
       "usage": [
         "business-report",
         "training-workshop",
@@ -170,8 +319,14 @@
       ]
     },
     "image-and-description": {
-      "role": "narrative",
-      "variant": "visual-explainer",
+      "group": "narrative",
+      "subGroup": "visual-explainer",
+      "variant": {
+        "composition": "media-split",
+        "tone": "approachable",
+        "style": "editorial",
+        "density": "medium"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -181,8 +336,14 @@
       ]
     },
     "metrics-slide": {
-      "role": "evidence",
-      "variant": "default",
+      "group": "evidence",
+      "subGroup": "default",
+      "variant": {
+        "composition": "stat-grid",
+        "tone": "formal",
+        "style": "data-first",
+        "density": "medium"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -191,8 +352,14 @@
       ]
     },
     "metrics-with-image": {
-      "role": "evidence",
-      "variant": "default",
+      "group": "evidence",
+      "subGroup": "default",
+      "variant": {
+        "composition": "media-split",
+        "tone": "assertive",
+        "style": "data-first",
+        "density": "medium"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -201,8 +368,14 @@
       ]
     },
     "chart-with-bullets": {
-      "role": "evidence",
-      "variant": "default",
+      "group": "evidence",
+      "subGroup": "default",
+      "variant": {
+        "composition": "analysis-split",
+        "tone": "formal",
+        "style": "data-first",
+        "density": "high"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -211,8 +384,14 @@
       ]
     },
     "table-info": {
-      "role": "evidence",
-      "variant": "default",
+      "group": "evidence",
+      "subGroup": "default",
+      "variant": {
+        "composition": "table-dominant",
+        "tone": "formal",
+        "style": "data-first",
+        "density": "high"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -221,8 +400,14 @@
       ]
     },
     "two-column-compare": {
-      "role": "comparison",
-      "variant": "default",
+      "group": "comparison",
+      "subGroup": "default",
+      "variant": {
+        "composition": "dual-columns",
+        "tone": "formal",
+        "style": "card-based",
+        "density": "medium"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -232,8 +417,14 @@
       ]
     },
     "challenge-outcome": {
-      "role": "comparison",
-      "variant": "default",
+      "group": "comparison",
+      "subGroup": "default",
+      "variant": {
+        "composition": "dual-columns",
+        "tone": "assertive",
+        "style": "minimal",
+        "density": "medium"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -243,8 +434,14 @@
       ]
     },
     "numbered-bullets": {
-      "role": "process",
-      "variant": "default",
+      "group": "process",
+      "subGroup": "default",
+      "variant": {
+        "composition": "step-list",
+        "tone": "neutral",
+        "style": "minimal",
+        "density": "medium"
+      },
       "usage": [
         "training-workshop",
         "project-status",
@@ -253,8 +450,14 @@
       ]
     },
     "timeline": {
-      "role": "process",
-      "variant": "default",
+      "group": "process",
+      "subGroup": "default",
+      "variant": {
+        "composition": "timeline-band",
+        "tone": "formal",
+        "style": "minimal",
+        "density": "medium"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -264,8 +467,14 @@
       ]
     },
     "quote-slide": {
-      "role": "highlight",
-      "variant": "default",
+      "group": "highlight",
+      "subGroup": "default",
+      "variant": {
+        "composition": "quote-focus",
+        "tone": "assertive",
+        "style": "statement",
+        "density": "low"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -274,8 +483,14 @@
       ]
     },
     "thank-you": {
-      "role": "closing",
-      "variant": "default",
+      "group": "closing",
+      "subGroup": "default",
+      "variant": {
+        "composition": "closing-hero",
+        "tone": "celebratory",
+        "style": "minimal",
+        "density": "low"
+      },
       "usage": [
         "academic-report",
         "business-report",
