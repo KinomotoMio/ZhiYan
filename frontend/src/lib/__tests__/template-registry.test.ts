@@ -18,6 +18,11 @@ test("template registry exposes usage metadata for built-in layouts", () => {
     style: "card-based",
     density: "medium",
   });
+  assert.equal(
+    outline.notes.purpose,
+    "用于交代整份演示的章节骨架，不负责深入解释单个章节内容。",
+  );
+  assert.match(outline.description, /章节骨架/);
   assert.deepEqual(outline.usage, [
     "academic-report",
     "business-report",
@@ -94,6 +99,16 @@ test("layout catalog renders role-based group and variant metadata", () => {
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
+  assert.match(html, /Runtime notes/);
+  assert.match(html, /shared metadata six-slot contract/);
+  assert.match(html, /Purpose/);
+  assert.match(html, /Structure/);
+  assert.match(html, /Design/);
+  assert.match(html, /Use when/);
+  assert.match(html, /Avoid when/);
+  assert.match(html, /Usage bias/);
+  assert.match(html, /用于建立演示开场身份与主题/);
+  assert.match(html, /当内容天然是 3-4 个并列卖点、能力点或结论点时使用/);
 
   const bulletIconsOnly = html.indexOf("bullet-icons-only");
   const bulletWithIcons = html.indexOf("bullet-with-icons");

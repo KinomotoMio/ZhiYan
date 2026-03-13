@@ -18,6 +18,7 @@ import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
+import { getLayout, type LayoutEntry as RuntimeLayoutEntry } from "@/lib/template-registry";
 import {
   compareLayoutRoles,
   getLayoutRole,
@@ -62,9 +63,18 @@ type CatalogEntry = {
   reviewedSubGroup: string;
   reviewedVariant: ReviewedLayoutVariant;
   usage: LayoutUsageTag[];
+  notes: RuntimeLayoutEntry["notes"];
   keyFields: string[];
   data: Record<string, unknown>;
 };
+
+function getRuntimeLayoutNotes(layoutId: string): RuntimeLayoutEntry["notes"] {
+  const layout = getLayout(layoutId);
+  if (!layout) {
+    throw new Error(`Unknown runtime layout entry: ${layoutId}`);
+  }
+  return layout.notes;
+}
 
 function svgDataUrl(stops: string[], label: string): string {
   const svg = `
@@ -97,6 +107,7 @@ const entries: CatalogEntry[] = [
     reviewedSubGroup: getReviewedLayoutTaxonomy("intro-slide")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("intro-slide")!.variant,
     usage: getLayoutUsage("intro-slide"),
+    notes: getRuntimeLayoutNotes("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
     data: {
       title: "ZhiYan Layout Catalog",
@@ -115,6 +126,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("outline-slide")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("outline-slide")!.variant,
     usage: getLayoutUsage("outline-slide"),
+    notes: getRuntimeLayoutNotes("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
     data: {
       title: "Presentation Outline",
@@ -150,6 +162,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("section-header")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("section-header")!.variant,
     usage: getLayoutUsage("section-header"),
+    notes: getRuntimeLayoutNotes("section-header"),
     keyFields: ["title", "subtitle?"],
     data: {
       title: "Platform Overview",
@@ -166,6 +179,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("bullet-with-icons")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("bullet-with-icons")!.variant,
     usage: getLayoutUsage("bullet-with-icons"),
+    notes: getRuntimeLayoutNotes("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
     data: {
       title: "Why Teams Use This Layout",
@@ -200,6 +214,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("image-and-description")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("image-and-description")!.variant,
     usage: getLayoutUsage("image-and-description"),
+    notes: getRuntimeLayoutNotes("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
     data: {
       title: "Feature Spotlight",
@@ -223,6 +238,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("bullet-icons-only")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("bullet-icons-only")!.variant,
     usage: getLayoutUsage("bullet-icons-only"),
+    notes: getRuntimeLayoutNotes("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
     data: {
       title: "Capability Grid",
@@ -246,6 +262,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("metrics-slide")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("metrics-slide")!.variant,
     usage: getLayoutUsage("metrics-slide"),
+    notes: getRuntimeLayoutNotes("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
     data: {
       title: "Quarterly Snapshot",
@@ -266,6 +283,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("metrics-with-image")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("metrics-with-image")!.variant,
     usage: getLayoutUsage("metrics-with-image"),
+    notes: getRuntimeLayoutNotes("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
     data: {
       title: "Impact + Product Shot",
@@ -299,6 +317,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("chart-with-bullets")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("chart-with-bullets")!.variant,
     usage: getLayoutUsage("chart-with-bullets"),
+    notes: getRuntimeLayoutNotes("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
     data: {
       title: "Trend + Commentary",
@@ -324,6 +343,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("table-info")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("table-info")!.variant,
     usage: getLayoutUsage("table-info"),
+    notes: getRuntimeLayoutNotes("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
     data: {
       title: "Option Comparison",
@@ -346,6 +366,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("two-column-compare")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("two-column-compare")!.variant,
     usage: getLayoutUsage("two-column-compare"),
+    notes: getRuntimeLayoutNotes("two-column-compare"),
     keyFields: ["title", "left", "right"],
     data: {
       title: "Manual vs Assisted Workflow",
@@ -375,6 +396,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("challenge-outcome")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("challenge-outcome")!.variant,
     usage: getLayoutUsage("challenge-outcome"),
+    notes: getRuntimeLayoutNotes("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
     data: {
       title: "Problems and Fixes",
@@ -400,6 +422,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("numbered-bullets")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("numbered-bullets")!.variant,
     usage: getLayoutUsage("numbered-bullets"),
+    notes: getRuntimeLayoutNotes("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
     data: {
       title: "Rollout Plan",
@@ -431,6 +454,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("timeline")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("timeline")!.variant,
     usage: getLayoutUsage("timeline"),
+    notes: getRuntimeLayoutNotes("timeline"),
     keyFields: ["title", "events[3-6]"],
     data: {
       title: "Delivery Timeline",
@@ -468,6 +492,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("quote-slide")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("quote-slide")!.variant,
     usage: getLayoutUsage("quote-slide"),
+    notes: getRuntimeLayoutNotes("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
     data: {
       quote:
@@ -486,6 +511,7 @@ const entries: CatalogEntry[] = [
       getReviewedLayoutTaxonomy("thank-you")?.subGroup ?? "default",
     reviewedVariant: getReviewedLayoutTaxonomy("thank-you")!.variant,
     usage: getLayoutUsage("thank-you"),
+    notes: getRuntimeLayoutNotes("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
     data: {
       title: "Thanks",
@@ -642,6 +668,45 @@ function ReviewedVariantCard({
   );
 }
 
+const NOTES_SLOT_LABELS: Array<{
+  key: keyof RuntimeLayoutEntry["notes"];
+  label: string;
+}> = [
+  { key: "purpose", label: "Purpose" },
+  { key: "structure_signal", label: "Structure" },
+  { key: "design_signal", label: "Design" },
+  { key: "use_when", label: "Use when" },
+  { key: "avoid_when", label: "Avoid when" },
+  { key: "usage_bias", label: "Usage bias" },
+];
+
+function NotesCard({ notes }: { notes: RuntimeLayoutEntry["notes"] }) {
+  return (
+    <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-700">
+          Runtime notes
+        </span>
+        <span className="text-xs text-sky-800">
+          shared metadata six-slot contract
+        </span>
+      </div>
+      <dl className="mt-3 space-y-3">
+        {NOTES_SLOT_LABELS.map(({ key, label }) => (
+          <div key={key}>
+            <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700">
+              {label}
+            </dt>
+            <dd className="mt-1 text-sm leading-6 text-slate-700">
+              {notes[key]}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export function LayoutCatalogClientPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-900">
@@ -656,7 +721,10 @@ export function LayoutCatalogClientPage() {
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
             This page renders every current TSX layout with sample data. Treat it
             as the fastest way to compare structure, inspect file names, and
-            decide where to add a new variant.
+            decide where to add a new variant. Notes now come from the shared
+            metadata runtime baseline; the per-layout `layoutDescription`
+            remains a component-level fallback rather than the catalog source
+            of truth.
           </p>
         </header>
 
@@ -837,9 +905,7 @@ export function LayoutCatalogClientPage() {
                         <UsageChips usage={entry.usage} />
                       </td>
                       <td className="px-5 py-5">
-                        <p className="text-sm leading-6 text-slate-700">
-                          {entry.module.layoutDescription}
-                        </p>
+                        <NotesCard notes={entry.notes} />
                       </td>
                     </tr>
                   );

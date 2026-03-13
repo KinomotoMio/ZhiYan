@@ -93,9 +93,16 @@ def test_get_layout_catalog_includes_usage_metadata():
     assert "角色:" in catalog
     assert "变体:" in catalog
     assert "适用领域" in catalog
+    assert "职责:" in catalog
+    assert "结构:" in catalog
+    assert "设计:" in catalog
+    assert "适用时机:" in catalog
+    assert "避免时机:" in catalog
+    assert "usage 偏向:" in catalog
     assert "学术汇报" in catalog
     assert "商业汇报" in catalog
     assert "图标要点 (icon-points)" in catalog
+    assert "用于正文中分点说明 3-4 个能力、优势或结论" in catalog
 
 
 def test_get_layout_variant_catalog_describes_role_to_variant_tracks():
@@ -114,6 +121,8 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert bullet_layout.variant.tone == "assertive"
     assert bullet_layout.variant.style == "icon-led"
     assert bullet_layout.variant.density == "medium"
+    assert bullet_layout.notes.purpose.startswith("用于正文中分点说明")
+    assert "图标分点结构" in bullet_layout.notes.structure_signal
 
     outline_layout = get_layout("outline-slide")
     assert outline_layout is not None
@@ -123,6 +132,8 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert outline_layout.variant.tone == "formal"
     assert outline_layout.variant.style == "card-based"
     assert outline_layout.variant.density == "medium"
+    assert outline_layout.description.startswith("用于交代整份演示的章节骨架")
+    assert outline_layout.notes.use_when.startswith("当你需要在正文前建立叙事顺序")
 
 
 def test_layout_role_mapping_matches_expected_layout_roles():
