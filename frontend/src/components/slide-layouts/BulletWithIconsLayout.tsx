@@ -1,7 +1,10 @@
 "use client";
 
+import { AlertCircle } from "lucide-react";
+
 import { getBulletWithIconsColumns } from "@/lib/layout-rules";
 import type { BulletWithIconsData } from "@/types/layout-data";
+
 import { LayoutIcon } from "./_shared";
 
 export const layoutId = "bullet-with-icons";
@@ -9,6 +12,38 @@ export const layoutName = "图标要点";
 export const layoutDescription = "带图标的 3-4 个要点，适合功能介绍、优势列举";
 
 export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsData }) {
+  if (data.status && data.items.length === 0) {
+    return (
+      <div className="flex h-full flex-col px-16 py-14">
+        <h2
+          style={{ fontSize: 36, fontWeight: 700, lineHeight: 1.3 }}
+          className="mb-10 text-[var(--background-text,#111827)]"
+        >
+          {data.title}
+        </h2>
+        <div className="flex flex-1 items-center justify-center">
+          <div className="max-w-3xl rounded-3xl border border-amber-200 bg-amber-50 px-10 py-9 text-center shadow-sm">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
+              <AlertCircle className="h-7 w-7" />
+            </div>
+            <h3
+              style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.3 }}
+              className="text-[var(--background-text,#111827)]"
+            >
+              {data.status.title}
+            </h3>
+            <p
+              style={{ fontSize: 17, lineHeight: 1.6 }}
+              className="mt-3 text-[var(--background-text,#111827)]/70"
+            >
+              {data.status.message}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const columns = getBulletWithIconsColumns(data.items.length);
   const compact = columns === 4;
 
@@ -28,10 +63,7 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
         }}
       >
         {data.items.map((item, i) => (
-          <div
-            key={i}
-            className="relative flex h-full min-h-0 flex-col pl-4"
-          >
+          <div key={i} className="relative flex h-full min-h-0 flex-col pl-4">
             <div
               className="absolute left-0 top-1/2 -translate-y-1/2"
               style={{

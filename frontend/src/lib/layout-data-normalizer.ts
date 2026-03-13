@@ -8,6 +8,8 @@ export interface LayoutNormalizeResult {
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
 const DEFAULT_FILLER = "内容生成中";
+const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
+const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
 type RecordLike = Record<string, unknown>;
 type OutlineSection = { title: string; description?: string };
@@ -83,6 +85,74 @@ function normalizeIcon(value: unknown): RecordLike | null {
   }
   if (typeof value === "string" && value.trim()) return { query: value.trim() };
   return null;
+}
+
+function isPlaceholderText(text: string): boolean {
+  return ["内容生成中", "待补充", "自动回退生成"].includes(text.trim());
+}
+
+function normalizeStatus(raw: unknown): RecordLike | null {
+  if (!isRecordLike(raw)) return null;
+  const title = asText(raw.title, BULLET_PLACEHOLDER_TITLE);
+  const message = asText(raw.message, BULLET_PLACEHOLDER_MESSAGE);
+  return { title, message };
+}
+
+function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "要点概览");
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  const items: RecordLike[] = [];
+
+  for (const rawItem of rawItems) {
+    if (!isRecordLike(rawItem)) continue;
+    const itemTitle = asText(rawItem.title);
+    const itemDescription = asText(rawItem.description);
+    const text = itemTitle || itemDescription;
+
+    if (!text) continue;
+
+    const repeatedPlaceholder =
+      itemTitle &&
+      itemDescription &&
+      itemTitle === itemDescription &&
+      isPlaceholderText(itemTitle);
+    if (repeatedPlaceholder) {
+      continue;
+    }
+
+    const icon = normalizeIcon(rawItem.icon) ?? { query: "star" };
+    items.push({
+      icon,
+      title: itemTitle || text.slice(0, 25),
+      description: itemDescription || text,
+    });
+  }
+
+  const explicitStatus = normalizeStatus(data.status);
+  const inferredStatus =
+    items.length === 0
+      ? {
+          title: BULLET_PLACEHOLDER_TITLE,
+          message: BULLET_PLACEHOLDER_MESSAGE,
+        }
+      : null;
+
+  const repaired: RecordLike = {
+    title,
+    items,
+  };
+  const status = explicitStatus ?? inferredStatus;
+  if (status) {
+    repaired.status = status;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize bullet-with-icons fallback state" : null,
+  };
 }
 
 function extractTextItems(value: unknown): string[] {
@@ -354,6 +424,9 @@ function normalizeThankYou(data: RecordLike): LayoutNormalizeResult {
 export function normalizeLayoutData(layoutId: string, data: Record<string, unknown>): LayoutNormalizeResult {
   if (layoutId === "intro-slide") {
     return normalizeIntroSlide(data);
+  }
+  if (layoutId === "bullet-with-icons") {
+    return normalizeBulletWithIcons(data);
   }
   if (layoutId === "outline-slide") {
     return normalizeOutlineSlide(data);

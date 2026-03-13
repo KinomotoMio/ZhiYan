@@ -52,9 +52,15 @@ export interface BulletIconItem {
   description: string;
 }
 
+export interface LayoutStatusState {
+  title: string;
+  message: string;
+}
+
 export interface BulletWithIconsData {
   title: string;
   items: BulletIconItem[];
+  status?: LayoutStatusState | null;
 }
 
 // 4. numbered-bullets
