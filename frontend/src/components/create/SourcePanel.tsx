@@ -550,7 +550,11 @@ export default function SourcePanel() {
       deselectAllSources();
       await Promise.all(
         toUnlink.map((id) =>
-          unlinkSourceFromSession(sessionId, id).catch((err) => { console.error("Failed to unlink source from session:", err);
+          unlinkSourceFromSession(sessionId, id).catch((err) => {
+            console.error(
+              `Failed to unlink source ${id} from session ${sessionId}:`,
+              err
+            );
             addSelectedSource(id);
           })
         )
