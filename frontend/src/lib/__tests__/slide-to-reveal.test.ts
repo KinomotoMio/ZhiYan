@@ -382,3 +382,29 @@ test("presentationToRevealHTML prioritizes image urls over source placeholders",
   assert.match(html, /<img src="https:\/\/example\.com\/image\.png"/);
   assert.doesNotMatch(html, /\u5f85\u7528\u6237\u8865\u56fe\/\u4e0a\u4f20/);
 });
+
+test("presentationToRevealHTML uses a generic alt fallback for metrics-with-image urls", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-metrics-url-alt",
+        layoutType: "metrics-with-image",
+        layoutId: "metrics-with-image",
+        contentData: {
+          title: "Resolved Image",
+          metrics: [{ value: "42", label: "Score" }],
+          image: {
+            source: "ai",
+            prompt: "",
+            url: "https://example.com/metrics-image.png",
+          },
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /<img src="https:\/\/example\.com\/metrics-image\.png" alt="Image"/);
+});
+

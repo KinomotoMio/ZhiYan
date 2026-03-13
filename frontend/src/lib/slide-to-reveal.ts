@@ -495,7 +495,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
             </div>
           </div>
           <div style="width:45%;flex-shrink:0;overflow:hidden;background:#f3f4f6;">
-            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || placeholder.title, "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
+            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || "Image", "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
           </div>
         </div>`;
     }
