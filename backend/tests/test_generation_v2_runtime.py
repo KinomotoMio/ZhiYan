@@ -414,68 +414,42 @@ def test_verify_soft_timeout_completes_job_with_warning(monkeypatch, tmp_path):
             await asyncio.sleep(0.05)
             return None
 
-        originals = (
-            runner_mod.stage_parse_document,
-            runner_mod.stage_generate_outline,
-            runner_mod.stage_select_layouts,
-            runner_mod.stage_generate_slides,
-            runner_mod.stage_resolve_assets,
-            runner_mod.stage_verify_slides,
-            sessions_pkg.session_store,
-            layout_verifier.verify_programmatic,
-            layout_verifier.run_aesthetic_verification,
-        )
-        runner_mod.stage_parse_document = fake_parse
-        runner_mod.stage_generate_outline = fake_outline
-        runner_mod.stage_select_layouts = fake_layout
-        runner_mod.stage_generate_slides = fake_slides
-        runner_mod.stage_resolve_assets = fake_assets
-        runner_mod.stage_verify_slides = fake_verify
         monkeypatch.setattr(sessions_pkg, "session_store", session_store)
+        monkeypatch.setattr(runner_mod, "stage_parse_document", fake_parse)
+        monkeypatch.setattr(runner_mod, "stage_generate_outline", fake_outline)
+        monkeypatch.setattr(runner_mod, "stage_select_layouts", fake_layout)
+        monkeypatch.setattr(runner_mod, "stage_generate_slides", fake_slides)
+        monkeypatch.setattr(runner_mod, "stage_resolve_assets", fake_assets)
+        monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
         monkeypatch.setattr(layout_verifier, "verify_programmatic", lambda slides: [])
         monkeypatch.setattr(layout_verifier, "run_aesthetic_verification", slow_aesthetic)
-        try:
-            job = GenerationJob(
-                job_id="job-verify-soft-timeout",
-                request=GenerationRequestData(
-                    topic="测试",
-                    content="测试内容",
-                    resolved_content="测试内容",
-                    num_pages=3,
-                    session_id=session["id"],
-                    title="测试主题",
-                ),
-                outline_accepted=True,
-            )
-            await store.create_job(job)
-            await runner._run_job(job.job_id, from_stage=StageStatus.PARSE)  # noqa: SLF001
 
-            loaded = await store.get_job(job.job_id)
-            assert loaded is not None
-            assert loaded.status == JobStatus.COMPLETED
-            assert loaded.presentation is not None
-            assert any(issue["source"] == "aesthetic_timeout_fallback" for issue in loaded.issues)
+        job = GenerationJob(
+            job_id="job-verify-soft-timeout",
+            request=GenerationRequestData(
+                topic="测试",
+                content="测试内容",
+                resolved_content="测试内容",
+                num_pages=3,
+                session_id=session["id"],
+                title="测试主题",
+            ),
+            outline_accepted=True,
+        )
+        await store.create_job(job)
+        await runner._run_job(job.job_id, from_stage=StageStatus.PARSE)  # noqa: SLF001
 
-            events = await store.list_events(job.job_id)
-            job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
-            assert job_failed == []
-            completed = [evt for evt in events if evt.type == EventType.JOB_COMPLETED]
-            assert completed
-        finally:
-            (
-                runner_mod.stage_parse_document,
-                runner_mod.stage_generate_outline,
-                runner_mod.stage_select_layouts,
-                runner_mod.stage_generate_slides,
-                runner_mod.stage_resolve_assets,
-                runner_mod.stage_verify_slides,
-                _,
-                _,
-                _,
-            ) = originals
-            monkeypatch.setattr(sessions_pkg, "session_store", originals[6])
-            monkeypatch.setattr(layout_verifier, "verify_programmatic", originals[7])
-            monkeypatch.setattr(layout_verifier, "run_aesthetic_verification", originals[8])
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.status == JobStatus.COMPLETED
+        assert loaded.presentation is not None
+        assert any(issue["source"] == "aesthetic_timeout_fallback" for issue in loaded.issues)
+
+        events = await store.list_events(job.job_id)
+        job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+        assert job_failed == []
+        completed = [evt for evt in events if evt.type == EventType.JOB_COMPLETED]
+        assert completed
 
     asyncio.run(_case())
 
