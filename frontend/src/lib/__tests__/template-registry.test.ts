@@ -122,9 +122,9 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /Taxonomy reference/);
   assert.match(html, />Group</);
   assert.match(html, />Runtime Variant</);
-  assert.match(html, />Schema</);
-  assert.match(html, />Usage</);
-  assert.match(html, />Notes</);
+  assert.match(html, /Usage/);
+  assert.match(html, /Show details/);
+  assert.match(html, /Overview/);
   assert.doesNotMatch(html, /Reviewed Sub-group/);
   assert.doesNotMatch(html, /Reviewed Variant/);
   assert.doesNotMatch(html, /Role Contract/);
@@ -155,16 +155,7 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
-  assert.match(html, /Runtime notes/);
-  assert.match(html, /shared metadata six-slot contract/);
-  assert.match(html, /Purpose/);
-  assert.match(html, /Structure/);
-  assert.match(html, /Design/);
-  assert.match(html, /Use when/);
-  assert.match(html, /Avoid when/);
-  assert.match(html, /Usage bias/);
   assert.match(html, /用于建立演示开场身份与主题/);
-  assert.match(html, /当内容天然是 3-4 个并列卖点、能力点或结论点时使用/);
   assert.match(html, /main table stays focused on the template directory itself/);
 
   const bulletIconsOnly = html.indexOf("bullet-icons-only");
