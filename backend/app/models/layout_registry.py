@@ -203,6 +203,23 @@ def get_layout_catalog() -> str:
     return "\n".join(lines)
 
 
+def get_layout_taxonomy_catalog() -> str:
+    """生成以 group / sub_group / layout_id 为主的 selector 候选文本。"""
+    lines: list[str] = []
+    for entry in _LAYOUTS:
+        lines.append(
+            f"- `{entry.id}` ({entry.name}, group: {entry.group}, sub_group: {entry.sub_group}, "
+            f"usage: {format_usage_tags(entry.usage_tags)}): "
+            f"purpose: {entry.notes.purpose} "
+            f"structure: {entry.notes.structure_signal} "
+            f"design: {entry.notes.design_signal} "
+            f"use_when: {entry.notes.use_when} "
+            f"avoid_when: {entry.notes.avoid_when} "
+            f"usage_bias: {entry.notes.usage_bias}"
+        )
+    return "\n".join(lines)
+
+
 def get_layout_variant_catalog() -> str:
     """生成 role -> variant -> layout 的决策清单文本。"""
     grouped_layouts: dict[tuple[str, str], list[LayoutEntry]] = {}

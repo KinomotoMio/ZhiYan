@@ -185,18 +185,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
     from app.models.layout_registry import (
         get_all_layouts,
-        get_layout_catalog,
+        get_layout,
         get_layout_ids,
-        get_layout_variant_catalog,
+        get_layout_taxonomy_catalog,
     )
     from app.services.pipeline.layout_roles import (
-        get_layout_role,
         get_outline_item_role,
         normalize_outline_items_roles,
-    )
-    from app.services.pipeline.layout_variants import (
-        get_layout_variant,
-        normalize_layout_variant,
     )
     from app.services.pipeline.layout_usage import (
         format_usage_tags,
@@ -234,19 +229,18 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
     document_usage_text = format_usage_tags(document_usage_tags)
     prompt = (
-        f"可用布局列表:\n{get_layout_catalog()}\n\n"
-        f"变体轨道:\n{get_layout_variant_catalog()}\n\n"
+        f"可用布局列表:\n{get_layout_taxonomy_catalog()}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
-        "- 先确定 group，再确定 variant，最后再输出 layout_id\n"
+        "- 先确定 group，再确定 sub_group，最后再输出 layout_id\n"
         "- narrative 必须显式选择 icon-points / visual-explainer / capability-grid 之一\n"
-        "- 非 narrative group 统一使用 variant=default\n"
+        "- 非 narrative group 统一使用 sub_group=default\n"
         "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
         "- 当 usage 未命中时，按内容结构与叙事节奏选择\n\n"
         f"大纲:\n{items_text}\n\n"
-        "请为每页输出 group、variant、layout_id 和 reason。"
+        "请为每页输出 group、sub_group、layout_id 和 reason。不要输出 variant。"
     )
 
     try:
@@ -261,17 +255,15 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
             role = get_outline_item_role(item or {})
             effective_usage = slide_usage_tags.get(sel["slide_number"], ()) or document_usage_tags
-            requested_variant = normalize_layout_variant(str(sel.get("variant") or "default"))
-            resolved_variant = _resolve_layout_variant(
+            resolved_sub_group = _resolve_layout_sub_group(
                 item or {},
                 role=role,
-                requested_variant=requested_variant,
-                requested_layout_id=str(sel.get("layout_id") or ""),
+                requested_sub_group=str(sel.get("sub_group") or "default"),
             )
-            candidate_entries = _rank_role_variant_layouts(
+            candidate_entries = _rank_group_sub_group_layouts(
                 layout_entries,
-                role=role,
-                variant=resolved_variant,
+                group=role,
+                sub_group=resolved_sub_group,
                 usage_tags=effective_usage,
                 rank_layouts_by_usage_fn=rank_layouts_by_usage,
             )
@@ -280,19 +272,41 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             if (
                 requested_layout_id not in valid_ids
                 or requested_layout_id not in candidate_ids
-                or get_layout_role(requested_layout_id) != role
-                or get_layout_variant(requested_layout_id) != resolved_variant
             ):
-                sel["layout_id"] = (
+                final_layout_id = (
                     candidate_entries[0].id
                     if candidate_entries
-                    else _role_variant_to_default_layout(role, resolved_variant)
+                    else _group_sub_group_to_default_layout(role, resolved_sub_group)
                 )
             else:
-                sel["layout_id"] = requested_layout_id
+                final_layout_id = requested_layout_id
 
+            final_entry = get_layout(final_layout_id)
+            if final_entry is None:
+                final_layout_id = _group_sub_group_to_default_layout(role, resolved_sub_group)
+                final_entry = get_layout(final_layout_id)
+            if final_entry is None:
+                logger.error(
+                    "Layout selection fallback resolved to unknown layout, using safety default",
+                    extra={
+                        "job_id": state.job_id,
+                        "stage": "layout",
+                        "group": role,
+                        "sub_group": resolved_sub_group,
+                        "requested_layout_id": requested_layout_id,
+                        "fallback_layout_id": final_layout_id,
+                        "safety_layout_id": "bullet-with-icons",
+                    },
+                )
+                final_layout_id = "bullet-with-icons"
+                final_entry = get_layout(final_layout_id)
+                if final_entry is None:
+                    raise KeyError("Safety default layout 'bullet-with-icons' is unavailable")
+
+            sel["layout_id"] = final_layout_id
             sel["group"] = role
-            sel["variant"] = resolved_variant
+            sel["sub_group"] = resolved_sub_group
+            sel["variant"] = _serialize_variant_from_entry(final_entry)
 
         state.layout_selections = selections
         logger.info(
@@ -317,33 +331,35 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             {
                 "slide_number": item["slide_number"],
                 "group": get_outline_item_role(item),
-                "variant": (
-                    resolved_variant := _resolve_layout_variant(
+                "sub_group": (
+                    resolved_sub_group := _resolve_layout_sub_group(
                         item,
                         role=get_outline_item_role(item),
-                        requested_variant="default",
-                        requested_layout_id="",
+                        requested_sub_group="default",
                     )
                 ),
-                "layout_id": _role_variant_to_default_layout(
-                    get_outline_item_role(item),
-                    resolved_variant,
+                "layout_id": (
+                    layout_id := _group_sub_group_to_default_layout(
+                        get_outline_item_role(item),
+                        resolved_sub_group,
+                    )
                 ),
+                "variant": _serialize_variant_from_entry(get_layout(layout_id)),
                 "reason": "fallback",
             }
             for item in outline_items
         ]
 
 
-def _role_variant_to_default_layout(role: str, variant: str) -> str:
-    if role == "narrative":
-        if variant == "visual-explainer":
+def _group_sub_group_to_default_layout(group: str, sub_group: str) -> str:
+    if group == "narrative":
+        if sub_group == "visual-explainer":
             return "image-and-description"
-        if variant == "capability-grid":
+        if sub_group == "capability-grid":
             return "bullet-icons-only"
         return "bullet-with-icons"
 
-    return _role_to_default_layout(role)
+    return _role_to_default_layout(group)
 
 
 def _format_outline_item_for_layout_prompt(
@@ -356,11 +372,10 @@ def _format_outline_item_for_layout_prompt(
     rank_layouts_by_usage_fn,
 ) -> str:
     from app.services.pipeline.layout_roles import get_default_layout_for_role, get_outline_item_role
-    from app.services.pipeline.layout_variants import (
-        get_layout_variant,
-        get_layout_variant_description,
-        get_layout_variant_label,
-        get_variants_for_role,
+    from app.services.pipeline.layout_taxonomy import (
+        get_sub_group_description,
+        get_sub_group_label,
+        get_sub_groups_for_group,
     )
 
     slide_number = int(item.get("slide_number", 0))
@@ -380,18 +395,18 @@ def _format_outline_item_for_layout_prompt(
     preferred = (
         rank_layouts_by_usage_fn(role_matched, effective_usage, limit=4) if effective_usage else []
     )
-    variant_candidates = []
-    for variant in get_variants_for_role(role):
-        variant_entries = [
-            entry for entry in role_matched if get_layout_variant(entry.id) == variant
+    sub_group_candidates = []
+    for sub_group in get_sub_groups_for_group(role):
+        sub_group_entries = [
+            entry for entry in role_matched if str(entry.sub_group) == sub_group
         ]
-        layouts_text = ", ".join(f"`{entry.id}`" for entry in variant_entries) or "无"
-        variant_candidates.append(
-            f"`{variant}`({get_layout_variant_label(role, variant)}: "
-            f"{get_layout_variant_description(role, variant)} 可用布局 {layouts_text})"
+        layouts_text = ", ".join(f"`{entry.id}`" for entry in sub_group_entries) or "无"
+        sub_group_candidates.append(
+            f"`{sub_group}`({get_sub_group_label(role, sub_group)}: "
+            f"{get_sub_group_description(role, sub_group)} 可用布局 {layouts_text})"
         )
     role_matched_text = ", ".join(f"`{entry.id}`" for entry in role_matched) or "无角色匹配布局"
-    variant_text = " / ".join(variant_candidates) if variant_candidates else "`default`"
+    sub_group_text = " / ".join(sub_group_candidates) if sub_group_candidates else "`default`"
     if preferred:
         preferred_text = ", ".join(f"`{entry.id}`({entry.name})" for entry in preferred)
     else:
@@ -400,7 +415,7 @@ def _format_outline_item_for_layout_prompt(
     return (
         f"- 第{slide_number}页: {item['title']} "
         f"(角色: {role}, "
-        f"候选变体: {variant_text}, "
+        f"候选子组: {sub_group_text}, "
         f"要点: {preview_points}, "
         f"页内 Usage: {usage_text}, "
         f"角色匹配布局: {role_matched_text}, "
@@ -690,65 +705,58 @@ async def stage_fix_slides_once(
                 }
             )
 
-def _rank_role_variant_layouts(
+def _rank_group_sub_group_layouts(
     layout_entries: list[Any],
     *,
-    role: str,
-    variant: str,
+    group: str,
+    sub_group: str,
     usage_tags: tuple[str, ...],
     rank_layouts_by_usage_fn,
 ) -> list[Any]:
     from app.services.pipeline.layout_roles import get_default_layout_for_role
-    from app.services.pipeline.layout_variants import get_layout_variant
 
-    variant_matched = [
+    sub_group_matched = [
         entry
         for entry in layout_entries
-        if str(entry.group) == role and get_layout_variant(entry.id) == variant
+        if str(entry.group) == group and str(entry.sub_group) == sub_group
     ]
-    if not variant_matched:
-        variant_matched = [entry for entry in layout_entries if str(entry.group) == role]
-    if not variant_matched:
-        fallback_layout = get_default_layout_for_role(role)
-        variant_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+    if not sub_group_matched:
+        sub_group_matched = [entry for entry in layout_entries if str(entry.group) == group]
+    if not sub_group_matched:
+        fallback_layout = get_default_layout_for_role(group)
+        sub_group_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
 
     if usage_tags:
         ranked = rank_layouts_by_usage_fn(
-            variant_matched,
+            sub_group_matched,
             usage_tags,
-            limit=len(variant_matched),
+            limit=len(sub_group_matched),
         )
         if ranked:
             return ranked
-    return variant_matched
+    return sub_group_matched
 
 
-def _resolve_layout_variant(
+def _resolve_layout_sub_group(
     item: dict[str, Any],
     *,
     role: str,
-    requested_variant: str,
-    requested_layout_id: str,
+    requested_sub_group: str,
 ) -> str:
     from app.services.pipeline.layout_roles import is_variant_pilot_role
-    from app.services.pipeline.layout_variants import get_layout_variant, get_variants_for_role
+    from app.services.pipeline.layout_taxonomy import get_sub_groups_for_group
 
     if not is_variant_pilot_role(role):
         return "default"
 
-    allowed_variants = set(get_variants_for_role(role))
-    if requested_variant in allowed_variants:
-        return requested_variant
+    allowed_sub_groups = set(get_sub_groups_for_group(role))
+    if requested_sub_group in allowed_sub_groups:
+        return requested_sub_group
 
-    if requested_layout_id:
-        inferred_variant = get_layout_variant(requested_layout_id)
-        if inferred_variant in allowed_variants:
-            return inferred_variant
-
-    return _suggest_variant_for_outline_item(item, role)
+    return _suggest_sub_group_for_outline_item(item, role)
 
 
-def _suggest_variant_for_outline_item(item: dict[str, Any], role: str) -> str:
+def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
     if role != "narrative":
         return "default"
 
@@ -769,6 +777,22 @@ def _suggest_variant_for_outline_item(item: dict[str, Any], role: str) -> str:
         return "capability-grid"
 
     return "icon-points"
+
+
+def _serialize_variant_from_entry(entry: Any) -> dict[str, str]:
+    if entry is None:
+        return {
+            "composition": "",
+            "tone": "",
+            "style": "",
+            "density": "",
+        }
+    return {
+        "composition": str(entry.variant.composition),
+        "tone": str(entry.variant.tone),
+        "style": str(entry.variant.style),
+        "density": str(entry.variant.density),
+    }
 
 
 def _role_to_default_layout(role: str) -> str:
