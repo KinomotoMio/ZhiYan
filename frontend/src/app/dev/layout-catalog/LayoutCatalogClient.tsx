@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentType, ReactNode } from "react";
+import { useState } from "react";
 
 import layoutMetadataJson from "@/generated/layout-metadata.json";
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
@@ -67,6 +68,9 @@ type CatalogEntry = {
   keyFields: string[];
   data: Record<string, unknown>;
 };
+
+type CatalogFilter = "all" | LayoutRole;
+type CardPanel = "overview" | "schema" | "notes";
 
 function getRuntimeLayoutNotes(layoutId: string): RuntimeLayoutEntry["notes"] {
   const layout = getLayout(layoutId);
@@ -613,7 +617,155 @@ function NotesCard({ notes }: { notes: RuntimeLayoutEntry["notes"] }) {
   );
 }
 
+function TogglePill({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+          : "rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-200"
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function LayoutCatalogCard({ entry }: { entry: CatalogEntry }) {
+  const [activePanel, setActivePanel] = useState<CardPanel>("overview");
+  const Component = entry.module.default;
+
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <div>
+          <PreviewFrame Component={Component} data={entry.data} />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-lg font-semibold text-slate-900">
+                {entry.module.layoutName}
+              </div>
+              <code className="mt-2 inline-block rounded bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
+                {entry.module.layoutId}
+              </code>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <TogglePill
+                active={activePanel === "overview"}
+                onClick={() => setActivePanel("overview")}
+              >
+                Overview
+              </TogglePill>
+              <TogglePill
+                active={activePanel === "schema"}
+                onClick={() => setActivePanel("schema")}
+              >
+                Schema
+              </TogglePill>
+              <TogglePill
+                active={activePanel === "notes"}
+                onClick={() => setActivePanel("notes")}
+              >
+                Notes
+              </TogglePill>
+            </div>
+          </div>
+
+          <div
+            className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]"
+            hidden={activePanel !== "overview"}
+          >
+            <div className="space-y-6">
+              <MetaBlock label="TSX File">
+                <code className="block rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700">
+                  frontend/src/components/slide-layouts/{entry.fileName}
+                </code>
+              </MetaBlock>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <MetaBlock label="Group">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                      {getLayoutRoleLabel(entry.group)}
+                    </span>
+                    <code className="mt-2 block text-xs text-slate-500">
+                      {entry.group}
+                    </code>
+                  </div>
+                </MetaBlock>
+                <MetaBlock label="Runtime Variant">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <VariantBadge role={entry.group} variant={entry.variant} />
+                  </div>
+                </MetaBlock>
+              </div>
+
+              <MetaBlock label="Usage">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <UsageChips usage={entry.usage} />
+                </div>
+              </MetaBlock>
+            </div>
+
+            <div>
+              <MetaBlock label="Notes preview">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                  {entry.notes.purpose}
+                </div>
+              </MetaBlock>
+            </div>
+          </div>
+
+          <div className="mt-5" hidden={activePanel !== "schema"}>
+            <MetaBlock label="Schema">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-semibold text-slate-900">
+                  {entry.schemaName}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {entry.keyFields.map((field) => (
+                    <span
+                      key={field}
+                      className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200"
+                    >
+                      {field}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </MetaBlock>
+          </div>
+
+          <div className="mt-5" hidden={activePanel !== "notes"}>
+            <MetaBlock label="Notes">
+              <NotesCard notes={entry.notes} />
+            </MetaBlock>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function LayoutCatalogClientPage() {
+  const [activeFilter, setActiveFilter] = useState<CatalogFilter>("all");
+
+  const visibleEntries = sortedEntries.filter(
+    (entry) => activeFilter === "all" || entry.group === activeFilter,
+  );
+
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-900">
       <div className="mx-auto max-w-[1880px]">
@@ -631,6 +783,23 @@ export function LayoutCatalogClientPage() {
             as a compact glossary, while the main table stays focused on the
             template directory itself.
           </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <TogglePill
+              active={activeFilter === "all"}
+              onClick={() => setActiveFilter("all")}
+            >
+              All layouts
+            </TogglePill>
+            {LAYOUT_ROLE_ORDER.map((role) => (
+              <TogglePill
+                key={role}
+                active={activeFilter === role}
+                onClick={() => setActiveFilter(role)}
+              >
+                {getLayoutRoleLabel(role)}
+              </TogglePill>
+            ))}
+          </div>
         </header>
 
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -743,88 +912,9 @@ export function LayoutCatalogClientPage() {
         </section>
 
         <section className="space-y-6">
-          {sortedEntries.map((entry) => {
-            const Component = entry.module.default;
-            return (
-              <article
-                key={entry.module.layoutId}
-                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
-              >
-                <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-                  <div>
-                    <PreviewFrame Component={Component} data={entry.data} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-                      <div className="space-y-6">
-                        <MetaBlock label="Layout">
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-lg font-semibold text-slate-900">
-                              {entry.module.layoutName}
-                            </div>
-                            <code className="mt-2 inline-block rounded bg-white px-2.5 py-1 text-xs text-slate-700 ring-1 ring-slate-200">
-                              {entry.module.layoutId}
-                            </code>
-                            <code className="mt-3 block rounded bg-white px-3 py-2 text-xs text-slate-700 ring-1 ring-slate-200">
-                              frontend/src/components/slide-layouts/{entry.fileName}
-                            </code>
-                          </div>
-                        </MetaBlock>
-
-                        <MetaBlock label="Schema">
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="text-sm font-semibold text-slate-900">
-                              {entry.schemaName}
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {entry.keyFields.map((field) => (
-                                <span
-                                  key={field}
-                                  className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200"
-                                >
-                                  {field}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </MetaBlock>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <MetaBlock label="Group">
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                                {getLayoutRoleLabel(entry.group)}
-                              </span>
-                              <code className="mt-2 block text-xs text-slate-500">
-                                {entry.group}
-                              </code>
-                            </div>
-                          </MetaBlock>
-                          <MetaBlock label="Runtime Variant">
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                              <VariantBadge role={entry.group} variant={entry.variant} />
-                            </div>
-                          </MetaBlock>
-                        </div>
-
-                        <MetaBlock label="Usage">
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <UsageChips usage={entry.usage} />
-                          </div>
-                        </MetaBlock>
-                      </div>
-
-                      <div className="min-w-0">
-                        <MetaBlock label="Notes">
-                          <NotesCard notes={entry.notes} />
-                        </MetaBlock>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+          {visibleEntries.map((entry) => (
+            <LayoutCatalogCard key={entry.module.layoutId} entry={entry} />
+          ))}
         </section>
       </div>
     </main>
