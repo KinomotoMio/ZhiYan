@@ -109,12 +109,20 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     bullet_layout = get_layout("bullet-with-icons")
     assert bullet_layout is not None
     assert bullet_layout.group == "narrative"
-    assert bullet_layout.variant == "icon-points"
+    assert bullet_layout.sub_group == "icon-points"
+    assert bullet_layout.variant.composition == "icon-columns"
+    assert bullet_layout.variant.tone == "assertive"
+    assert bullet_layout.variant.style == "icon-led"
+    assert bullet_layout.variant.density == "medium"
 
     outline_layout = get_layout("outline-slide")
     assert outline_layout is not None
     assert outline_layout.group == "agenda"
-    assert outline_layout.variant == "default"
+    assert outline_layout.sub_group == "default"
+    assert outline_layout.variant.composition == "card-grid"
+    assert outline_layout.variant.tone == "formal"
+    assert outline_layout.variant.style == "card-based"
+    assert outline_layout.variant.density == "medium"
 
 
 def test_layout_role_mapping_matches_expected_layout_roles():

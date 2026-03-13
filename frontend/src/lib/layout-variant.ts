@@ -1,92 +1,51 @@
-import layoutMetadataJson from "@/generated/layout-metadata.json";
-import type { LayoutRole } from "@/lib/layout-role";
+import {
+  getLayoutSubGroupDescription,
+  getLayoutSubGroupLabel,
+  getLayoutSubGroupsForGroup,
+  getLayoutTaxonomy,
+  type LayoutGroup,
+} from "@/lib/layout-taxonomy";
 import { compareLayoutNames } from "@/lib/sort";
 
-// Keep this union in sync with shared/layout-metadata.json when new variants land.
+// Compatibility wrapper for callers that still expect the old single-value
+// narrative variant track. The formal taxonomy entrypoint is layout-taxonomy.ts.
 export type LayoutVariant =
   | "default"
   | "icon-points"
   | "visual-explainer"
   | "capability-grid";
 
-type VariantDefinition = {
-  label: string;
-  description: string;
-};
-
-type SharedLayoutMetadata = {
-  subGroupsByGroup: Record<LayoutRole, Record<string, VariantDefinition>>;
-  layouts: Record<
-    string,
-    {
-      group: LayoutRole;
-      subGroup: string;
-      variant: {
-        composition: string;
-        tone: string;
-        style: string;
-        density: string;
-      };
-      usage: string[];
-    }
-  >;
-};
-
-const layoutMetadata = layoutMetadataJson as SharedLayoutMetadata;
-
-const VARIANTS_BY_ROLE: Record<LayoutRole, Record<LayoutVariant, VariantDefinition>> =
-  Object.fromEntries(
-    (
-      Object.entries(layoutMetadata.subGroupsByGroup) as Array<
-        [LayoutRole, Record<string, VariantDefinition>]
-      >
-    ).map(([group, subGroups]) => {
-      const compatibilityVariants =
-        group === "narrative"
-          ? subGroups
-          : {
-              default:
-                subGroups.default ?? {
-                  label: "默认变体",
-                  description: "当前组尚未展开正式的结构型兼容变体。",
-                },
-            };
-
-      return [group, compatibilityVariants];
-    }),
-  ) as Record<LayoutRole, Record<LayoutVariant, VariantDefinition>>;
-
-const LAYOUT_ID_TO_VARIANT: Record<string, LayoutVariant> = Object.fromEntries(
-  Object.entries(layoutMetadata.layouts).map(([layoutId, metadata]) => [
-    layoutId,
-    metadata.group === "narrative" ? metadata.subGroup : "default",
-  ]),
-) as Record<string, LayoutVariant>;
-
 export function getLayoutVariant(layoutId: string): LayoutVariant {
-  return LAYOUT_ID_TO_VARIANT[layoutId] ?? "default";
+  const taxonomy = getLayoutTaxonomy(layoutId);
+  if (!taxonomy) return "default";
+  return taxonomy.group === "narrative"
+    ? (taxonomy.subGroup as LayoutVariant)
+    : "default";
 }
 
 export function getLayoutVariantLabel(
-  role: LayoutRole,
+  role: LayoutGroup,
   variant: LayoutVariant,
 ): string {
-  return VARIANTS_BY_ROLE[role]?.[variant]?.label ?? variant;
+  return getLayoutSubGroupLabel(role, variant) ?? variant;
 }
 
 export function getLayoutVariantDescription(
-  role: LayoutRole,
+  role: LayoutGroup,
   variant: LayoutVariant,
 ): string {
-  return VARIANTS_BY_ROLE[role]?.[variant]?.description ?? "";
+  return getLayoutSubGroupDescription(role, variant) ?? "";
 }
 
-export function getLayoutVariantsForRole(role: LayoutRole): LayoutVariant[] {
-  return Object.keys(VARIANTS_BY_ROLE[role] ?? {}) as LayoutVariant[];
+export function getLayoutVariantsForRole(role: LayoutGroup): LayoutVariant[] {
+  if (role !== "narrative") {
+    return ["default"];
+  }
+  return getLayoutSubGroupsForGroup(role) as LayoutVariant[];
 }
 
 export function compareLayoutVariants(
-  role: LayoutRole,
+  role: LayoutGroup,
   leftVariant: LayoutVariant,
   rightVariant: LayoutVariant,
 ): number {

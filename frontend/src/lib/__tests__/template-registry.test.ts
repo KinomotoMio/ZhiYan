@@ -4,13 +4,20 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogClient";
+import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
 
 test("template registry exposes usage metadata for built-in layouts", () => {
   const outline = getLayout("outline-slide");
   assert.ok(outline);
   assert.equal(outline.group, "agenda");
-  assert.equal(outline.variant, "default");
+  assert.equal(outline.subGroup, "default");
+  assert.deepEqual(outline.variant, {
+    composition: "card-grid",
+    tone: "formal",
+    style: "card-based",
+    density: "medium",
+  });
   assert.deepEqual(outline.usage, [
     "academic-report",
     "business-report",
@@ -24,14 +31,31 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   const metrics = layouts.find((entry) => entry.id === "metrics-slide");
   assert.ok(metrics);
   assert.equal(metrics.group, "evidence");
-  assert.equal(metrics.variant, "default");
+  assert.equal(metrics.subGroup, "default");
+  assert.deepEqual(metrics.variant, {
+    composition: "stat-grid",
+    tone: "formal",
+    style: "data-first",
+    density: "medium",
+  });
   assert.equal(metrics.usage.includes("academic-report"), true);
   assert.equal(metrics.usage.includes("project-status"), true);
 
   const narrative = layouts.find((entry) => entry.id === "bullet-with-icons");
   assert.ok(narrative);
   assert.equal(narrative.group, "narrative");
-  assert.equal(narrative.variant, "icon-points");
+  assert.equal(narrative.subGroup, "icon-points");
+  assert.deepEqual(narrative.variant, {
+    composition: "icon-columns",
+    tone: "assertive",
+    style: "icon-led",
+    density: "medium",
+  });
+});
+
+test("legacy layout variant helper remains available as a compatibility wrapper", () => {
+  assert.equal(getLayoutVariant("bullet-with-icons"), "icon-points");
+  assert.equal(getLayoutVariant("outline-slide"), "default");
 });
 
 test("layout catalog renders role-based group and variant metadata", () => {

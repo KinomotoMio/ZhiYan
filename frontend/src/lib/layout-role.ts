@@ -1,76 +1,36 @@
-import layoutMetadataJson from "@/generated/layout-metadata.json";
+import {
+  getLayoutGroupDescription,
+  getLayoutGroupLabel,
+  getLayoutSubGroupsForGroup,
+  getLayoutTaxonomy,
+  LAYOUT_GROUP_ORDER,
+  type LayoutGroup,
+} from "@/lib/layout-taxonomy";
 
-export type LayoutRole =
-  | "cover"
-  | "agenda"
-  | "section-divider"
-  | "narrative"
-  | "evidence"
-  | "comparison"
-  | "process"
-  | "highlight"
-  | "closing";
+export type LayoutRole = LayoutGroup;
 
-type SharedLayoutMetadata = {
-  groupOrder: LayoutRole[];
-  groupLabels: Record<LayoutRole, string>;
-  groupDescriptions: Record<LayoutRole, string>;
-  subGroupsByGroup: Record<
-    LayoutRole,
-    Record<string, { label: string; description: string }>
-  >;
-  layouts: Record<
-    string,
-    {
-      group: LayoutRole;
-      subGroup: string;
-      variant: {
-        composition: string;
-        tone: string;
-        style: string;
-        density: string;
-      };
-      usage: string[];
-    }
-  >;
-};
+export const LAYOUT_ROLE_ORDER: LayoutRole[] = [...LAYOUT_GROUP_ORDER];
 
-const layoutMetadata = layoutMetadataJson as SharedLayoutMetadata;
+export const LAYOUT_ROLE_LABELS: Record<LayoutRole, string> = Object.fromEntries(
+  LAYOUT_ROLE_ORDER.map((role) => [role, getLayoutGroupLabel(role)]),
+) as Record<LayoutRole, string>;
 
-export const LAYOUT_ROLE_ORDER: LayoutRole[] = [...layoutMetadata.groupOrder];
-
-export const LAYOUT_ROLE_LABELS: Record<LayoutRole, string> = {
-  ...layoutMetadata.groupLabels,
-};
-
-export const LAYOUT_ROLE_DESCRIPTIONS: Record<LayoutRole, string> = {
-  ...layoutMetadata.groupDescriptions,
-};
+export const LAYOUT_ROLE_DESCRIPTIONS: Record<LayoutRole, string> = Object.fromEntries(
+  LAYOUT_ROLE_ORDER.map((role) => [role, getLayoutGroupDescription(role)]),
+) as Record<LayoutRole, string>;
 
 export const VARIANT_PILOT_ROLES = new Set<LayoutRole>(
-  (Object.entries(layoutMetadata.subGroupsByGroup) as Array<
-    [LayoutRole, Record<string, { label: string; description: string }>]
-  >)
-    .filter(([, subGroups]) => {
-      const keys = Object.keys(subGroups);
-      return keys.length > 1 || keys.some((key) => key !== "default");
-    })
-    .map(([group]) => group),
+  LAYOUT_ROLE_ORDER.filter((group) =>
+    getLayoutSubGroupsForGroup(group).some((subGroup) => subGroup !== "default"),
+  ),
 );
-
-const LAYOUT_ID_TO_ROLE: Record<string, LayoutRole> = Object.fromEntries(
-  Object.entries(layoutMetadata.layouts).map(([layoutId, metadata]) => [
-    layoutId,
-    metadata.group,
-  ]),
-) as Record<string, LayoutRole>;
 
 const ROLE_RANK = new Map(
   LAYOUT_ROLE_ORDER.map((role, index) => [role, index]),
 );
 
 export function getLayoutRole(layoutId: string): LayoutRole {
-  return LAYOUT_ID_TO_ROLE[layoutId] ?? "narrative";
+  return getLayoutTaxonomy(layoutId)?.group ?? "narrative";
 }
 
 export function getLayoutRoleLabel(role: LayoutRole): string {

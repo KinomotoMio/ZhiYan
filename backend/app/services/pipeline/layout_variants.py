@@ -1,11 +1,17 @@
-"""Layout variant helpers backed by shared metadata."""
+"""Compatibility variant helpers backed by the formal layout taxonomy."""
 
 from __future__ import annotations
 
 from typing import Literal, cast
 
-from app.services.pipeline.layout_metadata import load_layout_metadata
 from app.services.pipeline.layout_roles import LayoutRole, normalize_slide_role
+from app.services.pipeline.layout_taxonomy import (
+    get_group_order,
+    get_layout_taxonomy,
+    get_sub_group_description,
+    get_sub_group_label,
+    get_sub_groups_for_group,
+)
 
 LayoutVariant = Literal[
     "default",
@@ -14,35 +20,19 @@ LayoutVariant = Literal[
     "capability-grid",
 ]
 
-_SHARED_METADATA = load_layout_metadata()
-
 VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
     role: {
         cast(LayoutVariant, variant): {
-            "label": str(definition["label"]),
-            "description": str(definition["description"]),
+            "label": get_sub_group_label(role, variant),
+            "description": get_sub_group_description(role, variant),
         }
-        for variant, definition in variants.items()
-    }
-    for role, variants in (
-        (
-            cast(LayoutRole, role),
-            (
-                sub_groups
-                if role == "narrative"
-                else {
-                    "default": sub_groups.get(
-                        "default",
-                        {
-                            "label": "默认变体",
-                            "description": "当前组尚未展开正式的结构型兼容变体。",
-                        },
-                    )
-                }
-            ),
+        for variant in (
+            get_sub_groups_for_group(role)
+            if role == "narrative"
+            else ("default",)
         )
-        for role, sub_groups in _SHARED_METADATA["subGroupsByGroup"].items()
-    )
+    }
+    for role in get_group_order()
 }
 
 ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
@@ -50,17 +40,6 @@ ALL_LAYOUT_VARIANTS: frozenset[LayoutVariant] = frozenset(
     for role_variants in VARIANTS_BY_ROLE.values()
     for variant in role_variants
 )
-
-LAYOUT_ID_TO_VARIANT: dict[str, LayoutVariant] = {
-    layout_id: cast(
-        LayoutVariant,
-        metadata.get("subGroup", "default")
-        if metadata.get("group") == "narrative"
-        else "default",
-    )
-    for layout_id, metadata in _SHARED_METADATA["layouts"].items()
-}
-
 
 def normalize_layout_variant(value: str | None) -> LayoutVariant:
     token = (value or "").strip()
@@ -70,7 +49,10 @@ def normalize_layout_variant(value: str | None) -> LayoutVariant:
 
 
 def get_layout_variant(layout_id: str) -> LayoutVariant:
-    return LAYOUT_ID_TO_VARIANT.get(layout_id, "default")
+    taxonomy = get_layout_taxonomy(layout_id)
+    if taxonomy is None:
+        return "default"
+    return cast(LayoutVariant, taxonomy.sub_group) if taxonomy.group == "narrative" else "default"
 
 
 def get_layout_variant_label(role: str | None, variant: str | None) -> str:
