@@ -116,16 +116,40 @@ test("template registry matches shared metadata for all layouts", () => {
   }
 });
 
-test("layout catalog renders template previews and variable information", () => {
+test("layout catalog renders template directory metadata and taxonomy reference", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
-  assert.doesNotMatch(html, /<th[^>]*>Group<\/th>/);
-  assert.doesNotMatch(html, /<th[^>]*>Runtime Variant<\/th>/);
+  assert.match(html, /<th[^>]*>Group<\/th>/);
+  assert.match(html, /<th[^>]*>Runtime Variant<\/th>/);
   assert.doesNotMatch(html, /<th[^>]*>Reviewed Sub-group<\/th>/);
   assert.doesNotMatch(html, /<th[^>]*>Reviewed Variant<\/th>/);
   assert.doesNotMatch(html, /Role Contract/);
   assert.doesNotMatch(html, /Narrative Variant Pilot/);
   assert.doesNotMatch(html, /Reviewed Taxonomy Baseline/);
+  assert.match(html, /Taxonomy reference/);
+  assert.match(html, /封面/);
+  assert.match(html, /目录/);
+  assert.match(html, /图标要点/);
+  assert.match(html, /图文说明/);
+  assert.match(html, /能力网格/);
+  assert.match(html, /Sub-group/);
+  assert.match(html, /Axis/);
+  assert.match(html, /Variants/);
+  assert.match(html, /composition/);
+  assert.match(html, /tone/);
+  assert.match(html, /style/);
+  assert.match(html, /density/);
+  assert.match(html, /visual-explainer/);
+  assert.match(html, /capability-grid/);
+  assert.match(html, /hero-center/);
+  assert.match(html, /card-grid/);
+  assert.match(html, /data-first/);
+  assert.match(html, /icon-points/);
+  assert.match(html, /default/);
+  assert.match(html, /section-divider/);
+  assert.match(html, /agenda/);
+  assert.match(html, /evidence/);
+  assert.match(html, /compact glossary/);
   assert.match(html, /<th[^>]*>Usage<\/th>/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
@@ -140,16 +164,15 @@ test("layout catalog renders template previews and variable information", () => 
   assert.match(html, /Usage bias/);
   assert.match(html, /用于建立演示开场身份与主题/);
   assert.match(html, /当内容天然是 3-4 个并列卖点、能力点或结论点时使用/);
-  assert.match(html, /Built-in slide layouts/);
-  assert.match(
-    html,
-    /Use it as a compact template directory rather than a taxonomy migration workspace\./,
-  );
-  assert.match(html, /frontend\/src\/components\/slide-layouts\/IntroSlideLayout\.tsx/);
-  assert.match(html, /title/);
-  assert.match(html, /sections\[4-6\]/);
+  assert.match(html, /main table stays focused on the template directory itself/);
 
-  assert.notEqual(html.indexOf("bullet-icons-only"), -1);
-  assert.notEqual(html.indexOf("bullet-with-icons"), -1);
-  assert.notEqual(html.indexOf("image-and-description"), -1);
+  const bulletIconsOnly = html.indexOf("bullet-icons-only");
+  const bulletWithIcons = html.indexOf("bullet-with-icons");
+  const imageAndDescription = html.indexOf("image-and-description");
+
+  assert.notEqual(bulletIconsOnly, -1);
+  assert.notEqual(bulletWithIcons, -1);
+  assert.notEqual(imageAndDescription, -1);
+  assert.ok(bulletWithIcons < imageAndDescription);
+  assert.ok(imageAndDescription < bulletIconsOnly);
 });

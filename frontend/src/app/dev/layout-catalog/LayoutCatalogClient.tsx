@@ -2,6 +2,7 @@
 
 import type { ComponentType } from "react";
 
+import layoutMetadataJson from "@/generated/layout-metadata.json";
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
 import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
@@ -20,11 +21,33 @@ import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLa
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
 import { getLayout, type LayoutEntry as RuntimeLayoutEntry } from "@/lib/template-registry";
 import {
+  compareLayoutRoles,
+  getLayoutRole,
+  getLayoutRoleDescription,
+  getLayoutRoleLabel,
+  LAYOUT_ROLE_ORDER,
+  type LayoutRole,
+} from "@/lib/layout-role";
+import {
   getLayoutUsage,
   getUsageLabel,
   type LayoutUsageTag,
 } from "@/lib/layout-usage";
 import { compareLayoutNames } from "@/lib/sort";
+import {
+  compareLayoutVariants,
+  getLayoutVariant,
+  getLayoutVariantDescription,
+  getLayoutVariantLabel,
+  type LayoutVariant,
+} from "@/lib/layout-variant";
+import {
+  getLayoutSubGroupDescription,
+  getLayoutSubGroupLabel,
+  getLayoutVariantAxisDescription,
+  getLayoutVariantAxisLabel,
+  type LayoutSubGroup,
+} from "@/lib/layout-taxonomy";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -37,6 +60,8 @@ type CatalogEntry = {
   module: LayoutModule;
   fileName: string;
   schemaName: string;
+  group: LayoutRole;
+  variant: LayoutVariant;
   usage: LayoutUsageTag[];
   notes: RuntimeLayoutEntry["notes"];
   keyFields: string[];
@@ -77,6 +102,8 @@ const entries: CatalogEntry[] = [
     module: IntroSlide as unknown as LayoutModule,
     fileName: "IntroSlideLayout.tsx",
     schemaName: "IntroSlideData",
+    group: getLayoutRole("intro-slide"),
+    variant: getLayoutVariant("intro-slide"),
     usage: getLayoutUsage("intro-slide"),
     notes: getRuntimeLayoutNotes("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
@@ -91,6 +118,8 @@ const entries: CatalogEntry[] = [
     module: OutlineSlide as unknown as LayoutModule,
     fileName: "OutlineSlideLayout.tsx",
     schemaName: "OutlineSlideData",
+    group: getLayoutRole("outline-slide"),
+    variant: getLayoutVariant("outline-slide"),
     usage: getLayoutUsage("outline-slide"),
     notes: getRuntimeLayoutNotes("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
@@ -122,6 +151,8 @@ const entries: CatalogEntry[] = [
     module: SectionHeader as unknown as LayoutModule,
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
+    group: getLayoutRole("section-header"),
+    variant: getLayoutVariant("section-header"),
     usage: getLayoutUsage("section-header"),
     notes: getRuntimeLayoutNotes("section-header"),
     keyFields: ["title", "subtitle?"],
@@ -134,6 +165,8 @@ const entries: CatalogEntry[] = [
     module: BulletWithIcons as unknown as LayoutModule,
     fileName: "BulletWithIconsLayout.tsx",
     schemaName: "BulletWithIconsData",
+    group: getLayoutRole("bullet-with-icons"),
+    variant: getLayoutVariant("bullet-with-icons"),
     usage: getLayoutUsage("bullet-with-icons"),
     notes: getRuntimeLayoutNotes("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
@@ -164,6 +197,8 @@ const entries: CatalogEntry[] = [
     module: ImageAndDescription as unknown as LayoutModule,
     fileName: "ImageAndDescriptionLayout.tsx",
     schemaName: "ImageAndDescriptionData",
+    group: getLayoutRole("image-and-description"),
+    variant: getLayoutVariant("image-and-description"),
     usage: getLayoutUsage("image-and-description"),
     notes: getRuntimeLayoutNotes("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
@@ -183,6 +218,8 @@ const entries: CatalogEntry[] = [
     module: BulletIconsOnly as unknown as LayoutModule,
     fileName: "BulletIconsOnlyLayout.tsx",
     schemaName: "BulletIconsOnlyData",
+    group: getLayoutRole("bullet-icons-only"),
+    variant: getLayoutVariant("bullet-icons-only"),
     usage: getLayoutUsage("bullet-icons-only"),
     notes: getRuntimeLayoutNotes("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
@@ -202,6 +239,8 @@ const entries: CatalogEntry[] = [
     module: MetricsSlide as unknown as LayoutModule,
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
+    group: getLayoutRole("metrics-slide"),
+    variant: getLayoutVariant("metrics-slide"),
     usage: getLayoutUsage("metrics-slide"),
     notes: getRuntimeLayoutNotes("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
@@ -218,6 +257,8 @@ const entries: CatalogEntry[] = [
     module: MetricsWithImage as unknown as LayoutModule,
     fileName: "MetricsWithImageLayout.tsx",
     schemaName: "MetricsWithImageData",
+    group: getLayoutRole("metrics-with-image"),
+    variant: getLayoutVariant("metrics-with-image"),
     usage: getLayoutUsage("metrics-with-image"),
     notes: getRuntimeLayoutNotes("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
@@ -247,6 +288,8 @@ const entries: CatalogEntry[] = [
     module: ChartWithBullets as unknown as LayoutModule,
     fileName: "ChartWithBulletsLayout.tsx",
     schemaName: "ChartWithBulletsData",
+    group: getLayoutRole("chart-with-bullets"),
+    variant: getLayoutVariant("chart-with-bullets"),
     usage: getLayoutUsage("chart-with-bullets"),
     notes: getRuntimeLayoutNotes("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
@@ -268,6 +311,8 @@ const entries: CatalogEntry[] = [
     module: TableInfo as unknown as LayoutModule,
     fileName: "TableInfoLayout.tsx",
     schemaName: "TableInfoData",
+    group: getLayoutRole("table-info"),
+    variant: getLayoutVariant("table-info"),
     usage: getLayoutUsage("table-info"),
     notes: getRuntimeLayoutNotes("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
@@ -286,6 +331,8 @@ const entries: CatalogEntry[] = [
     module: TwoColumnCompare as unknown as LayoutModule,
     fileName: "TwoColumnCompareLayout.tsx",
     schemaName: "TwoColumnCompareData",
+    group: getLayoutRole("two-column-compare"),
+    variant: getLayoutVariant("two-column-compare"),
     usage: getLayoutUsage("two-column-compare"),
     notes: getRuntimeLayoutNotes("two-column-compare"),
     keyFields: ["title", "left", "right"],
@@ -311,6 +358,8 @@ const entries: CatalogEntry[] = [
     module: ChallengeOutcome as unknown as LayoutModule,
     fileName: "ChallengeOutcomeLayout.tsx",
     schemaName: "ChallengeOutcomeData",
+    group: getLayoutRole("challenge-outcome"),
+    variant: getLayoutVariant("challenge-outcome"),
     usage: getLayoutUsage("challenge-outcome"),
     notes: getRuntimeLayoutNotes("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
@@ -332,6 +381,8 @@ const entries: CatalogEntry[] = [
     module: NumberedBullets as unknown as LayoutModule,
     fileName: "NumberedBulletsLayout.tsx",
     schemaName: "NumberedBulletsData",
+    group: getLayoutRole("numbered-bullets"),
+    variant: getLayoutVariant("numbered-bullets"),
     usage: getLayoutUsage("numbered-bullets"),
     notes: getRuntimeLayoutNotes("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
@@ -359,6 +410,8 @@ const entries: CatalogEntry[] = [
     module: Timeline as unknown as LayoutModule,
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
+    group: getLayoutRole("timeline"),
+    variant: getLayoutVariant("timeline"),
     usage: getLayoutUsage("timeline"),
     notes: getRuntimeLayoutNotes("timeline"),
     keyFields: ["title", "events[3-6]"],
@@ -392,6 +445,8 @@ const entries: CatalogEntry[] = [
     module: QuoteSlide as unknown as LayoutModule,
     fileName: "QuoteSlideLayout.tsx",
     schemaName: "QuoteSlideData",
+    group: getLayoutRole("quote-slide"),
+    variant: getLayoutVariant("quote-slide"),
     usage: getLayoutUsage("quote-slide"),
     notes: getRuntimeLayoutNotes("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
@@ -406,6 +461,8 @@ const entries: CatalogEntry[] = [
     module: ThankYou as unknown as LayoutModule,
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
+    group: getLayoutRole("thank-you"),
+    variant: getLayoutVariant("thank-you"),
     usage: getLayoutUsage("thank-you"),
     notes: getRuntimeLayoutNotes("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
@@ -418,6 +475,14 @@ const entries: CatalogEntry[] = [
 ];
 
 const sortedEntries = [...entries].sort((left, right) => {
+  const roleDelta = compareLayoutRoles(left.group, right.group);
+  if (roleDelta !== 0) return roleDelta;
+  const variantDelta = compareLayoutVariants(
+    left.group,
+    left.variant,
+    right.variant,
+  );
+  if (variantDelta !== 0) return variantDelta;
   return compareLayoutNames(
     left.module.layoutName,
     right.module.layoutName,
@@ -425,6 +490,8 @@ const sortedEntries = [...entries].sort((left, right) => {
     right.module.layoutId,
   );
 });
+
+const variantAxes = layoutMetadataJson.variantAxes;
 
 function PreviewFrame({
   Component,
@@ -466,6 +533,26 @@ function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
           {getUsageLabel(tag)}
         </span>
       ))}
+    </div>
+  );
+}
+
+function VariantBadge({
+  role,
+  variant,
+}: {
+  role: LayoutRole;
+  variant: LayoutVariant;
+}) {
+  return (
+    <div>
+      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+        {getLayoutVariantLabel(role, variant)}
+      </span>
+      <code className="mt-2 block text-xs text-slate-500">{variant}</code>
+      <p className="mt-2 text-sm leading-6 text-slate-700">
+        {getLayoutVariantDescription(role, variant)}
+      </p>
     </div>
   );
 }
@@ -522,21 +609,142 @@ export function LayoutCatalogClientPage() {
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
             This page renders every built-in TSX layout with sample data so you
-            can quickly compare previews, inspect file locations, and review
-            the schema fields each template expects. Use it as a compact
-            template directory rather than a taxonomy migration workspace.
+            can compare previews, inspect file locations, and review the schema
+            fields each template expects. The taxonomy reference below is kept
+            as a compact glossary, while the main table stays focused on the
+            template directory itself.
           </p>
         </header>
 
+        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Taxonomy reference
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              This quick reference lists the current `group`, `sub-group`, and
+              compatibility `variant` vocabulary used by the built-in layouts.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-4 xl:grid-cols-3">
+            <article className="overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full table-fixed border-collapse">
+                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">Group</th>
+                    <th className="px-4 py-3">Meaning</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {LAYOUT_ROLE_ORDER.map((role) => (
+                    <tr key={role} className="border-t border-slate-200 align-top">
+                      <td className="px-4 py-4">
+                        <div className="text-sm font-semibold text-slate-900">
+                          {getLayoutRoleLabel(role)}
+                        </div>
+                        <code className="mt-1 block text-xs text-slate-500">{role}</code>
+                      </td>
+                      <td className="px-4 py-4 text-sm leading-6 text-slate-700">
+                        {getLayoutRoleDescription(role)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </article>
+            <article className="overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full table-fixed border-collapse">
+                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">Group</th>
+                    <th className="px-4 py-3">Sub-group</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {LAYOUT_ROLE_ORDER.flatMap((role) =>
+                    Object.keys(layoutMetadataJson.subGroupsByGroup[role]).map((subGroup) => (
+                      <tr
+                        key={`${role}-${subGroup}`}
+                        className="border-t border-slate-200 align-top"
+                      >
+                        <td className="px-4 py-4">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {getLayoutRoleLabel(role)}
+                          </div>
+                          <code className="mt-1 block text-xs text-slate-500">{role}</code>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {getLayoutSubGroupLabel(role, subGroup as LayoutSubGroup)}
+                          </div>
+                          <code className="mt-1 block text-xs text-slate-500">
+                            {subGroup}
+                          </code>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {getLayoutSubGroupDescription(
+                              role,
+                              subGroup as LayoutSubGroup,
+                            )}
+                          </p>
+                        </td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </article>
+            <article className="overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full table-fixed border-collapse">
+                <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">Axis</th>
+                    <th className="px-4 py-3">Variants</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(variantAxes).map(([axis, values]) => (
+                    <tr key={axis} className="border-t border-slate-200 align-top">
+                      <td className="px-4 py-4">
+                        <div className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-900">
+                          {axis}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="space-y-3">
+                          {Object.keys(values).map((value) => (
+                            <div key={`${axis}-${value}`}>
+                              <div className="text-sm font-semibold text-slate-900">
+                                {getLayoutVariantAxisLabel(axis as keyof typeof variantAxes, value)}
+                              </div>
+                              <code className="mt-1 block text-xs text-slate-500">
+                                {value}
+                              </code>
+                              <p className="mt-1 text-sm leading-6 text-slate-700">
+                                {getLayoutVariantAxisDescription(axis as keyof typeof variantAxes, value)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </article>
+          </div>
+        </section>
+
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[1760px] table-fixed border-collapse">
+            <table className="min-w-[2140px] table-fixed border-collapse">
             <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
               <tr>
                 <th className="w-[360px] px-5 py-4">Preview</th>
                 <th className="w-[190px] px-5 py-4">Layout</th>
                 <th className="w-[250px] px-5 py-4">TSX File</th>
                 <th className="w-[210px] px-5 py-4">Schema</th>
+                <th className="w-[140px] px-5 py-4">Group</th>
+                <th className="w-[240px] px-5 py-4">Runtime Variant</th>
                 <th className="w-[280px] px-5 py-4">Usage</th>
                 <th className="px-5 py-4">Notes</th>
               </tr>
@@ -579,6 +787,17 @@ export function LayoutCatalogClientPage() {
                             </span>
                           ))}
                         </div>
+                      </td>
+                      <td className="px-5 py-5">
+                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                          {getLayoutRoleLabel(entry.group)}
+                        </span>
+                        <code className="mt-2 block text-xs text-slate-500">
+                          {entry.group}
+                        </code>
+                      </td>
+                      <td className="px-5 py-5">
+                        <VariantBadge role={entry.group} variant={entry.variant} />
                       </td>
                       <td className="px-5 py-5">
                         <UsageChips usage={entry.usage} />
