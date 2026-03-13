@@ -1,7 +1,9 @@
 "use client";
 
-import type { ComponentType } from "react";
+import { Fragment, useState } from "react";
+import type { ComponentType, ReactNode } from "react";
 
+import layoutMetadataJson from "@/generated/layout-metadata.json";
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
 import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
@@ -24,7 +26,6 @@ import {
   getLayoutRole,
   getLayoutRoleDescription,
   getLayoutRoleLabel,
-  isVariantPilotRole,
   LAYOUT_ROLE_ORDER,
   type LayoutRole,
 } from "@/lib/layout-role";
@@ -39,13 +40,15 @@ import {
   getLayoutVariant,
   getLayoutVariantDescription,
   getLayoutVariantLabel,
-  getLayoutVariantsForRole,
   type LayoutVariant,
 } from "@/lib/layout-variant";
 import {
-  getReviewedLayoutTaxonomy,
-  type ReviewedLayoutVariant,
-} from "@/lib/layout-taxonomy-review";
+  getLayoutSubGroupDescription,
+  getLayoutSubGroupLabel,
+  getLayoutVariantAxisDescription,
+  getLayoutVariantAxisLabel,
+  type LayoutSubGroup,
+} from "@/lib/layout-taxonomy";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -60,13 +63,13 @@ type CatalogEntry = {
   schemaName: string;
   group: LayoutRole;
   variant: LayoutVariant;
-  reviewedSubGroup: string;
-  reviewedVariant: ReviewedLayoutVariant;
   usage: LayoutUsageTag[];
   notes: RuntimeLayoutEntry["notes"];
   keyFields: string[];
   data: Record<string, unknown>;
 };
+
+type CatalogFilter = "all" | LayoutRole;
 
 function getRuntimeLayoutNotes(layoutId: string): RuntimeLayoutEntry["notes"] {
   const layout = getLayout(layoutId);
@@ -104,8 +107,6 @@ const entries: CatalogEntry[] = [
     schemaName: "IntroSlideData",
     group: getLayoutRole("intro-slide"),
     variant: getLayoutVariant("intro-slide"),
-    reviewedSubGroup: getReviewedLayoutTaxonomy("intro-slide")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("intro-slide")!.variant,
     usage: getLayoutUsage("intro-slide"),
     notes: getRuntimeLayoutNotes("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
@@ -122,9 +123,6 @@ const entries: CatalogEntry[] = [
     schemaName: "OutlineSlideData",
     group: getLayoutRole("outline-slide"),
     variant: getLayoutVariant("outline-slide"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("outline-slide")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("outline-slide")!.variant,
     usage: getLayoutUsage("outline-slide"),
     notes: getRuntimeLayoutNotes("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
@@ -158,9 +156,6 @@ const entries: CatalogEntry[] = [
     schemaName: "SectionHeaderData",
     group: getLayoutRole("section-header"),
     variant: getLayoutVariant("section-header"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("section-header")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("section-header")!.variant,
     usage: getLayoutUsage("section-header"),
     notes: getRuntimeLayoutNotes("section-header"),
     keyFields: ["title", "subtitle?"],
@@ -175,9 +170,6 @@ const entries: CatalogEntry[] = [
     schemaName: "BulletWithIconsData",
     group: getLayoutRole("bullet-with-icons"),
     variant: getLayoutVariant("bullet-with-icons"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("bullet-with-icons")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("bullet-with-icons")!.variant,
     usage: getLayoutUsage("bullet-with-icons"),
     notes: getRuntimeLayoutNotes("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
@@ -210,9 +202,6 @@ const entries: CatalogEntry[] = [
     schemaName: "ImageAndDescriptionData",
     group: getLayoutRole("image-and-description"),
     variant: getLayoutVariant("image-and-description"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("image-and-description")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("image-and-description")!.variant,
     usage: getLayoutUsage("image-and-description"),
     notes: getRuntimeLayoutNotes("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
@@ -234,9 +223,6 @@ const entries: CatalogEntry[] = [
     schemaName: "BulletIconsOnlyData",
     group: getLayoutRole("bullet-icons-only"),
     variant: getLayoutVariant("bullet-icons-only"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("bullet-icons-only")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("bullet-icons-only")!.variant,
     usage: getLayoutUsage("bullet-icons-only"),
     notes: getRuntimeLayoutNotes("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
@@ -258,9 +244,6 @@ const entries: CatalogEntry[] = [
     schemaName: "MetricsSlideData",
     group: getLayoutRole("metrics-slide"),
     variant: getLayoutVariant("metrics-slide"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("metrics-slide")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("metrics-slide")!.variant,
     usage: getLayoutUsage("metrics-slide"),
     notes: getRuntimeLayoutNotes("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
@@ -279,9 +262,6 @@ const entries: CatalogEntry[] = [
     schemaName: "MetricsWithImageData",
     group: getLayoutRole("metrics-with-image"),
     variant: getLayoutVariant("metrics-with-image"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("metrics-with-image")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("metrics-with-image")!.variant,
     usage: getLayoutUsage("metrics-with-image"),
     notes: getRuntimeLayoutNotes("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
@@ -313,9 +293,6 @@ const entries: CatalogEntry[] = [
     schemaName: "ChartWithBulletsData",
     group: getLayoutRole("chart-with-bullets"),
     variant: getLayoutVariant("chart-with-bullets"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("chart-with-bullets")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("chart-with-bullets")!.variant,
     usage: getLayoutUsage("chart-with-bullets"),
     notes: getRuntimeLayoutNotes("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
@@ -339,9 +316,6 @@ const entries: CatalogEntry[] = [
     schemaName: "TableInfoData",
     group: getLayoutRole("table-info"),
     variant: getLayoutVariant("table-info"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("table-info")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("table-info")!.variant,
     usage: getLayoutUsage("table-info"),
     notes: getRuntimeLayoutNotes("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
@@ -362,9 +336,6 @@ const entries: CatalogEntry[] = [
     schemaName: "TwoColumnCompareData",
     group: getLayoutRole("two-column-compare"),
     variant: getLayoutVariant("two-column-compare"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("two-column-compare")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("two-column-compare")!.variant,
     usage: getLayoutUsage("two-column-compare"),
     notes: getRuntimeLayoutNotes("two-column-compare"),
     keyFields: ["title", "left", "right"],
@@ -392,9 +363,6 @@ const entries: CatalogEntry[] = [
     schemaName: "ChallengeOutcomeData",
     group: getLayoutRole("challenge-outcome"),
     variant: getLayoutVariant("challenge-outcome"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("challenge-outcome")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("challenge-outcome")!.variant,
     usage: getLayoutUsage("challenge-outcome"),
     notes: getRuntimeLayoutNotes("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
@@ -418,9 +386,6 @@ const entries: CatalogEntry[] = [
     schemaName: "NumberedBulletsData",
     group: getLayoutRole("numbered-bullets"),
     variant: getLayoutVariant("numbered-bullets"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("numbered-bullets")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("numbered-bullets")!.variant,
     usage: getLayoutUsage("numbered-bullets"),
     notes: getRuntimeLayoutNotes("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
@@ -450,9 +415,6 @@ const entries: CatalogEntry[] = [
     schemaName: "TimelineData",
     group: getLayoutRole("timeline"),
     variant: getLayoutVariant("timeline"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("timeline")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("timeline")!.variant,
     usage: getLayoutUsage("timeline"),
     notes: getRuntimeLayoutNotes("timeline"),
     keyFields: ["title", "events[3-6]"],
@@ -488,9 +450,6 @@ const entries: CatalogEntry[] = [
     schemaName: "QuoteSlideData",
     group: getLayoutRole("quote-slide"),
     variant: getLayoutVariant("quote-slide"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("quote-slide")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("quote-slide")!.variant,
     usage: getLayoutUsage("quote-slide"),
     notes: getRuntimeLayoutNotes("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
@@ -507,9 +466,6 @@ const entries: CatalogEntry[] = [
     schemaName: "ThankYouData",
     group: getLayoutRole("thank-you"),
     variant: getLayoutVariant("thank-you"),
-    reviewedSubGroup:
-      getReviewedLayoutTaxonomy("thank-you")?.subGroup ?? "default",
-    reviewedVariant: getReviewedLayoutTaxonomy("thank-you")!.variant,
     usage: getLayoutUsage("thank-you"),
     notes: getRuntimeLayoutNotes("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
@@ -538,7 +494,7 @@ const sortedEntries = [...entries].sort((left, right) => {
   );
 });
 
-const narrativeVariants = getLayoutVariantsForRole("narrative");
+const variantAxes = layoutMetadataJson.variantAxes;
 
 function PreviewFrame({
   Component,
@@ -584,6 +540,23 @@ function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
   );
 }
 
+function MetaBlock({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+        {label}
+      </h3>
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
 function VariantBadge({
   role,
   variant,
@@ -600,70 +573,6 @@ function VariantBadge({
       <p className="mt-2 text-sm leading-6 text-slate-700">
         {getLayoutVariantDescription(role, variant)}
       </p>
-    </div>
-  );
-}
-
-function ReviewedSubGroupBadge({ subGroup }: { subGroup: string }) {
-  return (
-    <div>
-      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-        Reviewed sub-group
-      </span>
-      <code className="mt-2 block text-xs text-slate-500">{subGroup}</code>
-    </div>
-  );
-}
-
-function ReviewedVariantCard({
-  variant,
-}: {
-  variant: ReviewedLayoutVariant;
-}) {
-  return (
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-          Reviewed variant baseline
-        </span>
-        <span className="text-xs text-emerald-800">
-          composition / tone / style / density
-        </span>
-      </div>
-      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-            composition
-          </dt>
-          <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {variant.composition}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-            tone
-          </dt>
-          <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {variant.tone}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-            style
-          </dt>
-          <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {variant.style}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-            density
-          </dt>
-          <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {variant.density}
-          </dd>
-        </div>
-      </dl>
     </div>
   );
 }
@@ -707,7 +616,38 @@ function NotesCard({ notes }: { notes: RuntimeLayoutEntry["notes"] }) {
   );
 }
 
+function TogglePill({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+          : "rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-200"
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
 export function LayoutCatalogClientPage() {
+  const [activeFilter, setActiveFilter] = useState<CatalogFilter>("all");
+  const [expandedLayoutId, setExpandedLayoutId] = useState<string | null>(null);
+
+  const visibleEntries = sortedEntries.filter(
+    (entry) => activeFilter === "all" || entry.group === activeFilter,
+  );
+
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-900">
       <div className="mx-auto max-w-[1880px]">
@@ -719,195 +659,239 @@ export function LayoutCatalogClientPage() {
             Built-in slide layouts
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            This page renders every current TSX layout with sample data. Treat it
-            as the fastest way to compare structure, inspect file names, and
-            decide where to add a new variant. Notes now come from the shared
-            metadata runtime baseline; the per-layout `layoutDescription`
-            remains a component-level fallback rather than the catalog source
-            of truth.
+            This page renders every built-in TSX layout with sample data so you
+            can compare previews, inspect file locations, and review the schema
+            fields each template expects. The taxonomy reference below is kept
+            as a compact glossary, while the main table stays focused on the
+            template directory itself.
           </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <TogglePill
+              active={activeFilter === "all"}
+              onClick={() => setActiveFilter("all")}
+            >
+              All layouts
+            </TogglePill>
+            {LAYOUT_ROLE_ORDER.map((role) => (
+              <TogglePill
+                key={role}
+                active={activeFilter === role}
+                onClick={() => setActiveFilter(role)}
+              >
+                {getLayoutRoleLabel(role)}
+              </TogglePill>
+            ))}
+          </div>
         </header>
 
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="max-w-3xl">
-            <h2 className="text-lg font-semibold text-slate-900">Role Contract</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              `group` here means the page&apos;s function in the whole deck
-              skeleton, not just its visual style. Shared metadata now stores a
-              reviewed `group / sub-group / variant` baseline, while the
-              runtime helper layer still exposes a compatibility `variant`
-              string until `#73` lands.
-            </p>
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {LAYOUT_ROLE_ORDER.map((role) => (
-              <article
-                key={role}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                    {getLayoutRoleLabel(role)}
-                  </span>
-                  {isVariantPilotRole(role) ? (
-                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                      Variant pilot
-                    </span>
-                  ) : null}
-                </div>
-                <code className="mt-3 block text-xs text-slate-500">{role}</code>
-                <p className="mt-2 text-sm leading-6 text-slate-700">
-                  {getLayoutRoleDescription(role)}
-                </p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="max-w-3xl">
             <h2 className="text-lg font-semibold text-slate-900">
-              Narrative Variant Pilot
+              Taxonomy reference
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              This panel still reflects the current compatibility runtime
-              variant track. Narrative is the only group whose compatibility
-              variant maps to a non-default `sub-group`; every other group stays
-              on a single `default` runtime variant until the public registry
-              interfaces are upgraded.
+              This quick reference lists the current `group`, `sub-group`, and
+              compatibility `variant` vocabulary used by the built-in layouts.
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
-            {narrativeVariants.map((variant) => (
-              <article
-                key={variant}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-              >
-                <VariantBadge role="narrative" variant={variant} />
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="mb-8 rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">
-          <div className="max-w-4xl">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Reviewed Taxonomy Baseline
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              The reviewed baseline below now comes directly from shared
-              metadata. Runtime helpers still expose the old single-value
-              `variant` field, but the canonical source of truth already stores
-              `sub-group` plus the four-field variant object used by the review
-              flow.
-            </p>
-          </div>
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Reviewed sub-group layer
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Group
               </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                `sub-group` captures structure. Only `narrative` currently
-                breaks out into `icon-points`, `visual-explainer`, and
-                `capability-grid`; every other built-in template stays on
-                `default`.
-              </p>
+              <div className="mt-4 space-y-4">
+                {LAYOUT_ROLE_ORDER.map((role) => (
+                  <div key={role} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {getLayoutRoleLabel(role)}
+                      </span>
+                      <code className="text-xs text-slate-500">{role}</code>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">
+                      {getLayoutRoleDescription(role)}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </article>
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Reviewed variant object
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Sub-group
               </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                The reviewed `variant` baseline is now a four-field object:
-                `composition`, `tone`, `style`, and `density`. This panel makes
-                those canonical metadata decisions easy to compare while the
-                public runtime interfaces are still on the compatibility shim.
-              </p>
+              <div className="mt-4 space-y-4">
+                {LAYOUT_ROLE_ORDER.map((role) => (
+                  <div key={role} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {getLayoutRoleLabel(role)}
+                      </span>
+                      <code className="text-xs text-slate-500">{role}</code>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {Object.keys(layoutMetadataJson.subGroupsByGroup[role]).map((subGroup) => (
+                        <div
+                          key={`${role}-${subGroup}`}
+                          className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {getLayoutSubGroupLabel(role, subGroup as LayoutSubGroup)}
+                            </span>
+                            <code className="text-xs text-slate-500">{subGroup}</code>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {getLayoutSubGroupDescription(role, subGroup as LayoutSubGroup)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Variant axes
+              </h3>
+              <div className="mt-4 space-y-4">
+                {Object.entries(variantAxes).map(([axis, values]) => (
+                  <div key={axis} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.08em] text-violet-700">
+                        {axis}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {Object.keys(values).map((value) => (
+                        <div
+                          key={`${axis}-${value}`}
+                          className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {getLayoutVariantAxisLabel(
+                                axis as keyof typeof variantAxes,
+                                value,
+                              )}
+                            </span>
+                            <code className="text-xs text-slate-500">{value}</code>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {getLayoutVariantAxisDescription(
+                              axis as keyof typeof variantAxes,
+                              value,
+                            )}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </article>
           </div>
         </section>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[2440px] table-fixed border-collapse">
-            <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
-              <tr>
-                <th className="w-[360px] px-5 py-4">Preview</th>
-                <th className="w-[190px] px-5 py-4">Layout</th>
-                <th className="w-[250px] px-5 py-4">TSX File</th>
-                <th className="w-[210px] px-5 py-4">Schema</th>
-                <th className="w-[140px] px-5 py-4">Group</th>
-                <th className="w-[240px] px-5 py-4">Runtime Variant</th>
-                <th className="w-[170px] px-5 py-4">Reviewed Sub-group</th>
-                <th className="w-[320px] px-5 py-4">Reviewed Variant</th>
-                <th className="w-[280px] px-5 py-4">Usage</th>
-                <th className="px-5 py-4">Notes</th>
-              </tr>
-            </thead>
+            <table className="min-w-[1480px] table-fixed border-collapse">
+              <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                <tr>
+                  <th className="w-[360px] px-5 py-4">Preview</th>
+                  <th className="w-[220px] px-5 py-4">Layout</th>
+                  <th className="w-[160px] px-5 py-4">Group</th>
+                  <th className="w-[260px] px-5 py-4">Runtime Variant</th>
+                  <th className="w-[250px] px-5 py-4">Usage</th>
+                  <th className="px-5 py-4">Details</th>
+                </tr>
+              </thead>
               <tbody>
-                {sortedEntries.map((entry) => {
+                {visibleEntries.map((entry) => {
+                  const isExpanded = expandedLayoutId === entry.module.layoutId;
                   const Component = entry.module.default;
+
                   return (
-                    <tr
-                      key={entry.module.layoutId}
-                      className="border-t border-slate-200 align-top"
-                    >
-                      <td className="px-5 py-5">
-                        <PreviewFrame Component={Component} data={entry.data} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <div className="text-sm font-semibold text-slate-900">
-                          {entry.module.layoutName}
-                        </div>
-                        <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                          {entry.module.layoutId}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <code className="block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                          frontend/src/components/slide-layouts/{entry.fileName}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <div className="text-sm font-medium text-slate-900">
-                          {entry.schemaName}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {entry.keyFields.map((field) => (
-                            <span
-                              key={field}
-                              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
-                            >
-                              {field}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-5 py-5">
-                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                          {getLayoutRoleLabel(entry.group)}
-                        </span>
-                        <code className="mt-2 block text-xs text-slate-500">
-                          {entry.group}
-                        </code>
-                      </td>
-                      <td className="px-5 py-5">
-                        <VariantBadge role={entry.group} variant={entry.variant} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <ReviewedSubGroupBadge subGroup={entry.reviewedSubGroup} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <ReviewedVariantCard variant={entry.reviewedVariant} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <UsageChips usage={entry.usage} />
-                      </td>
-                      <td className="px-5 py-5">
-                        <NotesCard notes={entry.notes} />
-                      </td>
-                    </tr>
+                    <Fragment key={entry.module.layoutId}>
+                      <tr
+                        className="border-t border-slate-200 align-top"
+                      >
+                        <td className="px-5 py-5">
+                          <PreviewFrame Component={Component} data={entry.data} />
+                        </td>
+                        <td className="px-5 py-5">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {entry.module.layoutName}
+                          </div>
+                          <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                            {entry.module.layoutId}
+                          </code>
+                          <code className="mt-3 block rounded bg-slate-50 px-2 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+                            frontend/src/components/slide-layouts/{entry.fileName}
+                          </code>
+                        </td>
+                        <td className="px-5 py-5">
+                          <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                            {getLayoutRoleLabel(entry.group)}
+                          </span>
+                          <code className="mt-2 block text-xs text-slate-500">
+                            {entry.group}
+                          </code>
+                        </td>
+                        <td className="px-5 py-5">
+                          <VariantBadge role={entry.group} variant={entry.variant} />
+                        </td>
+                        <td className="px-5 py-5">
+                          <UsageChips usage={entry.usage} />
+                        </td>
+                        <td className="px-5 py-5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedLayoutId((current) =>
+                                current === entry.module.layoutId
+                                  ? null
+                                  : entry.module.layoutId,
+                              )
+                            }
+                            className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-700"
+                          >
+                            {isExpanded ? "Hide details" : "Show details"}
+                          </button>
+                          <p className="mt-3 text-sm leading-6 text-slate-600">
+                            {entry.notes.purpose}
+                          </p>
+                        </td>
+                      </tr>
+                      {isExpanded ? (
+                        <tr className="border-t border-slate-100 bg-slate-50/60">
+                          <td colSpan={6} className="px-5 py-5">
+                            <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                              <MetaBlock label="Schema">
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                  <div className="text-sm font-semibold text-slate-900">
+                                    {entry.schemaName}
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {entry.keyFields.map((field) => (
+                                      <span
+                                        key={field}
+                                        className="rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200"
+                                      >
+                                        {field}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              </MetaBlock>
+                              <MetaBlock label="Notes">
+                                <NotesCard notes={entry.notes} />
+                              </MetaBlock>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>
