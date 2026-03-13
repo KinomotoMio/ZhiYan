@@ -238,6 +238,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "- 非 narrative group 统一使用 sub_group=default\n"
         "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
+        "- 尽量避免连续页面选择完全相同的 `layout_id`，除非角色固定页或没有更合适候选\n"
         "- 当 usage 未命中时，按内容结构与叙事节奏选择\n\n"
         f"大纲:\n{items_text}\n\n"
         "请为每页输出 group、sub_group、layout_id 和 reason。不要输出 variant。"

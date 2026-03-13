@@ -327,6 +327,7 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
         assert "`default`(标准论据页:" in prompt
         assert "优先候选布局:" in prompt
         assert "`chart-with-bullets`" in prompt
+        assert "尽量避免连续页面选择完全相同的 `layout_id`" in prompt
         assert "请为每页输出 group、sub_group、layout_id 和 reason。不要输出 variant。" in prompt
 
     asyncio.run(_case())
@@ -586,6 +587,85 @@ def test_stage_select_layouts_normalizes_invalid_sub_group_before_layout_fallbac
         assert state.layout_selections[1]["sub_group"] == "visual-explainer"
         assert state.layout_selections[1]["layout_id"] == "image-and-description"
         assert state.layout_selections[1]["variant"]["style"] == "editorial"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_forces_default_sub_group_for_non_narrative_groups(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "evidence",
+                    "sub_group": "visual-explainer",
+                    "layout_id": "image-and-description",
+                    "reason": "模型误把论据页当成 narrative 图文说明",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这一页展示关键指标和实验结论。",
+            topic="实验结果",
+            num_pages=3,
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "封面",
+                        "suggested_slide_role": "cover",
+                        "key_points": ["欢迎页"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "关键指标",
+                        "content_brief": "通过核心指标和结果结论说明实验表现。",
+                        "suggested_slide_role": "evidence",
+                        "key_points": ["实验结果", "关键指标", "结论"],
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "结束",
+                        "suggested_slide_role": "closing",
+                        "key_points": ["谢谢"],
+                    },
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["group"] == "evidence"
+        assert state.layout_selections[1]["sub_group"] == "default"
+        assert state.layout_selections[1]["layout_id"] != "image-and-description"
+        assert state.layout_selections[1]["layout_id"] in {
+            "metrics-slide",
+            "metrics-with-image",
+            "chart-with-bullets",
+            "table-info",
+        }
+        assert (
+            state.layout_selections[1]["variant"]
+            == get_layout(state.layout_selections[1]["layout_id"]).variant.__dict__
+        )
 
     asyncio.run(_case())
 

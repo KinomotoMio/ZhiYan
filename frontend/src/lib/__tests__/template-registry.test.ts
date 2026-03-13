@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,6 +7,30 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogClient";
 import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
+
+const sharedLayoutMetadata = JSON.parse(
+  readFileSync(
+    new URL("../../../../shared/layout-metadata.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  layouts: Record<
+    string,
+    {
+      group: string;
+      subGroup: string;
+      variant: {
+        composition: string;
+        tone: string;
+        style: string;
+        density: string;
+      };
+      notes: {
+        purpose: string;
+      };
+    }
+  >;
+};
 
 test("template registry exposes usage metadata for built-in layouts", () => {
   const outline = getLayout("outline-slide");
@@ -61,6 +86,25 @@ test("template registry exposes usage metadata for built-in layouts", () => {
 test("legacy layout variant helper remains available as a compatibility wrapper", () => {
   assert.equal(getLayoutVariant("bullet-with-icons"), "icon-points");
   assert.equal(getLayoutVariant("outline-slide"), "default");
+});
+
+test("template registry matches shared metadata for representative layouts", () => {
+  for (const layoutId of [
+    "bullet-with-icons",
+    "image-and-description",
+    "metrics-slide",
+    "thank-you",
+  ] as const) {
+    const runtime = getLayout(layoutId);
+    assert.ok(runtime);
+
+    const expected = sharedLayoutMetadata.layouts[layoutId];
+    assert.equal(runtime.group, expected.group);
+    assert.equal(runtime.subGroup, expected.subGroup);
+    assert.deepEqual(runtime.variant, expected.variant);
+    assert.equal(runtime.notes.purpose, expected.notes.purpose);
+    assert.equal(runtime.description, expected.notes.purpose);
+  }
 });
 
 test("layout catalog renders role-based group and variant metadata", () => {
