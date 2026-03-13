@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.api.v1 import export as export_api
 from app.main import app
 
 
@@ -68,6 +69,30 @@ def test_export_pdf_returns_503_with_manual_install_hint(monkeypatch):
 
     assert resp.status_code == 503
     assert "uv run playwright install chromium" in resp.json()["detail"]
+
+
+def test_export_content_disposition_uses_rfc5987_for_non_ascii_title():
+    header = export_api._build_content_disposition("测试汇报", "pptx")
+
+    assert 'filename="presentation.pptx"' in header
+    assert "filename*=UTF-8''%E6%B5%8B%E8%AF%95%E6%B1%87%E6%8A%A5.pptx" in header
+    header.encode("latin-1")
+
+
+def test_export_pdf_returns_non_ascii_filename_header(monkeypatch):
+    from app.services.export import pdf_exporter
+
+    async def fake_export_pdf(html_content: str):  # noqa: ARG001
+        return b"%PDF-1.4"
+
+    monkeypatch.setattr(pdf_exporter, "export_pdf", fake_export_pdf)
+
+    client = TestClient(app)
+    resp = client.post("/api/v1/export/pdf", json=_sample_export_payload())
+
+    assert resp.status_code == 200
+    assert 'filename="presentation.pdf"' in resp.headers["content-disposition"]
+    assert "filename*=UTF-8''" in resp.headers["content-disposition"]
 
 
 def test_cors_preflight_allows_localhost_and_loopback():
