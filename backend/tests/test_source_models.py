@@ -4,8 +4,11 @@ from app.models.source import detect_file_category, FileCategory
 @pytest.mark.parametrize("filename, expected_category", [
     ("document.pdf", FileCategory.PDF),
     ("report.docx", FileCategory.DOCX),
+    ("report.doc", FileCategory.DOCX),
     ("notes.md", FileCategory.MARKDOWN),
+    ("notes.markdown", FileCategory.MARKDOWN),
     ("presentation.pptx", FileCategory.PPTX),
+    ("presentation.ppt", FileCategory.PPTX),
     ("image.png", FileCategory.IMAGE),
     ("photo.jpg", FileCategory.IMAGE),
     ("graphic.jpeg", FileCategory.IMAGE),
