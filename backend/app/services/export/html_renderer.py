@@ -10,6 +10,11 @@ import re
 from html import escape
 from typing import Any
 
+from app.services.export.layout_rules import (
+    get_bullet_with_icons_columns,
+    is_bullet_icons_only_compact,
+)
+
 
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
     slides = presentation_dict.get("slides", [])
@@ -239,17 +244,69 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             '</div>'
             '</div>'
         )
-    if layout_id in ("bullet-with-icons", "bullet-icons-only"):
-        items = d.get("items") if isinstance(d.get("items"), list) else d.get("features", [])
-        card_html = "".join(
-            _bullet_card(item) for item in (items if isinstance(items, list) else [])
-        )
-        col_count = min(max(len(items) if isinstance(items, list) else 0, 1), 4)
+
+    if layout_id == "bullet-with-icons":
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        col_count = get_bullet_with_icons_columns(len(items))
+        compact = col_count == 4
+        cards: list[str] = []
+        for idx, item in enumerate(items):
+            title = escape(_item_text(item))
+            detail = escape(_item_detail(item))
+            icon_query = _item_icon_query(item)
+            cards.append(
+                '<div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">'
+                f'<div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:{"46%" if compact else "50%"};background-color:rgba(17,24,39,0.12);"></div>'
+                '<div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:8px 0;">'
+                f'<div style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:9999px;background:rgba(59,130,246,0.12);margin-bottom:16px;flex-shrink:0;">{_icon_token_svg(icon_query, 20)}</div>'
+                f'<h3 style="font-size:{19 if compact else 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:#3b82f6;margin:0 0 8px;min-width:0;">'
+                '<span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'
+                f'<span style="background:rgba(59,130,246,0.08);border-radius:3px;padding:{"0.04em 0.2em 0.1em" if compact else "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">{title}</span>'
+                "</span></h3>"
+                f'{_optional_paragraph(detail, f"font-size:{11.5 if compact else 12.5}px;line-height:1.42;color:rgba(17,24,39,0.72);margin:0;max-width:240px;")}'
+                f'<div style="padding-top:16px;font-size:{52 if compact else 60}px;font-weight:400;line-height:0.92;letter-spacing:-0.06em;color:#111827;">{idx + 1:02d}</div>'
+                "</div></div>"
+            )
         return (
-            '<div style="padding:60px 80px;height:100%;display:flex;flex-direction:column;">'
-            f'<h2 style="font-size:40px;font-weight:bold;margin-bottom:40px;">{escape(_as_text(d.get("title")))}</h2>'
-            f'<div style="display:grid;grid-template-columns:repeat({col_count},1fr);gap:32px;flex:1;">'
-            f"{card_html}"
+            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;">'
+            f'<h2 style="font-size:36px;font-weight:700;line-height:1.3;color:#111827;margin:0 0 40px;">{escape(_as_text(d.get("title")))}</h2>'
+            f'<div style="display:grid;grid-template-columns:repeat({col_count},1fr);column-gap:{18 if compact else 26}px;flex:1;min-height:0;">'
+            f'{"".join(cards)}'
+            "</div></div>"
+        )
+
+    if layout_id == "bullet-icons-only":
+        items_source = d.get("items")
+        if not isinstance(items_source, list):
+            items_source = d.get("features", [])
+        items = items_source if isinstance(items_source, list) else []
+        compact = is_bullet_icons_only_compact(len(items))
+        cards: list[str] = []
+        for idx, item in enumerate(items):
+            title = escape(_item_text(item))
+            icon_query = _item_icon_query(item)
+            cards.append(
+                '<div style="position:relative;display:flex;align-items:center;min-height:92px;overflow:hidden;border-radius:28px;'
+                'background:color-mix(in srgb, #111827 3%, white);padding:20px 24px;">'
+                '<div style="position:absolute;left:28px;top:50%;width:96px;height:48px;border-radius:16px;'
+                'background:rgba(59,130,246,0.16);transform:translateY(-50%) skewX(-22deg);"></div>'
+                '<div style="position:relative;z-index:1;width:72px;height:72px;border-radius:22px;'
+                'border:1px solid rgba(59,130,246,0.16);background:#ffffff;box-shadow:0 12px 32px rgba(15,23,42,0.08);'
+                f'display:flex;align-items:center;justify-content:center;color:#3b82f6;flex-shrink:0;">{_icon_token_svg(icon_query, 40)}</div>'
+                '<div style="position:relative;z-index:1;min-width:0;margin-left:24px;">'
+                f'<div style="font-size:12px;font-weight:700;letter-spacing:0.24em;line-height:1;color:#6b7280;margin-bottom:8px;">{idx + 1:02d}</div>'
+                f'<div style="font-size:{21 if compact else 24}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:#111827;">{title}</div>'
+                "</div>"
+                "</div>"
+            )
+        return (
+            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;">'
+            f'<h2 style="font-size:36px;font-weight:bold;line-height:1.3;margin-bottom:32px;">{escape(_as_text(d.get("title")))}</h2>'
+            f'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:{28 if compact else 40}px;row-gap:{18 if compact else 22}px;align-content:center;flex:1;min-height:0;">'
+            f'{"".join(cards)}'
             "</div></div>"
         )
 
@@ -513,6 +570,37 @@ def _item_detail(item: Any) -> str:
     if isinstance(item, dict):
         return _as_text(item.get("description"))
     return ""
+
+
+def _item_icon_query(item: Any) -> str:
+    if isinstance(item, dict):
+        icon = item.get("icon")
+        if isinstance(icon, dict):
+            query = _as_text(icon.get("query"))
+            if query:
+                return query
+    return _item_text(item)
+
+
+def _icon_token(query: str) -> str:
+    cleaned = "".join(ch for ch in query if ch.isalnum())
+    if not cleaned:
+        return "IC"
+    return cleaned[:2].upper()
+
+
+def _icon_token_svg(query: str, size: int) -> str:
+    token = escape(_icon_token(query))
+    half = size / 2
+    font_size = round(size * 0.34, 1)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+        f'viewBox="0 0 {size} {size}" aria-hidden="true">'
+        f'<circle cx="{half}" cy="{half}" r="{half - 2}" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="2"></circle>'
+        f'<text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" '
+        f'font-family="Arial, sans-serif" font-size="{font_size}" font-weight="700" fill="#2563EB">{token}</text>'
+        "</svg>"
+    )
 
 
 def _bullet_card(item: Any) -> str:

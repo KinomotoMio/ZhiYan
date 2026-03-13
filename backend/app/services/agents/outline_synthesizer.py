@@ -52,6 +52,7 @@ def get_outline_synthesizer_agent():
 
         from app.core.config import settings
         from app.core.model_resolver import resolve_model
+        from app.services.pipeline.layout_roles import format_role_contract_for_prompt
 
         _agent = Agent(
             model=resolve_model(settings.strong_model),
@@ -66,15 +67,7 @@ def get_outline_synthesizer_agent():
                 "4. **总结展望**（1-2页）：核心结论 + 致谢页\n\n"
                 "## 页面角色规划\n"
                 "为每页设置 suggested_slide_role，帮助后续先确定页面角色，再选择具体布局：\n"
-                "- `cover`: 第一页封面\n"
-                "- `agenda`: 目录/导航页\n"
-                "- `section-divider`: 章节过渡页\n"
-                "- `narrative`: 一般叙述、图文说明、能力介绍\n"
-                "- `evidence`: 指标、图表、表格、实验结果、事实支撑\n"
-                "- `comparison`: 对比、优劣分析、问题-方案\n"
-                "- `process`: 步骤、流程、时间线、方法路径\n"
-                "- `highlight`: 金句、结论、重点强调\n"
-                "- `closing`: 结束页/致谢页\n\n"
+                f"{format_role_contract_for_prompt()}\n\n"
                 "## 结构规则\n"
                 "- 第 1 页必须是 `cover`\n"
                 "- 最后一页必须是 `closing`\n"
