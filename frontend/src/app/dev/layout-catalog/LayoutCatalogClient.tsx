@@ -20,19 +20,13 @@ import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLa
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
 import {
   compareLayoutRoles,
+  getLayoutRole,
+  getLayoutRoleDescription,
+  getLayoutRoleLabel,
+  isVariantPilotRole,
+  LAYOUT_ROLE_ORDER,
   type LayoutRole,
 } from "@/lib/layout-role";
-import {
-  getLayoutGroupDescription,
-  getLayoutGroupLabel,
-  getLayoutSubGroupDescription,
-  getLayoutSubGroupLabel,
-  getLayoutSubGroupsForGroup,
-  getLayoutVariantAxisDescription,
-  getLayoutVariantAxisLabel,
-  LAYOUT_GROUP_ORDER,
-  type LayoutVariantObject,
-} from "@/lib/layout-taxonomy";
 import {
   getLayoutUsage,
   getUsageLabel,
@@ -40,13 +34,17 @@ import {
 } from "@/lib/layout-usage";
 import { compareLayoutNames } from "@/lib/sort";
 import {
+  compareLayoutVariants,
   getLayoutVariant,
   getLayoutVariantDescription,
   getLayoutVariantLabel,
   getLayoutVariantsForRole,
   type LayoutVariant,
 } from "@/lib/layout-variant";
-import { getLayout, type LayoutEntry as RegistryLayoutEntry } from "@/lib/template-registry";
+import {
+  getReviewedLayoutTaxonomy,
+  type ReviewedLayoutVariant,
+} from "@/lib/layout-taxonomy-review";
 
 type LayoutModule = {
   default: ComponentType<{ data: Record<string, unknown> }>;
@@ -60,40 +58,13 @@ type CatalogEntry = {
   fileName: string;
   schemaName: string;
   group: LayoutRole;
-  subGroup: RegistryLayoutEntry["subGroup"];
-  variant: LayoutVariantObject;
-  runtimeVariant: LayoutVariant;
+  variant: LayoutVariant;
+  reviewedSubGroup: string;
+  reviewedVariant: ReviewedLayoutVariant;
   usage: LayoutUsageTag[];
   keyFields: string[];
   data: Record<string, unknown>;
 };
-
-type CatalogEntryConfig = Omit<
-  CatalogEntry,
-  "group" | "subGroup" | "variant" | "runtimeVariant" | "usage"
->;
-
-function getCatalogLayout(layoutId: string): RegistryLayoutEntry {
-  const entry = getLayout(layoutId);
-  if (!entry) {
-    throw new Error(`Missing registry entry for layout ${layoutId}`);
-  }
-  return entry;
-}
-
-function createCatalogEntry(config: CatalogEntryConfig): CatalogEntry {
-  const layoutId = config.module.layoutId;
-  const layout = getCatalogLayout(layoutId);
-
-  return {
-    ...config,
-    group: layout.group,
-    subGroup: layout.subGroup,
-    variant: layout.variant,
-    runtimeVariant: getLayoutVariant(layoutId),
-    usage: getLayoutUsage(layoutId),
-  };
-}
 
 function svgDataUrl(stops: string[], label: string): string {
   const svg = `
@@ -117,10 +88,15 @@ const photoA = svgDataUrl(["#1d4ed8", "#06b6d4"], "Product View");
 const photoB = svgDataUrl(["#0f766e", "#65a30d"], "Dashboard");
 
 const entries: CatalogEntry[] = [
-  createCatalogEntry({
+  {
     module: IntroSlide as unknown as LayoutModule,
     fileName: "IntroSlideLayout.tsx",
     schemaName: "IntroSlideData",
+    group: getLayoutRole("intro-slide"),
+    variant: getLayoutVariant("intro-slide"),
+    reviewedSubGroup: getReviewedLayoutTaxonomy("intro-slide")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("intro-slide")!.variant,
+    usage: getLayoutUsage("intro-slide"),
     keyFields: ["title", "subtitle", "author?", "date?"],
     data: {
       title: "ZhiYan Layout Catalog",
@@ -128,11 +104,17 @@ const entries: CatalogEntry[] = [
       author: "Codex",
       date: "2026-03-11",
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: OutlineSlide as unknown as LayoutModule,
     fileName: "OutlineSlideLayout.tsx",
     schemaName: "OutlineSlideData",
+    group: getLayoutRole("outline-slide"),
+    variant: getLayoutVariant("outline-slide"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("outline-slide")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("outline-slide")!.variant,
+    usage: getLayoutUsage("outline-slide"),
     keyFields: ["title", "subtitle?", "sections[4-6]"],
     data: {
       title: "Presentation Outline",
@@ -157,21 +139,33 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: SectionHeader as unknown as LayoutModule,
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
+    group: getLayoutRole("section-header"),
+    variant: getLayoutVariant("section-header"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("section-header")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("section-header")!.variant,
+    usage: getLayoutUsage("section-header"),
     keyFields: ["title", "subtitle?"],
     data: {
       title: "Platform Overview",
       subtitle: "A clean transition slide between major chapters.",
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: BulletWithIcons as unknown as LayoutModule,
     fileName: "BulletWithIconsLayout.tsx",
     schemaName: "BulletWithIconsData",
+    group: getLayoutRole("bullet-with-icons"),
+    variant: getLayoutVariant("bullet-with-icons"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("bullet-with-icons")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("bullet-with-icons")!.variant,
+    usage: getLayoutUsage("bullet-with-icons"),
     keyFields: ["title", "items[3-4]"],
     data: {
       title: "Why Teams Use This Layout",
@@ -195,11 +189,17 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: ImageAndDescription as unknown as LayoutModule,
     fileName: "ImageAndDescriptionLayout.tsx",
     schemaName: "ImageAndDescriptionData",
+    group: getLayoutRole("image-and-description"),
+    variant: getLayoutVariant("image-and-description"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("image-and-description")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("image-and-description")!.variant,
+    usage: getLayoutUsage("image-and-description"),
     keyFields: ["title", "image", "description", "bullets?"],
     data: {
       title: "Feature Spotlight",
@@ -212,11 +212,17 @@ const entries: CatalogEntry[] = [
         "Easy to theme with photography",
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: BulletIconsOnly as unknown as LayoutModule,
     fileName: "BulletIconsOnlyLayout.tsx",
     schemaName: "BulletIconsOnlyData",
+    group: getLayoutRole("bullet-icons-only"),
+    variant: getLayoutVariant("bullet-icons-only"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("bullet-icons-only")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("bullet-icons-only")!.variant,
+    usage: getLayoutUsage("bullet-icons-only"),
     keyFields: ["title", "items[4-8]"],
     data: {
       title: "Capability Grid",
@@ -229,11 +235,17 @@ const entries: CatalogEntry[] = [
         { icon: { query: "shield-check" }, label: "Verification" },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: MetricsSlide as unknown as LayoutModule,
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
+    group: getLayoutRole("metrics-slide"),
+    variant: getLayoutVariant("metrics-slide"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("metrics-slide")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("metrics-slide")!.variant,
+    usage: getLayoutUsage("metrics-slide"),
     keyFields: ["title", "metrics[2-4]"],
     data: {
       title: "Quarterly Snapshot",
@@ -243,11 +255,17 @@ const entries: CatalogEntry[] = [
         { value: "3.6x", label: "Reuse", description: "template leverage" },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: MetricsWithImage as unknown as LayoutModule,
     fileName: "MetricsWithImageLayout.tsx",
     schemaName: "MetricsWithImageData",
+    group: getLayoutRole("metrics-with-image"),
+    variant: getLayoutVariant("metrics-with-image"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("metrics-with-image")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("metrics-with-image")!.variant,
+    usage: getLayoutUsage("metrics-with-image"),
     keyFields: ["title", "metrics[2-3]", "image"],
     data: {
       title: "Impact + Product Shot",
@@ -270,11 +288,17 @@ const entries: CatalogEntry[] = [
         alt: "dashboard preview",
       },
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: ChartWithBullets as unknown as LayoutModule,
     fileName: "ChartWithBulletsLayout.tsx",
     schemaName: "ChartWithBulletsData",
+    group: getLayoutRole("chart-with-bullets"),
+    variant: getLayoutVariant("chart-with-bullets"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("chart-with-bullets")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("chart-with-bullets")!.variant,
+    usage: getLayoutUsage("chart-with-bullets"),
     keyFields: ["title", "chart", "bullets[2-4]"],
     data: {
       title: "Trend + Commentary",
@@ -289,11 +313,17 @@ const entries: CatalogEntry[] = [
         { text: "Best used when one chart needs 2-3 plain-language takeaways." },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: TableInfo as unknown as LayoutModule,
     fileName: "TableInfoLayout.tsx",
     schemaName: "TableInfoData",
+    group: getLayoutRole("table-info"),
+    variant: getLayoutVariant("table-info"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("table-info")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("table-info")!.variant,
+    usage: getLayoutUsage("table-info"),
     keyFields: ["title", "headers", "rows", "caption?"],
     data: {
       title: "Option Comparison",
@@ -305,11 +335,17 @@ const entries: CatalogEntry[] = [
       ],
       caption: "A compact matrix for structured comparisons.",
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: TwoColumnCompare as unknown as LayoutModule,
     fileName: "TwoColumnCompareLayout.tsx",
     schemaName: "TwoColumnCompareData",
+    group: getLayoutRole("two-column-compare"),
+    variant: getLayoutVariant("two-column-compare"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("two-column-compare")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("two-column-compare")!.variant,
+    usage: getLayoutUsage("two-column-compare"),
     keyFields: ["title", "left", "right"],
     data: {
       title: "Manual vs Assisted Workflow",
@@ -328,11 +364,17 @@ const entries: CatalogEntry[] = [
         ],
       },
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: ChallengeOutcome as unknown as LayoutModule,
     fileName: "ChallengeOutcomeLayout.tsx",
     schemaName: "ChallengeOutcomeData",
+    group: getLayoutRole("challenge-outcome"),
+    variant: getLayoutVariant("challenge-outcome"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("challenge-outcome")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("challenge-outcome")!.variant,
+    usage: getLayoutUsage("challenge-outcome"),
     keyFields: ["title", "items[2-4]"],
     data: {
       title: "Problems and Fixes",
@@ -347,11 +389,17 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: NumberedBullets as unknown as LayoutModule,
     fileName: "NumberedBulletsLayout.tsx",
     schemaName: "NumberedBulletsData",
+    group: getLayoutRole("numbered-bullets"),
+    variant: getLayoutVariant("numbered-bullets"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("numbered-bullets")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("numbered-bullets")!.variant,
+    usage: getLayoutUsage("numbered-bullets"),
     keyFields: ["title", "items[3-5]"],
     data: {
       title: "Rollout Plan",
@@ -372,11 +420,17 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: Timeline as unknown as LayoutModule,
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
+    group: getLayoutRole("timeline"),
+    variant: getLayoutVariant("timeline"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("timeline")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("timeline")!.variant,
+    usage: getLayoutUsage("timeline"),
     keyFields: ["title", "events[3-6]"],
     data: {
       title: "Delivery Timeline",
@@ -403,11 +457,17 @@ const entries: CatalogEntry[] = [
         },
       ],
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: QuoteSlide as unknown as LayoutModule,
     fileName: "QuoteSlideLayout.tsx",
     schemaName: "QuoteSlideData",
+    group: getLayoutRole("quote-slide"),
+    variant: getLayoutVariant("quote-slide"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("quote-slide")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("quote-slide")!.variant,
+    usage: getLayoutUsage("quote-slide"),
     keyFields: ["quote", "author?", "context?"],
     data: {
       quote:
@@ -415,36 +475,33 @@ const entries: CatalogEntry[] = [
       author: "Design review note",
       context: "internal principle",
     },
-  }),
-  createCatalogEntry({
+  },
+  {
     module: ThankYou as unknown as LayoutModule,
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
+    group: getLayoutRole("thank-you"),
+    variant: getLayoutVariant("thank-you"),
+    reviewedSubGroup:
+      getReviewedLayoutTaxonomy("thank-you")?.subGroup ?? "default",
+    reviewedVariant: getReviewedLayoutTaxonomy("thank-you")!.variant,
+    usage: getLayoutUsage("thank-you"),
     keyFields: ["title", "subtitle?", "contact?"],
     data: {
       title: "Thanks",
       subtitle: "Questions, feedback, or layout ideas are welcome.",
       contact: "design-system@zhiyan.local",
     },
-  }),
+  },
 ];
 
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
   if (roleDelta !== 0) return roleDelta;
-  const subGroupDelta = compareSubGroups(
+  const variantDelta = compareLayoutVariants(
     left.group,
-    left.subGroup,
-    right.subGroup,
-    left.module.layoutId,
-    right.module.layoutId,
-  );
-  if (subGroupDelta !== 0) return subGroupDelta;
-  const variantDelta = compareVariantObjects(
     left.variant,
     right.variant,
-    left.module.layoutId,
-    right.module.layoutId,
   );
   if (variantDelta !== 0) return variantDelta;
   return compareLayoutNames(
@@ -456,47 +513,6 @@ const sortedEntries = [...entries].sort((left, right) => {
 });
 
 const narrativeVariants = getLayoutVariantsForRole("narrative");
-
-function compareSubGroups(
-  group: LayoutRole,
-  left: RegistryLayoutEntry["subGroup"],
-  right: RegistryLayoutEntry["subGroup"],
-  leftId: string,
-  rightId: string,
-): number {
-  const orderedSubGroups = getLayoutSubGroupsForGroup(group);
-  const leftIndex = orderedSubGroups.indexOf(left);
-  const rightIndex = orderedSubGroups.indexOf(right);
-
-  if (leftIndex !== -1 || rightIndex !== -1) {
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-  }
-
-  return compareLayoutNames(left, right, leftId, rightId);
-}
-
-function compareVariantObjects(
-  left: LayoutVariantObject,
-  right: LayoutVariantObject,
-  leftId: string,
-  rightId: string,
-): number {
-  const axes: Array<keyof LayoutVariantObject> = [
-    "composition",
-    "tone",
-    "style",
-    "density",
-  ];
-
-  for (const axis of axes) {
-    const delta = compareLayoutNames(left[axis], right[axis], leftId, rightId);
-    if (delta !== 0) return delta;
-  }
-
-  return 0;
-}
 
 function PreviewFrame({
   Component,
@@ -542,7 +558,7 @@ function UsageChips({ usage }: { usage: LayoutUsageTag[] }) {
   );
 }
 
-function RuntimeVariantBadge({
+function VariantBadge({
   role,
   variant,
 }: {
@@ -551,52 +567,38 @@ function RuntimeVariantBadge({
 }) {
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-          Compatibility shim
-        </span>
-        <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
-          {getLayoutVariantLabel(role, variant)}
-        </span>
-      </div>
+      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+        {getLayoutVariantLabel(role, variant)}
+      </span>
       <code className="mt-2 block text-xs text-slate-500">{variant}</code>
-      <p className="mt-2 text-sm leading-6 text-slate-600">
+      <p className="mt-2 text-sm leading-6 text-slate-700">
         {getLayoutVariantDescription(role, variant)}
       </p>
     </div>
   );
 }
 
-function SubGroupBadge({
-  group,
-  subGroup,
-}: {
-  group: LayoutRole;
-  subGroup: RegistryLayoutEntry["subGroup"];
-}) {
+function ReviewedSubGroupBadge({ subGroup }: { subGroup: string }) {
   return (
     <div>
       <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-        {getLayoutSubGroupLabel(group, subGroup)}
+        Reviewed sub-group
       </span>
       <code className="mt-2 block text-xs text-slate-500">{subGroup}</code>
-      <p className="mt-2 text-sm leading-6 text-slate-700">
-        {getLayoutSubGroupDescription(group, subGroup)}
-      </p>
     </div>
   );
 }
 
-function VariantCard({
+function ReviewedVariantCard({
   variant,
 }: {
-  variant: LayoutVariantObject;
+  variant: ReviewedLayoutVariant;
 }) {
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-          Canonical variant
+          Reviewed variant baseline
         </span>
         <span className="text-xs text-emerald-800">
           composition / tone / style / density
@@ -608,8 +610,7 @@ function VariantCard({
             composition
           </dt>
           <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {getLayoutVariantAxisLabel("composition", variant.composition)}
-            <code className="mt-1 block text-xs text-slate-500">{variant.composition}</code>
+            {variant.composition}
           </dd>
         </div>
         <div>
@@ -617,8 +618,7 @@ function VariantCard({
             tone
           </dt>
           <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {getLayoutVariantAxisLabel("tone", variant.tone)}
-            <code className="mt-1 block text-xs text-slate-500">{variant.tone}</code>
+            {variant.tone}
           </dd>
         </div>
         <div>
@@ -626,8 +626,7 @@ function VariantCard({
             style
           </dt>
           <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {getLayoutVariantAxisLabel("style", variant.style)}
-            <code className="mt-1 block text-xs text-slate-500">{variant.style}</code>
+            {variant.style}
           </dd>
         </div>
         <div>
@@ -635,21 +634,10 @@ function VariantCard({
             density
           </dt>
           <dd className="mt-1 rounded bg-white px-2 py-1 text-sm text-slate-800">
-            {getLayoutVariantAxisLabel("density", variant.density)}
-            <code className="mt-1 block text-xs text-slate-500">{variant.density}</code>
+            {variant.density}
           </dd>
         </div>
       </dl>
-      <p className="mt-3 text-xs leading-5 text-emerald-900">
-        {[
-          getLayoutVariantAxisDescription("composition", variant.composition),
-          getLayoutVariantAxisDescription("tone", variant.tone),
-          getLayoutVariantAxisDescription("style", variant.style),
-          getLayoutVariantAxisDescription("density", variant.density),
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      </p>
     </div>
   );
 }
@@ -666,63 +654,42 @@ export function LayoutCatalogClientPage() {
             Built-in slide layouts
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            This page renders every current TSX layout with sample data. Use it
-            as a taxonomy-first review workspace: compare each template&apos;s
-            page function, information structure, design variant, and current
-            compatibility metadata in one place.
+            This page renders every current TSX layout with sample data. Treat it
+            as the fastest way to compare structure, inspect file names, and
+            decide where to add a new variant.
           </p>
         </header>
 
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="max-w-4xl">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Taxonomy-first review workspace
-            </h2>
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-semibold text-slate-900">Role Contract</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              `group` defines the page&apos;s job in the deck, `sub-group`
-              captures the information structure, and `variant` captures the
-              design layer through `composition`, `tone`, `style`, and
-              `density`. The old runtime `variant` string is still visible
-              below, but only as a migration-time compatibility shim.
+              `group` here means the page&apos;s function in the whole deck
+              skeleton, not just its visual style. Shared metadata now stores a
+              reviewed `group / sub-group / variant` baseline, while the
+              runtime helper layer still exposes a compatibility `variant`
+              string until `#73` lands.
             </p>
           </div>
-          <div className="mt-5 grid gap-4 lg:grid-cols-3">
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">Group</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                Page function in the overall deck skeleton. This is the first
-                routing layer when teams compare layouts.
-              </p>
-            </article>
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">Sub-group</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                Structure layer inside one group. `narrative` is currently the
-                only group with non-default sub-groups.
-              </p>
-            </article>
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-900">Variant</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-700">
-                Design layer on top of `group + sub-group`, expressed as a
-                four-field object. This is now the canonical source of truth.
-              </p>
-            </article>
-          </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {LAYOUT_GROUP_ORDER.map((role) => (
+            {LAYOUT_ROLE_ORDER.map((role) => (
               <article
                 key={role}
                 className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                    {getLayoutGroupLabel(role)}
+                    {getLayoutRoleLabel(role)}
                   </span>
+                  {isVariantPilotRole(role) ? (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      Variant pilot
+                    </span>
+                  ) : null}
                 </div>
                 <code className="mt-3 block text-xs text-slate-500">{role}</code>
                 <p className="mt-2 text-sm leading-6 text-slate-700">
-                  {getLayoutGroupDescription(role)}
+                  {getLayoutRoleDescription(role)}
                 </p>
               </article>
             ))}
@@ -732,12 +699,14 @@ export function LayoutCatalogClientPage() {
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="max-w-3xl">
             <h2 className="text-lg font-semibold text-slate-900">
-              Compatibility runtime view
+              Narrative Variant Pilot
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              The runtime `variant` string is still exposed so older callers can
-              keep working. It is no longer the primary taxonomy model, and only
-              `narrative` currently maps to non-default compatibility variants.
+              This panel still reflects the current compatibility runtime
+              variant track. Narrative is the only group whose compatibility
+              variant maps to a non-default `sub-group`; every other group stays
+              on a single `default` runtime variant until the public registry
+              interfaces are upgraded.
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -746,9 +715,48 @@ export function LayoutCatalogClientPage() {
                 key={variant}
                 className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               >
-                <RuntimeVariantBadge role="narrative" variant={variant} />
+                <VariantBadge role="narrative" variant={variant} />
               </article>
             ))}
+          </div>
+        </section>
+
+        <section className="mb-8 rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">
+          <div className="max-w-4xl">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Reviewed Taxonomy Baseline
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              The reviewed baseline below now comes directly from shared
+              metadata. Runtime helpers still expose the old single-value
+              `variant` field, but the canonical source of truth already stores
+              `sub-group` plus the four-field variant object used by the review
+              flow.
+            </p>
+          </div>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Reviewed sub-group layer
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                `sub-group` captures structure. Only `narrative` currently
+                breaks out into `icon-points`, `visual-explainer`, and
+                `capability-grid`; every other built-in template stays on
+                `default`.
+              </p>
+            </article>
+            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Reviewed variant object
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                The reviewed `variant` baseline is now a four-field object:
+                `composition`, `tone`, `style`, and `density`. This panel makes
+                those canonical metadata decisions easy to compare while the
+                public runtime interfaces are still on the compatibility shim.
+              </p>
+            </article>
           </div>
         </section>
 
@@ -762,9 +770,9 @@ export function LayoutCatalogClientPage() {
                 <th className="w-[250px] px-5 py-4">TSX File</th>
                 <th className="w-[210px] px-5 py-4">Schema</th>
                 <th className="w-[140px] px-5 py-4">Group</th>
-                <th className="w-[220px] px-5 py-4">Sub-group</th>
-                <th className="w-[340px] px-5 py-4">Variant</th>
                 <th className="w-[240px] px-5 py-4">Runtime Variant</th>
+                <th className="w-[170px] px-5 py-4">Reviewed Sub-group</th>
+                <th className="w-[320px] px-5 py-4">Reviewed Variant</th>
                 <th className="w-[280px] px-5 py-4">Usage</th>
                 <th className="px-5 py-4">Notes</th>
               </tr>
@@ -810,33 +818,27 @@ export function LayoutCatalogClientPage() {
                       </td>
                       <td className="px-5 py-5">
                         <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                          {getLayoutGroupLabel(entry.group)}
+                          {getLayoutRoleLabel(entry.group)}
                         </span>
                         <code className="mt-2 block text-xs text-slate-500">
                           {entry.group}
                         </code>
                       </td>
                       <td className="px-5 py-5">
-                        <SubGroupBadge group={entry.group} subGroup={entry.subGroup} />
+                        <VariantBadge role={entry.group} variant={entry.variant} />
                       </td>
                       <td className="px-5 py-5">
-                        <VariantCard variant={entry.variant} />
+                        <ReviewedSubGroupBadge subGroup={entry.reviewedSubGroup} />
                       </td>
                       <td className="px-5 py-5">
-                        <RuntimeVariantBadge role={entry.group} variant={entry.runtimeVariant} />
+                        <ReviewedVariantCard variant={entry.reviewedVariant} />
                       </td>
                       <td className="px-5 py-5">
                         <UsageChips usage={entry.usage} />
                       </td>
                       <td className="px-5 py-5">
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                          Current runtime notes source
-                        </span>
                         <p className="text-sm leading-6 text-slate-700">
                           {entry.module.layoutDescription}
-                        </p>
-                        <p className="mt-2 text-xs leading-5 text-slate-500">
-                          Taxonomy-driven notes contract and runtime integration land in `#75`.
                         </p>
                       </td>
                     </tr>
