@@ -69,7 +69,7 @@ test("outline-slide malformed sections do not crash preview rendering", () => {
   assert.doesNotThrow(() => {
     html = renderToStaticMarkup(<SlidePreview slide={malformedSlide} />);
   });
-  assert.doesNotMatch(html, /璇ラ〉鏁版嵁寮傚父锛屽彲閲嶆柊鐢熸垚/);
+  assert.doesNotMatch(html, /该页数据异常，可重新生成/);
   assert.match(html, /Agenda broken/);
   assert.match(html, /\u80cc\u666f/);
   assert.match(html, /\u5206\u6790/);
