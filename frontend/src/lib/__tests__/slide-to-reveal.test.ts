@@ -309,3 +309,46 @@ test("presentationToRevealHTML renders outline-slide as a two-column agenda layo
   assert.doesNotMatch(html, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(html, /shadow-\[/);
 });
+
+test("presentationToRevealHTML renders metrics-slide executive summary and legacy fallback", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-metrics-summary",
+        layoutType: "metrics-slide",
+        layoutId: "metrics-slide",
+        contentData: {
+          title: "Quarterly Snapshot",
+          conclusion: "Enterprise adoption is no longer the bottleneck.",
+          conclusionBrief: "Coverage expanded across the org, so review latency is the next constraint.",
+          metrics: [
+            { value: "92%", label: "Adoption", description: "active team usage" },
+            { value: "14d", label: "Lead Time", description: "from brief to deck" },
+          ],
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-metrics-legacy",
+        layoutType: "metrics-slide",
+        layoutId: "metrics-slide",
+        contentData: {
+          title: "Legacy Snapshot",
+          metrics: [
+            { value: "3.6x", label: "Reuse", description: "template leverage" },
+            { value: "11", label: "Teams", description: "pilot rollout" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Enterprise adoption is no longer the bottleneck\./);
+  assert.match(html, /Coverage expanded across the org, so review latency is the next constraint\./);
+  assert.match(html, /min-height:168px/);
+  assert.match(html, /Legacy Snapshot/);
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:32px/);
+  assert.match(html, /template leverage/);
+});

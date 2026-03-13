@@ -18,7 +18,11 @@ from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
 from app.models.slide import Presentation, Component
-from app.services.presentations.normalizer import normalize_outline_slide_data, split_outline_sections
+from app.services.presentations.normalizer import (
+    normalize_metrics_slide_data,
+    normalize_outline_slide_data,
+    split_outline_sections,
+)
 from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
     is_bullet_icons_only_compact,
@@ -658,27 +662,64 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                 y += Inches(0.7)
 
     elif layout_id == "metrics-slide":
+        normalized = normalize_metrics_slide_data(d)
+        if normalized is None:
+            return
+
         _add_textbox(slide_obj,
                      Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
-                     d.get("title", ""), font_size=36, bold=True)
-        metrics = d.get("metrics") or []
+                     normalized.get("title", ""), font_size=36, bold=True)
+        metrics = normalized.get("metrics") or []
+        conclusion = _as_text(normalized.get("conclusion"))
+        conclusion_brief = _as_text(normalized.get("conclusionBrief"))
+        has_executive_summary = bool(conclusion or conclusion_brief)
         count = min(len(metrics), 4)
-        if count > 0:
+        if has_executive_summary:
+            summary_box = slide_obj.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                Inches(0.8), Inches(1.45), Inches(11.6), Inches(1.75),
+            )
+            summary_box.fill.solid()
+            summary_box.fill.fore_color.rgb = RGBColor(0xF4, 0xF8, 0xFF)
+            summary_box.line.color.rgb = RGBColor(0xD6, 0xE4, 0xFF)
+            if conclusion:
+                _add_textbox(slide_obj,
+                             Inches(1.05), Inches(1.72), Inches(10.9), Inches(0.48),
+                             conclusion, font_size=24, bold=True, color=GRAY_900)
+            if conclusion_brief:
+                _add_textbox(slide_obj,
+                             Inches(1.05), Inches(2.28), Inches(10.7), Inches(0.52),
+                             conclusion_brief, font_size=13, color=GRAY_600)
+            if count > 0:
+                card_width = 11.0 / count
+                for i, m in enumerate(metrics[:4]):
+                    x = Inches(0.8 + i * card_width)
+                    _add_textbox(slide_obj,
+                                 x + Inches(0.15), Inches(4.1), Inches(card_width - 0.3), Inches(0.7),
+                                 m.get("value", ""), font_size=36, bold=True, color=color)
+                    _add_textbox(slide_obj,
+                                 x + Inches(0.15), Inches(4.82), Inches(card_width - 0.3), Inches(0.45),
+                                 m.get("label", ""), font_size=16, bold=True)
+                    if m.get("description"):
+                        _add_textbox(slide_obj,
+                                     x + Inches(0.15), Inches(5.28), Inches(card_width - 0.3), Inches(0.52),
+                                     m["description"], font_size=12, color=GRAY_600)
+        elif count > 0:
             card_width = 10.0 / count
             for i, m in enumerate(metrics[:4]):
                 x = Inches(1.2 + i * card_width)
                 _add_textbox(slide_obj,
-                             x, Inches(2.8), Inches(card_width - 0.4), Inches(0.9),
-                             m.get("value", ""), font_size=44, bold=True, color=color,
+                             x, Inches(2.3), Inches(card_width), Inches(0.9),
+                             m.get("value", ""), font_size=42, bold=True, color=color,
                              alignment=PP_ALIGN.CENTER)
                 _add_textbox(slide_obj,
-                             x, Inches(3.8), Inches(card_width - 0.4), Inches(0.5),
+                             x, Inches(3.2), Inches(card_width), Inches(0.5),
                              m.get("label", ""), font_size=18, bold=True,
                              alignment=PP_ALIGN.CENTER)
                 if m.get("description"):
                     _add_textbox(slide_obj,
-                                 x, Inches(4.4), Inches(card_width - 0.4), Inches(0.5),
-                                 m["description"], font_size=14, color=GRAY_600,
+                                 x, Inches(3.75), Inches(card_width), Inches(0.8),
+                                 m["description"], font_size=13, color=GRAY_600,
                                  alignment=PP_ALIGN.CENTER)
 
     elif layout_id == "metrics-with-image":

@@ -176,3 +176,48 @@ test("bullet-icons-only uses a denser two-column matrix with larger icon anchors
   assert.match(html, />01<\/div>/);
   assert.match(html, /智能助手编排/);
 });
+
+test("metrics-slide preview renders executive summary and keeps legacy slides readable", () => {
+  const executiveSlide: Slide = {
+    slideId: "slide-metrics-summary",
+    layoutType: "metrics-slide",
+    layoutId: "metrics-slide",
+    contentData: {
+      title: "Quarterly Snapshot",
+      conclusion: "Enterprise adoption is no longer the bottleneck.",
+      conclusionBrief: "Coverage expanded across the org, so review latency is the next constraint.",
+      metrics: [
+        { value: "92%", label: "Adoption", description: "active team usage" },
+        { value: "14d", label: "Lead Time", description: "from brief to deck" },
+      ],
+    },
+    components: [],
+  };
+
+  const legacySlide: Slide = {
+    slideId: "slide-metrics-legacy",
+    layoutType: "metrics-slide",
+    layoutId: "metrics-slide",
+    contentData: {
+      title: "Legacy Snapshot",
+      metrics: [
+        { value: "3.6x", label: "Reuse", description: "template leverage" },
+        { value: "11", label: "Teams", description: "pilot rollout" },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <div>
+      <SlidePreview slide={executiveSlide} />
+      <SlidePreview slide={legacySlide} />
+    </div>
+  );
+
+  assert.match(html, /Enterprise adoption is no longer the bottleneck\./);
+  assert.match(html, /Coverage expanded across the org, so review latency is the next constraint\./);
+  assert.match(html, /Legacy Snapshot/);
+  assert.match(html, /template leverage/);
+  assert.doesNotMatch(html, /该��数据异常，可重新生成/);
+});

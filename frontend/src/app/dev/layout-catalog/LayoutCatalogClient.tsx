@@ -234,9 +234,12 @@ const entries: CatalogEntry[] = [
     module: MetricsSlide as unknown as LayoutModule,
     fileName: "MetricsSlideLayout.tsx",
     schemaName: "MetricsSlideData",
-    keyFields: ["title", "metrics[2-4]"],
+    keyFields: ["title", "conclusion", "conclusionBrief", "metrics[2-4]"],
     data: {
       title: "Quarterly Snapshot",
+      conclusion: "Enterprise adoption is no longer the bottleneck.",
+      conclusionBrief:
+        "Coverage expanded across the org, so the next constraint is shortening review latency and increasing reuse in late-stage polish.",
       metrics: [
         { value: "92%", label: "Adoption", description: "active team usage" },
         { value: "14d", label: "Lead Time", description: "from brief to deck" },

@@ -98,9 +98,11 @@ class MetricItem(BaseModel):
 
 
 class MetricsSlideData(BaseModel):
-    """指标卡片 — 2-4 个 KPI 数字"""
-    title: str = Field(min_length=2, max_length=40, description="页面标题")
-    metrics: list[MetricItem] = Field(min_length=2, max_length=4, description="指标列表")
+    """Metrics slide with executive summary support."""
+    title: str = Field(min_length=2, max_length=40, description="\u9875\u9762\u6807\u9898")
+    conclusion: str = Field(min_length=2, max_length=80, description="\u7ed3\u8bba\u53e5")
+    conclusionBrief: str = Field(min_length=5, max_length=180, description="\u7ed3\u8bba\u8865\u5145\u8bf4\u660e")
+    metrics: list[MetricItem] = Field(min_length=2, max_length=4, description="\u6307\u6807\u5217\u8868")
 
 
 # ---------- 6. metrics-with-image ----------

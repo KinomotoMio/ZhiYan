@@ -50,3 +50,42 @@ test("normalizeLayoutData trims outline-slide sections to six entries", () => {
     { title: "Six" },
   ]);
 });
+test("normalizeLayoutData repairs executive-summary metrics-slide items without losing the new fields", () => {
+  const result = normalizeLayoutData("metrics-slide", {
+    title: "Quarterly Snapshot",
+    conclusion: "Enterprise adoption is no longer the bottleneck.",
+    conclusionBrief: "Review latency is now the next constraint.",
+    metrics: [
+      { metric: "92%", title: "Adoption", detail: "active team usage" },
+      { value: "14d", label: "Lead Time", description: "from brief to deck" },
+    ],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.reason, "normalize metrics-slide shape");
+  assert.deepEqual(result.data, {
+    title: "Quarterly Snapshot",
+    conclusion: "Enterprise adoption is no longer the bottleneck.",
+    conclusionBrief: "Review latency is now the next constraint.",
+    metrics: [
+      { value: "92%", label: "Adoption", description: "active team usage" },
+      { value: "14d", label: "Lead Time", description: "from brief to deck" },
+    ],
+  });
+});
+
+test("normalizeLayoutData keeps legacy metrics-slide readable without fabricating summary copy", () => {
+  const result = normalizeLayoutData("metrics-slide", {
+    title: "Legacy Snapshot",
+    metrics: [
+      { value: "88%", label: "Coverage", description: "workspace adoption" },
+      { value: "11d", label: "Lead Time", description: "last quarter average" },
+    ],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, false);
+  assert.equal("conclusion" in result.data, false);
+  assert.equal("conclusionBrief" in result.data, false);
+});

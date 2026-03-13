@@ -84,7 +84,16 @@ export interface MetricItem {
 
 export interface MetricsSlideData {
   title: string;
+  conclusion: string;
+  conclusionBrief: string;
   metrics: MetricItem[];
+}
+
+export interface MetricsSlideRuntimeData {
+  title: string;
+  metrics: MetricItem[];
+  conclusion?: string | null;
+  conclusionBrief?: string | null;
 }
 
 // 6. metrics-with-image

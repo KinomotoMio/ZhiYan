@@ -230,3 +230,58 @@ def test_normalize_outline_slide_from_items_alias_and_pad_sections():
         {"title": "Findings"},
         {"title": "\u7ed3\u8bba"},
     ]
+
+def test_normalize_metrics_slide_keeps_legacy_shape_without_fabricating_summary():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-metrics-legacy",
+                "layoutId": "metrics-slide",
+                "contentData": {
+                    "title": "Legacy Snapshot",
+                    "metrics": [
+                        {"value": "88%", "label": "Coverage", "description": "workspace adoption"},
+                        {"value": "11d", "label": "Lead Time", "description": "last quarter average"},
+                    ],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is False
+    assert report["invalid_slide_count"] == 0
+    content = normalized["slides"][0]["contentData"]
+    assert "conclusion" not in content
+    assert "conclusionBrief" not in content
+
+
+def test_normalize_metrics_slide_repairs_metric_aliases_and_preserves_summary():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-metrics-summary",
+                "layoutId": "metrics-slide",
+                "contentData": {
+                    "title": "Quarterly Snapshot",
+                    "conclusion": "Enterprise adoption is no longer the bottleneck.",
+                    "conclusionBrief": "Review latency is now the next constraint.",
+                    "metrics": [
+                        {"metric": "92%", "title": "Adoption", "detail": "active team usage"},
+                        {"value": "14d", "label": "Lead Time", "description": "from brief to deck"},
+                    ],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "metrics-slide-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["conclusion"] == "Enterprise adoption is no longer the bottleneck."
+    assert content["conclusionBrief"] == "Review latency is now the next constraint."
+    assert content["metrics"] == [
+        {"value": "92%", "label": "Adoption", "description": "active team usage"},
+        {"value": "14d", "label": "Lead Time", "description": "from brief to deck"},
+    ]

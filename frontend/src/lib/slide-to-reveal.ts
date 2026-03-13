@@ -451,21 +451,40 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
 
     case "metrics-slide": {
       const metrics = Array.isArray(d.metrics) ? d.metrics : [];
-      const columns = metrics.length === 2 ? 2 : metrics.length === 3 ? 3 : 4;
+      const columns = metrics.length <= 1 ? 1 : metrics.length === 2 ? 2 : metrics.length === 3 ? 3 : 4;
+      const conclusion = asText(d.conclusion);
+      const conclusionBrief = asText(d.conclusionBrief);
+      const hasExecutiveSummary = Boolean(conclusion || conclusionBrief);
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
-          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:32px;align-items:center;flex:1;">
-            ${metrics.map((metric) => {
-              const row = metric as Record<string, unknown>;
-              return `
-                <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px;border-radius:16px;background:${primaryMix(5)};">
-                  <span style="font-size:48px;font-weight:800;line-height:1.1;color:var(--primary-color,#3b82f6);margin-bottom:8px;">${escapeHtml(asText(row.value))}</span>
-                  <span style="font-size:18px;font-weight:600;line-height:1.4;color:var(--background-text,#111827);margin-bottom:${asText(row.description) ? "4px" : "0"};">${escapeHtml(asText(row.label))}</span>
-                  ${asText(row.description) ? `<span style="font-size:14px;line-height:1.5;color:${backgroundTextMix(50)};">${escapeHtml(asText(row.description))}</span>` : ""}
-                </div>`;
-            }).join("")}
-          </div>
+          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 ${hasExecutiveSummary ? "24px" : "40px"};">${escapeHtml(asText(d.title))}</h2>
+          ${hasExecutiveSummary ? `
+            <div style="margin-bottom:32px;border-radius:28px;border:1px solid ${primaryMix(15)};background:linear-gradient(135deg,${primaryMix(10)},rgba(255,255,255,0.92));padding:32px 40px;">
+              ${conclusion ? `<p style="font-size:32px;font-weight:700;line-height:1.2;color:var(--background-text,#111827);margin:0;">${escapeHtml(conclusion)}</p>` : ""}
+              ${conclusionBrief ? `<p style="font-size:17px;line-height:1.6;color:${backgroundTextMix(70)};margin:${conclusion ? "16px" : "0"} 0 0;max-width:960px;">${escapeHtml(conclusionBrief)}</p>` : ""}
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:24px;align-items:stretch;flex:1;">
+              ${metrics.map((metric) => {
+                const row = metric as Record<string, unknown>;
+                return `
+                  <div style="display:flex;flex-direction:column;min-height:168px;padding:20px 24px;border-radius:16px;background:${primaryMix(5)};">
+                    <span style="font-size:40px;font-weight:800;line-height:1.1;color:var(--primary-color,#3b82f6);margin-bottom:8px;">${escapeHtml(asText(row.value))}</span>
+                    <span style="font-size:17px;font-weight:600;line-height:1.35;color:var(--background-text,#111827);margin-bottom:${asText(row.description) ? "4px" : "0"};">${escapeHtml(asText(row.label))}</span>
+                    ${asText(row.description) ? `<span style="font-size:13px;line-height:1.5;color:${backgroundTextMix(60)};">${escapeHtml(asText(row.description))}</span>` : ""}
+                  </div>`;
+              }).join("")}
+            </div>` : `
+            <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:32px;align-items:center;flex:1;">
+              ${metrics.map((metric) => {
+                const row = metric as Record<string, unknown>;
+                return `
+                  <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px;border-radius:16px;background:${primaryMix(5)};">
+                    <span style="font-size:48px;font-weight:800;line-height:1.1;color:var(--primary-color,#3b82f6);margin-bottom:8px;">${escapeHtml(asText(row.value))}</span>
+                    <span style="font-size:18px;font-weight:600;line-height:1.4;color:var(--background-text,#111827);margin-bottom:${asText(row.description) ? "4px" : "0"};">${escapeHtml(asText(row.label))}</span>
+                    ${asText(row.description) ? `<span style="font-size:14px;line-height:1.5;color:${backgroundTextMix(50)};">${escapeHtml(asText(row.description))}</span>` : ""}
+                  </div>`;
+              }).join("")}
+            </div>`}
         </div>`;
     }
 

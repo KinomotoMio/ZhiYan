@@ -106,7 +106,7 @@ _LAYOUTS: list[LayoutEntry] = [
     _build_layout_entry(
         layout_id="metrics-slide",
         name="指标卡片",
-        description="展示 2-4 个关键指标/KPI 数字，适合数据概览页",
+        description="\u652f\u6301 Executive Summary \u7ed3\u8bba\u5148\u884c\u7684\u6307\u6807\u9875\uff0c\u5e76\u517c\u5bb9\u5386\u53f2 metrics-only \u6570\u636e",
         output_model=MetricsSlideData,
     ),
     _build_layout_entry(

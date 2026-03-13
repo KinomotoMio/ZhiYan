@@ -56,6 +56,37 @@ def split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[st
     return sections[:midpoint], sections[midpoint:]
 
 
+def normalize_metrics_slide_data(
+    data: dict[str, Any],
+    *,
+    title_default: str = "关键指标",
+) -> dict[str, Any] | None:
+    title = _as_text(data.get("title"), title_default)
+    raw_metrics = data.get("metrics") if isinstance(data.get("metrics"), list) else []
+
+    metrics: list[dict[str, Any]] = []
+    for item in raw_metrics:
+        metric = _normalize_metric_item(item)
+        if metric is not None:
+            metrics.append(metric)
+
+    metrics = metrics[:4]
+    if not metrics:
+        return None
+
+    normalized: dict[str, Any] = {
+        "title": title,
+        "metrics": metrics,
+    }
+    conclusion = _as_text(data.get("conclusion"), "")
+    conclusion_brief = _as_text(data.get("conclusionBrief"), "")
+    if conclusion:
+        normalized["conclusion"] = conclusion
+    if conclusion_brief:
+        normalized["conclusionBrief"] = conclusion_brief
+    return normalized
+
+
 def normalize_presentation_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any]]:
     """Normalize persisted presentation payload."""
     normalized = deepcopy(payload)
@@ -104,6 +135,8 @@ def _normalize_layout_content(
 ) -> tuple[dict[str, Any], bool, bool, str]:
     if layout_id == "intro-slide":
         return _normalize_intro_slide(data)
+    if layout_id == "metrics-slide":
+        return _normalize_metrics_slide(data)
     if layout_id == "quote-slide":
         return _normalize_quote_slide(data)
     if layout_id == "thank-you":
@@ -174,6 +207,15 @@ def _normalize_outline_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool
     normalized = normalize_outline_slide_data(data)
     changed = normalized != data
     return normalized, changed, True, "outline-slide-shape" if changed else ""
+
+
+def _normalize_metrics_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    normalized = normalize_metrics_slide_data(data)
+    if normalized is None:
+        return data, False, False, "metrics-slide-unrecoverable"
+
+    changed = normalized != data
+    return normalized, changed, True, "metrics-slide-shape" if changed else ""
 
 
 def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
@@ -319,6 +361,29 @@ def _normalize_outline_section(
     if description:
         normalized["description"] = description
     return normalized
+
+
+def _normalize_metric_item(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    value = _as_text(raw.get("value"), "") or _as_text(raw.get("metric"), "") or _as_text(raw.get("number"), "")
+    label = _as_text(raw.get("label"), "") or _as_text(raw.get("title"), "") or _as_text(raw.get("name"), "")
+    description = _as_text(raw.get("description"), "") or _as_text(raw.get("detail"), "")
+
+    if not value and not label and not description:
+        return None
+
+    metric: dict[str, Any] = {
+        "value": value or label,
+        "label": label or value,
+    }
+    if description:
+        metric["description"] = description
+    icon = _normalize_icon(raw.get("icon"))
+    if icon is not None:
+        metric["icon"] = icon
+    return metric
 
 
 def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any] | None:

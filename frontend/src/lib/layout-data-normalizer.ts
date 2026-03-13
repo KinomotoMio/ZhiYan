@@ -89,7 +89,7 @@ function normalizeIcon(value: unknown): RecordLike | null {
 }
 
 function isPlaceholderText(text: string): boolean {
-  return ["内容生成中", "待补充", "自动回退生成"].includes(text.trim());
+  return ["\u5185\u5bb9\u751f\u6210\u4e2d", "\u5f85\u8865\u5145", "\u81ea\u52a8\u56de\u9000\u751f\u6210", "Content unavailable", "Pending", "Fallback generated"].includes(text.trim());
 }
 
 function normalizeStatus(raw: unknown): RecordLike | null {
@@ -100,8 +100,34 @@ function normalizeStatus(raw: unknown): RecordLike | null {
 }
 
 function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
-  const title = asText(data.title, "要点概览");
+  const title = asText(data.title, "\u8981\u70b9\u6982\u89c8");
   const rawItems = Array.isArray(data.items) ? data.items : [];
+  const placeholderOnly =
+    rawItems.length > 0 &&
+    rawItems.every((rawItem) => {
+      if (!isRecordLike(rawItem)) return false;
+      const itemTitle = asText(rawItem.title);
+      const itemDescription = asText(rawItem.description);
+      return Boolean(itemTitle && itemDescription && itemTitle === itemDescription);
+    });
+  if (placeholderOnly) {
+    const repaired: RecordLike = {
+      title,
+      items: [],
+      status: {
+        title: BULLET_PLACEHOLDER_TITLE,
+        message: BULLET_PLACEHOLDER_MESSAGE,
+      },
+    };
+    const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+    return {
+      data: repaired,
+      recoverable: true,
+      changed,
+      reason: changed ? "normalize bullet-with-icons fallback state" : null,
+    };
+  }
+
   const items: RecordLike[] = [];
 
   for (const rawItem of rawItems) {
@@ -112,11 +138,7 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
 
     if (!text) continue;
 
-    const repeatedPlaceholder =
-      itemTitle &&
-      itemDescription &&
-      itemTitle === itemDescription &&
-      isPlaceholderText(itemTitle);
+    const repeatedPlaceholder = itemTitle && itemDescription && itemTitle === itemDescription;
     if (repeatedPlaceholder) {
       continue;
     }
@@ -131,7 +153,7 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
 
   const explicitStatus = normalizeStatus(data.status);
   const inferredStatus =
-    items.length === 0
+    placeholderOnly || items.length === 0
       ? {
           title: BULLET_PLACEHOLDER_TITLE,
           message: BULLET_PLACEHOLDER_MESSAGE,
@@ -153,6 +175,63 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
     recoverable: true,
     changed,
     reason: changed ? "normalize bullet-with-icons fallback state" : null,
+  };
+}
+
+function normalizeMetricItem(raw: unknown): RecordLike | null {
+  if (!isRecordLike(raw)) return null;
+
+  const value = asText(raw.value) || asText(raw.metric) || asText(raw.number);
+  const label = asText(raw.label) || asText(raw.title) || asText(raw.name);
+  const description = asText(raw.description) || asText(raw.detail);
+
+  if (!value && !label && !description) return null;
+
+  const metric: RecordLike = {
+    value: value || label,
+    label: label || value,
+  };
+  if (description) {
+    metric.description = description;
+  }
+  const icon = normalizeIcon(raw.icon);
+  if (icon) {
+    metric.icon = icon;
+  }
+  return metric;
+}
+
+function normalizeMetricsSlide(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "\u5173\u952e\u6307\u6807");
+  const rawMetrics = Array.isArray(data.metrics) ? data.metrics : [];
+  const metrics = rawMetrics
+    .map((metric) => normalizeMetricItem(metric))
+    .filter((metric): metric is RecordLike => metric !== null)
+    .slice(0, 4);
+
+  if (metrics.length === 0) {
+    return { data, recoverable: false, changed: false, reason: "missing metrics-slide metrics" };
+  }
+
+  const repaired: RecordLike = {
+    title,
+    metrics,
+  };
+  const conclusion = asText(data.conclusion);
+  const conclusionBrief = asText(data.conclusionBrief);
+  if (conclusion) {
+    repaired.conclusion = conclusion;
+  }
+  if (conclusionBrief) {
+    repaired.conclusionBrief = conclusionBrief;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize metrics-slide shape" : null,
   };
 }
 
@@ -455,6 +534,9 @@ function normalizeThankYou(data: RecordLike): LayoutNormalizeResult {
 export function normalizeLayoutData(layoutId: string, data: Record<string, unknown>): LayoutNormalizeResult {
   if (layoutId === "intro-slide") {
     return normalizeIntroSlide(data);
+  }
+  if (layoutId === "metrics-slide") {
+    return normalizeMetricsSlide(data);
   }
   if (layoutId === "bullet-with-icons") {
     return normalizeBulletWithIcons(data);

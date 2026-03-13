@@ -14,6 +14,7 @@ from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
     is_bullet_icons_only_compact,
 )
+from app.services.presentations.normalizer import normalize_metrics_slide_data
 
 
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
@@ -333,25 +334,63 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "metrics-slide":
-        metrics = d.get("metrics")
+        normalized = normalize_metrics_slide_data(d)
+        if normalized is None:
+            return ""
+
+        metrics = normalized.get("metrics")
         metrics = metrics if isinstance(metrics, list) else []
-        card_html = "".join(
+        conclusion = _as_text(normalized.get("conclusion"))
+        conclusion_brief = _as_text(normalized.get("conclusionBrief"))
+        has_executive_summary = bool(conclusion or conclusion_brief)
+        cols = min(max(len(metrics), 1), 4)
+        if not has_executive_summary:
+            card_html = "".join(
+                (
+                    '<div style="text-align:center;padding:24px;">'
+                    f'<p style="font-size:48px;font-weight:bold;color:#3b82f6;">{escape(_as_text(m.get("value")) if isinstance(m, dict) else _as_text(m))}</p>'
+                    f'<p style="font-size:20px;font-weight:600;margin-top:12px;">{escape(_as_text(m.get("label")) if isinstance(m, dict) else "")}</p>'
+                    f'{_optional_paragraph(_as_text(m.get("description")) if isinstance(m, dict) else "", "font-size:15px;color:#6b7280;margin-top:8px;")}'
+                    "</div>"
+                )
+                for m in metrics
+            )
+            return (
+                '<div style="padding:60px 80px;height:100%;display:flex;flex-direction:column;">'
+                f'<h2 style="font-size:40px;font-weight:bold;margin-bottom:48px;">{escape(_as_text(normalized.get("title")))}</h2>'
+                f'<div style="display:grid;grid-template-columns:repeat({cols},1fr);gap:40px;flex:1;align-items:center;">{card_html}</div>'
+                "</div>"
+            )
+
+        conclusion_html = (
+            f'<p style="font-size:32px;font-weight:700;line-height:1.2;color:#111827;">{escape(conclusion)}</p>'
+            if conclusion
+            else ""
+        )
+        brief_margin = "16px" if conclusion else "0"
+        brief_html = (
+            f'<p style="font-size:17px;line-height:1.6;color:#4b5563;margin-top:{brief_margin};max-width:960px;">{escape(conclusion_brief)}</p>'
+            if conclusion_brief
+            else ""
+        )
+        executive_card_html = "".join(
             (
-                '<div style="text-align:center;padding:24px;">'
-                f'<p style="font-size:48px;font-weight:bold;color:#3b82f6;">{escape(_as_text(m.get("value")) if isinstance(m, dict) else _as_text(m))}</p>'
-                f'<p style="font-size:20px;font-weight:600;margin-top:12px;">{escape(_as_text(m.get("label")) if isinstance(m, dict) else "")}</p>'
-                f'{_optional_paragraph(_as_text(m.get("description")) if isinstance(m, dict) else "", "font-size:15px;color:#6b7280;margin-top:8px;")}'
+                '<div style="display:flex;flex-direction:column;min-height:168px;padding:20px 24px;border-radius:16px;background:rgba(59,130,246,0.05);">'
+                f'<p style="font-size:40px;font-weight:800;line-height:1.1;color:#3b82f6;">{escape(_as_text(m.get("value")) if isinstance(m, dict) else _as_text(m))}</p>'
+                f'<p style="font-size:17px;font-weight:600;line-height:1.35;color:#111827;margin-top:8px;">{escape(_as_text(m.get("label")) if isinstance(m, dict) else "")}</p>'
+                f'{_optional_paragraph(_as_text(m.get("description")) if isinstance(m, dict) else "", "font-size:13px;color:#6b7280;margin-top:4px;")}'
                 "</div>"
             )
             for m in metrics
         )
-        cols = min(max(len(metrics), 1), 4)
         return (
             '<div style="padding:60px 80px;height:100%;display:flex;flex-direction:column;">'
-            f'<h2 style="font-size:40px;font-weight:bold;margin-bottom:48px;">{escape(_as_text(d.get("title")))}</h2>'
-            f'<div style="display:grid;grid-template-columns:repeat({cols},1fr);gap:40px;flex:1;align-items:center;">'
-            f"{card_html}"
-            "</div></div>"
+            f'<h2 style="font-size:40px;font-weight:bold;margin-bottom:24px;">{escape(_as_text(normalized.get("title")))}</h2>'
+            '<div style="margin-bottom:32px;border-radius:28px;border:1px solid rgba(59,130,246,0.15);background:linear-gradient(135deg,rgba(59,130,246,0.10),rgba(255,255,255,0.92));padding:32px 40px;">'
+            f'{conclusion_html}{brief_html}'
+            '</div>'
+            f'<div style="display:grid;grid-template-columns:repeat({cols},1fr);gap:24px;flex:1;align-items:stretch;">{executive_card_html}</div>'
+            '</div>'
         )
 
     if layout_id == "metrics-with-image":
