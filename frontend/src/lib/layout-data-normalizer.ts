@@ -137,7 +137,7 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
 
     if (!text) continue;
 
-    const repeatedPlaceholder = itemTitle && itemDescription && itemTitle === itemDescription;
+    const repeatedPlaceholder = itemTitle && itemDescription && itemTitle === itemDescription && isPlaceholderText(itemTitle);
     if (repeatedPlaceholder) {
       continue;
     }
