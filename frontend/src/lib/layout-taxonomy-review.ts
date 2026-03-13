@@ -1,5 +1,8 @@
 import type { LayoutRole } from "@/lib/layout-role";
 
+// Temporary review overlay for #71.
+// This mirrors the current manual taxonomy baseline so /dev/layout-catalog can
+// render reviewed sub-groups and variant objects before shared metadata catches up.
 export type ReviewedSubGroup =
   | "default"
   | "icon-points"
