@@ -22,7 +22,7 @@ class ExportRequest(BaseModel):
 def _build_content_disposition(title: str, extension: str) -> str:
     raw_stem = (title or "presentation").strip()[:30] or "presentation"
     ascii_stem = raw_stem.encode("ascii", "ignore").decode("ascii")
-    ascii_stem = _FILENAME_FALLBACK_RE.sub("_", ascii_stem).strip("._")
+    ascii_stem = _FILENAME_FALLBACK_RE.sub("_", ascii_stem).strip("._-")
     fallback = ascii_stem or "presentation"
     fallback_filename = f"{fallback}.{extension}"
     encoded_filename = quote(f"{raw_stem}.{extension}")
