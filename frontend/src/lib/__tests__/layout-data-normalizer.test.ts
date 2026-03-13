@@ -89,3 +89,48 @@ test("normalizeLayoutData keeps legacy metrics-slide readable without fabricatin
   assert.equal("conclusion" in result.data, false);
   assert.equal("conclusionBrief" in result.data, false);
 });
+
+test("normalizeLayoutData keeps bullet-with-icons items when identical text is real content", () => {
+  const result = normalizeLayoutData("bullet-with-icons", {
+    title: "Team habits",
+    items: [
+      { title: "Same text", description: "Same text" },
+      { title: "Also same", description: "Also same" },
+      { title: "Third same", description: "Third same" },
+      { title: "Fourth same", description: "Fourth same" },
+    ],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.data, {
+    title: "Team habits",
+    items: [
+      { icon: { query: "star" }, title: "Same text", description: "Same text" },
+      { icon: { query: "star" }, title: "Also same", description: "Also same" },
+      { icon: { query: "star" }, title: "Third same", description: "Third same" },
+      { icon: { query: "star" }, title: "Fourth same", description: "Fourth same" },
+    ],
+  });
+});
+
+test("normalizeLayoutData collapses placeholder-only bullet-with-icons items into status state", () => {
+  const result = normalizeLayoutData("bullet-with-icons", {
+    title: "Auto fallback",
+    items: [
+      { title: "内容生成中", description: "内容生成中" },
+      { title: "待补充", description: "待补充" },
+    ],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.data, {
+    title: "Auto fallback",
+    items: [],
+    status: {
+      title: "内容暂未就绪",
+      message: "该页正在生成或已回退，可稍后重试。",
+    },
+  });
+});

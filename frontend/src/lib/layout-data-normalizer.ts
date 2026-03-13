@@ -107,7 +107,12 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
       if (!isRecordLike(rawItem)) return false;
       const itemTitle = asText(rawItem.title);
       const itemDescription = asText(rawItem.description);
-      return Boolean(itemTitle && itemDescription && itemTitle === itemDescription);
+      return Boolean(
+        itemTitle &&
+          itemDescription &&
+          itemTitle === itemDescription &&
+          isPlaceholderText(itemTitle)
+      );
     });
   if (placeholderOnly) {
     const repaired: RecordLike = {
