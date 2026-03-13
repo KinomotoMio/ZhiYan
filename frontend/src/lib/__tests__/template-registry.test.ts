@@ -27,6 +27,11 @@ const sharedLayoutMetadata = JSON.parse(
       };
       notes: {
         purpose: string;
+        structure_signal: string;
+        design_signal: string;
+        use_when: string;
+        avoid_when: string;
+        usage_bias: string;
       };
     }
   >;
