@@ -3,11 +3,18 @@ import type { LayoutRole } from "@/lib/layout-role";
 
 export type ReviewedSubGroup = string;
 
+type VariantAxes = typeof layoutMetadataJson.variantAxes;
+
+export type ReviewedVariantComposition = keyof VariantAxes["composition"];
+export type ReviewedVariantTone = keyof VariantAxes["tone"];
+export type ReviewedVariantStyle = keyof VariantAxes["style"];
+export type ReviewedVariantDensity = keyof VariantAxes["density"];
+
 export type ReviewedLayoutVariant = {
-  composition: string;
-  tone: string;
-  style: string;
-  density: string;
+  composition: ReviewedVariantComposition;
+  tone: ReviewedVariantTone;
+  style: ReviewedVariantStyle;
+  density: ReviewedVariantDensity;
 };
 
 export type ReviewedLayoutTaxonomy = {
