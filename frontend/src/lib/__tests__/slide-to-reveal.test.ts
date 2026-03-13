@@ -408,3 +408,28 @@ test("presentationToRevealHTML uses a generic alt fallback for metrics-with-imag
   assert.match(html, /<img src="https:\/\/example\.com\/metrics-image\.png" alt="Image"/);
 });
 
+test("presentationToRevealHTML uses a generic alt fallback for image-and-description urls", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-description-url-alt",
+        layoutType: "image-and-description",
+        layoutId: "image-and-description",
+        contentData: {
+          title: "Resolved Image",
+          description: "Has a real image URL.",
+          image: {
+            source: "ai",
+            prompt: "",
+            url: "https://example.com/description-image.png",
+          },
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /<img src="https:\/\/example\.com\/description-image\.png" alt="Image"/);
+});
+

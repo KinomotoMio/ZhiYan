@@ -581,7 +581,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
       return `
         <div style="display:flex;height:100%;">
           <div style="width:48%;flex-shrink:0;overflow:hidden;border-top-right-radius:24px;border-bottom-right-radius:24px;">
-            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || placeholder.title, "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
+            ${url ? renderImageFill(url, asText(image.alt) || asText(image.prompt) || "Image", "") : renderSimpleImagePlaceholder(placeholder.title, placeholder.detail, "height:100%;")}
           </div>
           <div style="display:flex;flex-direction:column;justify-content:center;flex:1;padding:56px;">
             <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 24px;">${escapeHtml(asText(d.title))}</h2>
