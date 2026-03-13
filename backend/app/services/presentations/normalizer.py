@@ -6,6 +6,8 @@ from copy import deepcopy
 import re
 from typing import Any
 
+from app.services.image_semantics import normalize_image_content_data
+
 _RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*\u2022+]\s*")
 _RE_ORDERED_LIST_PREFIX = re.compile(r"^\s*\d+[.)]\s*")
 _RE_WHITESPACE = re.compile(r"\s+")
@@ -102,21 +104,26 @@ def _normalize_layout_content(
     layout_id: str,
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], bool, bool, str]:
+    data_with_image_source = normalize_image_content_data(layout_id, data)
+    image_changed = data_with_image_source != data
+
     if layout_id == "intro-slide":
-        return _normalize_intro_slide(data)
+        return _normalize_intro_slide(data_with_image_source)
     if layout_id == "quote-slide":
-        return _normalize_quote_slide(data)
+        return _normalize_quote_slide(data_with_image_source)
     if layout_id == "thank-you":
-        return _normalize_thank_you(data)
+        return _normalize_thank_you(data_with_image_source)
     if layout_id == "outline-slide":
-        return _normalize_outline_slide(data)
+        return _normalize_outline_slide(data_with_image_source)
     if layout_id == "two-column-compare":
-        return _normalize_two_column_compare(data)
+        return _normalize_two_column_compare(data_with_image_source)
     if layout_id == "table-info":
-        return _normalize_table_info(data)
+        return _normalize_table_info(data_with_image_source)
     if layout_id == "challenge-outcome":
-        return _normalize_challenge_outcome(data)
-    return data, False, True, ""
+        return _normalize_challenge_outcome(data_with_image_source)
+    if image_changed:
+        return data_with_image_source, True, True, "image-ref-source"
+    return data_with_image_source, False, True, ""
 
 
 def _normalize_intro_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:

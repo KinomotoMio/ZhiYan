@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.models.slide import Slide
+from app.services.image_semantics import normalize_image_content_data
 
 logger = logging.getLogger(__name__)
 
@@ -541,20 +542,24 @@ async def stage_generate_slides(
 
 async def stage_resolve_assets(state: PipelineState, progress: ProgressHook | None = None) -> None:
     if progress:
-        await progress("assets", 5, TOTAL_STEPS, "处理资源...")
+        await progress("assets", 5, TOTAL_STEPS, "\u5904\u7406\u8d44\u6e90...")
 
     slides: list[Slide] = []
     for sc in state.slide_contents:
+        layout_id = sc.get("layout_id", "bullet-with-icons")
+        content_data = sc.get("content_data", {})
+        if isinstance(content_data, dict):
+            content_data = normalize_image_content_data(layout_id, content_data)
+
         slide = Slide(
             slideId=f"slide-{sc['slide_number']}",
-            layoutType=sc.get("layout_id", "bullet-with-icons"),
-            layoutId=sc.get("layout_id", "bullet-with-icons"),
-            contentData=sc.get("content_data", {}),
+            layoutType=layout_id,
+            layoutId=layout_id,
+            contentData=content_data,
             components=[],
         )
         slides.append(slide)
     state.slides = slides
-
 
 async def stage_verify_slides(
     state: PipelineState,
@@ -1030,7 +1035,10 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
                 {"value": f"{(i + 1) * 10}%", "label": f"指标 {i + 1}", "description": p}
                 for i, p in enumerate(metrics)
             ],
-            "image": {"prompt": "modern office presentation setting"},
+            "image": {
+                "source": "ai",
+                "prompt": "modern office presentation setting",
+            },
         }
     if layout_id == "chart-with-bullets":
         bullets = points[:4] if points else ["内容生成中", "内容生成中"]
@@ -1068,7 +1076,10 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     if layout_id == "image-and-description":
         return {
             "title": title,
-            "image": {"prompt": "business presentation illustration"},
+            "image": {
+                "source": "ai",
+                "prompt": "business presentation illustration",
+            },
             "description": points[0] if points else "内容生成中",
             "bullets": points[:3],
         }
