@@ -546,6 +546,7 @@ async def stage_verify_slides(
     progress: ProgressHook | None = None,
     enable_vision: bool = True,
     vision_timeout_seconds: float | None = None,
+    aesthetic_timeout_seconds: float | None = None,
 ) -> None:
     if progress:
         await progress("verify", 6, TOTAL_STEPS, "验证布局质量...")
@@ -561,24 +562,58 @@ async def stage_verify_slides(
         issues.append(issue_dict)
 
     if enable_vision and state.slides:
-        if vision_timeout_seconds is None:
+        if vision_timeout_seconds is None or aesthetic_timeout_seconds is None:
             from app.core.config import settings
 
             verify_timeout = float(settings.verify_timeout_seconds)
-            vision_timeout_seconds = min(
-                max(5.0, verify_timeout * 0.6),
-                max(1.0, verify_timeout - 1.0),
-            )
+            if vision_timeout_seconds is None:
+                vision_timeout_seconds = min(
+                    max(5.0, verify_timeout * 0.6),
+                    max(1.0, verify_timeout - 1.0),
+                )
+            if aesthetic_timeout_seconds is None:
+                aesthetic_timeout_seconds = min(
+                    max(5.0, vision_timeout_seconds * 1.25),
+                    max(1.0, verify_timeout - 1.0),
+                )
         presentation_dict = {
             "presentationId": "verification-temp",
             "title": state.topic or "演示文稿",
             "slides": [s.model_dump(mode="json", by_alias=True) for s in state.slides],
         }
-        aesthetic = await run_aesthetic_verification(
-            state.slides,
-            presentation_dict=presentation_dict,
-            vision_timeout_seconds=vision_timeout_seconds,
-        )
+        try:
+            if aesthetic_timeout_seconds and aesthetic_timeout_seconds > 0:
+                aesthetic = await asyncio.wait_for(
+                    run_aesthetic_verification(
+                        state.slides,
+                        presentation_dict=presentation_dict,
+                        vision_timeout_seconds=vision_timeout_seconds,
+                    ),
+                    timeout=aesthetic_timeout_seconds,
+                )
+            else:
+                aesthetic = await run_aesthetic_verification(
+                    state.slides,
+                    presentation_dict=presentation_dict,
+                    vision_timeout_seconds=vision_timeout_seconds,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Aesthetic verification exceeded %.1fs and was skipped to keep verify stage healthy",
+                aesthetic_timeout_seconds or 0.0,
+            )
+            issues.append(
+                {
+                    "slide_id": state.slides[0].slide_id,
+                    "severity": "warning",
+                    "category": "aesthetic",
+                    "message": "审美校验耗时过长，已跳过以避免 verify 阶段整体超时",
+                    "suggestion": "减少页数、降低视觉评估复杂度，或延长 verify 超时预算",
+                    "source": "aesthetic_timeout_fallback",
+                    "tier": "advisory",
+                }
+            )
+            aesthetic = None
         if aesthetic:
             for issue in aesthetic.issues:
                 issue_dict = issue.model_dump(mode="json")

@@ -349,6 +349,137 @@ def test_verify_timeout_persists_partial_presentation_and_emits_payload(monkeypa
     asyncio.run(_case())
 
 
+def test_verify_soft_timeout_completes_job_with_warning(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+
+        session_store = SessionStore(tmp_path / "sessions.db", tmp_path / "uploads")
+        await session_store.init()
+        await session_store.ensure_workspace("ws-runtime")
+        session = await session_store.create_session("ws-runtime", "生成会话")
+
+        from app.services.agents import layout_verifier
+        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as graph_mod
+        import app.services.sessions as sessions_pkg
+
+        async def fake_parse(state, progress=None):  # noqa: ARG001
+            state.document_metadata = {"char_count": len(state.raw_content)}
+
+        async def fake_outline(state, progress=None):  # noqa: ARG001
+            state.outline = {
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "封面",
+                        "suggested_layout_category": "intro",
+                        "key_points": [],
+                    }
+                ]
+            }
+
+        async def fake_layout(state, progress=None):  # noqa: ARG001
+            state.layout_selections = [{"slide_number": 1, "layout_id": "intro-slide"}]
+
+        async def fake_slides(state, per_slide_timeout, progress=None, on_slide=None):  # noqa: ARG001
+            state.slide_contents = [
+                {"slide_number": 1, "layout_id": "intro-slide", "content_data": {"title": "封面"}}
+            ]
+
+        async def fake_assets(state, progress=None):  # noqa: ARG001
+            from app.models.slide import Slide
+
+            state.slides = [
+                Slide(
+                    slideId="slide-1",
+                    layoutType="intro-slide",
+                    layoutId="intro-slide",
+                    contentData={"title": "封面"},
+                    components=[],
+                )
+            ]
+
+        async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+            await graph_mod.stage_verify_slides(
+                state,
+                progress=progress,
+                enable_vision=enable_vision,
+                vision_timeout_seconds=0.05,
+                aesthetic_timeout_seconds=0.01,
+            )
+
+        async def slow_aesthetic(*args, **kwargs):  # noqa: ARG001
+            await asyncio.sleep(0.05)
+            return None
+
+        originals = (
+            runner_mod.stage_parse_document,
+            runner_mod.stage_generate_outline,
+            runner_mod.stage_select_layouts,
+            runner_mod.stage_generate_slides,
+            runner_mod.stage_resolve_assets,
+            runner_mod.stage_verify_slides,
+            sessions_pkg.session_store,
+            layout_verifier.verify_programmatic,
+            layout_verifier.run_aesthetic_verification,
+        )
+        runner_mod.stage_parse_document = fake_parse
+        runner_mod.stage_generate_outline = fake_outline
+        runner_mod.stage_select_layouts = fake_layout
+        runner_mod.stage_generate_slides = fake_slides
+        runner_mod.stage_resolve_assets = fake_assets
+        runner_mod.stage_verify_slides = fake_verify
+        monkeypatch.setattr(sessions_pkg, "session_store", session_store)
+        monkeypatch.setattr(layout_verifier, "verify_programmatic", lambda slides: [])
+        monkeypatch.setattr(layout_verifier, "run_aesthetic_verification", slow_aesthetic)
+        try:
+            job = GenerationJob(
+                job_id="job-verify-soft-timeout",
+                request=GenerationRequestData(
+                    topic="测试",
+                    content="测试内容",
+                    resolved_content="测试内容",
+                    num_pages=3,
+                    session_id=session["id"],
+                    title="测试主题",
+                ),
+                outline_accepted=True,
+            )
+            await store.create_job(job)
+            await runner._run_job(job.job_id, from_stage=StageStatus.PARSE)  # noqa: SLF001
+
+            loaded = await store.get_job(job.job_id)
+            assert loaded is not None
+            assert loaded.status == JobStatus.COMPLETED
+            assert loaded.presentation is not None
+            assert any(issue["source"] == "aesthetic_timeout_fallback" for issue in loaded.issues)
+
+            events = await store.list_events(job.job_id)
+            job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+            assert job_failed == []
+            completed = [evt for evt in events if evt.type == EventType.JOB_COMPLETED]
+            assert completed
+        finally:
+            (
+                runner_mod.stage_parse_document,
+                runner_mod.stage_generate_outline,
+                runner_mod.stage_select_layouts,
+                runner_mod.stage_generate_slides,
+                runner_mod.stage_resolve_assets,
+                runner_mod.stage_verify_slides,
+                _,
+                _,
+                _,
+            ) = originals
+            monkeypatch.setattr(sessions_pkg, "session_store", originals[6])
+            monkeypatch.setattr(layout_verifier, "verify_programmatic", originals[7])
+            monkeypatch.setattr(layout_verifier, "run_aesthetic_verification", originals[8])
+
+    asyncio.run(_case())
+
+
 def test_two_column_compare_fallback_shape_on_slide_generation_error(monkeypatch):
     async def _case():
         from app.services.agents import slide_generator
