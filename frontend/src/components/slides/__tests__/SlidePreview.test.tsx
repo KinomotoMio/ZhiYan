@@ -53,6 +53,30 @@ test("outline-slide renders a two-column agenda page", () => {
   assert.match(html, />01<\/div>/);
 });
 
+test("outline-slide malformed sections do not crash preview rendering", () => {
+  const malformedSlide: Slide = {
+    slideId: "slide-outline-broken",
+    layoutType: "outline-slide",
+    layoutId: "outline-slide",
+    contentData: {
+      title: "Agenda broken",
+      sections: "not-an-array",
+    } as unknown as Slide["contentData"],
+    components: [],
+  };
+
+  let html = "";
+  assert.doesNotThrow(() => {
+    html = renderToStaticMarkup(<SlidePreview slide={malformedSlide} />);
+  });
+  assert.doesNotMatch(html, /该页数据异常，可重新生成/);
+  assert.match(html, /Agenda broken/);
+  assert.match(html, /\u80cc\u666f/);
+  assert.match(html, /\u5206\u6790/);
+  assert.match(html, /\u65b9\u6848/);
+  assert.match(html, /\u7ed3\u8bba/);
+});
+
 test("unrecoverable layout data renders fallback card", () => {
   const brokenSlide: Slide = {
     slideId: "slide-2",
@@ -193,7 +217,6 @@ test("metrics-slide preview renders executive summary and keeps legacy slides re
     },
     components: [],
   };
-
   const legacySlide: Slide = {
     slideId: "slide-metrics-legacy",
     layoutType: "metrics-slide",
@@ -207,17 +230,52 @@ test("metrics-slide preview renders executive summary and keeps legacy slides re
     },
     components: [],
   };
-
   const html = renderToStaticMarkup(
     <div>
       <SlidePreview slide={executiveSlide} />
       <SlidePreview slide={legacySlide} />
     </div>
   );
-
   assert.match(html, /Enterprise adoption is no longer the bottleneck\./);
   assert.match(html, /Coverage expanded across the org, so review latency is the next constraint\./);
   assert.match(html, /Legacy Snapshot/);
   assert.match(html, /template leverage/);
-  assert.doesNotMatch(html, /该��数据异常，可重新生成/);
+  assert.doesNotMatch(html, /\u8be5\u9875\u6570\u636e\u5f02\u5e38\uff0c\u53ef\u91cd\u65b0\u751f\u6210/);
+});
+test("image source placeholders render explicit user guidance", () => {
+  const userSlide: Slide = {
+    slideId: "slide-user-image",
+    layoutType: "image-and-description",
+    layoutId: "image-and-description",
+    contentData: {
+      title: "\u7528\u6237\u8865\u56fe",
+      description: "\u9700\u8981\u7ebf\u4e0b\u5b9e\u62cd\u3002",
+      image: { source: "user", prompt: "\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247" },
+    },
+    components: [],
+  };
+
+  const existingSlide: Slide = {
+    slideId: "slide-existing-image",
+    layoutType: "metrics-with-image",
+    layoutId: "metrics-with-image",
+    contentData: {
+      title: "\u73b0\u6709\u7d20\u6750",
+      metrics: [{ value: "12", label: "Assets" }],
+      image: { source: "existing", prompt: "\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe" },
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <div>
+      <SlidePreview slide={userSlide} />
+      <SlidePreview slide={existingSlide} />
+    </div>
+  );
+
+  assert.match(html, /\u5f85\u7528\u6237\u8865\u56fe\/\u4e0a\u4f20/);
+  assert.match(html, /\u8bf7\u4e0a\u4f20\u95e8\u5e97\u5b9e\u62cd\u7167\u7247/);
+  assert.match(html, /\u5f85\u7ed1\u5b9a\u73b0\u6709\u7d20\u6750/);
+  assert.match(html, /\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe/);
 });

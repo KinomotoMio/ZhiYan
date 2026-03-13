@@ -342,13 +342,23 @@ export default function SourcePanel() {
               migratedSessionId,
               "本地迁移快照",
               legacyPresentation as unknown as Presentation
-            ).catch(() => {});
+            ).catch((err) => {
+              console.error(
+                `Failed to create session snapshot for session ${migratedSessionId}:`,
+                err
+              );
+            });
           }
           for (const msg of legacyChats) {
             const role = msg.role === "assistant" ? "assistant" : "user";
             const content = typeof msg.content === "string" ? msg.content : "";
             if (!content.trim()) continue;
-            await appendSessionChat(migratedSessionId, { role, content }).catch(() => {});
+            await appendSessionChat(migratedSessionId, { role, content }).catch((err) => {
+              console.error(
+                `Failed to append session chat for session ${migratedSessionId}:`,
+                err
+              );
+            });
           }
           if (typeof window !== "undefined") {
             window.localStorage.setItem(MIGRATION_FLAG_KEY, "1");
@@ -437,7 +447,7 @@ export default function SourcePanel() {
           removeWorkspaceSource(tempId);
           addSelectedSource(meta.id);
           await refreshWorkspaceSources();
-          refreshSessions().catch(() => {});
+          refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
           if (meta.deduped) {
             toast.info("检测到重复素材，已复用已有内容");
           }
@@ -477,7 +487,7 @@ export default function SourcePanel() {
         removeWorkspaceSource(tempId);
         addSelectedSource(meta.id);
         await refreshWorkspaceSources();
-        refreshSessions().catch(() => {});
+        refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
         if (meta.deduped) {
           toast.info("检测到重复素材，已复用已有内容");
         }
@@ -518,7 +528,7 @@ export default function SourcePanel() {
           toast.error("关联素材失败，请稍后重试");
         }
       }
-      refreshSessions().catch(() => {});
+      refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
     },
     [
       addSelectedSource,
@@ -540,12 +550,16 @@ export default function SourcePanel() {
       deselectAllSources();
       await Promise.all(
         toUnlink.map((id) =>
-          unlinkSourceFromSession(sessionId, id).catch(() => {
+          unlinkSourceFromSession(sessionId, id).catch((err) => {
+            console.error(
+              `Failed to unlink source ${id} from session ${sessionId}:`,
+              err
+            );
             addSelectedSource(id);
           })
         )
       );
-      refreshSessions().catch(() => {});
+      refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
       return;
     }
 
@@ -560,7 +574,7 @@ export default function SourcePanel() {
       toLink.forEach((id) => removeSelectedSource(id));
       toast.error("批量关联失败，请稍后重试");
     }
-    refreshSessions().catch(() => {});
+    refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
   }, [
     addSelectedSource,
     allSelected,

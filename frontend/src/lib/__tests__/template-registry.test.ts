@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,6 +7,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogClient";
 import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
+
+const sharedLayoutMetadata = JSON.parse(
+  readFileSync(
+    new URL("../../../../shared/layout-metadata.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  layouts: Record<
+    string,
+    {
+      group: string;
+      subGroup: string;
+      variant: {
+        composition: string;
+        tone: string;
+        style: string;
+        density: string;
+      };
+      notes: {
+        purpose: string;
+        structure_signal: string;
+        design_signal: string;
+        use_when: string;
+        avoid_when: string;
+        usage_bias: string;
+      };
+    }
+  >;
+};
 
 test("template registry exposes usage metadata for built-in layouts", () => {
   const outline = getLayout("outline-slide");
@@ -18,6 +48,11 @@ test("template registry exposes usage metadata for built-in layouts", () => {
     style: "card-based",
     density: "medium",
   });
+  assert.equal(
+    outline.notes.purpose,
+    "用于交代整份演示的章节骨架，不负责深入解释单个章节内容。",
+  );
+  assert.match(outline.description, /章节骨架/);
   assert.deepEqual(outline.usage, [
     "academic-report",
     "business-report",
@@ -58,23 +93,50 @@ test("legacy layout variant helper remains available as a compatibility wrapper"
   assert.equal(getLayoutVariant("outline-slide"), "default");
 });
 
-test("layout catalog renders role-based group and variant metadata", () => {
+test("template registry matches shared metadata for all layouts", () => {
+  const allSharedLayoutIds = Object.keys(sharedLayoutMetadata.layouts);
+  const allRuntimeLayoutIds = getAllLayouts().map((entry) => entry.id);
+
+  assert.deepEqual(
+    allRuntimeLayoutIds.sort(),
+    allSharedLayoutIds.sort(),
+    "Mismatch between layouts in frontend registry and shared metadata",
+  );
+
+  for (const layoutId of allSharedLayoutIds) {
+    const runtime = getLayout(layoutId);
+    assert.ok(runtime, `Layout '${layoutId}' should be available in registry`);
+
+    const expected = sharedLayoutMetadata.layouts[layoutId];
+    assert.equal(runtime.group, expected.group);
+    assert.equal(runtime.subGroup, expected.subGroup);
+    assert.deepEqual(runtime.variant, expected.variant);
+    assert.deepEqual(runtime.notes, expected.notes);
+    assert.equal(runtime.description, expected.notes.purpose);
+  }
+});
+
+test("layout catalog renders template directory metadata and taxonomy reference", () => {
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
-  assert.match(html, /<th[^>]*>Group<\/th>/);
-  assert.match(html, /<th[^>]*>Sub-group<\/th>/);
-  assert.match(html, /<th[^>]*>Variant<\/th>/);
-  assert.match(html, /<th[^>]*>Runtime Variant<\/th>/);
-  assert.match(html, /Taxonomy-first review workspace/);
-  assert.match(html, /Compatibility runtime view/);
-  assert.match(html, /Current runtime notes source/);
+  assert.match(html, /Taxonomy reference/);
+  assert.match(html, />Group</);
+  assert.match(html, />Runtime Variant</);
+  assert.match(html, /Usage/);
+  assert.match(html, /Show details/);
+  assert.match(html, /Overview/);
+  assert.doesNotMatch(html, /Reviewed Sub-group/);
+  assert.doesNotMatch(html, /Reviewed Variant/);
+  assert.doesNotMatch(html, /Role Contract/);
+  assert.doesNotMatch(html, /Narrative Variant Pilot/);
+  assert.doesNotMatch(html, /Reviewed Taxonomy Baseline/);
   assert.match(html, /封面/);
   assert.match(html, /目录/);
   assert.match(html, /图标要点/);
   assert.match(html, /图文说明/);
   assert.match(html, /能力网格/);
-  assert.match(html, /Compatibility shim/);
-  assert.match(html, /Canonical variant/);
+  assert.match(html, />Sub-group</);
+  assert.match(html, /Variant axes/);
   assert.match(html, /composition/);
   assert.match(html, /tone/);
   assert.match(html, /style/);
@@ -89,11 +151,12 @@ test("layout catalog renders role-based group and variant metadata", () => {
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
-  assert.match(html, /<th[^>]*>Usage<\/th>/);
-  assert.match(html, /#75/);
+  assert.match(html, /compact glossary/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
+  assert.match(html, /用于建立演示开场身份与主题/);
+  assert.match(html, /main table stays focused on the template directory itself/);
 
   const bulletIconsOnly = html.indexOf("bullet-icons-only");
   const bulletWithIcons = html.indexOf("bullet-with-icons");

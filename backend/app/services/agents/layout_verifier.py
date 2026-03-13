@@ -371,6 +371,7 @@ def _extract_score(text: str) -> int:
         try:
             score = int(candidates[0])
             return max(0, min(score, 100))
-        except Exception:
-            pass
+        except ValueError as e:
+            logger.warning("Failed to parse score from candidate '%s': %s", candidates[0], e)
+
     return 80

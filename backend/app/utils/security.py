@@ -11,9 +11,14 @@ from fastapi import HTTPException
 
 URLPolicy = Literal["resolved_ip", "https_domain_only"]
 
-STRICT_POLICY_ERROR = "访问被拒绝: 不允许向内部或私有地址发送请求"
+STRICT_POLICY_ERROR = (
+    "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4e0d\u5141\u8bb8\u5411\u5185\u90e8\u6216"
+    "\u79c1\u6709\u5730\u5740\u53d1\u9001\u8bf7\u6c42"
+)
 HTTPS_DOMAIN_POLICY_ERROR = (
-    "访问被拒绝: 仅支持使用 https 的域名地址进行校验，不允许 localhost 或 IP 地址"
+    "\u8bbf\u95ee\u88ab\u62d2\u7edd: \u4ec5\u652f\u6301\u4f7f\u7528 https \u7684"
+    "\u57df\u540d\u5730\u5740\u8fdb\u884c\u6821\u9a8c\uff0c\u4e0d\u5141\u8bb8"
+    " localhost \u6216 IP \u5730\u5740"
 )
 
 _DOMAIN_LABEL_RE = re.compile(r"^[A-Za-z0-9-]{1,63}$")
@@ -98,19 +103,14 @@ async def _allows_resolved_ip(url: str) -> bool:
         return False
 
     loop = asyncio.get_running_loop()
-    ips = await loop.getaddrinfo(hostname, None)
-    for res in ips:
-        ip_str = res[4][0]
-        ip = ipaddress.ip_address(ip_str)
+    for res in await loop.getaddrinfo(hostname, None):
+        ip = ipaddress.ip_address(res[4][0])
         if not ip.is_global:
             return False
     return True
 
 
 async def is_safe_url(url: str, url_policy: URLPolicy = "resolved_ip") -> bool:
-    """
-    Check whether a URL is safe for server-side requests under the selected policy.
-    """
     try:
         if url_policy == "resolved_ip":
             return await _allows_resolved_ip(url)
@@ -122,7 +122,11 @@ async def is_safe_url(url: str, url_policy: URLPolicy = "resolved_ip") -> bool:
 
 
 def _build_policy_error(request: httpx.Request, url_policy: URLPolicy) -> str:
-    prefix = STRICT_POLICY_ERROR if url_policy == "resolved_ip" else HTTPS_DOMAIN_POLICY_ERROR
+    prefix = (
+        STRICT_POLICY_ERROR
+        if url_policy == "resolved_ip"
+        else HTTPS_DOMAIN_POLICY_ERROR
+    )
     return f"{prefix} ({request.url})"
 
 
@@ -143,18 +147,14 @@ _default_validate_url_hook = build_validate_url_hook()
 
 
 async def validate_url_hook(request: httpx.Request) -> None:
-    """
-    httpx request hook to validate the URL before sending the request.
-    """
     await _default_validate_url_hook(request)
 
 
 def get_safe_httpx_client(
-    *, url_policy: URLPolicy = "resolved_ip", **kwargs
+    *,
+    url_policy: URLPolicy = "resolved_ip",
+    **kwargs,
 ) -> httpx.AsyncClient:
-    """
-    Return an httpx.AsyncClient with SSRF protection enabled via request hooks.
-    """
     hooks = kwargs.pop("event_hooks", {}).copy()
     request_hooks = hooks.get("request", []).copy()
     request_hooks.append(build_validate_url_hook(url_policy=url_policy))

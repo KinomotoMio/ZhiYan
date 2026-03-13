@@ -9,6 +9,7 @@ type LayoutRecord = Record<
     group: LayoutGroup;
     subGroup: LayoutSubGroup;
     variant: LayoutVariantObject;
+    notes: LayoutTemplateNotes;
   }
 >;
 type SubGroupRecord = Record<
@@ -37,6 +38,15 @@ export type LayoutVariantObject = {
   density: LayoutVariantDensity;
 };
 
+export type LayoutTemplateNotes = {
+  purpose: string;
+  structure_signal: string;
+  design_signal: string;
+  use_when: string;
+  avoid_when: string;
+  usage_bias: string;
+};
+
 export type LayoutTaxonomyEntry = {
   group: LayoutGroup;
   subGroup: LayoutSubGroup;
@@ -62,6 +72,10 @@ export function getLayoutTaxonomy(layoutId: string): LayoutTaxonomyEntry | null 
     subGroup: metadata.subGroup as LayoutSubGroup,
     variant: metadata.variant,
   };
+}
+
+export function getLayoutNotes(layoutId: string): LayoutTemplateNotes | null {
+  return layouts[layoutId]?.notes ?? null;
 }
 
 export function getLayoutGroupLabel(group: LayoutGroup): string {
