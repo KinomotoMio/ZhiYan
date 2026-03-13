@@ -19,8 +19,9 @@
 
 ### 当前阶段的默认规则
 - 如果模板的主要差异体现在信息如何被组织，则优先记为 `sub-group`
-- 如果模板尚未有稳定、可复用的设计扩散命名，则 `variant` 暂记为 `default`
-- 除 narrative 试点外，本轮不主动为其他 group 发明新的 `sub-group` 或多维 `variant`
+- `variant` 的对象结构和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
+- 本记录不再把 `variant` 一律暂记为 `default`，而是回写当前 16 个 built-in template 的正式 variant 归属
+- 除 narrative 试点外，本轮仍不主动为其他 group 发明新的 `sub-group`
 - 本轮审校只对 built-in template 给出人工归属结论，不改共享 metadata，也不改 selector
 
 ### 审校来源
@@ -34,22 +35,22 @@
 
 | `layoutId` | 当前系统归属 | 审校后 `group` | 审校后 `sub-group` | 审校后 `variant` | 结论类型 | 人工判断理由 |
 |---|---|---|---|---|---|---|
-| `intro-slide` | `cover / default` | `cover` | `default` | `default` | `保留归属` | 该页承担封面职责，当前没有第二种稳定的信息结构分流。 |
-| `outline-slide` | `agenda / default` | `agenda` | `default` | `default` | `保留归属` | 该页负责目录导航，当前只有一种明确的章节骨架结构。 |
-| `section-header` | `section-divider / default` | `section-divider` | `default` | `default` | `保留归属` | 该页承担章节过渡，不需要额外结构层细分。 |
-| `bullet-with-icons` | `narrative / icon-points` | `narrative` | `icon-points` | `default` | `新增或调整 sub-group` | 图标分点是正文页的信息组织方式，属于结构层而不是设计扩散。 |
-| `image-and-description` | `narrative / visual-explainer` | `narrative` | `visual-explainer` | `default` | `新增或调整 sub-group` | 主视觉加说明文字定义的是正文承载结构，应迁移为 `sub-group`。 |
-| `bullet-icons-only` | `narrative / capability-grid` | `narrative` | `capability-grid` | `default` | `新增或调整 sub-group` | 能力矩阵/图标网格属于稳定的结构差异，不再作为旧 `variant` 继续保留。 |
-| `metrics-slide` | `evidence / default` | `evidence` | `default` | `default` | `保留归属` | 当前仍可统一视为证据页下的默认结构，本轮不额外拆分指标型子结构。 |
-| `metrics-with-image` | `evidence / default` | `evidence` | `default` | `default` | `保留归属` | 虽然包含视觉元素，但本轮尚不足以单独固化为稳定的 `sub-group`。 |
-| `chart-with-bullets` | `evidence / default` | `evidence` | `default` | `default` | `保留归属` | 图表解读与其他证据页存在差异，但本轮先保持 evidence 默认结构，避免过早膨胀 taxonomy。 |
-| `table-info` | `evidence / default` | `evidence` | `default` | `default` | `保留归属` | 表格页暂统一留在 evidence 默认结构，待后续实现 issue 再决定是否细分。 |
-| `two-column-compare` | `comparison / default` | `comparison` | `default` | `default` | `保留归属` | 该页承担并列对比职责，但本轮不把对比结构继续拆成更多 `sub-group`。 |
-| `challenge-outcome` | `comparison / default` | `comparison` | `default` | `default` | `保留归属` | 问题到方案的映射仍归在 comparison 组内，本轮先不单列结构子类。 |
-| `numbered-bullets` | `process / default` | `process` | `default` | `default` | `保留归属` | 该页承担步骤/方法流程，本轮默认仍归于 process 默认结构。 |
-| `timeline` | `process / default` | `process` | `default` | `default` | `保留归属` | 时间线存在潜在结构差异，但本轮暂不继续拆分 `process` 组。 |
-| `quote-slide` | `highlight / default` | `highlight` | `default` | `default` | `保留归属` | 单点强调页当前只有一种稳定结构，无需新增层级。 |
-| `thank-you` | `closing / default` | `closing` | `default` | `default` | `保留归属` | 收尾页继续作为 closing 默认结构，不为设计排版单独命名。 |
+| `intro-slide` | `cover / default` | `cover` | `default` | `{ composition: hero-center, tone: formal, style: editorial, density: low }` | `补充正式 variant` | 该页承担封面职责，结构层保持默认，设计层以开场式主视觉与低密度编排定版。 |
+| `outline-slide` | `agenda / default` | `agenda` | `default` | `{ composition: card-grid, tone: formal, style: card-based, density: medium }` | `补充正式 variant` | 目录页的稳定设计差异体现在卡片网格骨架和中等承载度。 |
+| `section-header` | `section-divider / default` | `section-divider` | `default` | `{ composition: section-break, tone: assertive, style: minimal, density: low }` | `补充正式 variant` | 章节过渡页继续保留默认结构，但设计层已能明确为切换感强、低密度的分隔骨架。 |
+| `bullet-with-icons` | `narrative / icon-points` | `narrative` | `icon-points` | `{ composition: icon-columns, tone: assertive, style: icon-led, density: medium }` | `新增或调整 sub-group + 定义 variant` | 图标分点属于结构层，同时其多列图标化编排和强调型气质可稳定沉淀为正式 variant。 |
+| `image-and-description` | `narrative / visual-explainer` | `narrative` | `visual-explainer` | `{ composition: media-split, tone: approachable, style: editorial, density: medium }` | `新增或调整 sub-group + 定义 variant` | 主视觉加说明文字继续作为 `sub-group`，设计层则定版为图文分栏、亲和讲解型 variant。 |
+| `bullet-icons-only` | `narrative / capability-grid` | `narrative` | `capability-grid` | `{ composition: capability-grid, tone: assertive, style: icon-led, density: high }` | `新增或调整 sub-group + 定义 variant` | 能力矩阵属于结构层，同时其高密度、图标驱动的网格呈现已具备稳定的设计变体语义。 |
+| `metrics-slide` | `evidence / default` | `evidence` | `default` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` | `补充正式 variant` | 指标卡片页在默认 evidence 结构下，可明确沉淀为数据优先、指标网格型 variant。 |
+| `metrics-with-image` | `evidence / default` | `evidence` | `default` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` | `补充正式 variant` | 虽仍归 evidence 默认结构，但设计层已稳定体现为数据与配图并置的分栏 variant。 |
+| `chart-with-bullets` | `evidence / default` | `evidence` | `default` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` | `补充正式 variant` | 图表与解读并置的分析骨架足以作为正式 variant，而不必先升级为新的 `sub-group`。 |
+| `table-info` | `evidence / default` | `evidence` | `default` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` | `补充正式 variant` | 表格主导的证据页目前仍可留在 evidence 默认结构，但设计层已能明确为高密度表格型 variant。 |
+| `two-column-compare` | `comparison / default` | `comparison` | `default` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` | `补充正式 variant` | 标准双栏对比页的设计特征主要体现在卡片化双栏骨架。 |
+| `challenge-outcome` | `comparison / default` | `comparison` | `default` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` | `补充正式 variant` | 问题到方案映射仍属 comparison 默认结构，但设计层气质和视觉语言已与标准对比页拉开差异。 |
+| `numbered-bullets` | `process / default` | `process` | `default` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` | `补充正式 variant` | 步骤页的稳定差异集中在顺序清单骨架和中性说明气质。 |
+| `timeline` | `process / default` | `process` | `default` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` | `补充正式 variant` | 时间线虽然仍保留 process 默认结构，但设计层已经形成清晰的带状时间轴 variant。 |
+| `quote-slide` | `highlight / default` | `highlight` | `default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` | `补充正式 variant` | 强调页的设计差异稳定落在单句聚焦和 statement 风格上。 |
+| `thank-you` | `closing / default` | `closing` | `default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` | `补充正式 variant` | 结尾页的正式 variant 应表达收束感与庆祝/致谢型气质，而不是继续停留在默认占位。 |
 
 ## 分组结论摘要
 
@@ -61,7 +62,7 @@
 - `icon-points` 作为 `bullet-with-icons` 的 `sub-group`
 - `visual-explainer` 作为 `image-and-description` 的 `sub-group`
 - `capability-grid` 作为 `bullet-icons-only` 的 `sub-group`
-- `narrative` 组下当前所有 template 的 `variant` 统一暂记为 `default`
+- narrative 组下三个模板都已经补足正式 variant 对象
 
 这意味着 `narrative` 原来的“多 `variant` 试点”，在新语义下应理解为“多 `sub-group` 试点”。
 
@@ -81,21 +82,23 @@
 
 - 当前 taxonomy 的首要目标是先让三层语义稳定
 - 除 narrative 外，其余 built-in template 虽然存在结构差异的讨论空间，但还不足以在本轮直接固化为正式 `sub-group`
-- 先把这些组统一记为 `sub-group=default`，可以避免在人工审校尚未完全收口时，把新的分类提前写死到实现层
+- 先把这些组统一记为 `sub-group=default`，可以避免在人工审校尚未完全收口时，把新的结构分类提前写死到实现层
+- 但这些组下的模板已经补足正式 `variant` 对象，用于表达设计排版扩散
 
 ### 关于 `variant`
-本轮没有为任何 built-in template 输出新的正式 `variant` 命名。
+本轮已经为所有 built-in template 输出正式 `variant` 对象归属。
 
 统一结论：
 
-- 当前所有 built-in template 的 `variant` 暂记为 `default`
+- 当前所有 built-in template 的 `variant` 都应视为四字段对象，而不再是单值 `default`
 - narrative 原来的三个旧 `variant` 名称已迁移为 `sub-group`
-- “设计排版扩散”这一层继续保留给后续实现与 notes 线路，不在本轮提前发明命名体系
+- 具体字段和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
 
 ## 对后续实现的要求
 - metadata / catalog / selector 后续只能消费本记录中的审校结论，不得继续直接沿用旧 `group + variant` 假设
 - 若后续要为 `evidence / comparison / process` 增加新的 `sub-group`，应基于模板页的稳定结构差异另行决策
 - `#68` 应把本记录中的 `group / sub-group / variant` 结论视为 notes 聚合的上游输入
+- 后续实现 issue 不得把 `variant` 重新降回单值字符串语义
 
 ## 本记录不做什么
 - 不修改 `shared/layout-metadata.json`
