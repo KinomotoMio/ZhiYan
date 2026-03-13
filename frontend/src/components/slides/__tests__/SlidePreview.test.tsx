@@ -27,7 +27,7 @@ test("two-column-compare malformed content does not crash", () => {
   assert.match(html, /核心框架|要点 A|要点 B/);
 });
 
-test("outline-slide renders a grid navigation page", () => {
+test("outline-slide renders a two-column agenda page", () => {
   const slide: Slide = {
     slideId: "slide-outline",
     layoutType: "outline-slide",
@@ -47,7 +47,8 @@ test("outline-slide renders a grid navigation page", () => {
 
   const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
   assert.match(html, /汇报目录/);
-  assert.match(html, /grid-template-columns:repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(html, /grid-cols-2/);
+  assert.match(html, /grid-template-rows:repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(html, /问题定义与业务场景/);
   assert.match(html, />01<\/div>/);
 });

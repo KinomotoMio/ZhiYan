@@ -86,7 +86,7 @@ test("presentationToRevealHTML keeps intro-slide title on background text colors
   assert.match(html, /color:color-mix\(in srgb, var\(--background-text,#111827\) 60%, transparent\)/);
 });
 
-test("presentationToRevealHTML renders outline-slide as a card grid", () => {
+test("presentationToRevealHTML renders outline-slide as a two-column agenda layout", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,
     slides: [
@@ -110,9 +110,10 @@ test("presentationToRevealHTML renders outline-slide as a card grid", () => {
   });
 
   assert.match(html, /Report Outline/);
-  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(html, /display:flex;gap:56px;flex:1;margin-top:48px;/);
+  assert.match(html, /grid-template-rows:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(html, /Context and problem framing/);
-  assert.match(html, /height:132px;background:linear-gradient/);
+  assert.match(html, /border-top:1px solid/);
   assert.match(html, /Background/);
   assert.match(html, /Results/);
 });
@@ -273,4 +274,38 @@ test("presentationToRevealHTML renders a fallback message for unrecoverable layo
   });
 
   assert.ok(html.includes("Slide data is unavailable in presentation mode."));
+});
+
+test("presentationToRevealHTML renders outline-slide as a two-column agenda layout", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-outline",
+        layoutType: "outline-slide",
+        layoutId: "outline-slide",
+        contentData: {
+          title: "Presentation Outline",
+          subtitle: "A quick way to preview the report structure.",
+          sections: [
+            { title: "Background", description: "Why this matters" },
+            { title: "Method", description: "How we approached it" },
+            { title: "Findings", description: "What we observed" },
+            { title: "Results", description: "What changed" },
+            { title: "Next Steps", description: "How to proceed" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Presentation Outline/);
+  assert.match(html, /Background/);
+  assert.match(html, /Next Steps/);
+  assert.match(html, /display:flex;gap:56px;flex:1;margin-top:48px;/);
+  assert.ok(html.includes(">01<"));
+  assert.ok(html.includes(">05<"));
+  assert.doesNotMatch(html, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(html, /shadow-\[/);
 });

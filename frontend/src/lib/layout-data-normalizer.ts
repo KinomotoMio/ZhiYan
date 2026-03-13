@@ -8,6 +8,7 @@ export interface LayoutNormalizeResult {
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
 const DEFAULT_FILLER = "内容生成中";
+const OUTLINE_FALLBACK_TITLES = ["背景", "分析", "方案", "结论", "实施", "总结"] as const;
 const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
 const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
@@ -61,7 +62,7 @@ function extractTextItemsFromText(rawText: string): string[] {
 
 function cleanMarkdownText(raw: string): string {
   return raw
-    .replace(/^\s*[-*•]+\s*/, "")
+    .replace(/^\s*[-*•+]\s*/, "")
     .replace(/^\s*\d+[.)]\s*/, "")
     .replace(/^\|+|\|+$/g, "")
     .replace(/\*\*/g, "")
@@ -243,6 +244,74 @@ function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize compare shape" : null };
 }
 
+function normalizeOutlineSection(value: unknown, index: number): RecordLike | null {
+  if (typeof value === "string") {
+    const title = asText(value);
+    if (!title) return null;
+    return { title };
+  }
+
+  if (!isRecordLike(value)) return null;
+
+  const title =
+    asText(value.title) ||
+    asText(value.text) ||
+    asText(value.label) ||
+    asText(value.heading) ||
+    asText(value.name);
+  const description = asText(value.description) || asText(value.summary) || asText(value.detail);
+
+  if (!title && !description) return null;
+
+  const section: RecordLike = {
+    title: title || OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}`,
+  };
+  if (description) {
+    section.description = description;
+  }
+  return section;
+}
+
+function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
+  const title = asText(data.title, "目录");
+  const subtitle = asText(data.subtitle);
+  const sourceSections = Array.isArray(data.sections)
+    ? data.sections
+    : Array.isArray(data.items)
+      ? data.items
+      : [];
+
+  const sections: RecordLike[] = [];
+  for (const [index, section] of sourceSections.entries()) {
+    const normalized = normalizeOutlineSection(section, index);
+    if (normalized) {
+      sections.push(normalized);
+    }
+  }
+
+  const repairedSections = sections.slice(0, 6);
+  while (repairedSections.length < 4) {
+    const index = repairedSections.length;
+    repairedSections.push({ title: OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}` });
+  }
+
+  const repaired: RecordLike = {
+    title,
+    sections: repairedSections,
+  };
+  if (subtitle) {
+    repaired.subtitle = subtitle;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize outline shape" : null,
+  };
+}
+
 function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
   const headers = extractTextItems(data.headers).length > 0
     ? extractTextItems(data.headers)
@@ -267,7 +336,7 @@ function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
 
   const resolvedHeaders = headers.length > 0
     ? headers
-    : (rows[0] ? rows[0].map((_, i) => `列${i + 1}`) : []);
+    : (rows[0] ? rows[0].map((_, i) => `列 ${i + 1}`) : []);
   if (resolvedHeaders.length === 0 || rows.length === 0) {
     return { data, recoverable: false, changed: false, reason: "invalid table shape" };
   }
@@ -354,44 +423,6 @@ function normalizeIntroSlide(data: RecordLike): LayoutNormalizeResult {
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize intro shape" : null };
 }
 
-function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
-  const title = asText(data.title, "目录导航");
-  const subtitle = asText(data.subtitle);
-  const sectionsRaw = Array.isArray(data.sections)
-    ? data.sections
-    : Array.isArray(data.items)
-      ? data.items
-      : [];
-
-  const sections = sectionsRaw
-    .map((entry) => {
-      if (typeof entry === "string" && entry.trim()) {
-        return { title: entry.trim() } satisfies OutlineSection;
-      }
-      if (!isRecordLike(entry)) return null;
-      const sectionTitle = asText(entry.title) || asText(entry.heading) || asText(entry.label);
-      if (!sectionTitle) return null;
-      const sectionDescription = asText(entry.description) || asText(entry.text);
-      return sectionDescription
-        ? ({ title: sectionTitle, description: sectionDescription } satisfies OutlineSection)
-        : ({ title: sectionTitle } satisfies OutlineSection);
-    })
-    .filter((entry): entry is OutlineSection => entry !== null);
-
-  if (sections.length < 4) {
-    return { data, recoverable: false, changed: false, reason: "insufficient outline sections" };
-  }
-
-  const repaired: RecordLike = {
-    title,
-    sections: sections.slice(0, 6),
-  };
-  if (subtitle) repaired.subtitle = subtitle;
-
-  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
-  return { data: repaired, recoverable: true, changed, reason: changed ? "normalize outline shape" : null };
-}
-
 function normalizeQuoteSlide(data: RecordLike): LayoutNormalizeResult {
   const quote = asText(data.quote) || asText(data.title);
   if (!quote) {
@@ -436,6 +467,9 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
   }
   if (layoutId === "thank-you") {
     return normalizeThankYou(data);
+  }
+  if (layoutId === "outline-slide") {
+    return normalizeOutlineSlide(data);
   }
   if (layoutId === "two-column-compare") {
     return normalizeTwoColumnCompare(data);

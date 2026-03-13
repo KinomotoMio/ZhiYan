@@ -12,7 +12,6 @@ from typing import Any
 
 from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
-    get_outline_slide_columns,
     is_bullet_icons_only_compact,
 )
 
@@ -116,6 +115,85 @@ def _render_components(components: Any) -> str:
     return "\n".join(blocks)
 
 
+
+OUTLINE_FALLBACK_TITLES = ("Background", "Analysis", "Solution", "Conclusion", "Implementation", "Summary")
+
+
+def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        raw = []
+
+    sections: list[dict[str, str]] = []
+    for index, item in enumerate(raw):
+        title = ""
+        description = ""
+        if isinstance(item, str):
+            title = item.strip()
+        elif isinstance(item, dict):
+            title = (
+                _as_text(item.get("title"))
+                or _as_text(item.get("text"))
+                or _as_text(item.get("label"))
+                or _as_text(item.get("heading"))
+                or _as_text(item.get("name"))
+            )
+            description = (
+                _as_text(item.get("description"))
+                or _as_text(item.get("summary"))
+                or _as_text(item.get("detail"))
+            )
+
+        if not title and not description:
+            continue
+
+        section = {"title": title or OUTLINE_FALLBACK_TITLES[index]}
+        if description:
+            section["description"] = description
+        sections.append(section)
+
+    sections = sections[:6]
+    while len(sections) < 4:
+        sections.append({"title": OUTLINE_FALLBACK_TITLES[len(sections)]})
+    return sections
+
+
+def _split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    midpoint = (len(sections) + 1) // 2
+    return sections[:midpoint], sections[midpoint:]
+
+
+def _render_outline_column(column: list[dict[str, str]], start_index: int) -> str:
+    if not column:
+        return ""
+
+    articles = []
+    for offset, section in enumerate(column):
+        index = start_index + offset + 1
+        title = escape(section.get("title", f"Section {index}"))
+        description = escape(section.get("description", ""))
+        description_html = (
+            f'<p style="font-size:15px;line-height:1.6;color:#64748b;margin:12px 0 0;max-width:420px;">{description}</p>'
+            if description
+            else ""
+        )
+        articles.append(
+            '<article style="border-top:1px solid #dbe2ea;padding-top:18px;display:flex;gap:20px;">'
+            '<div style="width:48px;flex-shrink:0;padding-top:4px;">'
+            f'<div style="font-size:13px;font-weight:700;letter-spacing:0.18em;color:#2563eb;">{index:02d}</div>'
+            '</div>'
+            '<div style="min-width:0;">'
+            f'<h3 style="font-size:28px;font-weight:600;line-height:1.05;color:#0f172a;margin:0;letter-spacing:-0.04em;">{title}</h3>'
+            f'{description_html}'
+            '</div>'
+            '</article>'
+        )
+
+    return (
+        f'<div style="flex:1;display:grid;grid-template-rows:repeat({len(column)},minmax(0,1fr));gap:24px;min-height:0;">'
+        f'{"".join(articles)}'
+        '</div>'
+    )
+
 def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     d = data
     if layout_id == "intro-slide":
@@ -147,33 +225,24 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "outline-slide":
-        sections = d.get("sections") if isinstance(d.get("sections"), list) else []
-        cols = get_outline_slide_columns(len(sections))
-        cards: list[str] = []
-        for idx, item in enumerate(sections[:6]):
-            if not isinstance(item, dict):
-                continue
-            title = escape(_as_text(item.get("title"), f"章节{idx + 1}"))
-            description = escape(_as_text(item.get("description")) or _as_text(item.get("title"), f"章节{idx + 1}"))
-            cards.append(
-                '<article style="overflow:hidden;border-radius:18px;border:1px solid rgba(15,23,42,0.06);'
-                'background:#ffffff;box-shadow:0 12px 30px rgba(15,23,42,0.06);">'
-                '<div style="border-bottom:1px solid rgba(15,23,42,0.06);padding:24px 28px;">'
-                f'<div style="font-size:14px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;margin-bottom:16px;">{idx + 1:02d}</div>'
-                f'<h3 style="font-size:30px;font-weight:500;line-height:0.96;letter-spacing:-0.06em;color:#111827;margin:0;min-height:58px;">{title}</h3>'
-                '</div>'
-                '<div style="height:132px;background:linear-gradient(135deg, rgba(59,130,246,0.16), rgba(17,24,39,0.1));"></div>'
-                '<div style="padding:16px 28px;background:#2f3642;color:#fff;">'
-                f'<div style="font-size:14px;line-height:1.45;min-height:40px;color:rgba(255,255,255,0.88);">{description}</div>'
-                '</div>'
-                '</article>'
-            )
+        sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
+        left, right = _split_outline_sections(sections)
+        subtitle = _as_text(d.get("subtitle"))
         return (
-            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;color:#111827;">'
-            f'<h2 style="font-size:42px;font-weight:700;line-height:1.15;letter-spacing:-0.04em;margin:0 0 16px;">{escape(_as_text(d.get("title"), "目录导航"))}</h2>'
-            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:17px;line-height:1.55;color:#6b7280;max-width:640px;")}'
-            f'<div style="display:grid;grid-template-columns:repeat({cols},minmax(0,1fr));column-gap:22px;row-gap:24px;flex:1;align-content:start;margin-top:40px;">{"".join(cards)}</div>'
-            "</div>"
+            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);">'
+            '<div style="display:flex;align-items:flex-end;gap:40px;">'
+            '<div style="max-width:560px;">'
+            '<div style="width:64px;height:6px;border-radius:9999px;background:#2563eb;margin-bottom:20px;"></div>'
+            f'<h2 style="font-size:42px;font-weight:bold;line-height:1.12;letter-spacing:-0.045em;color:#0f172a;margin:0 0 16px;">{escape(_as_text(d.get("title"), "Outline"))}</h2>'
+            f'{_optional_paragraph(subtitle, "font-size:17px;line-height:1.6;color:#64748b;margin:0;max-width:520px;")}'
+            '</div>'
+            '<div style="height:1px;flex:1;background:#dbe2ea;margin-bottom:12px;"></div>'
+            '</div>'
+            '<div style="display:flex;gap:56px;flex:1;margin-top:48px;">'
+            f'{_render_outline_column(left, 0)}'
+            f'{_render_outline_column(right, len(left))}'
+            '</div>'
+            '</div>'
         )
 
     if layout_id == "bullet-with-icons":

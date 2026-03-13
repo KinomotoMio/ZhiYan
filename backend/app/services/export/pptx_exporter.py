@@ -13,13 +13,14 @@ from typing import Any
 from pptx import Presentation as PptxPresentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
 from app.models.slide import Presentation, Component
+from app.services.presentations.normalizer import normalize_outline_slide_data, split_outline_sections
 from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
-    get_outline_slide_columns,
     is_bullet_icons_only_compact,
 )
 
@@ -307,6 +308,95 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
     return pairs
 
 
+GRAY_200 = RGBColor(0xDB, 0xE2, 0xEA)
+GRAY_900 = RGBColor(0x0F, 0x17, 0x2A)
+
+OUTLINE_ACCENT_LEFT = Inches(0.82)
+OUTLINE_ACCENT_TOP = Inches(0.62)
+OUTLINE_ACCENT_WIDTH = Inches(0.72)
+OUTLINE_ACCENT_HEIGHT = Inches(0.06)
+OUTLINE_TITLE_TOP = Inches(0.90)
+OUTLINE_TITLE_WIDTH = Inches(5.4)
+OUTLINE_TITLE_HEIGHT = Inches(0.70)
+OUTLINE_SUBTITLE_TOP = Inches(1.62)
+OUTLINE_SUBTITLE_WIDTH = Inches(5.2)
+OUTLINE_SUBTITLE_HEIGHT = Inches(0.58)
+OUTLINE_DIVIDER_LEFT = Inches(6.25)
+OUTLINE_DIVIDER_TOP = Inches(1.18)
+OUTLINE_DIVIDER_WIDTH = Inches(6.0)
+OUTLINE_DIVIDER_HEIGHT = Inches(0.02)
+OUTLINE_LEFT_COLUMN_LEFT = Inches(0.82)
+OUTLINE_RIGHT_COLUMN_LEFT = Inches(6.90)
+OUTLINE_CONTENT_TOP = Inches(2.18)
+OUTLINE_COLUMN_WIDTH = Inches(5.45)
+OUTLINE_COLUMN_HEIGHT = Inches(4.75)
+
+
+def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RGBColor):
+    shape = slide_obj.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top, width, height)
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = color
+    shape.line.fill.background()
+    return shape
+
+
+def _render_outline_column(
+    slide_obj,
+    sections: list[dict[str, str]],
+    start_index: int,
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+    accent_color: RGBColor,
+) -> None:
+    if not sections:
+        return
+
+    row_height = height // len(sections)
+    number_width = Inches(0.55)
+    gap_width = Inches(0.18)
+    title_left = left + number_width + gap_width
+    title_width = width - number_width - gap_width
+
+    for offset, section in enumerate(sections):
+        item_top = top + row_height * offset
+        _add_rule(slide_obj, left, item_top, width, Inches(0.02), GRAY_200)
+        _add_textbox(
+            slide_obj,
+            left,
+            item_top + Inches(0.10),
+            number_width,
+            Inches(0.25),
+            f"{start_index + offset + 1:02d}",
+            font_size=11,
+            bold=True,
+            color=accent_color,
+        )
+        _add_textbox(
+            slide_obj,
+            title_left,
+            item_top + Inches(0.05),
+            title_width,
+            Inches(0.45),
+            section.get("title", f"Section {start_index + offset + 1}"),
+            font_size=21,
+            bold=True,
+            color=GRAY_900,
+        )
+        description = section.get("description", "")
+        if description:
+            _add_textbox(
+                slide_obj,
+                title_left,
+                item_top + Inches(0.55),
+                title_width,
+                max(row_height - Inches(0.7), Inches(0.3)),
+                description,
+                font_size=12,
+                color=GRAY_600,
+            )
+
 def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGBColor | None = None) -> None:
     """根据 layout_id 和 contentData 渲染幻灯片内容"""
     color = theme_color or PRIMARY_COLOR
@@ -351,81 +441,42 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          alignment=PP_ALIGN.CENTER)
 
     elif layout_id == "outline-slide":
-        _add_textbox(
-            slide_obj,
-            Inches(0.7), Inches(0.5), Inches(6.0), Inches(0.9),
-            _as_text(d.get("title"), "目录导航"),
-            font_size=32, bold=True
-        )
-        subtitle = _as_text(d.get("subtitle"))
+        outline = normalize_outline_slide_data(d)
+        left_sections, right_sections = split_outline_sections(outline["sections"])
+        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
+        _add_textbox(slide_obj,
+                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
+                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
+        subtitle = _as_text(outline.get("subtitle"))
         if subtitle:
-            _add_textbox(
-                slide_obj,
-                Inches(0.7), Inches(1.15), Inches(6.0), Inches(0.8),
-                subtitle, font_size=14, color=GRAY_600
-            )
-
-        sections = d.get("sections") if isinstance(d.get("sections"), list) else []
-        count = min(max(len(sections), 0), 6)
-        if count > 0:
-            cols = get_outline_slide_columns(count)
-            rows = (count + cols - 1) // cols
-            card_width = 3.9 if cols == 3 else 5.95
-            card_height = 2.0 if rows >= 2 else 2.35
-            start_y = 2.1
-            gap_x = 0.25
-            gap_y = 0.28
-
-            for idx, section in enumerate(sections[:6]):
-                if not isinstance(section, dict):
-                    continue
-                col_idx = idx % cols
-                row_idx = idx // cols
-                left = Inches(0.7 + col_idx * (card_width + gap_x))
-                top = Inches(start_y + row_idx * (card_height + gap_y))
-
-                card = slide_obj.shapes.add_shape(
-                    1, left, top, Inches(card_width), Inches(card_height)
-                )
-                card.fill.solid()
-                card.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                card.line.color.rgb = RGBColor(0xEA, 0xEC, 0xF0)
-
-                _add_textbox(
-                    slide_obj,
-                    left + Inches(0.2), top + Inches(0.15), Inches(0.6), Inches(0.25),
-                    str(idx + 1).zfill(2), font_size=10, bold=True, color=GRAY_600
-                )
-                _add_textbox(
-                    slide_obj,
-                    left + Inches(0.2), top + Inches(0.48), Inches(card_width - 0.4), Inches(0.5),
-                    _as_text(section.get("title"), f"章节{idx + 1}"), font_size=22, bold=False
-                )
-
-                banner = slide_obj.shapes.add_shape(
-                    1,
-                    left + Inches(0.02),
-                    top + Inches(card_height - 0.72),
-                    Inches(card_width - 0.04),
-                    Inches(0.7),
-                )
-                banner.fill.solid()
-                banner.fill.fore_color.rgb = RGBColor(0x2F, 0x36, 0x42)
-                banner.line.fill.background()
-
-                _add_textbox(
-                    slide_obj,
-                    left + Inches(0.2), top + Inches(card_height - 0.58), Inches(card_width - 0.4), Inches(0.32),
-                    _as_text(section.get("description")) or _as_text(section.get("title"), f"章节{idx + 1}"),
-                    font_size=10, color=RGBColor(0xFF, 0xFF, 0xFF)
-                )
-
-    elif layout_id == "bullet-with-icons":
-        _add_textbox(
+            _add_textbox(slide_obj,
+                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
+                         subtitle, font_size=14, color=GRAY_600)
+        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
+        _render_outline_column(
             slide_obj,
-            Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
-            d.get("title", ""), font_size=36, bold=True
+            left_sections,
+            0,
+            OUTLINE_LEFT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
+            color,
         )
+        _render_outline_column(
+            slide_obj,
+            right_sections,
+            len(left_sections),
+            OUTLINE_RIGHT_COLUMN_LEFT,
+            OUTLINE_CONTENT_TOP,
+            OUTLINE_COLUMN_WIDTH,
+            OUTLINE_COLUMN_HEIGHT,
+            color,
+        )
+    elif layout_id == "bullet-with-icons":
+        _add_textbox(slide_obj,
+                     Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+                     d.get("title", ""), font_size=36, bold=True)
         items_source = d.get("items")
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
