@@ -33,6 +33,16 @@ class LayoutVariantObject:
 
 
 @dataclass(frozen=True)
+class LayoutTemplateNotes:
+    purpose: str
+    structure_signal: str
+    design_signal: str
+    use_when: str
+    avoid_when: str
+    usage_bias: str
+
+
+@dataclass(frozen=True)
 class LayoutTaxonomyEntry:
     group: LayoutGroup
     sub_group: str
@@ -59,6 +69,25 @@ def get_layout_taxonomy(layout_id: str) -> LayoutTaxonomyEntry | None:
             style=str(variant.get("style", "")),
             density=str(variant.get("density", "")),
         ),
+    )
+
+
+def get_layout_notes(layout_id: str) -> LayoutTemplateNotes | None:
+    metadata = _SHARED_METADATA["layouts"].get(layout_id)
+    if not isinstance(metadata, dict):
+        return None
+
+    notes = metadata.get("notes", {})
+    if not isinstance(notes, dict):
+        return None
+
+    return LayoutTemplateNotes(
+        purpose=str(notes.get("purpose", "")),
+        structure_signal=str(notes.get("structure_signal", "")),
+        design_signal=str(notes.get("design_signal", "")),
+        use_when=str(notes.get("use_when", "")),
+        avoid_when=str(notes.get("avoid_when", "")),
+        usage_bias=str(notes.get("usage_bias", "")),
     )
 
 

@@ -23,13 +23,21 @@ import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
-import { getLayoutTaxonomy, type LayoutGroup, type LayoutSubGroup, type LayoutVariantObject } from "@/lib/layout-taxonomy";
+import {
+  getLayoutNotes,
+  getLayoutTaxonomy,
+  type LayoutGroup,
+  type LayoutSubGroup,
+  type LayoutTemplateNotes,
+  type LayoutVariantObject,
+} from "@/lib/layout-taxonomy";
 import { getLayoutUsage, type LayoutUsageTag } from "@/lib/layout-usage";
 
 export interface LayoutEntry {
   id: string;
   name: string;
   description: string;
+  notes: LayoutTemplateNotes;
   group: LayoutGroup;
   subGroup: LayoutSubGroup;
   variant: LayoutVariantObject;
@@ -73,11 +81,13 @@ function ensureInitialized() {
   for (const mod of allModules) {
     if (!mod.layoutId || !mod.default) continue;
     const taxonomy = getLayoutTaxonomy(mod.layoutId);
-    if (!taxonomy) continue;
+    const notes = getLayoutNotes(mod.layoutId);
+    if (!taxonomy || !notes) continue;
     _registry.set(mod.layoutId, {
       id: mod.layoutId,
       name: mod.layoutName || mod.layoutId,
-      description: mod.layoutDescription || "",
+      description: notes.purpose,
+      notes,
       group: taxonomy.group,
       subGroup: taxonomy.subGroup,
       variant: taxonomy.variant,

@@ -238,6 +238,14 @@
         "style": "editorial",
         "density": "low"
       },
+      "notes": {
+        "purpose": "用于建立演示开场身份与主题，不负责展开正文内容。",
+        "structure_signal": "cover / default 适合单一主题入口，强调标题、身份与第一印象。",
+        "design_signal": "hero-center + formal + editorial + low 让注意力集中在标题和主题氛围上。",
+        "use_when": "当你需要一个正式、清晰、有开场感的封面页时优先使用。",
+        "avoid_when": "不适合承载多个并列信息点、目录导航或正文解释。",
+        "usage_bias": "强偏 academic-report、business-report、investor-pitch，对其他 usage 为中等兼容。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -258,6 +266,14 @@
         "style": "card-based",
         "density": "medium"
       },
+      "notes": {
+        "purpose": "用于交代整份演示的章节骨架，不负责深入解释单个章节内容。",
+        "structure_signal": "agenda / default 适合把 4-6 个章节块组织成统一目录视图。",
+        "design_signal": "card-grid + formal + card-based + medium 让目录既可扫读又保持章节边界。",
+        "use_when": "当你需要在正文前建立叙事顺序和章节预期时使用。",
+        "avoid_when": "不适合展示单一结论、图表分析或具体案例内容。",
+        "usage_bias": "强偏 academic-report、business-report、project-status，对 training-workshop 也较友好。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -275,6 +291,14 @@
         "tone": "assertive",
         "style": "minimal",
         "density": "low"
+      },
+      "notes": {
+        "purpose": "用于大章节之间的切换与提示，不负责承载大量新信息。",
+        "structure_signal": "section-divider / default 只保留章节标题和简短引导，强调结构切换。",
+        "design_signal": "section-break + assertive + minimal + low 提供清晰的阶段切换感而不分散注意力。",
+        "use_when": "当你需要在长 deck 中重置观众注意力、标记新章节时使用。",
+        "avoid_when": "不适合放目录、证据、步骤或任何需要完整阅读的信息块。",
+        "usage_bias": "强偏 conference-keynote、business-report、product-demo，其他 usage 为弱偏向。"
       },
       "usage": [
         "academic-report",
@@ -294,6 +318,14 @@
         "style": "icon-led",
         "density": "medium"
       },
+      "notes": {
+        "purpose": "用于正文中分点说明 3-4 个能力、优势或结论，不负责复杂流程或大段图文。",
+        "structure_signal": "narrative / icon-points 适合将并列要点组织成易扫读的图标分点结构。",
+        "design_signal": "icon-columns + assertive + icon-led + medium 强化每个要点的视觉锚点与结论感。",
+        "use_when": "当内容天然是 3-4 个并列卖点、能力点或结论点时使用。",
+        "avoid_when": "不适合讲时间线、表格数据或需要主视觉主导的故事页。",
+        "usage_bias": "强偏 sales-pitch、product-demo、investor-pitch，对 business-report 也很适用。"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -311,6 +343,14 @@
         "style": "icon-led",
         "density": "high"
       },
+      "notes": {
+        "purpose": "用于正文中的能力矩阵、模块总览或功能地图，不负责线性叙事。",
+        "structure_signal": "narrative / capability-grid 适合把多个并列能力点组织成高密度网格。",
+        "design_signal": "capability-grid + assertive + icon-led + high 强调覆盖面、并列关系和快速扫读。",
+        "use_when": "当你需要一页覆盖 4-8 个并列能力项时使用。",
+        "avoid_when": "不适合需要详细解释每一点，或需要时间顺序和主次层级的内容。",
+        "usage_bias": "强偏 product-demo、training-workshop、business-report，对 conference-keynote 为中偏向。"
+      },
       "usage": [
         "business-report",
         "training-workshop",
@@ -326,6 +366,14 @@
         "tone": "approachable",
         "style": "editorial",
         "density": "medium"
+      },
+      "notes": {
+        "purpose": "用于正文中的案例、场景或产品特性说明，不负责高密度信息压缩。",
+        "structure_signal": "narrative / visual-explainer 适合由一个主视觉承载情境，再配说明文字。",
+        "design_signal": "media-split + approachable + editorial + medium 让页面更适合讲解、展示和说明。",
+        "use_when": "当一张图能承担主要情绪或理解入口时优先使用。",
+        "avoid_when": "不适合没有视觉主体的纯要点页，也不适合高密度矩阵信息。",
+        "usage_bias": "强偏 product-demo、sales-pitch、conference-keynote，对 business-report 为中偏向。"
       },
       "usage": [
         "business-report",
@@ -344,6 +392,14 @@
         "style": "data-first",
         "density": "medium"
       },
+      "notes": {
+        "purpose": "用于展示少量核心 KPI 或指标摘要，不负责完整趋势解读。",
+        "structure_signal": "evidence / default 在证据页中以指标卡片作为主载体，突出关键数字。",
+        "design_signal": "stat-grid + formal + data-first + medium 适合用少量数据建立可信度和概览感。",
+        "use_when": "当结论可以被 2-4 个核心数字直接支撑时使用。",
+        "avoid_when": "不适合需要详细趋势分析、表格参数或图片说明并重的内容。",
+        "usage_bias": "强偏 business-report、investor-pitch、project-status，对 academic-report 也适用。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -359,6 +415,14 @@
         "tone": "assertive",
         "style": "data-first",
         "density": "medium"
+      },
+      "notes": {
+        "purpose": "用于同时展示关键指标和配图场景，不负责高密度表格或复杂图表分析。",
+        "structure_signal": "evidence / default 仍属于证据页，但通过图像补足语境和感知。",
+        "design_signal": "media-split + assertive + data-first + medium 让数据结论和场景视觉同时成立。",
+        "use_when": "当你既需要展示 KPI，又希望让产品或场景画面增强说服力时使用。",
+        "avoid_when": "不适合没有图像语境的纯数字概览，也不适合大量数据对比。",
+        "usage_bias": "强偏 sales-pitch、product-demo、investor-pitch，对 business-report 为中偏向。"
       },
       "usage": [
         "business-report",
@@ -376,6 +440,14 @@
         "style": "data-first",
         "density": "high"
       },
+      "notes": {
+        "purpose": "用于图表趋势与文字解读并置，不负责单页概览或大表格参数罗列。",
+        "structure_signal": "evidence / default 中更偏分析型，图表负责主证据，右侧要点负责解释。",
+        "design_signal": "analysis-split + formal + data-first + high 适合让图表阅读和观点提炼同时发生。",
+        "use_when": "当一张图表需要 2-3 个明确 takeaways 时使用。",
+        "avoid_when": "不适合只有一句结论的轻量证据页，也不适合纯表格信息。",
+        "usage_bias": "强偏 academic-report、business-report、project-status，对 investor-pitch 为中偏向。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -392,6 +464,14 @@
         "style": "data-first",
         "density": "high"
       },
+      "notes": {
+        "purpose": "用于结构化参数、矩阵和行列对照，不负责情绪化展示或单点强调。",
+        "structure_signal": "evidence / default 中更偏表格主导，适合行列清晰的结构化信息。",
+        "design_signal": "table-dominant + formal + data-first + high 强调信息完整度和严谨感。",
+        "use_when": "当核心信息天然需要按行列展开比较时使用。",
+        "avoid_when": "不适合需要图片主导、流程叙事或少量关键数字概览。",
+        "usage_bias": "强偏 academic-report、business-report、project-status，对 sales-pitch 为弱到中偏向。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -407,6 +487,14 @@
         "tone": "formal",
         "style": "card-based",
         "density": "medium"
+      },
+      "notes": {
+        "purpose": "用于并列比较两组对象或两种方案，不负责讲因果过程。",
+        "structure_signal": "comparison / default 适合稳定的左右对照结构，突出两侧差异。",
+        "design_signal": "dual-columns + formal + card-based + medium 让左右比较既清楚又有边界感。",
+        "use_when": "当你需要让观众快速比较 A/B、现状/目标、手工/自动化时使用。",
+        "avoid_when": "不适合讲问题到方案的映射链，也不适合多于两组对象的比较。",
+        "usage_bias": "强偏 business-report、sales-pitch、product-demo，对 investor-pitch 为中偏向。"
       },
       "usage": [
         "academic-report",
@@ -425,6 +513,14 @@
         "style": "minimal",
         "density": "medium"
       },
+      "notes": {
+        "purpose": "用于呈现问题到结果、挑战到方案的映射，不负责纯并列优劣对照。",
+        "structure_signal": "comparison / default 中更偏映射关系，每组内容带有明显的前后因果。",
+        "design_signal": "dual-columns + assertive + minimal + medium 让问题与回应之间形成更强的推进感。",
+        "use_when": "当内容是痛点或挑战到结果或方案这类对应关系时优先使用。",
+        "avoid_when": "不适合无因果关系的普通双栏比较，也不适合步骤型内容。",
+        "usage_bias": "强偏 business-report、sales-pitch、project-status，对 investor-pitch、product-demo 为中偏向。"
+      },
       "usage": [
         "business-report",
         "sales-pitch",
@@ -442,6 +538,14 @@
         "style": "minimal",
         "density": "medium"
       },
+      "notes": {
+        "purpose": "用于说明步骤、方法或执行路径，不负责表达真实时间里程碑。",
+        "structure_signal": "process / default 中更偏步骤清单，强调顺序而非时间坐标。",
+        "design_signal": "step-list + neutral + minimal + medium 让执行步骤保持可读性和方法感。",
+        "use_when": "当你要讲做法、流程、操作步骤或 rollout path 时使用。",
+        "avoid_when": "不适合讲按日期推进的时间线，也不适合高密度并列能力页。",
+        "usage_bias": "强偏 training-workshop、project-status、business-report，对 product-demo 为中偏向。"
+      },
       "usage": [
         "training-workshop",
         "project-status",
@@ -457,6 +561,14 @@
         "tone": "formal",
         "style": "minimal",
         "density": "medium"
+      },
+      "notes": {
+        "purpose": "用于表达时间顺序、里程碑或发展节奏，不负责方法步骤说明。",
+        "structure_signal": "process / default 中更偏时间轴，将事件绑定到时间节点上。",
+        "design_signal": "timeline-band + formal + minimal + medium 强调时间推进与阶段变化，而不是操作方法。",
+        "use_when": "当信息核心是时间、阶段、里程碑或发展历程时使用。",
+        "avoid_when": "不适合没有时间语义的步骤说明，也不适合单点结论页。",
+        "usage_bias": "强偏 project-status、academic-report、conference-keynote，对 business-report 为中偏向。"
       },
       "usage": [
         "academic-report",
@@ -475,6 +587,14 @@
         "style": "statement",
         "density": "low"
       },
+      "notes": {
+        "purpose": "用于强调一句核心结论、引用或原则，不负责组织复杂信息。",
+        "structure_signal": "highlight / default 适合把注意力聚焦到一句话，而不是多元素阅读。",
+        "design_signal": "quote-focus + assertive + statement + low 让页面情绪和焦点都收束到单句表达上。",
+        "use_when": "当你需要暂停叙事、突出原则、引用或关键结论时使用。",
+        "avoid_when": "不适合承载列表、图表、双栏比较或复杂说明。",
+        "usage_bias": "强偏 conference-keynote、business-report、academic-report，对 investor-pitch 为中偏向。"
+      },
       "usage": [
         "academic-report",
         "business-report",
@@ -490,6 +610,14 @@
         "tone": "celebratory",
         "style": "minimal",
         "density": "low"
+      },
+      "notes": {
+        "purpose": "用于收尾、致谢和结束，不负责引入新的分析或论证。",
+        "structure_signal": "closing / default 保持简单收束，让信息在结束感中自然落下。",
+        "design_signal": "closing-hero + celebratory + minimal + low 强调结束感、礼貌性和留白。",
+        "use_when": "当 deck 需要明确结束并留出提问或联系方式时使用。",
+        "avoid_when": "不适合继续承载新观点、数据、流程或目录信息。",
+        "usage_bias": "对全部 usage 普遍兼容，其中 conference-keynote、sales-pitch、investor-pitch 的结束需求更强。"
       },
       "usage": [
         "academic-report",
