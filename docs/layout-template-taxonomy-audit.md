@@ -54,16 +54,16 @@
 ## 分组结论摘要
 
 ### `narrative`
-本轮唯一明确需要从旧 `variant` 迁移出结构层的 group 仍然是 `narrative`。
+本轮唯一明确需要从旧 `variant` 迁移出结构层的 `group` 仍然是 `narrative`。
 
 最终结论：
 
 - `icon-points` 作为 `bullet-with-icons` 的 `sub-group`
 - `visual-explainer` 作为 `image-and-description` 的 `sub-group`
 - `capability-grid` 作为 `bullet-icons-only` 的 `sub-group`
-- narrative 组下当前所有 template 的 `variant` 统一暂记为 `default`
+- `narrative` 组下当前所有 template 的 `variant` 统一暂记为 `default`
 
-这意味着 narrative 原来的“多 variant 试点”，在新语义下应理解为“多 `sub-group` 试点”。
+这意味着 `narrative` 原来的“多 `variant` 试点”，在新语义下应理解为“多 `sub-group` 试点”。
 
 ### 其余 group
 本轮继续保持以下 group 为默认结构：
