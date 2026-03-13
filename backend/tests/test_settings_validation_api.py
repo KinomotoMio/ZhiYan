@@ -38,14 +38,14 @@ def test_validate_openai_accepts_https_gateway_without_dns_global_resolution(mon
         json={
             "provider": "openai",
             "api_key": "sk-test",
-            "base_url": "https://gateway.example.com/v1",
+            "base_url": "https://gateway.public-gateway.dev/v1",
         },
     )
 
     assert resp.status_code == 200
     assert resp.json() == {"valid": True, "message": "OpenAI API Key 验证成功"}
     assert seen["url_policy"] == "https_domain_only"
-    assert seen["requested_url"] == "https://gateway.example.com/v1/models"
+    assert seen["requested_url"] == "https://gateway.public-gateway.dev/v1/models"
 
 
 def test_validate_openai_rejects_ip_literal_base_url(monkeypatch):
@@ -92,6 +92,29 @@ def test_validate_openai_rejects_http_gateway(monkeypatch):
     assert body["valid"] is False
     assert "仅支持使用 https 的域名地址进行校验" in body["message"]
     assert "http://gateway.example.com/v1/models" in body["message"]
+
+
+def test_validate_openai_rejects_private_use_hostname_suffix(monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:  # noqa: ARG001
+        raise AssertionError("transport should not be called for blocked URLs")
+
+    _install_mock_client(monkeypatch, handler)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/settings/validate",
+        json={
+            "provider": "openai",
+            "api_key": "sk-test",
+            "base_url": "https://proxy.internal/v1",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is False
+    assert "仅支持使用 https 的域名地址进行校验" in body["message"]
+    assert "proxy.internal" in body["message"]
 
 
 def test_validate_google_sends_api_key_in_header(monkeypatch):
@@ -156,7 +179,7 @@ def test_validate_openai_maps_401_to_invalid_key(monkeypatch):
         json={
             "provider": "openai",
             "api_key": "sk-invalid",
-            "base_url": "https://gateway.example.com/v1",
+            "base_url": "https://gateway.public-gateway.dev/v1",
         },
     )
 

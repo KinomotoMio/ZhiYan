@@ -15,7 +15,7 @@ def test_https_domain_only_allows_openai_domain():
 def test_https_domain_only_allows_custom_gateway_domain():
     assert asyncio.run(
         security.is_safe_url(
-            "https://gateway.example.com/v1/models",
+            "https://gateway.public-gateway.dev/v1/models",
             url_policy="https_domain_only",
         )
     )
@@ -57,6 +57,24 @@ def test_https_domain_only_does_not_use_resolved_ip_policy(monkeypatch):
     assert asyncio.run(
         security.is_safe_url(
             "https://api.openai.com/v1/models",
+            url_policy="https_domain_only",
+        )
+    )
+
+
+def test_https_domain_only_rejects_private_use_hostname_suffix():
+    assert not asyncio.run(
+        security.is_safe_url(
+            "https://api.gateway.internal/v1/models",
+            url_policy="https_domain_only",
+        )
+    )
+
+
+def test_https_domain_only_rejects_embedded_credentials():
+    assert not asyncio.run(
+        security.is_safe_url(
+            "https://user:secret@gateway.public-gateway.dev/v1/models",
             url_policy="https_domain_only",
         )
     )

@@ -25,6 +25,15 @@ _LOCAL_HOSTNAMES = {
     "ip6-loopback",
     "loopback",
 }
+_PRIVATE_USE_HOSTNAME_SUFFIXES = (
+    ".internal",
+    ".intranet",
+    ".corp",
+    ".home",
+    ".lan",
+    ".local",
+    ".localdomain",
+)
 
 
 def _is_ip_literal(hostname: str) -> bool:
@@ -55,13 +64,25 @@ def _is_domain_hostname(hostname: str) -> bool:
     )
 
 
+def _has_private_use_hostname_suffix(hostname: str) -> bool:
+    normalized = hostname.rstrip(".").lower()
+    return any(normalized.endswith(suffix) for suffix in _PRIVATE_USE_HOSTNAME_SUFFIXES)
+
+
 def _allows_https_domain_only(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme != "https":
         return False
+    if parsed.username or parsed.password:
+        return False
 
     hostname = parsed.hostname
-    if not hostname or _is_local_hostname(hostname) or _is_ip_literal(hostname):
+    if (
+        not hostname
+        or _is_local_hostname(hostname)
+        or _is_ip_literal(hostname)
+        or _has_private_use_hostname_suffix(hostname)
+    ):
         return False
 
     return _is_domain_hostname(hostname)
