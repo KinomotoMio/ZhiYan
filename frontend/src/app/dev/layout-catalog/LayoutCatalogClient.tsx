@@ -665,9 +665,10 @@ export function LayoutCatalogClientPage() {
             <h2 className="text-lg font-semibold text-slate-900">Role Contract</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               `group` here means the page&apos;s function in the whole deck
-              skeleton, not just its visual style. `variant` sits under the
-              group and describes the reusable structure track inside that page
-              role. Narrative is the first role piloting this extra layer.
+              skeleton, not just its visual style. Shared metadata now stores a
+              reviewed `group / sub-group / variant` baseline, while the
+              runtime helper layer still exposes a compatibility `variant`
+              string until `#73` lands.
             </p>
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -701,10 +702,11 @@ export function LayoutCatalogClientPage() {
               Narrative Variant Pilot
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Narrative is the first group that now exposes multiple formal
-              variants. Other groups stay on a single `default` variant for now
-              so the registry shape is already consistent before selector logic
-              is upgraded.
+              This panel still reflects the current compatibility runtime
+              variant track. Narrative is the only group whose compatibility
+              variant maps to a non-default `sub-group`; every other group stays
+              on a single `default` runtime variant until the public registry
+              interfaces are upgraded.
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -725,10 +727,11 @@ export function LayoutCatalogClientPage() {
               Reviewed Taxonomy Baseline
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Runtime metadata still exposes the old single-value `variant`
-              field. The reviewed baseline below overlays the current manual
-              decisions from `#62` and `#71` so you can inspect `sub-group`
-              plus the four-field variant object directly inside the catalog.
+              The reviewed baseline below now comes directly from shared
+              metadata. Runtime helpers still expose the old single-value
+              `variant` field, but the canonical source of truth already stores
+              `sub-group` plus the four-field variant object used by the review
+              flow.
             </p>
           </div>
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -749,9 +752,9 @@ export function LayoutCatalogClientPage() {
               </h3>
               <p className="mt-2 text-sm leading-6 text-slate-700">
                 The reviewed `variant` baseline is now a four-field object:
-                `composition`, `tone`, `style`, and `density`. This panel is
-                here to make those decisions easy to compare before runtime
-                metadata catches up.
+                `composition`, `tone`, `style`, and `density`. This panel makes
+                those canonical metadata decisions easy to compare while the
+                public runtime interfaces are still on the compatibility shim.
               </p>
             </article>
           </div>

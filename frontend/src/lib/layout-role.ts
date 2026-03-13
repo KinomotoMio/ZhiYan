@@ -12,40 +12,56 @@ export type LayoutRole =
   | "closing";
 
 type SharedLayoutMetadata = {
-  roleOrder: LayoutRole[];
-  roleLabels: Record<LayoutRole, string>;
-  roleDescriptions: Record<LayoutRole, string>;
-  variantPilotRoles: LayoutRole[];
-  variantsByRole: Record<
+  groupOrder: LayoutRole[];
+  groupLabels: Record<LayoutRole, string>;
+  groupDescriptions: Record<LayoutRole, string>;
+  subGroupsByGroup: Record<
     LayoutRole,
     Record<string, { label: string; description: string }>
   >;
   layouts: Record<
     string,
-    { role: LayoutRole; variant: string; usage: string[] }
+    {
+      group: LayoutRole;
+      subGroup: string;
+      variant: {
+        composition: string;
+        tone: string;
+        style: string;
+        density: string;
+      };
+      usage: string[];
+    }
   >;
 };
 
 const layoutMetadata = layoutMetadataJson as SharedLayoutMetadata;
 
-export const LAYOUT_ROLE_ORDER: LayoutRole[] = [...layoutMetadata.roleOrder];
+export const LAYOUT_ROLE_ORDER: LayoutRole[] = [...layoutMetadata.groupOrder];
 
 export const LAYOUT_ROLE_LABELS: Record<LayoutRole, string> = {
-  ...layoutMetadata.roleLabels,
+  ...layoutMetadata.groupLabels,
 };
 
 export const LAYOUT_ROLE_DESCRIPTIONS: Record<LayoutRole, string> = {
-  ...layoutMetadata.roleDescriptions,
+  ...layoutMetadata.groupDescriptions,
 };
 
 export const VARIANT_PILOT_ROLES = new Set<LayoutRole>(
-  layoutMetadata.variantPilotRoles,
+  (Object.entries(layoutMetadata.subGroupsByGroup) as Array<
+    [LayoutRole, Record<string, { label: string; description: string }>]
+  >)
+    .filter(([, subGroups]) => {
+      const keys = Object.keys(subGroups);
+      return keys.length > 1 || keys.some((key) => key !== "default");
+    })
+    .map(([group]) => group),
 );
 
 const LAYOUT_ID_TO_ROLE: Record<string, LayoutRole> = Object.fromEntries(
   Object.entries(layoutMetadata.layouts).map(([layoutId, metadata]) => [
     layoutId,
-    metadata.role,
+    metadata.group,
   ]),
 ) as Record<string, LayoutRole>;
 

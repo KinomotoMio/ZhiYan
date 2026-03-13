@@ -15,18 +15,51 @@ type VariantDefinition = {
 };
 
 type SharedLayoutMetadata = {
-  variantsByRole: Record<LayoutRole, Record<string, VariantDefinition>>;
-  layouts: Record<string, { role: LayoutRole; variant: LayoutVariant; usage: string[] }>;
+  subGroupsByGroup: Record<LayoutRole, Record<string, VariantDefinition>>;
+  layouts: Record<
+    string,
+    {
+      group: LayoutRole;
+      subGroup: string;
+      variant: {
+        composition: string;
+        tone: string;
+        style: string;
+        density: string;
+      };
+      usage: string[];
+    }
+  >;
 };
 
 const layoutMetadata = layoutMetadataJson as SharedLayoutMetadata;
 
-const VARIANTS_BY_ROLE = layoutMetadata.variantsByRole;
+const VARIANTS_BY_ROLE: Record<LayoutRole, Record<LayoutVariant, VariantDefinition>> =
+  Object.fromEntries(
+    (
+      Object.entries(layoutMetadata.subGroupsByGroup) as Array<
+        [LayoutRole, Record<string, VariantDefinition>]
+      >
+    ).map(([group, subGroups]) => {
+      const compatibilityVariants =
+        group === "narrative"
+          ? subGroups
+          : {
+              default:
+                subGroups.default ?? {
+                  label: "默认变体",
+                  description: "当前组尚未展开正式的结构型兼容变体。",
+                },
+            };
+
+      return [group, compatibilityVariants];
+    }),
+  ) as Record<LayoutRole, Record<LayoutVariant, VariantDefinition>>;
 
 const LAYOUT_ID_TO_VARIANT: Record<string, LayoutVariant> = Object.fromEntries(
   Object.entries(layoutMetadata.layouts).map(([layoutId, metadata]) => [
     layoutId,
-    metadata.variant,
+    metadata.group === "narrative" ? metadata.subGroup : "default",
   ]),
 ) as Record<string, LayoutVariant>;
 
