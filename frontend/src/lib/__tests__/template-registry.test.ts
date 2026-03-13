@@ -93,21 +93,25 @@ test("legacy layout variant helper remains available as a compatibility wrapper"
   assert.equal(getLayoutVariant("outline-slide"), "default");
 });
 
-test("template registry matches shared metadata for representative layouts", () => {
-  for (const layoutId of [
-    "bullet-with-icons",
-    "image-and-description",
-    "metrics-slide",
-    "thank-you",
-  ] as const) {
+test("template registry matches shared metadata for all layouts", () => {
+  const allSharedLayoutIds = Object.keys(sharedLayoutMetadata.layouts);
+  const allRuntimeLayoutIds = getAllLayouts().map((entry) => entry.id);
+
+  assert.deepEqual(
+    allRuntimeLayoutIds.sort(),
+    allSharedLayoutIds.sort(),
+    "Mismatch between layouts in frontend registry and shared metadata",
+  );
+
+  for (const layoutId of allSharedLayoutIds) {
     const runtime = getLayout(layoutId);
-    assert.ok(runtime);
+    assert.ok(runtime, `Layout '${layoutId}' should be available in registry`);
 
     const expected = sharedLayoutMetadata.layouts[layoutId];
     assert.equal(runtime.group, expected.group);
     assert.equal(runtime.subGroup, expected.subGroup);
     assert.deepEqual(runtime.variant, expected.variant);
-    assert.equal(runtime.notes.purpose, expected.notes.purpose);
+    assert.deepEqual(runtime.notes, expected.notes);
     assert.equal(runtime.description, expected.notes.purpose);
   }
 });
