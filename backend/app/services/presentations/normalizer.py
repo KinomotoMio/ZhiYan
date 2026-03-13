@@ -61,7 +61,7 @@ def split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[st
 def normalize_metrics_slide_data(
     data: dict[str, Any],
     *,
-    title_default: str = "鍏抽敭鎸囨爣",
+    title_default: str = "\u5173\u952e\u6307\u6807",
 ) -> dict[str, Any] | None:
     title = _as_text(data.get("title"), title_default)
     raw_metrics = data.get("metrics") if isinstance(data.get("metrics"), list) else []

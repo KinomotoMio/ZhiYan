@@ -168,6 +168,6 @@ class ChallengeOutcomeData(BaseModel):
 
 
 class ThankYouData(BaseModel):
-    title: str = Field(default="璋㈣阿", min_length=2, max_length=20, description="Thank-you title")
+    title: str = Field(default="\u8c22\u8c22", min_length=2, max_length=20, description="Thank-you title")
     subtitle: str | None = Field(None, max_length=60, description="Thank-you subtitle")
     contact: str | None = Field(None, max_length=60, description="Contact info")
