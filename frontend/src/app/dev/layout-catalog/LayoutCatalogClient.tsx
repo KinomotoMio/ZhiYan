@@ -758,7 +758,8 @@ export function LayoutCatalogClientPage() {
         </section>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full table-fixed border-collapse">
+          <div className="overflow-x-auto">
+            <table className="min-w-[2440px] table-fixed border-collapse">
             <thead className="bg-slate-100 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
               <tr>
                 <th className="w-[360px] px-5 py-4">Preview</th>
@@ -773,75 +774,76 @@ export function LayoutCatalogClientPage() {
                 <th className="px-5 py-4">Notes</th>
               </tr>
             </thead>
-            <tbody>
-              {sortedEntries.map((entry) => {
-                const Component = entry.module.default;
-                return (
-                  <tr
-                    key={entry.module.layoutId}
-                    className="border-t border-slate-200 align-top"
-                  >
-                    <td className="px-5 py-5">
-                      <PreviewFrame Component={Component} data={entry.data} />
-                    </td>
-                    <td className="px-5 py-5">
-                      <div className="text-sm font-semibold text-slate-900">
-                        {entry.module.layoutName}
-                      </div>
-                      <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                        {entry.module.layoutId}
-                      </code>
-                    </td>
-                    <td className="px-5 py-5">
-                      <code className="block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                        frontend/src/components/slide-layouts/{entry.fileName}
-                      </code>
-                    </td>
-                    <td className="px-5 py-5">
-                      <div className="text-sm font-medium text-slate-900">
-                        {entry.schemaName}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {entry.keyFields.map((field) => (
-                          <span
-                            key={field}
-                            className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
-                          >
-                            {field}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-5 py-5">
-                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                        {getLayoutRoleLabel(entry.group)}
-                      </span>
-                      <code className="mt-2 block text-xs text-slate-500">
-                        {entry.group}
-                      </code>
-                    </td>
-                    <td className="px-5 py-5">
-                      <VariantBadge role={entry.group} variant={entry.variant} />
-                    </td>
-                    <td className="px-5 py-5">
-                      <ReviewedSubGroupBadge subGroup={entry.reviewedSubGroup} />
-                    </td>
-                    <td className="px-5 py-5">
-                      <ReviewedVariantCard variant={entry.reviewedVariant} />
-                    </td>
-                    <td className="px-5 py-5">
-                      <UsageChips usage={entry.usage} />
-                    </td>
-                    <td className="px-5 py-5">
-                      <p className="text-sm leading-6 text-slate-700">
-                        {entry.module.layoutDescription}
-                      </p>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+              <tbody>
+                {sortedEntries.map((entry) => {
+                  const Component = entry.module.default;
+                  return (
+                    <tr
+                      key={entry.module.layoutId}
+                      className="border-t border-slate-200 align-top"
+                    >
+                      <td className="px-5 py-5">
+                        <PreviewFrame Component={Component} data={entry.data} />
+                      </td>
+                      <td className="px-5 py-5">
+                        <div className="text-sm font-semibold text-slate-900">
+                          {entry.module.layoutName}
+                        </div>
+                        <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                          {entry.module.layoutId}
+                        </code>
+                      </td>
+                      <td className="px-5 py-5">
+                        <code className="block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                          frontend/src/components/slide-layouts/{entry.fileName}
+                        </code>
+                      </td>
+                      <td className="px-5 py-5">
+                        <div className="text-sm font-medium text-slate-900">
+                          {entry.schemaName}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {entry.keyFields.map((field) => (
+                            <span
+                              key={field}
+                              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-5 py-5">
+                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                          {getLayoutRoleLabel(entry.group)}
+                        </span>
+                        <code className="mt-2 block text-xs text-slate-500">
+                          {entry.group}
+                        </code>
+                      </td>
+                      <td className="px-5 py-5">
+                        <VariantBadge role={entry.group} variant={entry.variant} />
+                      </td>
+                      <td className="px-5 py-5">
+                        <ReviewedSubGroupBadge subGroup={entry.reviewedSubGroup} />
+                      </td>
+                      <td className="px-5 py-5">
+                        <ReviewedVariantCard variant={entry.reviewedVariant} />
+                      </td>
+                      <td className="px-5 py-5">
+                        <UsageChips usage={entry.usage} />
+                      </td>
+                      <td className="px-5 py-5">
+                        <p className="text-sm leading-6 text-slate-700">
+                          {entry.module.layoutDescription}
+                        </p>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </main>
