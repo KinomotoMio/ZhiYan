@@ -62,6 +62,7 @@ def get_layout_selector_agent():
                 "- `evidence` / `comparison` / `process` 仍按各自 group 内布局选择，但 sub_group 保持 `default`\n"
                 "- 优先选择 usage 匹配且结构匹配的 layout\n"
                 "- 若 usage 不匹配但结构明显更合适，可越过 usage\n"
+                "- 尽量避免连续页面选择完全相同的 `layout_id`，除非角色固定页或没有更合适候选\n"
                 "- 学术类优先信息密度高、逻辑清晰的 layout\n"
                 "- 商业/销售/路演类优先强调价值、对比、指标、配图的 layout\n"
                 "- 培训/会议类优先步骤、时间线、章节切换清晰的 layout\n\n"

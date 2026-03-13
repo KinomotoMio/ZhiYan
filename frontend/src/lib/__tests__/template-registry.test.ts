@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,6 +7,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogClient";
 import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
+
+const sharedLayoutMetadata = JSON.parse(
+  readFileSync(
+    new URL("../../../../shared/layout-metadata.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  layouts: Record<
+    string,
+    {
+      group: string;
+      subGroup: string;
+      variant: {
+        composition: string;
+        tone: string;
+        style: string;
+        density: string;
+      };
+      notes: {
+        purpose: string;
+        structure_signal: string;
+        design_signal: string;
+        use_when: string;
+        avoid_when: string;
+        usage_bias: string;
+      };
+    }
+  >;
+};
 
 test("template registry exposes usage metadata for built-in layouts", () => {
   const outline = getLayout("outline-slide");
@@ -61,6 +91,29 @@ test("template registry exposes usage metadata for built-in layouts", () => {
 test("legacy layout variant helper remains available as a compatibility wrapper", () => {
   assert.equal(getLayoutVariant("bullet-with-icons"), "icon-points");
   assert.equal(getLayoutVariant("outline-slide"), "default");
+});
+
+test("template registry matches shared metadata for all layouts", () => {
+  const allSharedLayoutIds = Object.keys(sharedLayoutMetadata.layouts);
+  const allRuntimeLayoutIds = getAllLayouts().map((entry) => entry.id);
+
+  assert.deepEqual(
+    allRuntimeLayoutIds.sort(),
+    allSharedLayoutIds.sort(),
+    "Mismatch between layouts in frontend registry and shared metadata",
+  );
+
+  for (const layoutId of allSharedLayoutIds) {
+    const runtime = getLayout(layoutId);
+    assert.ok(runtime, `Layout '${layoutId}' should be available in registry`);
+
+    const expected = sharedLayoutMetadata.layouts[layoutId];
+    assert.equal(runtime.group, expected.group);
+    assert.equal(runtime.subGroup, expected.subGroup);
+    assert.deepEqual(runtime.variant, expected.variant);
+    assert.deepEqual(runtime.notes, expected.notes);
+    assert.equal(runtime.description, expected.notes.purpose);
+  }
 });
 
 test("layout catalog renders role-based group and variant metadata", () => {
