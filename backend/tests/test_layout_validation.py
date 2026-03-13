@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.models.layout_registry import get_layout
+from app.models.layout_registry import get_all_layouts, get_layout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,19 +31,16 @@ def test_generated_layout_metadata_matches_shared_taxonomy_fields():
         assert generated_layout["notes"] == shared_layout["notes"]
 
 
-def test_backend_layout_registry_matches_shared_metadata_for_representative_layouts():
+def test_backend_layout_registry_matches_shared_metadata():
     shared = _load_json(SHARED_METADATA_PATH)["layouts"]
 
-    for layout_id in (
-        "bullet-with-icons",
-        "image-and-description",
-        "metrics-slide",
-        "thank-you",
-    ):
+    all_registered_ids = {entry.id for entry in get_all_layouts()}
+    all_shared_ids = set(shared.keys())
+    assert all_registered_ids == all_shared_ids
+
+    for layout_id, expected in shared.items():
         entry = get_layout(layout_id)
         assert entry is not None
-
-        expected = shared[layout_id]
         assert entry.group == expected["group"]
         assert entry.sub_group == expected["subGroup"]
         assert entry.variant.__dict__ == expected["variant"]
