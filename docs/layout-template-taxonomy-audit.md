@@ -32,7 +32,7 @@
 
 ## 全量审校结果
 
-| layoutId | 当前系统归属 | 审校后 `group` | 审校后 `sub-group` | 审校后 `variant` | 结论类型 | 人工判断理由 |
+| `layoutId` | 当前系统归属 | 审校后 `group` | 审校后 `sub-group` | 审校后 `variant` | 结论类型 | 人工判断理由 |
 |---|---|---|---|---|---|---|
 | `intro-slide` | `cover / default` | `cover` | `default` | `default` | `保留归属` | 该页承担封面职责，当前没有第二种稳定的信息结构分流。 |
 | `outline-slide` | `agenda / default` | `agenda` | `default` | `default` | `保留归属` | 该页负责目录导航，当前只有一种明确的章节骨架结构。 |
