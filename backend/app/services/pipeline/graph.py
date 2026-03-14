@@ -259,7 +259,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     from app.models.layout_registry import (
         get_all_layouts,
         get_layout,
-        get_layout_ids,
         get_layout_taxonomy_catalog,
     )
     from app.services.pipeline.layout_roles import (
@@ -277,7 +276,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         num_pages=state.num_pages,
     )
     state.outline["items"] = outline_items
-    valid_ids = set(get_layout_ids())
     layout_entries = get_all_layouts()
     document_usage_tags, slide_usage_tags = infer_document_and_slide_usage(
         state.topic,
@@ -306,19 +304,19 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         f"文档级 Usage 推断: {document_usage_text}\n"
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
-        "- 先确定 group，再确定 sub_group，最后再输出 layout_id\n"
+        "- 先确定 group，再确定 sub_group，再输出 variant_id\n"
         "- 对存在正式结构层的 group，必须显式选择对应的 sub_group\n"
         "- narrative 候选为 icon-points / visual-explainer / capability-grid\n"
         "- evidence 候选为 stat-summary / visual-evidence / chart-analysis / table-matrix\n"
         "- comparison 候选为 side-by-side / response-mapping\n"
         "- process 候选为 step-flow / timeline-milestone\n"
         "- 其余 group 统一使用 sub_group=default\n"
-        "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
+        "- 优先选择 usage 匹配且结构匹配的 variant_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
-        "- 尽量避免连续页面选择完全相同的 `layout_id`，除非角色固定页或没有更合适候选\n"
+        "- 系统会在你选中的 variant_id 下再解析具体 layout_id\n"
         "- 当 usage 未命中时，按内容结构与叙事节奏选择\n\n"
         f"大纲:\n{items_text}\n\n"
-        "请为每页输出 group、sub_group、layout_id 和 reason。不要输出 variant。"
+        "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。"
     )
 
     try:
@@ -338,30 +336,40 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 role=role,
                 requested_sub_group=str(sel.get("sub_group") or "default"),
             )
-            candidate_entries = _rank_group_sub_group_layouts(
+            requested_layout_id = str(sel.get("layout_id") or "")
+            requested_layout = get_layout(requested_layout_id) if requested_layout_id else None
+            resolved_variant_id = _resolve_layout_variant(
+                item or {},
+                role=role,
+                sub_group=resolved_sub_group,
+                requested_variant_id=str(sel.get("variant_id") or getattr(requested_layout, "variant_id", "")),
+                usage_tags=effective_usage,
+            )
+            candidate_entries = _rank_group_sub_group_variant_layouts(
                 layout_entries,
                 group=role,
                 sub_group=resolved_sub_group,
+                variant_id=resolved_variant_id,
                 usage_tags=effective_usage,
                 rank_layouts_by_usage_fn=rank_layouts_by_usage,
             )
-            candidate_ids = {entry.id for entry in candidate_entries}
-            requested_layout_id = str(sel.get("layout_id") or "")
-            if (
-                requested_layout_id not in valid_ids
-                or requested_layout_id not in candidate_ids
-            ):
-                final_layout_id = (
-                    candidate_entries[0].id
-                    if candidate_entries
-                    else _group_sub_group_to_default_layout(role, resolved_sub_group)
+            final_layout_id = (
+                candidate_entries[0].id
+                if candidate_entries
+                else _group_sub_group_variant_to_default_layout(
+                    role,
+                    resolved_sub_group,
+                    resolved_variant_id,
                 )
-            else:
-                final_layout_id = requested_layout_id
+            )
 
             final_entry = get_layout(final_layout_id)
             if final_entry is None:
-                final_layout_id = _group_sub_group_to_default_layout(role, resolved_sub_group)
+                final_layout_id = _group_sub_group_variant_to_default_layout(
+                    role,
+                    resolved_sub_group,
+                    resolved_variant_id,
+                )
                 final_entry = get_layout(final_layout_id)
             if final_entry is None:
                 logger.error(
@@ -371,7 +379,8 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                         "stage": "layout",
                         "group": role,
                         "sub_group": resolved_sub_group,
-                        "requested_layout_id": requested_layout_id,
+                        "requested_variant_id": str(sel.get("variant_id") or ""),
+                        "resolved_variant_id": resolved_variant_id,
                         "fallback_layout_id": final_layout_id,
                         "safety_layout_id": "bullet-with-icons",
                     },
@@ -384,7 +393,8 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             sel["layout_id"] = final_layout_id
             sel["group"] = role
             sel["sub_group"] = resolved_sub_group
-            sel["variant"] = _serialize_variant_from_entry(final_entry)
+            sel["variant_id"] = final_entry.variant_id
+            sel["design_traits"] = _serialize_design_traits_from_entry(final_entry)
 
         state.layout_selections = selections
         logger.info(
@@ -416,44 +426,82 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                         requested_sub_group="default",
                     )
                 ),
-                "layout_id": (
-                    layout_id := _group_sub_group_to_default_layout(
+                "variant_id": (
+                    variant_id := _group_sub_group_to_default_variant(
                         get_outline_item_role(item),
                         resolved_sub_group,
                     )
                 ),
-                "variant": _serialize_variant_from_entry(get_layout(layout_id)),
+                "layout_id": (
+                    layout_id := _group_sub_group_variant_to_default_layout(
+                        get_outline_item_role(item),
+                        resolved_sub_group,
+                        variant_id,
+                    )
+                ),
+                "design_traits": _serialize_design_traits_from_entry(get_layout(layout_id)),
                 "reason": "fallback",
             }
             for item in outline_items
         ]
 
 
-def _group_sub_group_to_default_layout(group: str, sub_group: str) -> str:
-    if group == "narrative":
-        if sub_group == "visual-explainer":
-            return "image-and-description"
-        if sub_group == "capability-grid":
-            return "bullet-icons-only"
-        return "bullet-with-icons"
-    if group == "evidence":
-        if sub_group == "visual-evidence":
-            return "metrics-with-image"
-        if sub_group == "chart-analysis":
-            return "chart-with-bullets"
-        if sub_group == "table-matrix":
-            return "table-info"
-        return "metrics-slide"
-    if group == "comparison":
-        if sub_group == "response-mapping":
-            return "challenge-outcome"
-        return "two-column-compare"
-    if group == "process":
-        if sub_group == "timeline-milestone":
-            return "timeline"
-        return "numbered-bullets"
+def _group_sub_group_to_default_variant(group: str, sub_group: str) -> str:
+    defaults: dict[tuple[str, str], str] = {
+        ("cover", "default"): "title-centered",
+        ("agenda", "default"): "section-cards",
+        ("section-divider", "default"): "centered-divider",
+        ("narrative", "icon-points"): "icon-pillars",
+        ("narrative", "visual-explainer"): "media-feature",
+        ("narrative", "capability-grid"): "icon-matrix",
+        ("evidence", "stat-summary"): "kpi-grid",
+        ("evidence", "visual-evidence"): "context-metrics",
+        ("evidence", "chart-analysis"): "chart-takeaways",
+        ("evidence", "table-matrix"): "data-matrix",
+        ("comparison", "side-by-side"): "balanced-columns",
+        ("comparison", "response-mapping"): "challenge-response",
+        ("process", "step-flow"): "numbered-steps",
+        ("process", "timeline-milestone"): "timeline-band",
+        ("highlight", "default"): "quote-focus",
+        ("closing", "default"): "closing-center",
+    }
+    return defaults.get((group, sub_group), "icon-pillars")
 
-    return _role_to_default_layout(group)
+
+def _group_sub_group_variant_to_default_layout(group: str, sub_group: str, variant_id: str) -> str:
+    defaults: dict[tuple[str, str, str], str] = {
+        ("cover", "default", "title-centered"): "intro-slide",
+        ("cover", "default", "title-left"): "intro-slide-left",
+        ("agenda", "default", "section-cards"): "outline-slide",
+        ("agenda", "default", "chapter-rail"): "outline-slide-rail",
+        ("section-divider", "default", "centered-divider"): "section-header",
+        ("section-divider", "default", "side-label"): "section-header-side",
+        ("narrative", "icon-points", "icon-pillars"): "bullet-with-icons",
+        ("narrative", "icon-points", "feature-cards"): "bullet-with-icons-cards",
+        ("narrative", "visual-explainer", "media-feature"): "image-and-description",
+        ("narrative", "capability-grid", "icon-matrix"): "bullet-icons-only",
+        ("evidence", "stat-summary", "kpi-grid"): "metrics-slide",
+        ("evidence", "stat-summary", "summary-band"): "metrics-slide-band",
+        ("evidence", "visual-evidence", "context-metrics"): "metrics-with-image",
+        ("evidence", "chart-analysis", "chart-takeaways"): "chart-with-bullets",
+        ("evidence", "table-matrix", "data-matrix"): "table-info",
+        ("comparison", "side-by-side", "balanced-columns"): "two-column-compare",
+        ("comparison", "response-mapping", "challenge-response"): "challenge-outcome",
+        ("process", "step-flow", "numbered-steps"): "numbered-bullets",
+        ("process", "step-flow", "progress-track"): "numbered-bullets-track",
+        ("process", "timeline-milestone", "timeline-band"): "timeline",
+        ("highlight", "default", "quote-focus"): "quote-slide",
+        ("highlight", "default", "banner-highlight"): "quote-banner",
+        ("closing", "default", "closing-center"): "thank-you",
+        ("closing", "default", "contact-card"): "thank-you-contact",
+    }
+    return defaults.get(
+        (group, sub_group, variant_id),
+        defaults.get(
+            (group, sub_group, _group_sub_group_to_default_variant(group, sub_group)),
+            _role_to_default_layout(group),
+        ),
+    )
 
 
 def _format_outline_item_for_layout_prompt(
@@ -467,9 +515,11 @@ def _format_outline_item_for_layout_prompt(
 ) -> str:
     from app.services.pipeline.layout_roles import get_default_layout_for_role, get_outline_item_role
     from app.services.pipeline.layout_taxonomy import (
+        get_layout_variant_definition,
         get_sub_group_description,
         get_sub_group_label,
         get_sub_groups_for_group,
+        get_variant_ids_for_sub_group,
     )
 
     slide_number = int(item.get("slide_number", 0))
@@ -486,25 +536,45 @@ def _format_outline_item_for_layout_prompt(
     if not role_matched:
         fallback_layout = get_default_layout_for_role(role)
         role_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
-    preferred = (
-        rank_layouts_by_usage_fn(role_matched, effective_usage, limit=4) if effective_usage else []
-    )
     sub_group_candidates = []
     for sub_group in get_sub_groups_for_group(role):
         sub_group_entries = [
             entry for entry in role_matched if str(entry.sub_group) == sub_group
         ]
-        layouts_text = ", ".join(f"`{entry.id}`" for entry in sub_group_entries) or "无"
+        variant_candidates = []
+        for variant_id in get_variant_ids_for_sub_group(role, sub_group):
+            definition = get_layout_variant_definition(role, sub_group, variant_id)
+            variant_layouts = [
+                entry.id for entry in sub_group_entries if str(entry.variant_id) == variant_id
+            ]
+            variant_candidates.append(
+                f"`{variant_id}`({definition.label if definition else variant_id}: "
+                f"{definition.description if definition else ''} 可用布局 {', '.join(f'`{layout_id}`' for layout_id in variant_layouts) or '无'})"
+            )
+        layouts_text = " / ".join(variant_candidates) or "无"
         sub_group_candidates.append(
             f"`{sub_group}`({get_sub_group_label(role, sub_group)}: "
             f"{get_sub_group_description(role, sub_group)} 可用布局 {layouts_text})"
         )
     role_matched_text = ", ".join(f"`{entry.id}`" for entry in role_matched) or "无角色匹配布局"
     sub_group_text = " / ".join(sub_group_candidates) if sub_group_candidates else "`default`"
-    if preferred:
-        preferred_text = ", ".join(f"`{entry.id}`({entry.name})" for entry in preferred)
+    preferred_variants = (
+        _rank_group_sub_group_variants(
+            role_matched,
+            group=role,
+            usage_tags=effective_usage,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage_fn,
+        )
+        if effective_usage
+        else []
+    )
+    if preferred_variants:
+        preferred_text = ", ".join(
+            f"`{variant_id}`({label})"
+            for variant_id, label in preferred_variants
+        )
     else:
-        preferred_text = "无明确 usage 候选，按结构选择"
+        preferred_text = "无明确 usage 候选，按结构和设计方向选择"
 
     return (
         f"- 第{slide_number}页: {item['title']} "
@@ -513,7 +583,7 @@ def _format_outline_item_for_layout_prompt(
         f"要点: {preview_points}, "
         f"页内 Usage: {usage_text}, "
         f"角色匹配布局: {role_matched_text}, "
-        f"优先候选布局: {preferred_text})"
+        f"优先候选变体: {preferred_text})"
     )
 
 
@@ -838,36 +908,66 @@ async def stage_fix_slides_once(
                 }
             )
 
-def _rank_group_sub_group_layouts(
+def _rank_group_sub_group_variants(
+    layout_entries: list[Any],
+    *,
+    group: str,
+    usage_tags: tuple[str, ...],
+    rank_layouts_by_usage_fn,
+) -> list[tuple[str, str]]:
+    matched = [entry for entry in layout_entries if str(entry.group) == group]
+    ranked_layouts = (
+        rank_layouts_by_usage_fn(matched, usage_tags, limit=len(matched)) if usage_tags else matched
+    )
+    seen: set[str] = set()
+    ranked_variants: list[tuple[str, str]] = []
+    for entry in ranked_layouts:
+        if entry.variant_id in seen:
+            continue
+        seen.add(entry.variant_id)
+        ranked_variants.append((entry.variant_id, entry.variant_label))
+    return ranked_variants
+
+
+def _rank_group_sub_group_variant_layouts(
     layout_entries: list[Any],
     *,
     group: str,
     sub_group: str,
+    variant_id: str,
     usage_tags: tuple[str, ...],
     rank_layouts_by_usage_fn,
 ) -> list[Any]:
     from app.services.pipeline.layout_roles import get_default_layout_for_role
 
-    sub_group_matched = [
+    variant_matched = [
         entry
         for entry in layout_entries
-        if str(entry.group) == group and str(entry.sub_group) == sub_group
+        if str(entry.group) == group
+        and str(entry.sub_group) == sub_group
+        and str(entry.variant_id) == variant_id
     ]
-    if not sub_group_matched:
-        sub_group_matched = [entry for entry in layout_entries if str(entry.group) == group]
-    if not sub_group_matched:
+    if not variant_matched:
+        variant_matched = [
+            entry
+            for entry in layout_entries
+            if str(entry.group) == group and str(entry.sub_group) == sub_group
+        ]
+    if not variant_matched:
+        variant_matched = [entry for entry in layout_entries if str(entry.group) == group]
+    if not variant_matched:
         fallback_layout = get_default_layout_for_role(group)
-        sub_group_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
+        variant_matched = [entry for entry in layout_entries if entry.id == fallback_layout]
 
     if usage_tags:
         ranked = rank_layouts_by_usage_fn(
-            sub_group_matched,
+            variant_matched,
             usage_tags,
-            limit=len(sub_group_matched),
+            limit=len(variant_matched),
         )
         if ranked:
             return ranked
-    return sub_group_matched
+    return variant_matched
 
 
 def _resolve_layout_sub_group(
@@ -886,6 +986,24 @@ def _resolve_layout_sub_group(
         return requested_sub_group
 
     return _suggest_sub_group_for_outline_item(item, role)
+
+
+def _resolve_layout_variant(
+    item: dict[str, Any],
+    *,
+    role: str,
+    sub_group: str,
+    requested_variant_id: str,
+    usage_tags: tuple[str, ...],
+) -> str:
+    from app.services.pipeline.layout_taxonomy import get_variant_ids_for_sub_group
+
+    allowed_variants = tuple(get_variant_ids_for_sub_group(role, sub_group))
+    if not allowed_variants:
+        return _group_sub_group_to_default_variant(role, sub_group)
+    if requested_variant_id in allowed_variants:
+        return requested_variant_id
+    return _suggest_variant_for_outline_item(item, role, sub_group, usage_tags, allowed_variants)
 
 
 def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
@@ -930,19 +1048,112 @@ def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
     return "default"
 
 
-def _serialize_variant_from_entry(entry: Any) -> dict[str, str]:
+def _suggest_variant_for_outline_item(
+    item: dict[str, Any],
+    role: str,
+    sub_group: str,
+    usage_tags: tuple[str, ...],
+    allowed_variants: tuple[str, ...],
+) -> str:
+    title = str(item.get("title") or "").lower()
+    content_brief = str(item.get("content_brief") or "").lower()
+    key_points = [
+        str(point).strip().lower()
+        for point in item.get("key_points", [])
+        if isinstance(point, str) and point.strip()
+    ]
+    combined = "\n".join([title, content_brief, "\n".join(key_points)])
+
+    def choose(default_variant: str, alternative_variant: str, condition: bool) -> str:
+        if alternative_variant in allowed_variants and condition:
+            return alternative_variant
+        if default_variant in allowed_variants:
+            return default_variant
+        return allowed_variants[0]
+
+    if role == "cover" and sub_group == "default":
+        return choose(
+            "title-centered",
+            "title-left",
+            bool(content_brief.strip()) or len(title) >= 18 or len(key_points) >= 3,
+        )
+
+    if role == "agenda" and sub_group == "default":
+        return choose(
+            "section-cards",
+            "chapter-rail",
+            len(key_points) >= 5 or "阶段" in combined or "路径" in combined,
+        )
+
+    if role == "section-divider" and sub_group == "default":
+        return choose(
+            "centered-divider",
+            "side-label",
+            bool(content_brief.strip()) or "part" in combined or "阶段" in combined,
+        )
+
+    if role == "narrative" and sub_group == "icon-points":
+        return choose(
+            "icon-pillars",
+            "feature-cards",
+            "功能" in combined
+            or "模块" in combined
+            or "能力" in combined
+            or "product-demo" in usage_tags
+            or "sales-pitch" in usage_tags,
+        )
+
+    if role == "evidence" and sub_group == "stat-summary":
+        summary_band_tokens = (
+            "摘要",
+            "总览",
+            "总述",
+            "executive summary",
+            "one-line summary",
+            "一句话",
+        )
+        return choose(
+            "kpi-grid",
+            "summary-band",
+            "investor-pitch" in usage_tags
+            or "sales-pitch" in usage_tags
+            or any(token in combined for token in summary_band_tokens),
+        )
+
+    if role == "process" and sub_group == "step-flow":
+        return choose(
+            "numbered-steps",
+            "progress-track",
+            "阶段" in combined
+            or "推进" in combined
+            or "rollout" in combined
+            or "project-status" in usage_tags,
+        )
+
+    if role == "highlight" and sub_group == "default":
+        return choose(
+            "quote-focus",
+            "banner-highlight",
+            not ("引用" in combined or "作者" in combined or "quote" in combined),
+        )
+
+    if role == "closing" and sub_group == "default":
+        return choose(
+            "closing-center",
+            "contact-card",
+            "contact" in combined or "联系" in combined or "邮箱" in combined or "sales-pitch" in usage_tags,
+        )
+
+    return _group_sub_group_to_default_variant(role, sub_group)
+
+
+def _serialize_design_traits_from_entry(entry: Any) -> dict[str, str]:
     if entry is None:
-        return {
-            "composition": "",
-            "tone": "",
-            "style": "",
-            "density": "",
-        }
+        return {"tone": "", "style": "", "density": ""}
     return {
-        "composition": str(entry.variant.composition),
-        "tone": str(entry.variant.tone),
-        "style": str(entry.variant.style),
-        "density": str(entry.variant.density),
+        "tone": str(entry.design_traits.tone),
+        "style": str(entry.design_traits.style),
+        "density": str(entry.design_traits.density),
     }
 
 
@@ -1109,15 +1320,26 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     title = item.get("title", "幻灯片")
     points = _normalize_fallback_points(item.get("key_points"))
 
-    if layout_id == "intro-slide":
+    if layout_id in {"intro-slide", "intro-slide-left"}:
         return {"title": title, "subtitle": "由知演 AI 智能生成"}
-    if layout_id in {"thank-you", "thankyou"}:
+    if layout_id in {"thank-you", "thank-you-contact", "thankyou"}:
         return {"title": "谢谢", "subtitle": "感谢您的关注"}
-    if layout_id == "section-header":
+    if layout_id in {"section-header", "section-header-side"}:
         return {"title": title}
-    if layout_id == "bullet-with-icons":
+    if layout_id in {"outline-slide", "outline-slide-rail"}:
+        sections = points[:6] if points else ["议题概览", "核心内容", "后续安排"]
+        while len(sections) < 3:
+            sections.append(f"章节 {len(sections) + 1}")
+        return {
+            "title": title,
+            "sections": [
+                {"title": section[:24], "description": "自动回退生成"}
+                for section in sections
+            ],
+        }
+    if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         return _bullet_with_icons_fallback(title, points)
-    if layout_id == "numbered-bullets":
+    if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
         items = points[:5] if points else ["内容生成中"]
         while len(items) < 3:
             items.append("内容生成中")
@@ -1125,7 +1347,7 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
             "title": title,
             "items": [{"title": f"要点 {i + 1}", "description": p} for i, p in enumerate(items)],
         }
-    if layout_id == "metrics-slide":
+    if layout_id in {"metrics-slide", "metrics-slide-band"}:
         metrics = points[:3] if points else ["内容生成中", "内容生成中"]
         if len(metrics) < 2:
             metrics.append("内容生成中")
@@ -1213,7 +1435,7 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
                 for i, event in enumerate(events)
             ],
         }
-    if layout_id == "quote-slide":
+    if layout_id in {"quote-slide", "quote-banner"}:
         return {"quote": points[0] if points else title}
     if layout_id == "bullet-icons-only":
         labels = points[:6] if points else ["能力 1", "能力 2", "能力 3", "能力 4"]

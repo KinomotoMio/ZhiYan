@@ -35,10 +35,16 @@ class LayoutType(str, Enum):
     SECTION_HEADER = "section-header"
     BLANK = "blank"
     INTRO_SLIDE = "intro-slide"
+    INTRO_SLIDE_LEFT = "intro-slide-left"
+    SECTION_HEADER_SIDE = "section-header-side"
     OUTLINE_SLIDE = "outline-slide"
+    OUTLINE_SLIDE_RAIL = "outline-slide-rail"
     BULLET_WITH_ICONS = "bullet-with-icons"
+    BULLET_WITH_ICONS_CARDS = "bullet-with-icons-cards"
     NUMBERED_BULLETS = "numbered-bullets"
+    NUMBERED_BULLETS_TRACK = "numbered-bullets-track"
     METRICS_SLIDE = "metrics-slide"
+    METRICS_SLIDE_BAND = "metrics-slide-band"
     METRICS_WITH_IMAGE = "metrics-with-image"
     CHART_WITH_BULLETS = "chart-with-bullets"
     TABLE_INFO = "table-info"
@@ -46,9 +52,11 @@ class LayoutType(str, Enum):
     IMAGE_AND_DESCRIPTION = "image-and-description"
     TIMELINE = "timeline"
     QUOTE_SLIDE = "quote-slide"
+    QUOTE_BANNER = "quote-banner"
     BULLET_ICONS_ONLY = "bullet-icons-only"
     CHALLENGE_OUTCOME = "challenge-outcome"
     THANK_YOU = "thank-you"
+    THANK_YOU_CONTACT = "thank-you-contact"
 
 
 class TextAlign(str, Enum):

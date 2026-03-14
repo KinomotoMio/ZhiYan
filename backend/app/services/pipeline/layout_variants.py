@@ -4,24 +4,48 @@ from __future__ import annotations
 
 from typing import TypeAlias, cast
 
+from app.services.pipeline.layout_metadata import load_layout_metadata
 from app.services.pipeline.layout_roles import LayoutRole, normalize_slide_role
 from app.services.pipeline.layout_taxonomy import (
     get_group_order,
     get_layout_taxonomy,
-    get_sub_group_description,
-    get_sub_group_label,
-    get_sub_groups_for_group,
+    get_layout_variant_definition,
 )
 
 LayoutVariant: TypeAlias = str
 
+def _build_variant_sub_groups() -> dict[LayoutRole, dict[LayoutVariant, str]]:
+    metadata = load_layout_metadata()
+    variants_by_sub_group = metadata.get("variantsBySubGroup", {})
+    variant_sub_groups: dict[LayoutRole, dict[LayoutVariant, str]] = {}
+
+    for role in get_group_order():
+        sub_groups = variants_by_sub_group.get(role, {})
+        variant_sub_groups[role] = {
+            cast(LayoutVariant, variant_id): str(sub_group)
+            for sub_group, variants in sub_groups.items()
+            for variant_id in variants.keys()
+        }
+
+    return variant_sub_groups
+
+
+_VARIANT_SUB_GROUPS = _build_variant_sub_groups()
+
+
+def _variant_entry(role: LayoutRole, variant: LayoutVariant) -> dict[str, str]:
+    sub_group = _VARIANT_SUB_GROUPS[role][variant]
+    definition = get_layout_variant_definition(role, sub_group, variant)
+    return {
+        "label": definition.label if definition else variant,
+        "description": definition.description if definition else "",
+    }
+
+
 VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
     role: {
-        cast(LayoutVariant, variant): {
-            "label": get_sub_group_label(role, variant),
-            "description": get_sub_group_description(role, variant),
-        }
-        for variant in (get_sub_groups_for_group(role) or ("default",))
+        cast(LayoutVariant, variant): _variant_entry(role, cast(LayoutVariant, variant))
+        for variant in _VARIANT_SUB_GROUPS[role]
     }
     for role in get_group_order()
 }
@@ -36,25 +60,29 @@ def normalize_layout_variant(value: str | None) -> LayoutVariant:
     token = (value or "").strip()
     if token in ALL_LAYOUT_VARIANTS:
         return cast(LayoutVariant, token)
-    return "default"
+    return ""
 
 
 def get_layout_variant(layout_id: str) -> LayoutVariant:
     taxonomy = get_layout_taxonomy(layout_id)
     if taxonomy is None:
-        return "default"
-    return cast(LayoutVariant, taxonomy.sub_group)
+        return "title-centered"
+    return cast(LayoutVariant, taxonomy.variant_id)
 
 
 def get_layout_variant_label(role: str | None, variant: str | None) -> str:
     normalized_role = normalize_slide_role(role)
     normalized_variant = normalize_layout_variant(variant)
+    if normalized_variant not in VARIANTS_BY_ROLE[normalized_role]:
+        normalized_variant = next(iter(VARIANTS_BY_ROLE[normalized_role]))
     return VARIANTS_BY_ROLE[normalized_role][normalized_variant]["label"]
 
 
 def get_layout_variant_description(role: str | None, variant: str | None) -> str:
     normalized_role = normalize_slide_role(role)
     normalized_variant = normalize_layout_variant(variant)
+    if normalized_variant not in VARIANTS_BY_ROLE[normalized_role]:
+        normalized_variant = next(iter(VARIANTS_BY_ROLE[normalized_role]))
     return VARIANTS_BY_ROLE[normalized_role][normalized_variant]["description"]
 
 

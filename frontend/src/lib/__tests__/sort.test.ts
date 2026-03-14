@@ -81,9 +81,9 @@ test("compareUpdatedAt uses the ASCII fallback for invalid and equal timestamp t
 
 test("compareLayoutVariants follows metadata order instead of localized labels", () => {
   const variants = [
-    "capability-grid",
-    "icon-points",
-    "visual-explainer",
+    "feature-cards",
+    "icon-pillars",
+    "media-feature",
   ] as const;
 
   const sorted = [...variants].sort((left, right) =>
@@ -91,9 +91,9 @@ test("compareLayoutVariants follows metadata order instead of localized labels",
   );
 
   assert.deepEqual(sorted, [
-    "icon-points",
-    "visual-explainer",
-    "capability-grid",
+    "icon-pillars",
+    "feature-cards",
+    "media-feature",
   ]);
 });
 

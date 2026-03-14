@@ -19,12 +19,7 @@ const sharedLayoutMetadata = JSON.parse(
     {
       group: string;
       subGroup: string;
-      variant: {
-        composition: string;
-        tone: string;
-        style: string;
-        density: string;
-      };
+      variantId: string;
       notes: {
         purpose: string;
         structure_signal: string;
@@ -42,8 +37,9 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   assert.ok(outline);
   assert.equal(outline.group, "agenda");
   assert.equal(outline.subGroup, "default");
-  assert.deepEqual(outline.variant, {
-    composition: "card-grid",
+  assert.equal(outline.variantId, "section-cards");
+  assert.equal(outline.variantLabel, "章节卡片目录");
+  assert.deepEqual(outline.designTraits, {
     tone: "formal",
     style: "card-based",
     density: "medium",
@@ -67,8 +63,8 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   assert.ok(metrics);
   assert.equal(metrics.group, "evidence");
   assert.equal(metrics.subGroup, "stat-summary");
-  assert.deepEqual(metrics.variant, {
-    composition: "stat-grid",
+  assert.equal(metrics.variantId, "kpi-grid");
+  assert.deepEqual(metrics.designTraits, {
     tone: "formal",
     style: "data-first",
     density: "medium",
@@ -80,8 +76,8 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   assert.ok(narrative);
   assert.equal(narrative.group, "narrative");
   assert.equal(narrative.subGroup, "icon-points");
-  assert.deepEqual(narrative.variant, {
-    composition: "icon-columns",
+  assert.equal(narrative.variantId, "icon-pillars");
+  assert.deepEqual(narrative.designTraits, {
     tone: "assertive",
     style: "icon-led",
     density: "medium",
@@ -89,9 +85,9 @@ test("template registry exposes usage metadata for built-in layouts", () => {
 });
 
 test("legacy layout variant helper remains available as a compatibility wrapper", () => {
-  assert.equal(getLayoutVariant("bullet-with-icons"), "icon-points");
-  assert.equal(getLayoutVariant("metrics-slide"), "stat-summary");
-  assert.equal(getLayoutVariant("outline-slide"), "default");
+  assert.equal(getLayoutVariant("bullet-with-icons"), "icon-pillars");
+  assert.equal(getLayoutVariant("metrics-slide"), "kpi-grid");
+  assert.equal(getLayoutVariant("outline-slide"), "section-cards");
 });
 
 test("template registry matches shared metadata for all layouts", () => {
@@ -111,7 +107,7 @@ test("template registry matches shared metadata for all layouts", () => {
     const expected = sharedLayoutMetadata.layouts[layoutId];
     assert.equal(runtime.group, expected.group);
     assert.equal(runtime.subGroup, expected.subGroup);
-    assert.deepEqual(runtime.variant, expected.variant);
+    assert.equal(runtime.variantId, expected.variantId);
     assert.deepEqual(runtime.notes, expected.notes);
     assert.equal(runtime.description, expected.notes.purpose);
   }
@@ -121,10 +117,10 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /Taxonomy reference/);
-  assert.match(html, /Issue 98 taxonomy calibration/);
+  assert.match(html, /Issue 102 variant delivery/);
   assert.match(html, />Group</);
   assert.match(html, /Structure sub-group/);
-  assert.match(html, />Variant axes</);
+  assert.match(html, />Variant</);
   assert.match(html, /Usage/);
   assert.match(html, /Show details/);
   assert.match(html, /Overview/);
@@ -147,7 +143,8 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /响应映射/);
   assert.match(html, /步骤流程/);
   assert.match(html, /时间里程碑/);
-  assert.match(html, /composition/);
+  assert.match(html, /title-centered/);
+  assert.match(html, /title-left/);
   assert.match(html, /tone/);
   assert.match(html, /style/);
   assert.match(html, /density/);
@@ -161,34 +158,35 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /response-mapping/);
   assert.match(html, /step-flow/);
   assert.match(html, /timeline-milestone/);
-  assert.match(html, /hero-center/);
-  assert.match(html, /card-grid/);
+  assert.match(html, /section-cards/);
+  assert.match(html, /chapter-rail/);
   assert.match(html, /data-first/);
-  assert.match(html, /icon-points/);
+  assert.match(html, /icon-pillars/);
   assert.match(html, /default/);
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
   assert.match(html, /formal sub-groups/);
   assert.match(html, /formal structure/);
-  assert.match(html, /latest taxonomy calibration/);
-  assert.match(html, /formal `variant` axes/);
+  assert.match(html, /single structure can now expose multiple official variants/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
   assert.match(html, /用于建立演示开场身份与主题/);
   assert.match(
     html,
-    /main table applies that same `group \/ sub-group \/ variant` contract/,
+    /main table applies that same `group \/ sub-group \/ variant \/ layout` contract/,
   );
 
   const bulletIconsOnly = html.indexOf("bullet-icons-only");
   const bulletWithIcons = html.indexOf("bullet-with-icons");
   const imageAndDescription = html.indexOf("image-and-description");
+  const introSlideLeft = html.indexOf("intro-slide-left");
 
   assert.notEqual(bulletIconsOnly, -1);
   assert.notEqual(bulletWithIcons, -1);
   assert.notEqual(imageAndDescription, -1);
+  assert.notEqual(introSlideLeft, -1);
   assert.ok(bulletWithIcons < imageAndDescription);
   assert.ok(imageAndDescription < bulletIconsOnly);
 });

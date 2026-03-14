@@ -98,7 +98,9 @@
         },
         "templateSlotMapping": {
           "type": "object",
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Template slot name to component identifier map"
         }
       }

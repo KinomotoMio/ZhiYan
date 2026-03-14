@@ -155,9 +155,9 @@ export function normalizeSlideSceneBackground<T extends Slide>(slide: T): T {
       return slide;
     }
 
-    const clone = { ...slide } as T & { background?: SceneBackground | null };
-    delete clone.background;
-    return clone as T;
+    const { background, ...rest } = slide;
+    void background;
+    return rest as T;
   }
 
   if (JSON.stringify(slide.background ?? null) === JSON.stringify(normalizedBackground)) {
