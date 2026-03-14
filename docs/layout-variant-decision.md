@@ -6,7 +6,7 @@
 在 `group` 与 `sub-group` 已分别承担“页面功能定位”和“信息结构细分”职责后，
 `variant` 只负责同一 `group + sub-group` 下的设计排版扩散。
 
-本记录只回答 `variant` 的规则、字段和值域，不直接修改运行时代码。
+本记录只回答 `variant` 在 taxonomy 主干中的角色、当前对象结构与现阶段值域基线，不直接修改运行时代码，也不替 `#102` 提前给出“这套模型已最终足够”的结论。
 
 ## 为什么 `variant` 仍然需要是对象
 `variant` 不再承担结构差异，但仍需要对象化，原因不变：
@@ -155,7 +155,9 @@ type LayoutVariant = {
 | `highlight / default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` | 强调页以结论或引用作为单点焦点。 |
 | `closing / default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` | 结尾页强调收束感和结束感。 |
 
-## 当前 16 个 built-in template 的正式 `variant` 归属
+以上示例用于说明当前 built-in template 的设计层基线，不应被理解为同一 `group + sub-group` 下唯一允许存在的正式 `variant`。
+
+## 当前 16 个 built-in template 的 `variant` 基线归属
 
 | `layoutId` | `group` | `sub-group` | `variant` |
 |---|---|---|---|
@@ -176,6 +178,9 @@ type LayoutVariant = {
 | `quote-slide` | `highlight` | `default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` |
 | `thank-you` | `closing` | `default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` |
 
+这些归属用于表达“当前 built-in template 分别落在哪个设计层基线”，
+不等于宣称同一 `group + sub-group` 在后续扩模板时只能存在这一种 `variant`。
+
 ## 本记录不做什么
 - 不修改 `variant` 的对象字段名
 - 不为未来模板预先扩展新的值域
@@ -185,3 +190,4 @@ type LayoutVariant = {
 ## 状态
 本记录是 `#98` 之后的最新 `variant` 边界基线。
 后续若要扩展新的 `variant` 值域，应通过新的决策更新，而不是在实现 PR 中静默新增。
+`composition / tone / style / density` 是否足以长期支撑同一 `group + sub-group` 下的多设计风格扩展，继续由 `#102` 评估。

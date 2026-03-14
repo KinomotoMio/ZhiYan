@@ -4,7 +4,7 @@
 本记录固定 Zhiyan 模板体系中的三层 taxonomy 语义：`group / sub-group / variant`。
 它是后续 built-in template 审校、shared metadata、catalog、selector 与兼容层实现改造的统一口径。
 
-本记录只回答分类语义问题，不直接承担具体代码实现。
+本记录只回答 taxonomy 总框架与变量关系，不直接承担具体代码实现，也不替代 `#102` 对 `variant` 表达能力的后续专项重审。
 
 ## 背景
 当前系统已经正式使用 `group / sub-group / variant` 三层 taxonomy：
@@ -74,13 +74,42 @@
 - `variant` 不立即被视为硬路由字段
 - 若某个 `composition` 名称主要回答的是结构差异，应优先把该差异回收到 `sub-group`
 
+### 4. `usage` 与 `notes` 的位置
+`usage` 不是新的硬 taxonomy 层，而是位于 `variant` 之下的适配偏好层。
+
+它回答的问题是：
+
+- 在同样的功能定位、信息结构和设计变体下，这个方向更偏哪些使用场景
+- 哪些 usage 会影响候选排序，但不应反向改写 `group / sub-group / variant`
+
+默认规则：
+
+- 一个 `variant` 可以偏向多个 `usage`
+- `usage` 影响排序和适配偏好，不新增新的分类层级
+
+`notes` 也不是新的 taxonomy 层，而是综合上游信息后形成的解释层。
+
+它固定聚合：
+
+- `group`
+- `sub-group`
+- `variant`
+- `usage`
+
+因此，本轮统一按以下主干理解变量关系：
+
+`group -> sub-group -> variant -> usage`
+
+`notes` 作为派生说明层，负责把这条主干转写成 agent 与人都能消费的解释信号。
+
 ## 第二轮校准结论
 
 ### `group`
 本轮不新增 `group`。
 当前 `cover / agenda / section-divider / narrative / evidence / comparison / process / highlight / closing`
-对现有 16 个 built-in template 足够。
+对现有 16 个 built-in template 与当前已知的常见页面 archetype 足够。
 
+本轮不直接宣称它们已经覆盖“绝大多数 PPT 页面场景”。
 本轮的主问题不是 `group` 覆盖不足，而是多个 `group` 的正式结构层仍被压在 `default` 或 `variant.composition` 中。
 
 ### `sub-group`
@@ -111,6 +140,7 @@
 - `tone / style / density` 继续稳定承担设计层职责
 - `composition` 仍保留为设计骨架字段，但其历史上混入的结构语义应逐步弱化
 - 若一个差异已经决定应匹配哪类模板页，它属于 `sub-group`，不属于 `variant`
+- 当前结论只负责确认 `variant` 仍属于设计层，不在本轮给出其表达能力是否最终足够的结论
 
 ## 三层分别回答什么
 
@@ -119,6 +149,8 @@
 | `group` | 这页是拿来干什么的？ | “这是一页论据页 / 对比页 / 封面页” |
 | `sub-group` | 这页用什么结构完成这个功能？ | “这是一页 evidence 下的图表解读结构” |
 | `variant` | 在该功能与结构已确定后，这页具体长成哪种设计排版？ | “这是一页图表解读结构下的某种正式设计变体” |
+| `usage` | 在该设计变体下，更偏哪些使用场景？ | “这是一页更偏 investor-pitch / business-report 的图表解读变体” |
+| `notes` | 如何把前述层级解释给 agent 与人？ | “为什么该选它、何时该避开它、它更偏哪些 usage” |
 
 ## 每层不负责什么
 
@@ -127,6 +159,8 @@
 | `group` | 不负责区分同组内的结构差异，不负责设计风格 |
 | `sub-group` | 不负责设计扩散，不负责品牌气质或版式情绪 |
 | `variant` | 不负责定义页面职责，不负责定义结构类型 |
+| `usage` | 不负责定义 taxonomy 主干，不负责替代 `variant` 做设计分流 |
+| `notes` | 不负责新增分类层，不负责替代 selector 或 metadata schema |
 
 ## 典型映射
 
@@ -176,3 +210,4 @@ built-in template 的正式归属必须消费本记录的边界：
 本记录是 `#98` 之后的最新 taxonomy 决策基线。
 `variant` 的对象结构和值域仍由 [layout-variant-decision.md](./layout-variant-decision.md) 承接，
 built-in template 的正式归属与 notes 基线由 [layout-template-taxonomy-audit.md](./layout-template-taxonomy-audit.md) 承接。
+`variant` 的多设计风格扩展能力，以及四轴是否足以长期承载这种扩展，继续由 `#102` 承接。

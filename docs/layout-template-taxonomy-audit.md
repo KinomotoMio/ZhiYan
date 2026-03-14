@@ -2,7 +2,7 @@
 
 ## 摘要
 本记录用于承接 `#62`，对当前 16 个 built-in template 做一次完整的人工审校，
-输出 `group / sub-group / variant` 三层归属结论。
+输出 `group / sub-group / variant` 三层归属结论与当前 built-in template 的基线示例。
 
 本记录消费 `#67` 中已经固定的 taxonomy 语义，不重新定义三层概念。
 它的目标是给后续 metadata、catalog、selector 与 notes 线路提供统一输入，
@@ -16,11 +16,13 @@
 - `group`：页面功能定位
 - `sub-group`：单个 group 内的信息结构细分，单选
 - `variant`：在 `group + sub-group` 已确定之后的设计排版扩散
+- `usage`：位于 `variant` 之下的适配偏好层，不是新的硬 taxonomy 层
+- `notes`：综合上游语义形成的解释层，不是新的分类层
 
 ### 当前阶段的默认规则
 - 如果模板的主要差异体现在信息如何被组织，则优先记为 `sub-group`
 - `variant` 的对象结构和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
-- 本记录不再把 `variant` 一律暂记为 `default`，而是回写当前 16 个 built-in template 的正式 variant 归属
+- 本记录不再把 `variant` 一律暂记为 `default`，而是回写当前 16 个 built-in template 的当前基线归属
 - 本轮明确回写 `evidence / comparison / process` 的正式 `sub-group`
 - 本轮审校只对 built-in template 给出人工归属结论，不改共享 metadata，也不改 selector
 
@@ -102,12 +104,13 @@
 这些组当前 built-in 数量和结构差异都不足以支撑新的正式子类。
 
 ### 关于 `variant`
-本轮已经为所有 built-in template 输出正式 `variant` 对象归属。
+本轮已经为所有 built-in template 输出当前 `variant` 基线归属。
 
 统一结论：
 
 - 当前所有 built-in template 的 `variant` 都应视为四字段对象，而不再是单值 `default`
 - `narrative / evidence / comparison / process` 都已经拥有正式的结构层 `sub-group`
+- 当前表中的 `variant` 结果只代表 built-in template 的现阶段基线，不代表同一 `group + sub-group` 只能存在这一种设计变体
 - 具体字段和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
 
 ## 对后续实现的要求
