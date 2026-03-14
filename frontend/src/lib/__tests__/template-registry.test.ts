@@ -66,7 +66,7 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   const metrics = layouts.find((entry) => entry.id === "metrics-slide");
   assert.ok(metrics);
   assert.equal(metrics.group, "evidence");
-  assert.equal(metrics.subGroup, "default");
+  assert.equal(metrics.subGroup, "stat-summary");
   assert.deepEqual(metrics.variant, {
     composition: "stat-grid",
     tone: "formal",
@@ -121,7 +121,8 @@ test("layout catalog renders template directory metadata and taxonomy reference"
 
   assert.match(html, /Taxonomy reference/);
   assert.match(html, />Group</);
-  assert.match(html, />Runtime Variant</);
+  assert.match(html, />Sub-group</);
+  assert.match(html, />Variant axes</);
   assert.match(html, /Usage/);
   assert.match(html, /Show details/);
   assert.match(html, /Overview/);
@@ -130,13 +131,12 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.doesNotMatch(html, /Role Contract/);
   assert.doesNotMatch(html, /Narrative Variant Pilot/);
   assert.doesNotMatch(html, /Reviewed Taxonomy Baseline/);
+  assert.doesNotMatch(html, /Runtime Variant/);
   assert.match(html, /封面/);
   assert.match(html, /目录/);
   assert.match(html, /图标要点/);
   assert.match(html, /图文说明/);
   assert.match(html, /能力网格/);
-  assert.match(html, />Sub-group</);
-  assert.match(html, /Variant axes/);
   assert.match(html, /composition/);
   assert.match(html, /tone/);
   assert.match(html, /style/);
@@ -151,12 +151,15 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
-  assert.match(html, /compact glossary/);
+  assert.match(html, /formal `variant` axes/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);
   assert.match(html, /融资路演/);
   assert.match(html, /用于建立演示开场身份与主题/);
-  assert.match(html, /main table stays focused on the template directory itself/);
+  assert.match(
+    html,
+    /main table applies that same `group \/ sub-group \/ variant` contract/,
+  );
 
   const bulletIconsOnly = html.indexOf("bullet-icons-only");
   const bulletWithIcons = html.indexOf("bullet-with-icons");
