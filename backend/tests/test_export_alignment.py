@@ -182,6 +182,45 @@ def test_build_presentation_html_canonicalizes_compare_and_challenge_alias_place
     assert "Fallback generated" not in html
 
 
+def test_build_presentation_html_preserves_legitimate_english_pending_content():
+    payload = {
+        "presentationId": "pres-pending-html",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-compare",
+                "layoutType": "two-column-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": ["Security review", "Pending"],
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-bullets",
+                "layoutType": "bullet-with-icons",
+                "layoutId": "bullet-with-icons",
+                "contentData": {
+                    "title": "Status",
+                    "items": [
+                        {"icon": {"query": "clock-3"}, "title": "Pending", "description": "Awaiting approval"},
+                        {"icon": {"query": "shield"}, "title": "Approved", "description": "Security cleared"},
+                        {"icon": {"query": "rocket"}, "title": "Ready", "description": "Queued for launch"},
+                    ],
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "Security review" in html
+    assert "Pending" in html
+    assert "Awaiting approval" in html
+    assert "待补充" not in html
+
+
 def test_build_presentation_html_renders_bullet_icons_only_icon_tokens():
     payload = {
         "presentationId": "pres-icons-html",

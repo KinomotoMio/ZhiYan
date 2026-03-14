@@ -47,6 +47,11 @@ export function isFallbackPlaceholderText(text: string): boolean {
   return FALLBACK_MATCH_MAP.has(trimmed.toLowerCase());
 }
 
+export function areAllFallbackPlaceholders(texts: readonly string[]): boolean {
+  const populated = texts.map((text) => text.trim()).filter(Boolean);
+  return populated.length > 0 && populated.every((text) => isFallbackPlaceholderText(text));
+}
+
 export function getBulletFallbackStatus(): { title: string; message: string } {
   return {
     title: STATUS_TITLE,

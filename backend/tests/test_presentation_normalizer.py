@@ -214,6 +214,39 @@ def test_normalize_challenge_outcome_canonicalizes_legacy_placeholder_aliases():
     ]
 
 
+def test_normalize_preserves_legitimate_english_pending_content():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-pending-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": ["Security review", "Pending"],
+                },
+            },
+            {
+                "slideId": "slide-pending-challenge",
+                "layoutId": "challenge-outcome",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": [
+                        {"challenge": "Security review", "outcome": "Pending"},
+                    ],
+                },
+            },
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "two-column-compare-from-items" in report["repair_types"]
+    compare = normalized["slides"][0]["contentData"]
+    challenge = normalized["slides"][1]["contentData"]
+    assert compare["right"]["items"] == ["Pending"]
+    assert challenge["items"] == [{"challenge": "Security review", "outcome": "Pending"}]
+
+
 def test_unrecoverable_slide_reported_without_modification():
     payload = _wrap_slides(
         [

@@ -32,6 +32,7 @@ from app.services.fallback_semantics import (
     PENDING_SUPPLEMENT,
     STATUS_MESSAGE,
     STATUS_TITLE,
+    are_all_placeholder_texts,
     canonicalize_fallback_text,
     get_bullet_fallback_status,
     is_placeholder_text,
@@ -280,7 +281,7 @@ def _extract_compare_column(raw: Any, fallback: str) -> tuple[str, list[str]]:
     items_raw = raw.get("items")
     if not isinstance(items_raw, list):
         return heading, []
-    items = [canonicalize_fallback_text(_item_text(item)) for item in items_raw]
+    items = [_item_text(item) for item in items_raw]
     return heading, [item for item in items if item]
 
 
@@ -320,14 +321,17 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
     if isinstance(raw_items, list):
         for row in raw_items:
             if isinstance(row, dict):
+                challenge = _as_text(row.get("challenge"), CONTENT_GENERATING)
+                outcome = _as_text(row.get("outcome"), PENDING_SUPPLEMENT)
+                if are_all_placeholder_texts([challenge, outcome]):
+                    challenge = canonicalize_fallback_text(challenge)
+                    outcome = canonicalize_fallback_text(outcome)
                 pairs.append(
-                    (
-                        canonicalize_fallback_text(_as_text(row.get("challenge"), CONTENT_GENERATING)),
-                        canonicalize_fallback_text(_as_text(row.get("outcome"), PENDING_SUPPLEMENT)),
-                    )
+                    (challenge, outcome)
                 )
             elif isinstance(row, str) and row.strip():
-                pairs.append((canonicalize_fallback_text(row.strip()), PENDING_SUPPLEMENT))
+                text = row.strip()
+                pairs.append((text, PENDING_SUPPLEMENT))
     if pairs:
         return pairs
 
@@ -336,8 +340,11 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
             return []
     challenge_items_raw = data["challenge"].get("items")
     outcome_items_raw = data["outcome"].get("items")
-    challenge_items = [canonicalize_fallback_text(_item_text(item)) for item in challenge_items_raw] if isinstance(challenge_items_raw, list) else []
-    outcome_items = [canonicalize_fallback_text(_item_text(item)) for item in outcome_items_raw] if isinstance(outcome_items_raw, list) else []
+    challenge_items = [_item_text(item) for item in challenge_items_raw] if isinstance(challenge_items_raw, list) else []
+    outcome_items = [_item_text(item) for item in outcome_items_raw] if isinstance(outcome_items_raw, list) else []
+    if are_all_placeholder_texts([*challenge_items, *outcome_items]):
+        challenge_items = [canonicalize_fallback_text(item) for item in challenge_items]
+        outcome_items = [canonicalize_fallback_text(item) for item in outcome_items]
     count = max(len(challenge_items), len(outcome_items))
     if count == 0:
         return []
@@ -608,8 +615,8 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
 
             for idx, item in enumerate(items[:4]):
                 left = base_left + idx * (column_width + gutter)
-                title = canonicalize_fallback_text(_item_text(item))
-                desc = canonicalize_fallback_text(_item_description(item))
+                title = _item_text(item)
+                desc = _item_description(item)
                 icon_token = _icon_token(_item_icon_query(item))
 
                 rule = slide_obj.shapes.add_shape(
@@ -909,6 +916,19 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         if not left_col[1] and not right_col[1]:
             left_col = _extract_compare_column(d.get("challenge"), "要点 A")
             right_col = _extract_compare_column(d.get("outcome"), "要点 B")
+        if not left_col[1] and not right_col[1]:
+            items_raw = d.get("items")
+            items = [_item_text(item) for item in items_raw] if isinstance(items_raw, list) else []
+            items = [item for item in items if item]
+            if are_all_placeholder_texts(items):
+                items = [canonicalize_fallback_text(item) for item in items]
+            if items:
+                midpoint = max(1, (len(items) + 1) // 2)
+                left_col = ("要点 A", items[:midpoint])
+                right_col = ("要点 B", items[midpoint:])
+        if are_all_placeholder_texts([*left_col[1], *right_col[1]]):
+            left_col = (left_col[0], [canonicalize_fallback_text(item) for item in left_col[1]])
+            right_col = (right_col[0], [canonicalize_fallback_text(item) for item in right_col[1]])
         for (col_title, col_items), x_offset in [(left_col, 0.8), (right_col, 7.0)]:
             _add_textbox(slide_obj,
                          Inches(x_offset), Inches(1.8), Inches(5.0), Inches(0.6),

@@ -19,6 +19,7 @@ from app.services.fallback_semantics import (
     PENDING_SUPPLEMENT,
     STATUS_MESSAGE,
     STATUS_TITLE,
+    are_all_placeholder_texts,
     canonicalize_fallback_text,
     get_bullet_fallback_status,
     is_placeholder_text,
@@ -269,8 +270,8 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         compact = col_count == 4
         cards: list[str] = []
         for idx, item in enumerate(items):
-            title = escape(canonicalize_fallback_text(_item_text(item)))
-            detail = escape(canonicalize_fallback_text(_item_detail(item)))
+            title = escape(_item_text(item))
+            detail = escape(_item_detail(item))
             icon_query = _item_icon_query(item)
             cards.append(
                 '<div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">'
@@ -700,7 +701,7 @@ def _column_heading(column: dict[str, Any], fallback: str) -> str:
 def _normalize_column_items(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
-    items = [canonicalize_fallback_text(_item_text(item)) for item in raw]
+    items = [_item_text(item) for item in raw]
     return [item for item in items if item]
 
 
@@ -763,10 +764,24 @@ def _compare_columns(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
             "items": _normalize_column_items(outcome.get("items")),
         }
 
+    left_items_probe = left.get("items") if isinstance(left, dict) else []
+    right_items_probe = right.get("items") if isinstance(right, dict) else []
+    if (not left and not right) or (not left_items_probe and not right_items_probe):
+        items = _normalize_column_items(data.get("items"))
+        if are_all_placeholder_texts(items):
+            items = [canonicalize_fallback_text(item) for item in items]
+        if items:
+            midpoint = max(1, (len(items) + 1) // 2)
+            left = {"heading": "要点 A", "items": items[:midpoint]}
+            right = {"heading": "要点 B", "items": items[midpoint:]}
+
     left = left or {}
     right = right or {}
     left_items = _normalize_column_items(left.get("items"))
     right_items = _normalize_column_items(right.get("items"))
+    if are_all_placeholder_texts([*left_items, *right_items]):
+        left_items = [canonicalize_fallback_text(item) for item in left_items]
+        right_items = [canonicalize_fallback_text(item) for item in right_items]
     return (
         {"heading": _column_heading(left, "要点 A"), "items": left_items or [CONTENT_GENERATING]},
         {"heading": _column_heading(right, "要点 B"), "items": right_items or [CONTENT_GENERATING]},
@@ -792,13 +807,21 @@ def _challenge_outcome_pairs(data: dict[str, Any]) -> list[dict[str, str]]:
     if isinstance(raw_items, list):
         for row in raw_items:
             if isinstance(row, dict):
-                challenge = canonicalize_fallback_text(_as_text(row.get("challenge"), CONTENT_GENERATING))
-                outcome = canonicalize_fallback_text(_as_text(row.get("outcome"), PENDING_SUPPLEMENT))
+                challenge = _as_text(row.get("challenge"), CONTENT_GENERATING)
+                outcome = _as_text(row.get("outcome"), PENDING_SUPPLEMENT)
+                if are_all_placeholder_texts([challenge, outcome]):
+                    challenge = canonicalize_fallback_text(challenge)
+                    outcome = canonicalize_fallback_text(outcome)
                 pairs.append({"challenge": challenge, "outcome": outcome})
             elif isinstance(row, str):
                 text = row.strip()
                 if text:
-                    pairs.append({"challenge": canonicalize_fallback_text(text), "outcome": PENDING_SUPPLEMENT})
+                    pairs.append(
+                        {
+                            "challenge": text,
+                            "outcome": PENDING_SUPPLEMENT,
+                        }
+                    )
     if pairs:
         return pairs
 
@@ -806,6 +829,9 @@ def _challenge_outcome_pairs(data: dict[str, Any]) -> list[dict[str, str]]:
     outcome = data.get("outcome") if isinstance(data.get("outcome"), dict) else {}
     challenge_items = _normalize_column_items(challenge.get("items"))
     outcome_items = _normalize_column_items(outcome.get("items"))
+    if are_all_placeholder_texts([*challenge_items, *outcome_items]):
+        challenge_items = [canonicalize_fallback_text(item) for item in challenge_items]
+        outcome_items = [canonicalize_fallback_text(item) for item in outcome_items]
     count = max(len(challenge_items), len(outcome_items))
     for idx in range(count):
         pairs.append(

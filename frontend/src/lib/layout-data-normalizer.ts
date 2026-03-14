@@ -3,9 +3,9 @@ import {
   PENDING_SUPPLEMENT,
   STATUS_MESSAGE,
   STATUS_TITLE,
+  areAllFallbackPlaceholders,
   canonicalizeFallbackText,
   getBulletFallbackStatus,
-  isFallbackPlaceholderText,
 } from "@/lib/fallback-semantics";
 
 export interface LayoutNormalizeResult {
@@ -48,7 +48,7 @@ function extractTextItemsFromText(rawText: string): string[] {
         .replace(/^\|/, "")
         .replace(/\|$/, "")
         .split("|")
-        .map((cell) => canonicalizeFallbackText(cleanMarkdownText(cell)));
+        .map((cell) => cleanMarkdownText(cell));
       for (const cell of cells) {
         if (shouldKeepCell(cell)) {
           items.push(cell);
@@ -57,7 +57,7 @@ function extractTextItemsFromText(rawText: string): string[] {
       continue;
     }
 
-    const cleaned = canonicalizeFallbackText(cleanMarkdownText(line));
+    const cleaned = cleanMarkdownText(line);
     if (shouldKeepCell(cleaned)) {
       items.push(cleaned);
     }
@@ -101,6 +101,12 @@ function normalizeStatus(raw: unknown): RecordLike | null {
   return { title, message };
 }
 
+function canonicalizePlaceholderSequence(items: string[]): string[] {
+  return areAllFallbackPlaceholders(items)
+    ? items.map((item) => canonicalizeFallbackText(item))
+    : items;
+}
+
 function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
   const title = asText(data.title, "\u8981\u70b9\u6982\u89c8");
   const rawItems = Array.isArray(data.items) ? data.items : [];
@@ -108,13 +114,15 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
     rawItems.length > 0 &&
     rawItems.every((rawItem) => {
       if (!isRecordLike(rawItem)) return false;
-      const itemTitle = canonicalizeFallbackText(asText(rawItem.title));
-      const itemDescription = canonicalizeFallbackText(asText(rawItem.description));
+      const itemTitle = asText(rawItem.title);
+      const itemDescription = asText(rawItem.description);
+      const canonicalTitle = canonicalizeFallbackText(itemTitle);
+      const canonicalDescription = canonicalizeFallbackText(itemDescription);
       return Boolean(
         itemTitle &&
           itemDescription &&
-          itemTitle === itemDescription &&
-          isFallbackPlaceholderText(itemTitle)
+          canonicalTitle === canonicalDescription &&
+          areAllFallbackPlaceholders([itemTitle, itemDescription])
       );
     });
   if (placeholderOnly) {
@@ -136,17 +144,19 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
 
   for (const rawItem of rawItems) {
     if (!isRecordLike(rawItem)) continue;
-    const itemTitle = canonicalizeFallbackText(asText(rawItem.title));
-    const itemDescription = canonicalizeFallbackText(asText(rawItem.description));
+    const itemTitle = asText(rawItem.title);
+    const itemDescription = asText(rawItem.description);
     const text = itemTitle || itemDescription;
 
     if (!text) continue;
 
+    const canonicalTitle = canonicalizeFallbackText(itemTitle);
+    const canonicalDescription = canonicalizeFallbackText(itemDescription);
     const repeatedPlaceholder =
       itemTitle &&
       itemDescription &&
-      itemTitle === itemDescription &&
-      isFallbackPlaceholderText(itemTitle);
+      canonicalTitle === canonicalDescription &&
+      areAllFallbackPlaceholders([itemTitle, itemDescription]);
     if (repeatedPlaceholder) {
       continue;
     }
@@ -259,7 +269,7 @@ function extractTextItems(value: unknown): string[] {
       const outcome = asText(item.outcome);
       text = challenge && outcome ? `${challenge} / ${outcome}` : challenge || outcome;
     }
-    if (text) items.push(canonicalizeFallbackText(text));
+    if (text) items.push(text);
   }
   return items;
 }
@@ -276,7 +286,7 @@ function splitTwoColumns(items: string[]): [string[], string[]] {
 
 function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLike | null {
   if (typeof raw === "string" && raw.trim()) {
-    const items = extractTextItemsFromText(raw);
+    const items = canonicalizePlaceholderSequence(extractTextItemsFromText(raw));
     if (items.length === 0) return null;
     return {
       heading: fallbackHeading,
@@ -285,7 +295,7 @@ function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLi
   }
   if (!isRecordLike(raw)) return null;
   const heading = asText(raw.heading) || asText(raw.title) || fallbackHeading;
-  const items = extractTextItems(raw.items);
+  const items = canonicalizePlaceholderSequence(extractTextItems(raw.items));
   const column: RecordLike = {
     heading,
     items: items.length > 0 ? items : [CONTENT_GENERATING],
@@ -306,7 +316,7 @@ function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
   }
 
   if (!left && !right) {
-    const items = extractTextItems(data.items);
+    const items = canonicalizePlaceholderSequence(extractTextItems(data.items));
     if (items.length === 0) {
       return { data, recoverable: false, changed: false, reason: "missing two-column data" };
     }
@@ -454,23 +464,32 @@ function normalizeChallengeOutcome(data: RecordLike): LayoutNormalizeResult {
   if (Array.isArray(rawItems)) {
     for (const row of rawItems) {
       if (isRecordLike(row)) {
-        const challenge = canonicalizeFallbackText(asText(row.challenge));
-        const outcome = canonicalizeFallbackText(asText(row.outcome));
+        const challenge = asText(row.challenge);
+        const outcome = asText(row.outcome);
+        const placeholderOnlyRow = areAllFallbackPlaceholders([challenge, outcome]);
         if (challenge || outcome) {
           pairs.push({
-            challenge: challenge || CONTENT_GENERATING,
-            outcome: outcome || PENDING_SUPPLEMENT,
+            challenge: placeholderOnlyRow ? canonicalizeFallbackText(challenge) || CONTENT_GENERATING : challenge || CONTENT_GENERATING,
+            outcome: placeholderOnlyRow ? canonicalizeFallbackText(outcome) || PENDING_SUPPLEMENT : outcome || PENDING_SUPPLEMENT,
           });
         }
       } else if (typeof row === "string" && row.trim()) {
-        pairs.push({ challenge: canonicalizeFallbackText(row.trim()), outcome: PENDING_SUPPLEMENT });
+        const text = row.trim();
+        pairs.push({
+          challenge: text,
+          outcome: PENDING_SUPPLEMENT,
+        });
       }
     }
   }
 
   if (pairs.length === 0) {
-    const challenges = extractSideItems(data.challenge);
-    const outcomes = extractSideItems(data.outcome);
+    let challenges = extractSideItems(data.challenge);
+    let outcomes = extractSideItems(data.outcome);
+    if (areAllFallbackPlaceholders([...challenges, ...outcomes])) {
+      challenges = challenges.map((item) => canonicalizeFallbackText(item));
+      outcomes = outcomes.map((item) => canonicalizeFallbackText(item));
+    }
     const count = Math.max(challenges.length, outcomes.length);
     for (let i = 0; i < count; i += 1) {
       pairs.push({

@@ -11,6 +11,7 @@ import {
   PENDING_SUPPLEMENT,
   STATUS_MESSAGE,
   STATUS_TITLE,
+  areAllFallbackPlaceholders,
   canonicalizeFallbackText,
   getBulletFallbackStatus,
 } from "@/lib/fallback-semantics";
@@ -285,15 +286,23 @@ function compareColumns(data: Record<string, unknown>) {
     right = normalize(data.outcome, "Point B");
   }
 
+  const canonicalizeColumns = areAllFallbackPlaceholders([...left.items, ...right.items]);
+  const leftItems = canonicalizeColumns
+    ? left.items.map(canonicalizeFallbackText)
+    : left.items;
+  const rightItems = canonicalizeColumns
+    ? right.items.map(canonicalizeFallbackText)
+    : right.items;
+
   return {
     left: {
       heading: left.heading,
-      items: left.items.length > 0 ? left.items.map(canonicalizeFallbackText) : [CONTENT_GENERATING],
+      items: leftItems.length > 0 ? leftItems : [CONTENT_GENERATING],
       iconQuery: left.iconQuery,
     },
     right: {
       heading: right.heading,
-      items: right.items.length > 0 ? right.items.map(canonicalizeFallbackText) : [CONTENT_GENERATING],
+      items: rightItems.length > 0 ? rightItems : [CONTENT_GENERATING],
       iconQuery: right.iconQuery,
     },
   };
@@ -305,12 +314,19 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
     for (const entry of data.items) {
       if (entry && typeof entry === "object") {
         const rec = entry as Record<string, unknown>;
+        const challenge = asText(rec.challenge, CONTENT_GENERATING);
+        const outcome = asText(rec.outcome, PENDING_SUPPLEMENT);
+        const placeholderOnlyRow = areAllFallbackPlaceholders([challenge, outcome]);
         pairs.push({
-          challenge: canonicalizeFallbackText(asText(rec.challenge, CONTENT_GENERATING)),
-          outcome: canonicalizeFallbackText(asText(rec.outcome, PENDING_SUPPLEMENT)),
+          challenge: placeholderOnlyRow ? canonicalizeFallbackText(challenge) : challenge,
+          outcome: placeholderOnlyRow ? canonicalizeFallbackText(outcome) : outcome,
         });
       } else if (typeof entry === "string" && entry.trim()) {
-        pairs.push({ challenge: canonicalizeFallbackText(entry.trim()), outcome: PENDING_SUPPLEMENT });
+        const text = entry.trim();
+        pairs.push({
+          challenge: text,
+          outcome: PENDING_SUPPLEMENT,
+        });
       }
     }
   }
@@ -329,11 +345,16 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
   const outcomeItems = Array.isArray(outcome.items)
     ? outcome.items.map((item) => itemText(item)).filter(Boolean)
     : [];
+  const canonicalizeSides = areAllFallbackPlaceholders([...challengeItems, ...outcomeItems]);
   const count = Math.max(challengeItems.length, outcomeItems.length);
   for (let i = 0; i < count; i += 1) {
     pairs.push({
-      challenge: canonicalizeFallbackText(challengeItems[i] || CONTENT_GENERATING),
-      outcome: canonicalizeFallbackText(outcomeItems[i] || PENDING_SUPPLEMENT),
+      challenge: canonicalizeSides
+        ? canonicalizeFallbackText(challengeItems[i] || CONTENT_GENERATING)
+        : challengeItems[i] || CONTENT_GENERATING,
+      outcome: canonicalizeSides
+        ? canonicalizeFallbackText(outcomeItems[i] || PENDING_SUPPLEMENT)
+        : outcomeItems[i] || PENDING_SUPPLEMENT,
     });
   }
   return pairs.length > 0 ? pairs : [{ challenge: CONTENT_GENERATING, outcome: PENDING_SUPPLEMENT }];
@@ -447,16 +468,16 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
                       ${renderIconSvg(query, 20)}
                     </div>
                     <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
-                      <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
-                        <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
-                          ${escapeHtml(canonicalizeFallbackText(itemText(item)))}
+                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                          <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
+                          ${escapeHtml(itemText(item))}
                         </span>
                       </span>
                     </h3>
                     ${itemDescription(item)
                       ? `<p style="font-size:${compact ? 11.5 : 12.5}px;line-height:1.42;color:${backgroundTextMix(72)};margin:0;max-width:240px;">
                           <span style="display:-webkit-box;-webkit-line-clamp:${compact ? 4 : 5};-webkit-box-orient:vertical;overflow:hidden;">
-                            ${escapeHtml(canonicalizeFallbackText(itemDescription(item)))}
+                            ${escapeHtml(itemDescription(item))}
                           </span>
                         </p>`
                       : ""}

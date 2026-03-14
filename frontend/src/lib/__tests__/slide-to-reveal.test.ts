@@ -316,6 +316,43 @@ test("presentationToRevealHTML canonicalizes legacy fallback placeholder aliases
   assert.doesNotMatch(html, /Fallback generated/);
 });
 
+test("presentationToRevealHTML preserves legitimate english pending content", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-pending-compare",
+        layoutType: "two-column-compare",
+        layoutId: "two-column-compare",
+        contentData: {
+          title: "Workflow",
+          items: ["Security review", "Pending"],
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-pending-bullet",
+        layoutType: "bullet-with-icons",
+        layoutId: "bullet-with-icons",
+        contentData: {
+          title: "Status",
+          items: [
+            { icon: { query: "clock-3" }, title: "Pending", description: "Awaiting approval" },
+            { icon: { query: "shield" }, title: "Approved", description: "Security cleared" },
+            { icon: { query: "rocket" }, title: "Ready", description: "Queued for launch" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Security review/);
+  assert.match(html, />Pending</);
+  assert.match(html, /Awaiting approval/);
+  assert.doesNotMatch(html, /待补充/);
+});
+
 test("presentationToRevealHTML renders a fallback message for unrecoverable layout data", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,

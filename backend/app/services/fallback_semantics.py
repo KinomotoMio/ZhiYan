@@ -51,6 +51,11 @@ def is_placeholder_text(text: str) -> bool:
     return trimmed.lower() in _PLACEHOLDER_MATCH_MAP
 
 
+def are_all_placeholder_texts(texts: list[str]) -> bool:
+    populated = [text.strip() for text in texts if text.strip()]
+    return bool(populated) and all(is_placeholder_text(text) for text in populated)
+
+
 def get_bullet_fallback_status() -> dict[str, str]:
     return {
         "title": STATUS_TITLE,

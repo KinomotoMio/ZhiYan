@@ -11,9 +11,9 @@ from app.services.fallback_semantics import (
     PENDING_SUPPLEMENT,
     STATUS_MESSAGE,
     STATUS_TITLE,
+    are_all_placeholder_texts,
     canonicalize_fallback_text,
     get_bullet_fallback_status,
-    is_placeholder_text,
 )
 from app.services.image_semantics import normalize_image_content_data
 
@@ -243,16 +243,22 @@ def _normalize_status(raw: Any) -> dict[str, str] | None:
     return {"title": title, "message": message}
 
 
+def _canonicalize_placeholder_sequence(items: list[str]) -> list[str]:
+    if are_all_placeholder_texts(items):
+        return [canonicalize_fallback_text(item) for item in items]
+    return items
+
+
 def _normalize_bullet_with_icons(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
     title = _as_text(data.get("title"), "\u8981\u70b9\u6982\u89c8")
     raw_items = data.get("items") if isinstance(data.get("items"), list) else []
 
     placeholder_only = bool(raw_items) and all(
         isinstance(raw_item, dict)
-        and (item_title := canonicalize_fallback_text(_as_text(raw_item.get("title"), "")))
-        and (item_description := canonicalize_fallback_text(_as_text(raw_item.get("description"), "")))
-        and item_title == item_description
-        and is_placeholder_text(item_title)
+        and (item_title := _as_text(raw_item.get("title"), ""))
+        and (item_description := _as_text(raw_item.get("description"), ""))
+        and are_all_placeholder_texts([item_title, item_description])
+        and canonicalize_fallback_text(item_title) == canonicalize_fallback_text(item_description)
         for raw_item in raw_items
     )
 
@@ -260,12 +266,17 @@ def _normalize_bullet_with_icons(data: dict[str, Any]) -> tuple[dict[str, Any], 
     for raw_item in raw_items:
         if not isinstance(raw_item, dict):
             continue
-        item_title = canonicalize_fallback_text(_as_text(raw_item.get("title"), ""))
-        item_description = canonicalize_fallback_text(_as_text(raw_item.get("description"), ""))
+        item_title = _as_text(raw_item.get("title"), "")
+        item_description = _as_text(raw_item.get("description"), "")
         text = item_title or item_description
         if not text:
             continue
-        if item_title and item_description and item_title == item_description and is_placeholder_text(item_title):
+        if (
+            item_title
+            and item_description
+            and are_all_placeholder_texts([item_title, item_description])
+            and canonicalize_fallback_text(item_title) == canonicalize_fallback_text(item_description)
+        ):
             continue
 
         icon = _normalize_icon(raw_item.get("icon")) or {"query": "star"}
@@ -302,7 +313,7 @@ def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any],
         right = _normalize_compare_column(data.get("outcome"), DEFAULT_RIGHT_HEADING)
 
     if left is None and right is None:
-        items = _extract_text_items(data.get("items"))
+        items = _canonicalize_placeholder_sequence(_extract_text_items(data.get("items")))
         if items:
             left_items, right_items = _split_two_columns(items)
             normalized = {
@@ -370,10 +381,11 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
                 challenge = _as_text(item.get("challenge"), "")
                 outcome = _as_text(item.get("outcome"), "")
                 if challenge or outcome:
+                    placeholder_only_row = are_all_placeholder_texts([challenge, outcome])
                     items.append(
                         {
-                            "challenge": canonicalize_fallback_text(challenge) or CONTENT_GENERATING,
-                            "outcome": canonicalize_fallback_text(outcome) or PENDING_SUPPLEMENT,
+                            "challenge": canonicalize_fallback_text(challenge) if placeholder_only_row and challenge else challenge or CONTENT_GENERATING,
+                            "outcome": canonicalize_fallback_text(outcome) if placeholder_only_row and outcome else outcome or PENDING_SUPPLEMENT,
                         }
                     )
             elif isinstance(item, str):
@@ -381,7 +393,7 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
                 if text:
                     items.append(
                         {
-                            "challenge": canonicalize_fallback_text(text),
+                            "challenge": text,
                             "outcome": PENDING_SUPPLEMENT,
                         }
                     )
@@ -389,6 +401,9 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
     if not items:
         challenges = _extract_side_texts(data.get("challenge"))
         outcomes = _extract_side_texts(data.get("outcome"))
+        if are_all_placeholder_texts([*challenges, *outcomes]):
+            challenges = [canonicalize_fallback_text(item) for item in challenges]
+            outcomes = [canonicalize_fallback_text(item) for item in outcomes]
         if challenges or outcomes:
             count = max(len(challenges), len(outcomes))
             for idx in range(count):
@@ -466,7 +481,7 @@ def _normalize_metric_item(raw: Any) -> dict[str, Any] | None:
 
 def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any] | None:
     if isinstance(raw, str):
-        items = _extract_text_items_from_text(raw)
+        items = _canonicalize_placeholder_sequence(_extract_text_items_from_text(raw))
         if not items:
             return None
         return {
@@ -478,7 +493,7 @@ def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any]
         return None
 
     heading = _as_text(raw.get("heading") or raw.get("title"), fallback_heading)
-    items = _extract_text_items(raw.get("items"))
+    items = _canonicalize_placeholder_sequence(_extract_text_items(raw.get("items")))
     if not items:
         items = [CONTENT_GENERATING]
 
@@ -525,7 +540,7 @@ def _extract_text_items(raw: Any) -> list[str]:
                 text = challenge or outcome
 
         if text:
-            items.append(canonicalize_fallback_text(text))
+            items.append(text)
 
     return items
 
@@ -538,13 +553,13 @@ def _extract_text_items_from_text(text: str) -> list[str]:
     items: list[str] = []
     for line in lines:
         if line.startswith("|"):
-            cells = [canonicalize_fallback_text(_clean_markdown_text(cell)) for cell in line.strip("|").split("|")]
+            cells = [_clean_markdown_text(cell) for cell in line.strip("|").split("|")]
             for cell in cells:
                 if _should_keep_cell(cell):
                     items.append(cell)
             continue
 
-        cleaned = canonicalize_fallback_text(_clean_markdown_text(line))
+        cleaned = _clean_markdown_text(line)
         if _should_keep_cell(cleaned):
             items.append(cleaned)
 

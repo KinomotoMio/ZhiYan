@@ -178,3 +178,26 @@ test("normalizeLayoutData canonicalizes legacy compare and challenge placeholder
     items: [{ challenge: "内容生成中", outcome: "待补充" }],
   });
 });
+
+test("normalizeLayoutData preserves legitimate English content that includes pending states", () => {
+  const compare = normalizeLayoutData("two-column-compare", {
+    title: "Project status",
+    items: ["Vendor review", "Pending"],
+  });
+  assert.equal(compare.recoverable, true);
+  assert.deepEqual(compare.data, {
+    title: "Project status",
+    left: { heading: "要点 A", items: ["Vendor review"] },
+    right: { heading: "要点 B", items: ["Pending"] },
+  });
+
+  const challenge = normalizeLayoutData("challenge-outcome", {
+    title: "Workflow",
+    items: [{ challenge: "Security review", outcome: "Pending" }],
+  });
+  assert.equal(challenge.recoverable, true);
+  assert.deepEqual(challenge.data, {
+    title: "Workflow",
+    items: [{ challenge: "Security review", outcome: "Pending" }],
+  });
+});
