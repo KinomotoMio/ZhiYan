@@ -1,6 +1,10 @@
 from app.models.slide import Slide
 from app.services.presentations.normalizer import normalize_presentation_payload
-from app.utils.scene_background import get_scene_background_rule, supports_scene_background_layout
+from app.utils.scene_background import (
+    build_generated_scene_background,
+    get_scene_background_rule,
+    supports_scene_background_layout,
+)
 
 
 def _wrap_slides(slides):
@@ -20,6 +24,23 @@ def test_scene_background_rules_match_expected_layout_defaults():
         "balanced",
     )
     assert get_scene_background_rule("thank-you").emphasis == "immersive"
+
+
+def test_build_generated_scene_background_only_for_matching_role_layout_pairs():
+    assert build_generated_scene_background("intro-slide", "cover") == {
+        "kind": "scene",
+        "preset": "hero-glow",
+        "emphasis": "immersive",
+        "colorToken": "primary",
+    }
+    assert build_generated_scene_background("quote-slide", "highlight") == {
+        "kind": "scene",
+        "preset": "quote-focus",
+        "emphasis": "balanced",
+        "colorToken": "primary",
+    }
+    assert build_generated_scene_background("quote-slide", "narrative") is None
+    assert build_generated_scene_background("quote-banner", "highlight") is None
 
 
 def test_slide_model_accepts_legal_scene_background_on_eligible_layout():

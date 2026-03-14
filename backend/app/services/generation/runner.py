@@ -844,13 +844,7 @@ class GenerationRunner:
             job.slides = [slide.model_dump(mode="json", by_alias=True) for slide in state.slides]
         elif state.slide_contents:
             job.slides = [
-                {
-                    "slideId": f"slide-{item['slide_number']}",
-                    "layoutType": item.get("layout_id", "bullet-with-icons"),
-                    "layoutId": item.get("layout_id", "bullet-with-icons"),
-                    "contentData": item.get("content_data", {}),
-                    "components": [],
-                }
+                _serialize_slide_content_item(item)
                 for item in state.slide_contents
             ]
         job.issues = list(state.verification_issues)
@@ -991,3 +985,17 @@ def _parse_stage(raw: str) -> StageStatus | None:
     with suppress(ValueError):
         return StageStatus(raw)
     return None
+
+
+def _serialize_slide_content_item(item: dict[str, object]) -> dict[str, object]:
+    slide_payload: dict[str, object] = {
+        "slideId": f"slide-{item['slide_number']}",
+        "layoutType": item.get("layout_id", "bullet-with-icons"),
+        "layoutId": item.get("layout_id", "bullet-with-icons"),
+        "contentData": item.get("content_data", {}),
+        "components": [],
+    }
+    background = item.get("background")
+    if background is not None:
+        slide_payload["background"] = background
+    return slide_payload
