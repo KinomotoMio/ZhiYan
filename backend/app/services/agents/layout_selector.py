@@ -16,7 +16,7 @@ class SlideLayoutChoice(BaseModel):
     group: str = Field(description="必须与该页的 suggested_slide_role 一致")
     sub_group: str = Field(
         default="default",
-        description="该 group 下的信息结构层；非 narrative 组统一填 default",
+        description="该 group 下的信息结构层；必须从该 group 的正式 sub_group 集合中选择",
     )
     layout_id: str = Field(description="从可用布局中选择的 layout_id")
     reason: str = Field(description="选择理由（一句话）")
@@ -53,13 +53,16 @@ def get_layout_selector_agent():
                 "## 选择原则\n"
                 "- 必须先锁定每页的 `group`，且它必须与 `suggested_slide_role` 一致\n"
                 "- 然后选择该 `group` 下的 `sub_group`，最后再落到具体 `layout_id`\n"
-                "- 对 narrative，必须先判断是 `icon-points` / `visual-explainer` / `capability-grid` 哪一种结构，再选择 layout\n"
-                "- 对非 narrative group，`sub_group` 一律填 `default`\n"
+                "- 对存在正式结构层的 group，必须先判断应落在哪个 `sub_group`\n"
+                "- `narrative` 候选为 `icon-points` / `visual-explainer` / `capability-grid`\n"
+                "- `evidence` 候选为 `stat-summary` / `visual-evidence` / `chart-analysis` / `table-matrix`\n"
+                "- `comparison` 候选为 `side-by-side` / `response-mapping`\n"
+                "- `process` 候选为 `step-flow` / `timeline-milestone`\n"
+                "- 其余 group 保持 `sub_group=default`\n"
                 "- `cover` 必须选择 `intro-slide`\n"
                 "- `agenda` 必须选择 `outline-slide`\n"
                 "- `section-divider` 必须选择 `section-header`\n"
                 "- `closing` 必须选择 `thank-you`\n"
-                "- `evidence` / `comparison` / `process` 仍按各自 group 内布局选择，但 sub_group 保持 `default`\n"
                 "- 优先选择 usage 匹配且结构匹配的 layout\n"
                 "- 若 usage 不匹配但结构明显更合适，可越过 usage\n"
                 "- 尽量避免连续页面选择完全相同的 `layout_id`，除非角色固定页或没有更合适候选\n"

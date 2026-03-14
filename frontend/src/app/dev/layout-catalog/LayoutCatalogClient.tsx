@@ -106,6 +106,9 @@ function svgDataUrl(stops: string[], label: string): string {
 const photoA = svgDataUrl(["#1d4ed8", "#06b6d4"], "Product View");
 const photoB = svgDataUrl(["#0f766e", "#65a30d"], "Dashboard");
 const VARIANT_AXIS_ORDER = ["composition", "tone", "style", "density"] as const;
+const FORMAL_SUBGROUP_ROLES = LAYOUT_ROLE_ORDER.filter((role) =>
+  getLayoutSubGroupsForGroup(role).some((subGroup) => subGroup !== "default"),
+);
 
 const entries: CatalogEntry[] = [
   {
@@ -685,6 +688,21 @@ export function LayoutCatalogClientPage() {
             the shared vocabulary, and the main table applies that same
             `group / sub-group / variant` contract to each built-in template.
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">
+              Issue 98 taxonomy calibration
+            </span>
+            {FORMAL_SUBGROUP_ROLES.map((role) => (
+              <span
+                key={role}
+                className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200"
+              >
+                {getLayoutRoleLabel(role)}: {getLayoutSubGroupsForGroup(role).length} formal
+                {" "}
+                sub-groups
+              </span>
+            ))}
+          </div>
           <div className="mt-5 flex flex-wrap gap-2">
             <TogglePill
               active={activeFilter === "all"}
@@ -711,7 +729,10 @@ export function LayoutCatalogClientPage() {
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               This quick reference lists the current `group`, `sub-group`, and
-              formal `variant` axes used by the built-in layouts.
+              formal `variant` axes used by the built-in layouts. After the
+              latest taxonomy calibration, `evidence`, `comparison`, and
+              `process` now expose formal structure layers instead of staying in
+              `default`.
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -727,6 +748,11 @@ export function LayoutCatalogClientPage() {
                         {getLayoutRoleLabel(role)}
                       </span>
                       <code className="text-xs text-slate-500">{role}</code>
+                      {getLayoutSubGroupsForGroup(role).some((subGroup) => subGroup !== "default") ? (
+                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+                          formal sub-groups
+                        </span>
+                      ) : null}
                     </div>
                     <p className="mt-3 text-sm leading-6 text-slate-700">
                       {getLayoutRoleDescription(role)}
@@ -759,6 +785,11 @@ export function LayoutCatalogClientPage() {
                               {getLayoutSubGroupLabel(role, subGroup as LayoutSubGroup)}
                             </span>
                             <code className="text-xs text-slate-500">{subGroup}</code>
+                            {subGroup !== "default" ? (
+                              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+                                formal structure
+                              </span>
+                            ) : null}
                           </div>
                           <p className="mt-2 text-sm leading-6 text-slate-700">
                             {getLayoutSubGroupDescription(role, subGroup as LayoutSubGroup)}
@@ -821,7 +852,7 @@ export function LayoutCatalogClientPage() {
                   <th className="w-[360px] px-5 py-4">Preview</th>
                   <th className="w-[220px] px-5 py-4">Layout</th>
                   <th className="w-[160px] px-5 py-4">Group</th>
-                  <th className="w-[240px] px-5 py-4">Sub-group</th>
+                  <th className="w-[240px] px-5 py-4">Structure sub-group</th>
                   <th className="w-[300px] px-5 py-4">Variant axes</th>
                   <th className="w-[250px] px-5 py-4">Usage</th>
                   <th className="px-5 py-4">Details</th>

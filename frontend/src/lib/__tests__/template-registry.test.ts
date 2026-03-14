@@ -121,8 +121,9 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   const html = renderToStaticMarkup(createElement(LayoutCatalogClientPage));
 
   assert.match(html, /Taxonomy reference/);
+  assert.match(html, /Issue 98 taxonomy calibration/);
   assert.match(html, />Group</);
-  assert.match(html, />Sub-group</);
+  assert.match(html, /Structure sub-group/);
   assert.match(html, />Variant axes</);
   assert.match(html, /Usage/);
   assert.match(html, /Show details/);
@@ -168,6 +169,9 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /section-divider/);
   assert.match(html, /agenda/);
   assert.match(html, /evidence/);
+  assert.match(html, /formal sub-groups/);
+  assert.match(html, /formal structure/);
+  assert.match(html, /latest taxonomy calibration/);
   assert.match(html, /formal `variant` axes/);
   assert.match(html, /学术汇报/);
   assert.match(html, /商业汇报/);

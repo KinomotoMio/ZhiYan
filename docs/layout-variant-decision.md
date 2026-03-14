@@ -1,26 +1,24 @@
 # Layout Variant 决策记录
 
 ## 摘要
-本记录用于承接 `#71`，把 Zhiyan 模板体系中的 `variant` 从旧的单值标签升级为可直接指导后续实现的对象结构。
+本记录承接 `#71` 与 `#98`，固定 Zhiyan 模板体系中的 `variant` 对象结构、字段职责和值域边界。
 
-在 `#67` 与 `#62` 之后，`group` 与 `sub-group` 已经分别承担“页面功能定位”和“信息结构细分”职责。
-本记录继续完成第三层收口：在 `group + sub-group` 已确定后，如何用统一的对象字段表达设计排版扩散。
+在 `group` 与 `sub-group` 已分别承担“页面功能定位”和“信息结构细分”职责后，
+`variant` 只负责同一 `group + sub-group` 下的设计排版扩散。
 
 本记录只回答 `variant` 的规则、字段和值域，不直接修改运行时代码。
 
-## 为什么 `variant` 不能继续停留在单值字符串
-旧的单值 `variant` 已经不足以表达当前模板体系中的设计差异，原因有三点：
+## 为什么 `variant` 仍然需要是对象
+`variant` 不再承担结构差异，但仍需要对象化，原因不变：
 
-1. 单值字符串很容易再次混入结构层语义  
-   narrative 试点已经证明，像 `icon-points / visual-explainer / capability-grid` 这类名字更接近 `sub-group`，而不是设计扩散。
+1. 同一结构下的设计差异本身就是多维的  
+   版式骨架、表达气质、视觉语言与信息密度不能稳定压成一个单值字符串。
 
-2. 单值字符串难以稳定承载多个设计维度  
-   同一个 `group + sub-group` 下的模板差异，往往同时涉及版式骨架、整体气质、视觉风格和信息密度。继续压成一个名字，会让命名越来越混杂。
+2. 实现层需要可拆分消费的设计信号  
+   metadata、catalog、notes 与 selector 都需要按维度读取设计层信息。
 
-3. 后续实现需要可拆分消费的设计信号  
-   metadata、catalog、notes 与 selector 后续都需要读取设计层信息。对象结构比单值字符串更适合作为统一上游。
-
-因此，本记录将 `variant` 明确为对象，而不是继续沿用单值枚举。
+3. 兼容旧接口时更容易明确边界  
+   旧的单值 `variant` 只能作为过渡视图，正式语义应继续由对象承载。
 
 ## `variant` 的正式对象形态
 首批正式结构固定为四个字段：
@@ -40,14 +38,15 @@ type LayoutVariant = {
 
 | 字段 | 回答的问题 | 不负责回答的问题 |
 |---|---|---|
-| `composition` | 这页采用哪种版式骨架？ | 页面功能定位、信息结构分类 |
-| `tone` | 这页整体给人的气质是什么？ | 信息层级、组件摆放结构 |
+| `composition` | 这页采用哪种版式骨架或空间组织方式？ | 页面功能定位、信息结构分类 |
+| `tone` | 这页整体给人的气质是什么？ | 信息结构与组件关系 |
 | `style` | 这页主要依赖哪种视觉语言？ | 页面职责、内容组织方式 |
 | `density` | 这页的信息承载强度有多高？ | 配色方案、具体文案内容 |
 
 进一步约束如下：
 
 - `composition` 可以影响模板选择与排序，但不能替代 `sub-group`
+- 若某个历史 `composition` 名称主要承担结构分类职责，应优先把这层差异回收到 `sub-group`
 - `tone` 用于区分表达气质，例如正式、强调、庆祝，不用于编码结构
 - `style` 用于概括视觉语言，例如卡片化、图标化、数据优先
 - `density` 用于表达单位画面内的信息承载强度，统一使用低/中/高三档
@@ -105,32 +104,54 @@ type LayoutVariant = {
 ## 哪些差异进入 `variant`
 以下差异进入 `variant`：
 
-- 同一 `group + sub-group` 下，版式骨架不同
-- 同一结构下，表达气质明显不同
-- 同一结构下，视觉语言存在稳定差异
-- 同一结构下，信息承载强度存在稳定差异
+- 同一 `group + sub-group` 下的设计骨架细化
+- 同一结构下的表达气质差异
+- 同一结构下的视觉语言差异
+- 同一结构下的信息承载强度差异
 
 以下差异不进入 `variant`：
 
 - 页面功能定位不同
 - 信息结构类型不同
+- 足以改变模板匹配结果的结构差异
 - 一次性文案倾向或业务语气
 - 仅存在于 notes 中的使用建议
-- 不足以复用命名的细碎视觉差异
 
-## 首批按 `group / sub-group` 的示例
+## `#98` 之后的边界澄清
+第二轮 taxonomy 校准后，以下结构差异不再视为 `variant` 主体：
+
+- `evidence`
+  - `stat-summary`
+  - `visual-evidence`
+  - `chart-analysis`
+  - `table-matrix`
+- `comparison`
+  - `side-by-side`
+  - `response-mapping`
+- `process`
+  - `step-flow`
+  - `timeline-milestone`
+
+它们已经正式进入 `sub-group`，`variant` 只保留这些结构之内的设计扩散。
+
+## 按 `group / sub-group` 的示例
 
 | `group / sub-group` | 推荐的首批 `variant` 示例 | 说明 |
 |---|---|---|
 | `cover / default` | `{ composition: hero-center, tone: formal, style: editorial, density: low }` | 封面页优先由开场感和整体气质驱动。 |
 | `agenda / default` | `{ composition: card-grid, tone: formal, style: card-based, density: medium }` | 目录页的核心差异主要体现在网格卡片编排。 |
 | `section-divider / default` | `{ composition: section-break, tone: assertive, style: minimal, density: low }` | 章节过渡页应强化切换感，而不是增加信息密度。 |
-| `narrative / icon-points` | `{ composition: icon-columns, tone: assertive, style: icon-led, density: medium }` | 结构层已固定为图标分点，设计层再表达图标驱动的排版气质。 |
-| `narrative / visual-explainer` | `{ composition: media-split, tone: approachable, style: editorial, density: medium }` | 图文说明结构的主要设计差异来自图文分栏与讲解气质。 |
-| `narrative / capability-grid` | `{ composition: capability-grid, tone: assertive, style: icon-led, density: high }` | 能力网格结构适合更高承载度和更强图标化风格。 |
-| `evidence / default` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` | 证据页的首批变体重点在数据承载方式。 |
-| `comparison / default` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` | 对比页优先用双栏并列骨架表达取舍关系。 |
-| `process / default` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` | 流程页优先保持步骤可读性和结构清晰。 |
+| `narrative / icon-points` | `{ composition: icon-columns, tone: assertive, style: icon-led, density: medium }` | 图标分点结构下的设计层表达。 |
+| `narrative / visual-explainer` | `{ composition: media-split, tone: approachable, style: editorial, density: medium }` | 图文说明结构下的设计层表达。 |
+| `narrative / capability-grid` | `{ composition: capability-grid, tone: assertive, style: icon-led, density: high }` | 能力网格结构下的设计层表达。 |
+| `evidence / stat-summary` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` | 指标概览结构下的设计层表达。 |
+| `evidence / visual-evidence` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` | 图像佐证结构下的设计层表达。 |
+| `evidence / chart-analysis` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` | 图表解读结构下的设计层表达。 |
+| `evidence / table-matrix` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` | 表格矩阵结构下的设计层表达。 |
+| `comparison / side-by-side` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` | 并列对照结构下的设计层表达。 |
+| `comparison / response-mapping` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` | 响应映射结构下的设计层表达。 |
+| `process / step-flow` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` | 步骤流程结构下的设计层表达。 |
+| `process / timeline-milestone` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` | 时间里程碑结构下的设计层表达。 |
 | `highlight / default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` | 强调页以结论或引用作为单点焦点。 |
 | `closing / default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` | 结尾页强调收束感和结束感。 |
 
@@ -144,40 +165,23 @@ type LayoutVariant = {
 | `bullet-with-icons` | `narrative` | `icon-points` | `{ composition: icon-columns, tone: assertive, style: icon-led, density: medium }` |
 | `image-and-description` | `narrative` | `visual-explainer` | `{ composition: media-split, tone: approachable, style: editorial, density: medium }` |
 | `bullet-icons-only` | `narrative` | `capability-grid` | `{ composition: capability-grid, tone: assertive, style: icon-led, density: high }` |
-| `metrics-slide` | `evidence` | `default` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` |
-| `metrics-with-image` | `evidence` | `default` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` |
-| `chart-with-bullets` | `evidence` | `default` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` |
-| `table-info` | `evidence` | `default` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` |
-| `two-column-compare` | `comparison` | `default` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` |
-| `challenge-outcome` | `comparison` | `default` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` |
-| `numbered-bullets` | `process` | `default` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` |
-| `timeline` | `process` | `default` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` |
+| `metrics-slide` | `evidence` | `stat-summary` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` |
+| `metrics-with-image` | `evidence` | `visual-evidence` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` |
+| `chart-with-bullets` | `evidence` | `chart-analysis` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` |
+| `table-info` | `evidence` | `table-matrix` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` |
+| `two-column-compare` | `comparison` | `side-by-side` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` |
+| `challenge-outcome` | `comparison` | `response-mapping` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` |
+| `numbered-bullets` | `process` | `step-flow` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` |
+| `timeline` | `process` | `timeline-milestone` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` |
 | `quote-slide` | `highlight` | `default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` |
 | `thank-you` | `closing` | `default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` |
 
-## 对后续实现 issue 的要求
-
-### 对 `#72` / `#73`
-- 共享 metadata、前后端 registry 和 helper 层后续应以对象形式消费 `variant`
-- 若运行时需要过渡层，可在实现 issue 中添加兼容映射，但不得重新定义字段名和值域
-
-### 对 `#74`
-- `/dev/layout-catalog` 后续应展示四个字段，而不是继续把 `variant` 当单值文本展示
-
-### 对 `#75`
-- notes 应消费 `variant` 对象中的四个维度，分别承接适用场景与排除条件
-- notes 的固定槽位合同由 [layout-notes-decision.md](./layout-notes-decision.md) 承接
-
-### 对 `#76`
-- selector 不应再直接围绕单值 `variant` 做硬匹配，而应把四个字段作为排序与筛选输入
-
 ## 本记录不做什么
-- 不修改 `shared/layout-metadata.json`
-- 不修改前后端 registry
-- 不修改 catalog 运行时展示
-- 不修改 selector
-- 不修改 notes runtime
+- 不修改 `variant` 的对象字段名
+- 不为未来模板预先扩展新的值域
+- 不修改 selector、catalog 或 registry 的具体实现
+- 不重新引入单值 `variant` 作为正式 taxonomy
 
 ## 状态
-本记录构成 `#71` 的决策基线。
-后续如果要扩展新的 `variant` 值域，应通过新的决策更新，而不是在实现 PR 中静默新增。
+本记录是 `#98` 之后的最新 `variant` 边界基线。
+后续若要扩展新的 `variant` 值域，应通过新的决策更新，而不是在实现 PR 中静默新增。

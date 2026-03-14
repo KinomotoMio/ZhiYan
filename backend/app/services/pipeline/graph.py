@@ -51,6 +51,78 @@ _CAPABILITY_GRID_KEYWORDS = (
     "feature set",
     "stack",
 )
+_EVIDENCE_VISUAL_KEYWORDS = (
+    "图片",
+    "配图",
+    "界面",
+    "截图",
+    "场景",
+    "照片",
+    "视觉",
+    "hero",
+    "image",
+    "photo",
+    "visual",
+    "screenshot",
+    "showcase",
+)
+_CHART_ANALYSIS_KEYWORDS = (
+    "图表",
+    "曲线",
+    "柱状",
+    "折线",
+    "趋势",
+    "走势",
+    "同比",
+    "环比",
+    "图",
+    "chart",
+    "graph",
+    "trend",
+    "analysis",
+    "takeaway",
+    "benchmark",
+)
+_TABLE_MATRIX_KEYWORDS = (
+    "表格",
+    "矩阵",
+    "参数",
+    "行列",
+    "清单",
+    "规格",
+    "table",
+    "matrix",
+    "tabular",
+    "spec",
+    "parameter",
+)
+_TIMELINE_KEYWORDS = (
+    "时间线",
+    "里程碑",
+    "阶段",
+    "日期",
+    "排期",
+    "roadmap",
+    "timeline",
+    "milestone",
+    "quarter",
+    "month",
+    "week",
+)
+_RESPONSE_MAPPING_KEYWORDS = (
+    "挑战",
+    "痛点",
+    "问题",
+    "方案",
+    "回应",
+    "结果",
+    "改进",
+    "challenge",
+    "pain point",
+    "response",
+    "solution",
+    "outcome",
+)
 
 ProgressHook = Callable[[str, int, int, str], Awaitable[None]]
 SlideHook = Callable[[dict[str, Any]], Awaitable[None]]
@@ -235,8 +307,12 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
         "- 先确定 group，再确定 sub_group，最后再输出 layout_id\n"
-        "- narrative 必须显式选择 icon-points / visual-explainer / capability-grid 之一\n"
-        "- 非 narrative group 统一使用 sub_group=default\n"
+        "- 对存在正式结构层的 group，必须显式选择对应的 sub_group\n"
+        "- narrative 候选为 icon-points / visual-explainer / capability-grid\n"
+        "- evidence 候选为 stat-summary / visual-evidence / chart-analysis / table-matrix\n"
+        "- comparison 候选为 side-by-side / response-mapping\n"
+        "- process 候选为 step-flow / timeline-milestone\n"
+        "- 其余 group 统一使用 sub_group=default\n"
         "- 优先选择 usage 匹配且结构匹配的 layout_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
         "- 尽量避免连续页面选择完全相同的 `layout_id`，除非角色固定页或没有更合适候选\n"
@@ -360,6 +436,22 @@ def _group_sub_group_to_default_layout(group: str, sub_group: str) -> str:
         if sub_group == "capability-grid":
             return "bullet-icons-only"
         return "bullet-with-icons"
+    if group == "evidence":
+        if sub_group == "visual-evidence":
+            return "metrics-with-image"
+        if sub_group == "chart-analysis":
+            return "chart-with-bullets"
+        if sub_group == "table-matrix":
+            return "table-info"
+        return "metrics-slide"
+    if group == "comparison":
+        if sub_group == "response-mapping":
+            return "challenge-outcome"
+        return "two-column-compare"
+    if group == "process":
+        if sub_group == "timeline-milestone":
+            return "timeline"
+        return "numbered-bullets"
 
     return _role_to_default_layout(group)
 
@@ -787,10 +879,9 @@ def _resolve_layout_sub_group(
     from app.services.pipeline.layout_roles import is_variant_pilot_role
     from app.services.pipeline.layout_taxonomy import get_sub_groups_for_group
 
-    if not is_variant_pilot_role(role):
-        return "default"
-
     allowed_sub_groups = set(get_sub_groups_for_group(role))
+    if not is_variant_pilot_role(role) or not allowed_sub_groups:
+        return "default"
     if requested_sub_group in allowed_sub_groups:
         return requested_sub_group
 
@@ -798,9 +889,6 @@ def _resolve_layout_sub_group(
 
 
 def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
-    if role != "narrative":
-        return "default"
-
     title = str(item.get("title") or "").lower()
     content_brief = str(item.get("content_brief") or "").lower()
     key_points = [
@@ -811,13 +899,35 @@ def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
     key_point_text = "\n".join(key_points)
     combined = "\n".join([title, content_brief, key_point_text])
 
-    if any(token in combined for token in _VISUAL_EXPLAINER_KEYWORDS):
-        return "visual-explainer"
+    if role == "narrative":
+        if any(token in combined for token in _VISUAL_EXPLAINER_KEYWORDS):
+            return "visual-explainer"
 
-    if len(key_points) >= 5 or any(token in combined for token in _CAPABILITY_GRID_KEYWORDS):
-        return "capability-grid"
+        if len(key_points) >= 5 or any(token in combined for token in _CAPABILITY_GRID_KEYWORDS):
+            return "capability-grid"
 
-    return "icon-points"
+        return "icon-points"
+
+    if role == "evidence":
+        if any(token in combined for token in _TABLE_MATRIX_KEYWORDS):
+            return "table-matrix"
+        if any(token in combined for token in _CHART_ANALYSIS_KEYWORDS):
+            return "chart-analysis"
+        if any(token in combined for token in _EVIDENCE_VISUAL_KEYWORDS):
+            return "visual-evidence"
+        return "stat-summary"
+
+    if role == "comparison":
+        if any(token in combined for token in _RESPONSE_MAPPING_KEYWORDS):
+            return "response-mapping"
+        return "side-by-side"
+
+    if role == "process":
+        if any(token in combined for token in _TIMELINE_KEYWORDS):
+            return "timeline-milestone"
+        return "step-flow"
+
+    return "default"
 
 
 def _serialize_variant_from_entry(entry: Any) -> dict[str, str]:

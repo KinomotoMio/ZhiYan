@@ -66,21 +66,41 @@
       }
     },
     "evidence": {
-      "default": {
-        "label": "标准论据页",
-        "description": "当前先保留一个默认子类，用于统一承载数据、指标或表格内容。"
+      "stat-summary": {
+        "label": "指标概览",
+        "description": "以 2-4 个核心指标支撑结论，适合 executive summary、KPI 摘要或轻量量化证据页。"
+      },
+      "visual-evidence": {
+        "label": "图像佐证",
+        "description": "以关键数据配合场景图像承载证据，适合需要同时建立量化说服力与视觉语境的页面。"
+      },
+      "chart-analysis": {
+        "label": "图表解读",
+        "description": "以图表主证据配合解读要点承载分析，适合趋势、对比和 takeaways 并置的页面。"
+      },
+      "table-matrix": {
+        "label": "表格矩阵",
+        "description": "以表格或矩阵作为主要承载结构，适合参数、行列对照和结构化事实汇总。"
       }
     },
     "comparison": {
-      "default": {
-        "label": "标准对比页",
-        "description": "当前先保留一个默认子类，用于表达方案或结论之间的对照。"
+      "side-by-side": {
+        "label": "并列对照",
+        "description": "以左右并列的稳定对照结构呈现两组对象或方案，突出横向差异。"
+      },
+      "response-mapping": {
+        "label": "响应映射",
+        "description": "以挑战到回应、问题到方案的双栏映射结构呈现对应关系，强调前后关联。"
       }
     },
     "process": {
-      "default": {
-        "label": "标准流程页",
-        "description": "当前先保留一个默认子类，用于表达步骤与时间顺序。"
+      "step-flow": {
+        "label": "步骤流程",
+        "description": "以顺序步骤或方法路径承载信息，适合讲做法、流程或 rollout path。"
+      },
+      "timeline-milestone": {
+        "label": "时间里程碑",
+        "description": "以时间轴或里程碑带承载信息，适合讲阶段推进、发展历程或关键节点。"
       }
     },
     "highlight": {
@@ -385,7 +405,7 @@
     },
     "metrics-slide": {
       "group": "evidence",
-      "subGroup": "default",
+      "subGroup": "stat-summary",
       "variant": {
         "composition": "stat-grid",
         "tone": "formal",
@@ -393,12 +413,12 @@
         "density": "medium"
       },
       "notes": {
-        "purpose": "\u7528\u4e8e\u5148\u7ed9\u51fa\u4e00\u53e5 executive summary \u7ed3\u8bba\uff0c\u518d\u7528 2-4 \u4e2a\u6838\u5fc3\u6307\u6807\u652f\u6491\uff1b\u540c\u65f6\u517c\u5bb9\u5386\u53f2 metrics-only \u6570\u636e\u3002",
-        "structure_signal": "evidence / default \u5728\u8bc1\u636e\u9875\u4e2d\u4ee5\u6307\u6807\u5361\u7247\u4f5c\u4e3a\u4e3b\u8f7d\u4f53\uff0c\u7a81\u51fa\u5173\u952e\u6570\u5b57\u3002",
-        "design_signal": "stat-grid + formal + data-first + medium \u9002\u5408\u7528\u5c11\u91cf\u6570\u636e\u5efa\u7acb\u53ef\u4fe1\u5ea6\u548c\u6982\u89c8\u611f\u3002",
-        "use_when": "\u5f53\u4f60\u9700\u8981\u5148\u8bf4\u7ed3\u8bba\uff0c\u518d\u8ba9 2-4 \u4e2a\u6570\u5b57\u4f5c\u4e3a\u91cf\u5316\u8bc1\u636e\u652f\u6491\u65f6\u4f7f\u7528\u3002",
-        "avoid_when": "\u4e0d\u9002\u5408\u9700\u8981\u8be6\u7ec6\u8d8b\u52bf\u5206\u6790\u3001\u8868\u683c\u53c2\u6570\u3001\u590d\u6742\u56fe\u8868\uff0c\u6216\u56fe\u6587\u5e76\u91cd\u7684\u8bf4\u660e\u9875\u3002",
-        "usage_bias": "\u5f3a\u504f business-report\u3001investor-pitch\u3001project-status\uff0c\u5bf9 academic-report \u4e5f\u9002\u7528\uff1b\u5386\u53f2 metrics-only \u5185\u5bb9\u53ef\u517c\u5bb9\u5c55\u793a\u3002"
+        "purpose": "用于先给出一句 executive summary 结论，再用 2-4 个核心指标支撑；同时兼容历史 metrics-only 数据。",
+        "structure_signal": "evidence / stat-summary 在证据页中以指标卡片作为主载体，突出关键数字。",
+        "design_signal": "stat-grid + formal + data-first + medium 适合用少量数据建立可信度和概览感。",
+        "use_when": "当你需要先说结论，再让 2-4 个数字作为量化证据支撑时使用。",
+        "avoid_when": "不适合需要详细趋势分析、表格参数、复杂图表，或图文并重的说明页。",
+        "usage_bias": "强偏 business-report、investor-pitch、project-status，对 academic-report 也适用；历史 metrics-only 内容可兼容展示。"
       },
       "usage": [
         "academic-report",
@@ -409,7 +429,7 @@
     },
     "metrics-with-image": {
       "group": "evidence",
-      "subGroup": "default",
+      "subGroup": "visual-evidence",
       "variant": {
         "composition": "media-split",
         "tone": "assertive",
@@ -418,7 +438,7 @@
       },
       "notes": {
         "purpose": "用于同时展示关键指标和配图场景，不负责高密度表格或复杂图表分析。",
-        "structure_signal": "evidence / default 仍属于证据页，但通过图像补足语境和感知。",
+        "structure_signal": "evidence / visual-evidence 以关键指标配合场景图像承载证据，同时补足语境和感知。",
         "design_signal": "media-split + assertive + data-first + medium 让数据结论和场景视觉同时成立。",
         "use_when": "当你既需要展示 KPI，又希望让产品或场景画面增强说服力时使用。",
         "avoid_when": "不适合没有图像语境的纯数字概览，也不适合大量数据对比。",
@@ -433,7 +453,7 @@
     },
     "chart-with-bullets": {
       "group": "evidence",
-      "subGroup": "default",
+      "subGroup": "chart-analysis",
       "variant": {
         "composition": "analysis-split",
         "tone": "formal",
@@ -442,7 +462,7 @@
       },
       "notes": {
         "purpose": "用于图表趋势与文字解读并置，不负责单页概览或大表格参数罗列。",
-        "structure_signal": "evidence / default 中更偏分析型，图表负责主证据，右侧要点负责解释。",
+        "structure_signal": "evidence / chart-analysis 以图表作为主证据，并用右侧要点完成趋势解读和结论提炼。",
         "design_signal": "analysis-split + formal + data-first + high 适合让图表阅读和观点提炼同时发生。",
         "use_when": "当一张图表需要 2-3 个明确 takeaways 时使用。",
         "avoid_when": "不适合只有一句结论的轻量证据页，也不适合纯表格信息。",
@@ -457,7 +477,7 @@
     },
     "table-info": {
       "group": "evidence",
-      "subGroup": "default",
+      "subGroup": "table-matrix",
       "variant": {
         "composition": "table-dominant",
         "tone": "formal",
@@ -466,7 +486,7 @@
       },
       "notes": {
         "purpose": "用于结构化参数、矩阵和行列对照，不负责情绪化展示或单点强调。",
-        "structure_signal": "evidence / default 中更偏表格主导，适合行列清晰的结构化信息。",
+        "structure_signal": "evidence / table-matrix 以表格或矩阵作为主载体，适合行列清晰的结构化信息。",
         "design_signal": "table-dominant + formal + data-first + high 强调信息完整度和严谨感。",
         "use_when": "当核心信息天然需要按行列展开比较时使用。",
         "avoid_when": "不适合需要图片主导、流程叙事或少量关键数字概览。",
@@ -481,7 +501,7 @@
     },
     "two-column-compare": {
       "group": "comparison",
-      "subGroup": "default",
+      "subGroup": "side-by-side",
       "variant": {
         "composition": "dual-columns",
         "tone": "formal",
@@ -490,7 +510,7 @@
       },
       "notes": {
         "purpose": "用于并列比较两组对象或两种方案，不负责讲因果过程。",
-        "structure_signal": "comparison / default 适合稳定的左右对照结构，突出两侧差异。",
+        "structure_signal": "comparison / side-by-side 适合稳定的左右对照结构，突出两侧差异。",
         "design_signal": "dual-columns + formal + card-based + medium 让左右比较既清楚又有边界感。",
         "use_when": "当你需要让观众快速比较 A/B、现状/目标、手工/自动化时使用。",
         "avoid_when": "不适合讲问题到方案的映射链，也不适合多于两组对象的比较。",
@@ -506,7 +526,7 @@
     },
     "challenge-outcome": {
       "group": "comparison",
-      "subGroup": "default",
+      "subGroup": "response-mapping",
       "variant": {
         "composition": "dual-columns",
         "tone": "assertive",
@@ -515,7 +535,7 @@
       },
       "notes": {
         "purpose": "用于呈现问题到结果、挑战到方案的映射，不负责纯并列优劣对照。",
-        "structure_signal": "comparison / default 中更偏映射关系，每组内容带有明显的前后因果。",
+        "structure_signal": "comparison / response-mapping 更偏问题到回应的映射关系，每组内容带有明显的前后因果。",
         "design_signal": "dual-columns + assertive + minimal + medium 让问题与回应之间形成更强的推进感。",
         "use_when": "当内容是痛点或挑战到结果或方案这类对应关系时优先使用。",
         "avoid_when": "不适合无因果关系的普通双栏比较，也不适合步骤型内容。",
@@ -531,7 +551,7 @@
     },
     "numbered-bullets": {
       "group": "process",
-      "subGroup": "default",
+      "subGroup": "step-flow",
       "variant": {
         "composition": "step-list",
         "tone": "neutral",
@@ -540,7 +560,7 @@
       },
       "notes": {
         "purpose": "用于说明步骤、方法或执行路径，不负责表达真实时间里程碑。",
-        "structure_signal": "process / default 中更偏步骤清单，强调顺序而非时间坐标。",
+        "structure_signal": "process / step-flow 以步骤清单承载方法或执行路径，强调顺序而非时间坐标。",
         "design_signal": "step-list + neutral + minimal + medium 让执行步骤保持可读性和方法感。",
         "use_when": "当你要讲做法、流程、操作步骤或 rollout path 时使用。",
         "avoid_when": "不适合讲按日期推进的时间线，也不适合高密度并列能力页。",
@@ -555,7 +575,7 @@
     },
     "timeline": {
       "group": "process",
-      "subGroup": "default",
+      "subGroup": "timeline-milestone",
       "variant": {
         "composition": "timeline-band",
         "tone": "formal",
@@ -564,7 +584,7 @@
       },
       "notes": {
         "purpose": "用于表达时间顺序、里程碑或发展节奏，不负责方法步骤说明。",
-        "structure_signal": "process / default 中更偏时间轴，将事件绑定到时间节点上。",
+        "structure_signal": "process / timeline-milestone 以时间轴承载阶段推进，将事件绑定到时间节点上。",
         "design_signal": "timeline-band + formal + minimal + medium 强调时间推进与阶段变化，而不是操作方法。",
         "use_when": "当信息核心是时间、阶段、里程碑或发展历程时使用。",
         "avoid_when": "不适合没有时间语义的步骤说明，也不适合单点结论页。",
