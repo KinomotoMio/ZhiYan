@@ -20,7 +20,10 @@ from app.services.pipeline.layout_variants import (
     get_variants_for_role,
 )
 from app.services.pipeline.graph import PipelineState, stage_select_layouts
-from app.services.pipeline.layout_usage import infer_document_and_slide_usage, infer_usage_tags
+from app.services.pipeline.layout_usage import (
+    infer_document_and_slide_usage,
+    infer_usage_tags,
+)
 
 
 class _FakeResult:
@@ -135,7 +138,46 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert outline_layout.design_traits.style == "card-based"
     assert outline_layout.design_traits.density == "medium"
     assert outline_layout.description.startswith("用于交代整份演示的章节骨架")
-    assert outline_layout.notes.use_when.startswith("当你需要在正文前建立叙事顺序")
+    assert outline_layout.notes.use_when.startswith("当目录需要让 4-6 个章节被并列扫读")
+
+
+def test_sibling_layout_notes_stay_distinct_after_runtime_sync():
+    bullet_layout = get_layout("bullet-with-icons")
+    bullet_cards_layout = get_layout("bullet-with-icons-cards")
+    metrics_layout = get_layout("metrics-slide")
+    metrics_band_layout = get_layout("metrics-slide-band")
+    steps_layout = get_layout("numbered-bullets")
+    track_layout = get_layout("numbered-bullets-track")
+    thank_you_layout = get_layout("thank-you")
+    thank_you_contact_layout = get_layout("thank-you-contact")
+
+    assert bullet_layout is not None
+    assert bullet_cards_layout is not None
+    assert "一句结论配一个图标锚点" in bullet_layout.notes.use_when
+    assert "独立卡片边界" in bullet_cards_layout.notes.use_when
+    assert "较完整的标题或说明卡片" in bullet_layout.notes.avoid_when
+    assert "轻量并列结论" in bullet_cards_layout.notes.avoid_when
+
+    assert metrics_layout is not None
+    assert metrics_band_layout is not None
+    assert "同一视觉层级上并列展示 2-4 个核心数字" in metrics_layout.notes.use_when
+    assert "executive summary 先抢占注意力" in metrics_band_layout.notes.use_when
+    assert "横向结论带先抢占注意力" in metrics_layout.notes.avoid_when
+    assert "同一视觉层级并列出现" in metrics_band_layout.notes.avoid_when
+
+    assert steps_layout is not None
+    assert track_layout is not None
+    assert "彼此相对独立但有顺序的执行动作" in steps_layout.notes.use_when
+    assert "阶段递进或 rollout 轨道感" in track_layout.notes.use_when
+    assert "连续推进轨道" in steps_layout.notes.avoid_when
+    assert "彼此独立的步骤要点、方法清单" in track_layout.notes.avoid_when
+
+    assert thank_you_layout is not None
+    assert thank_you_contact_layout is not None
+    assert "而不需要额外行动信息" in thank_you_layout.notes.use_when
+    assert "继续联系、预约、跟进，或采取下一步行动" in thank_you_contact_layout.notes.use_when
+    assert "明确联系方式和下一步行动" in thank_you_layout.notes.avoid_when
+    assert "联系方式抢走收尾留白" in thank_you_contact_layout.notes.avoid_when
 
 
 def test_layout_role_mapping_matches_expected_layout_roles():

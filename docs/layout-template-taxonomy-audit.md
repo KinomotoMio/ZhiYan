@@ -130,8 +130,8 @@
 | `purpose` | 用于建立演示开场身份与主题，不负责展开正文内容。 |
 | `structure_signal` | `cover / default` 适合单一主题入口，强调标题、身份与第一印象。 |
 | `design_signal` | `hero-center + formal + editorial + low` 让注意力集中在标题和主题氛围上。 |
-| `use_when` | 当你需要一个正式、清晰、有开场感的封面页时优先使用。 |
-| `avoid_when` | 不适合承载多个并列信息点、目录导航或正文解释。 |
+| `use_when` | 当你只需要一句主标题建立开场身份与主题，且不想让副标题分散注意力时优先使用。 |
+| `avoid_when` | 不适合承载较长副标题、项目上下文、演讲者身份块、目录导航或正文解释。 |
 | `usage_bias` | 强偏 `academic-report`、`business-report`、`investor-pitch`，对其他 usage 为中等兼容。 |
 
 ### `outline-slide`
@@ -141,8 +141,8 @@
 | `purpose` | 用于交代整份演示的章节骨架，不负责深入解释单个章节内容。 |
 | `structure_signal` | `agenda / default` 适合把 4-6 个章节块组织成统一目录视图。 |
 | `design_signal` | `card-grid + formal + card-based + medium` 让目录既可扫读又保持章节边界。 |
-| `use_when` | 当你需要在正文前建立叙事顺序和章节预期时使用。 |
-| `avoid_when` | 不适合展示单一结论、图表分析或具体案例内容。 |
+| `use_when` | 当目录需要让 4-6 个章节被并列扫读，并快速建立模块边界时使用。 |
+| `avoid_when` | 不适合强调严格推进顺序、纵向路线感、单一结论、图表分析或具体案例内容。 |
 | `usage_bias` | 强偏 `academic-report`、`business-report`、`project-status`，对 `training-workshop` 也较友好。 |
 
 ### `section-header`
@@ -152,8 +152,8 @@
 | `purpose` | 用于大章节之间的切换与提示，不负责承载大量新信息。 |
 | `structure_signal` | `section-divider / default` 只保留章节标题和简短引导，强调结构切换。 |
 | `design_signal` | `section-break + assertive + minimal + low` 提供清晰的阶段切换感而不分散注意力。 |
-| `use_when` | 当你需要在长 deck 中重置观众注意力、标记新章节时使用。 |
-| `avoid_when` | 不适合放目录、证据、步骤或任何需要完整阅读的信息块。 |
+| `use_when` | 当你需要用居中标题做出明显的章节切面、仪式感或情绪重置时使用。 |
+| `avoid_when` | 不适合需要阶段编号、侧边路标、目录、证据、步骤或任何需要完整阅读的信息块。 |
 | `usage_bias` | 强偏 `conference-keynote`、`business-report`、`product-demo`，其他 usage 为弱偏向。 |
 
 ### `bullet-with-icons`
@@ -163,8 +163,8 @@
 | `purpose` | 用于正文中分点说明 3-4 个能力、优势或结论，不负责复杂流程或大段图文。 |
 | `structure_signal` | `narrative / icon-points` 适合将并列要点组织成易扫读的图标分点结构。 |
 | `design_signal` | `icon-columns + assertive + icon-led + medium` 强化每个要点的视觉锚点与结论感。 |
-| `use_when` | 当内容天然是 3-4 个并列卖点、能力点或结论点时使用。 |
-| `avoid_when` | 不适合讲时间线、表格数据或需要主视觉主导的故事页。 |
+| `use_when` | 当内容是 3-4 个并列要点，且每个点更像一句结论配一个图标锚点，而不是独立模块卡片时使用。 |
+| `avoid_when` | 不适合每个要点都需要较完整的标题或说明卡片、时间线、表格数据，或需要主视觉主导的故事页。 |
 | `usage_bias` | 强偏 `sales-pitch`、`product-demo`、`investor-pitch`，对 `business-report` 也很适用。 |
 
 ### `image-and-description`
@@ -174,8 +174,8 @@
 | `purpose` | 用于正文中的案例、场景或产品特性说明，不负责高密度信息压缩。 |
 | `structure_signal` | `narrative / visual-explainer` 适合由一个主视觉承载情境，再配说明文字。 |
 | `design_signal` | `media-split + approachable + editorial + medium` 让页面更适合讲解、展示和说明。 |
-| `use_when` | 当一张图能承担主要情绪或理解入口时优先使用。 |
-| `avoid_when` | 不适合没有视觉主体的纯要点页，也不适合高密度矩阵信息。 |
+| `use_when` | 当一张图需要承担主要情境或理解入口，文字只是辅助解释时优先使用。 |
+| `avoid_when` | 不适合没有视觉主体的纯要点页，也不适合需要把 3-4 个并列点或 4-8 个网格能力一次讲清的内容。 |
 | `usage_bias` | 强偏 `product-demo`、`sales-pitch`、`conference-keynote`，对 `business-report` 为中偏向。 |
 
 ### `bullet-icons-only`
@@ -185,8 +185,8 @@
 | `purpose` | 用于正文中的能力矩阵、模块总览或功能地图，不负责线性叙事。 |
 | `structure_signal` | `narrative / capability-grid` 适合把多个并列能力点组织成高密度网格。 |
 | `design_signal` | `capability-grid + assertive + icon-led + high` 强调覆盖面、并列关系和快速扫读。 |
-| `use_when` | 当你需要一页覆盖 4-8 个并列能力项时使用。 |
-| `avoid_when` | 不适合需要详细解释每一点，或需要时间顺序和主次层级的内容。 |
+| `use_when` | 当你需要一页覆盖 4-8 个并列能力项，并让观众先扫到覆盖面而不是逐条细读时使用。 |
+| `avoid_when` | 不适合需要详细解释每一点、主视觉带入，或存在明显时间顺序和主次层级的内容。 |
 | `usage_bias` | 强偏 `product-demo`、`training-workshop`、`business-report`，对 `conference-keynote` 为中偏向。 |
 
 ### `metrics-slide`
@@ -196,8 +196,8 @@
 | `purpose` | 用于展示少量核心 KPI 或指标摘要，不负责完整趋势解读。 |
 | `structure_signal` | `evidence / stat-summary` 在证据页中以指标卡片作为主载体，突出关键数字。 |
 | `design_signal` | `stat-grid + formal + data-first + medium` 适合用少量数据建立可信度和概览感。 |
-| `use_when` | 当结论可以被 2-4 个核心数字直接支撑时使用。 |
-| `avoid_when` | 不适合需要详细趋势分析、表格参数或图片说明并重的内容。 |
+| `use_when` | 当你需要在同一视觉层级上并列展示 2-4 个核心数字，让观众先看到指标组合而不是一句横向判断时使用。 |
+| `avoid_when` | 不适合需要横向结论带先抢占注意力、详细趋势分析、复杂图表，或图文并重的说明页。 |
 | `usage_bias` | 强偏 `business-report`、`investor-pitch`、`project-status`，对 `academic-report` 也适用。 |
 
 ### `metrics-with-image`
@@ -262,8 +262,8 @@
 | `purpose` | 用于说明步骤、方法或执行路径，不负责表达真实时间里程碑。 |
 | `structure_signal` | `process / step-flow` 以步骤清单承载方法或执行路径，强调顺序而非时间坐标。 |
 | `design_signal` | `step-list + neutral + minimal + medium` 让执行步骤保持可读性和方法感。 |
-| `use_when` | 当你要讲做法、流程、操作步骤或 rollout path 时使用。 |
-| `avoid_when` | 不适合讲按日期推进的时间线，也不适合高密度并列能力页。 |
+| `use_when` | 当你要讲方法、清单式步骤，或彼此相对独立但有顺序的执行动作时使用。 |
+| `avoid_when` | 不适合需要强调连续推进轨道、阶段递进关系、按日期推进的时间线，或高密度并列能力页。 |
 | `usage_bias` | 强偏 `training-workshop`、`project-status`、`business-report`，对 `product-demo` 为中偏向。 |
 
 ### `timeline`
@@ -284,8 +284,8 @@
 | `purpose` | 用于强调一句核心结论、引用或原则，不负责组织复杂信息。 |
 | `structure_signal` | `highlight / default` 适合把注意力聚焦到一句话，而不是多元素阅读。 |
 | `design_signal` | `quote-focus + assertive + statement + low` 让页面情绪和焦点都收束到单句表达上。 |
-| `use_when` | 当你需要暂停叙事、突出原则、引用或关键结论时使用。 |
-| `avoid_when` | 不适合承载列表、图表、双栏比较或复杂说明。 |
+| `use_when` | 当你需要突出原则、引用，或一句需要被静下来阅读的关键结论时使用。 |
+| `avoid_when` | 不适合需要更强舞台宣告感、横幅式主张发布、列表、图表、双栏比较或复杂说明。 |
 | `usage_bias` | 强偏 `conference-keynote`、`business-report`、`academic-report`，对 `investor-pitch` 为中偏向。 |
 
 ### `thank-you`
@@ -295,8 +295,8 @@
 | `purpose` | 用于收尾、致谢和结束，不负责引入新的分析或论证。 |
 | `structure_signal` | `closing / default` 保持简单收束，让信息在结束感中自然落下。 |
 | `design_signal` | `closing-hero + celebratory + minimal + low` 强调结束感、礼貌性和留白。 |
-| `use_when` | 当 deck 需要明确结束并留出提问或联系方式时使用。 |
-| `avoid_when` | 不适合继续承载新观点、数据、流程或目录信息。 |
+| `use_when` | 当 deck 只需要礼貌收束、留出提问空间或结束感，而不需要额外行动信息时使用。 |
+| `avoid_when` | 不适合继续承载新观点、数据、流程或目录信息，或需要明确联系方式和下一步行动时使用。 |
 | `usage_bias` | 对全部 usage 普遍兼容，其中 `conference-keynote`、`sales-pitch`、`investor-pitch` 的结束需求更强。 |
 
 ## 本记录不做什么
