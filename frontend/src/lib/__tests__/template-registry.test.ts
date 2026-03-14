@@ -90,6 +90,7 @@ test("template registry exposes usage metadata for built-in layouts", () => {
 
 test("legacy layout variant helper remains available as a compatibility wrapper", () => {
   assert.equal(getLayoutVariant("bullet-with-icons"), "icon-points");
+  assert.equal(getLayoutVariant("metrics-slide"), "stat-summary");
   assert.equal(getLayoutVariant("outline-slide"), "default");
 });
 
@@ -137,12 +138,28 @@ test("layout catalog renders template directory metadata and taxonomy reference"
   assert.match(html, /图标要点/);
   assert.match(html, /图文说明/);
   assert.match(html, /能力网格/);
+  assert.match(html, /指标概览/);
+  assert.match(html, /图像佐证/);
+  assert.match(html, /图表解读/);
+  assert.match(html, /表格矩阵/);
+  assert.match(html, /并列对照/);
+  assert.match(html, /响应映射/);
+  assert.match(html, /步骤流程/);
+  assert.match(html, /时间里程碑/);
   assert.match(html, /composition/);
   assert.match(html, /tone/);
   assert.match(html, /style/);
   assert.match(html, /density/);
   assert.match(html, /visual-explainer/);
   assert.match(html, /capability-grid/);
+  assert.match(html, /stat-summary/);
+  assert.match(html, /visual-evidence/);
+  assert.match(html, /chart-analysis/);
+  assert.match(html, /table-matrix/);
+  assert.match(html, /side-by-side/);
+  assert.match(html, /response-mapping/);
+  assert.match(html, /step-flow/);
+  assert.match(html, /timeline-milestone/);
   assert.match(html, /hero-center/);
   assert.match(html, /card-grid/);
   assert.match(html, /data-first/);
