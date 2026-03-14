@@ -434,7 +434,7 @@ function normalizeNumberedBullets(data: RecordLike): LayoutNormalizeResult {
     .filter((item): item is RecordLike => isRecordLike(item))
     .map((item, index) => ({
       title: asText(item.title, `步骤 ${index + 1}`),
-      description: asText(item.description, asText(item.detail, DEFAULT_FILLER)),
+      description: asText(item.description, asText(item.detail, CONTENT_GENERATING)),
     }))
     .slice(0, 5);
 
