@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import TypeAlias, cast
 
 from app.services.pipeline.layout_roles import LayoutRole, normalize_slide_role
 from app.services.pipeline.layout_taxonomy import (
@@ -13,12 +13,7 @@ from app.services.pipeline.layout_taxonomy import (
     get_sub_groups_for_group,
 )
 
-LayoutVariant = Literal[
-    "default",
-    "icon-points",
-    "visual-explainer",
-    "capability-grid",
-]
+LayoutVariant: TypeAlias = str
 
 VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
     role: {
@@ -26,11 +21,7 @@ VARIANTS_BY_ROLE: dict[LayoutRole, dict[LayoutVariant, dict[str, str]]] = {
             "label": get_sub_group_label(role, variant),
             "description": get_sub_group_description(role, variant),
         }
-        for variant in (
-            get_sub_groups_for_group(role)
-            if role == "narrative"
-            else ("default",)
-        )
+        for variant in (get_sub_groups_for_group(role) or ("default",))
     }
     for role in get_group_order()
 }
@@ -52,7 +43,7 @@ def get_layout_variant(layout_id: str) -> LayoutVariant:
     taxonomy = get_layout_taxonomy(layout_id)
     if taxonomy is None:
         return "default"
-    return cast(LayoutVariant, taxonomy.sub_group) if taxonomy.group == "narrative" else "default"
+    return cast(LayoutVariant, taxonomy.sub_group)
 
 
 def get_layout_variant_label(role: str | None, variant: str | None) -> str:

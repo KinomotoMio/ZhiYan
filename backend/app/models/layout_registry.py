@@ -1,7 +1,7 @@
 """布局注册中心 — layout_id → Pydantic 模型映射。
 
 用于 Pipeline 中的 GenerateSlides 节点，根据 layout_id 动态选择 output_type。
-对外正式暴露三层 taxonomy 运行时字段，同时保留 selector 当前使用的旧兼容文本接口。
+对外正式暴露三层 taxonomy 运行时字段，同时保留兼容的单值 taxonomy token 视图。
 """
 
 from __future__ import annotations
@@ -191,7 +191,7 @@ def get_layout_catalog() -> str:
         legacy_variant = get_layout_variant(entry.id)
         variant_label = get_layout_variant_label(entry.group, legacy_variant)
         lines.append(
-            f"- `{entry.id}` ({entry.name}, 角色: {entry.group}, 变体: {variant_label} ({legacy_variant}), "
+            f"- `{entry.id}` ({entry.name}, 角色: {entry.group}, 兼容子组: {variant_label} ({legacy_variant}), "
             f"适用领域: {format_usage_tags(entry.usage_tags)}): "
             f"职责: {entry.notes.purpose} "
             f"结构: {entry.notes.structure_signal} "
@@ -221,7 +221,7 @@ def get_layout_taxonomy_catalog() -> str:
 
 
 def get_layout_variant_catalog() -> str:
-    """生成 role -> variant -> layout 的决策清单文本。"""
+    """生成 group -> compatibility sub-group token -> layout 的决策清单文本。"""
     grouped_layouts: dict[tuple[str, str], list[LayoutEntry]] = {}
     for entry in _LAYOUTS:
         key = (entry.group, get_layout_variant(entry.id))
@@ -235,7 +235,7 @@ def get_layout_variant_catalog() -> str:
             f"`{candidate.id}`({candidate.name})" for candidate in variant_entries
         )
         lines.append(
-            f"- 角色 `{group}` / 变体 `{variant}` ({variant_label}): "
+            f"- 角色 `{group}` / 兼容子组 `{variant}` ({variant_label}): "
             f"{variant_description} 可用布局: {layouts_text}"
         )
 
