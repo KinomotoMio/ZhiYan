@@ -1,4 +1,4 @@
-// Slide 数据模型 — 与 shared/schemas/slide.schema.json 保持同步
+// Slide data model. Keep in sync with shared/schemas/slide.schema.json.
 
 export type ComponentType = "text" | "image" | "chart" | "shape";
 
@@ -18,7 +18,6 @@ export type LayoutType =
   | "image-full"
   | "section-header"
   | "blank"
-  // 新版 layout IDs
   | "intro-slide"
   | "outline-slide"
   | "bullet-with-icons"
@@ -34,6 +33,24 @@ export type LayoutType =
   | "bullet-icons-only"
   | "challenge-outcome"
   | "thank-you";
+
+export type SceneBackgroundPreset =
+  | "hero-glow"
+  | "section-band"
+  | "outline-grid"
+  | "quote-focus"
+  | "closing-wash";
+
+export type SceneBackgroundEmphasis = "subtle" | "balanced" | "immersive";
+
+export type SceneBackgroundColorToken = "primary" | "secondary" | "neutral";
+
+export interface SceneBackground {
+  kind: "scene";
+  preset: SceneBackgroundPreset;
+  emphasis?: SceneBackgroundEmphasis;
+  colorToken?: SceneBackgroundColorToken;
+}
 
 export interface Position {
   x: number;
@@ -66,11 +83,9 @@ export interface Component {
 export interface Slide {
   slideId: string;
   layoutType: LayoutType;
-  // 主渲染字段：具体 layout ID（对应 template-registry 中的布局）
   layoutId?: string;
-  // 主渲染字段：结构化内容数据（按 layout schema 生成的 JSON）
   contentData?: Record<string, unknown>;
-  // 旧版兼容字段（只读兼容）
+  background?: SceneBackground | null;
   components?: Component[];
   speakerNotes?: string;
   templateSlotMapping?: Record<string, string>;

@@ -1,12 +1,13 @@
-"""Slide 数据模型 — 与 shared/schemas/slide.schema.json 保持同步
+"""Slide data models kept in sync with shared/schemas/slide.schema.json."""
 
-layout_id + content_data 是主渲染契约。
-components 字段仅保留读兼容。
-"""
+from __future__ import annotations
 
 from enum import Enum
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.utils.scene_background import REMOVE_BACKGROUND, normalize_scene_background
 
 
 class ComponentType(str, Enum):
@@ -26,7 +27,6 @@ class ComponentRole(str, Enum):
 
 
 class LayoutType(str, Enum):
-    # 旧版 layout type（向后兼容）
     TITLE_SLIDE = "title-slide"
     TITLE_CONTENT = "title-content"
     TITLE_CONTENT_IMAGE = "title-content-image"
@@ -34,7 +34,6 @@ class LayoutType(str, Enum):
     IMAGE_FULL = "image-full"
     SECTION_HEADER = "section-header"
     BLANK = "blank"
-    # 新版 layout IDs（与 layout_registry 一致）
     INTRO_SLIDE = "intro-slide"
     OUTLINE_SLIDE = "outline-slide"
     BULLET_WITH_ICONS = "bullet-with-icons"
@@ -64,11 +63,31 @@ class VerticalAlign(str, Enum):
     BOTTOM = "bottom"
 
 
+class SceneBackgroundPreset(str, Enum):
+    HERO_GLOW = "hero-glow"
+    SECTION_BAND = "section-band"
+    OUTLINE_GRID = "outline-grid"
+    QUOTE_FOCUS = "quote-focus"
+    CLOSING_WASH = "closing-wash"
+
+
+class SceneBackgroundEmphasis(str, Enum):
+    SUBTLE = "subtle"
+    BALANCED = "balanced"
+    IMMERSIVE = "immersive"
+
+
+class SceneBackgroundColorToken(str, Enum):
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
+    NEUTRAL = "neutral"
+
+
 class Position(BaseModel):
-    x: float = Field(ge=0, le=100, description="左边距百分比")
-    y: float = Field(ge=0, le=100, description="上边距百分比")
-    width: float = Field(gt=0, le=100, description="宽度百分比")
-    height: float = Field(gt=0, le=100, description="高度百分比")
+    x: float = Field(ge=0, le=100, description="Left percentage")
+    y: float = Field(ge=0, le=100, description="Top percentage")
+    width: float = Field(gt=0, le=100, description="Width percentage")
+    height: float = Field(gt=0, le=100, description="Height percentage")
 
 
 class Style(BaseModel):
@@ -96,23 +115,44 @@ class Component(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class SceneBackground(BaseModel):
+    kind: Literal["scene"]
+    preset: SceneBackgroundPreset
+    emphasis: SceneBackgroundEmphasis | None = None
+    color_token: SceneBackgroundColorToken | None = Field(None, alias="colorToken")
+
+    model_config = {"populate_by_name": True}
+
+
 class Slide(BaseModel):
     slide_id: str = Field(alias="slideId")
     layout_type: str = Field(alias="layoutType")
-
-    # 新增：具体 layout ID（对应 template-registry 中的布局）
     layout_id: str | None = Field(None, alias="layoutId")
-
-    # 新增：结构化内容数据（按 layout schema 生成的 JSON）
     content_data: dict | None = Field(None, alias="contentData")
-
-    # 旧版兼容字段（只读兼容）
+    background: SceneBackground | None = None
     components: list[Component] = Field(default_factory=list)
-
     speaker_notes: str | None = Field(None, alias="speakerNotes")
     template_slot_mapping: dict[str, str] | None = Field(
         None, alias="templateSlotMapping"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_scene_background_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "background" not in value:
+            return value
+
+        data = dict(value)
+        layout_id = data.get("layoutId") or data.get("layoutType")
+        normalized_background = normalize_scene_background(
+            layout_id if isinstance(layout_id, str) else None,
+            data.get("background"),
+        )
+        if normalized_background is REMOVE_BACKGROUND:
+            data.pop("background", None)
+        else:
+            data["background"] = normalized_background
+        return data
 
     model_config = {"populate_by_name": True}
 

@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.services.image_semantics import normalize_image_content_data
+from app.utils.scene_background import REMOVE_BACKGROUND, normalize_scene_background
 
 _RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*\u2022+]\s*")
 _RE_ORDERED_LIST_PREFIX = re.compile(r"^\s*\d+[.)]\s*")
@@ -109,6 +110,18 @@ def normalize_presentation_payload(payload: dict[str, Any]) -> tuple[dict[str, A
             continue
         layout_id_raw = slide.get("layoutId") or slide.get("layoutType") or ""
         layout_id = str(layout_id_raw) if isinstance(layout_id_raw, str) else ""
+
+        if "background" in slide:
+            normalized_background = normalize_scene_background(layout_id, slide.get("background"))
+            if normalized_background is REMOVE_BACKGROUND:
+                slide.pop("background", None)
+                changed = True
+                repair_reasons.append("scene-background")
+            elif slide.get("background") != normalized_background:
+                slide["background"] = normalized_background
+                changed = True
+                repair_reasons.append("scene-background")
+
         content = slide.get("contentData")
         if not isinstance(content, dict):
             continue
