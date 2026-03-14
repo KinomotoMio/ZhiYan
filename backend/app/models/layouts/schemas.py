@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class IconRef(BaseModel):
@@ -54,9 +54,29 @@ class BulletIconItem(BaseModel):
     description: str = Field(max_length=60, description="Bullet description")
 
 
+class LayoutStatusState(BaseModel):
+    title: str = Field(min_length=2, max_length=40, description="Fallback status title")
+    message: str = Field(min_length=2, max_length=120, description="Fallback status message")
+
+
 class BulletWithIconsData(BaseModel):
     title: str = Field(min_length=2, max_length=40, description="Slide title")
-    items: list[BulletIconItem] = Field(min_length=3, max_length=4, description="Bullet items")
+    items: list[BulletIconItem] = Field(default_factory=list, max_length=4, description="Bullet items")
+    status: LayoutStatusState | None = Field(None, description="Explicit fallback status for unavailable content")
+
+    @model_validator(mode="after")
+    def validate_items_or_status(self) -> "BulletWithIconsData":
+        has_items = len(self.items) > 0
+        if has_items:
+            if len(self.items) < 3:
+                raise ValueError("bullet-with-icons requires 3-4 items when status is absent")
+            if self.status is not None:
+                raise ValueError("bullet-with-icons cannot define status when content items are present")
+            return self
+
+        if self.status is None:
+            raise ValueError("bullet-with-icons requires status when content items are unavailable")
+        return self
 
 
 class NumberedBulletItem(BaseModel):

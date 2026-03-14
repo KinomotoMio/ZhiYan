@@ -1,0 +1,14 @@
+{
+  "canonical": {
+    "contentGenerating": "内容生成中",
+    "pendingSupplement": "待补充",
+    "fallbackGenerated": "自动回退生成",
+    "statusTitle": "内容暂未就绪",
+    "statusMessage": "该页正在生成或已回退，可稍后重试。"
+  },
+  "legacyAliases": {
+    "contentGenerating": ["Content unavailable"],
+    "pendingSupplement": ["Pending"],
+    "fallbackGenerated": ["Fallback generated"]
+  }
+}

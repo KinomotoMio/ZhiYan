@@ -62,6 +62,37 @@ def test_normalize_intro_slide_presenter_to_author():
     assert "presenter" not in content
 
 
+def test_normalize_bullet_with_icons_placeholder_aliases_to_status_state():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-bullets",
+                "layoutId": "bullet-with-icons",
+                "contentData": {
+                    "title": "Key findings",
+                    "items": [
+                        {"title": "Content unavailable", "description": "Content unavailable"},
+                        {"title": "Fallback generated", "description": "Fallback generated"},
+                    ],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "bullet-with-icons-fallback-state" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content == {
+        "title": "Key findings",
+        "items": [],
+        "status": {
+            "title": "内容暂未就绪",
+            "message": "该页正在生成或已回退，可稍后重试。",
+        },
+    }
+
+
 def test_normalize_thank_you_contact_info_to_contact():
     payload = _wrap_slides(
         [
@@ -158,6 +189,64 @@ def test_normalize_challenge_outcome_from_legacy_sides():
     ]
 
 
+def test_normalize_challenge_outcome_canonicalizes_legacy_placeholder_aliases():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-legacy-challenge",
+                "layoutId": "challenge-outcome",
+                "contentData": {
+                    "title": "问题与方案",
+                    "items": [
+                        {"challenge": "Content unavailable", "outcome": "Pending"},
+                    ],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "challenge-outcome-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["items"] == [
+        {"challenge": "内容生成中", "outcome": "待补充"},
+    ]
+
+
+def test_normalize_preserves_legitimate_english_pending_content():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-pending-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": ["Security review", "Pending"],
+                },
+            },
+            {
+                "slideId": "slide-pending-challenge",
+                "layoutId": "challenge-outcome",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": [
+                        {"challenge": "Security review", "outcome": "Pending"},
+                    ],
+                },
+            },
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "two-column-compare-from-items" in report["repair_types"]
+    compare = normalized["slides"][0]["contentData"]
+    challenge = normalized["slides"][1]["contentData"]
+    assert compare["right"]["items"] == ["Pending"]
+    assert challenge["items"] == [{"challenge": "Security review", "outcome": "Pending"}]
+
+
 def test_unrecoverable_slide_reported_without_modification():
     payload = _wrap_slides(
         [
@@ -200,6 +289,28 @@ def test_normalize_two_column_compare_from_string_columns():
     assert content["right"]["heading"] == "要点 B"
     assert isinstance(content["right"]["items"], list)
     assert len(content["right"]["items"]) >= 1
+
+
+def test_normalize_two_column_compare_canonicalizes_legacy_placeholder_aliases():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-compare-aliases",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Compare",
+                    "items": ["Content unavailable", "Pending"],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "two-column-compare-from-items" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert content["left"]["items"] == ["内容生成中"]
+    assert content["right"]["items"] == ["待补充"]
 
 
 def test_normalize_outline_slide_from_items_alias_and_pad_sections():

@@ -5,9 +5,16 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const sourcePath = path.resolve(__dirname, "../../shared/layout-metadata.json");
 const targetDir = path.resolve(__dirname, "../src/generated");
-const targetPath = path.join(targetDir, "layout-metadata.json");
-
 mkdirSync(targetDir, { recursive: true });
-cpSync(sourcePath, targetPath);
+
+const filesToSync = [
+  ["../../shared/layout-metadata.json", "layout-metadata.json"],
+  ["../../shared/fallback-semantics.json", "fallback-semantics.json"],
+];
+
+for (const [sourceRelativePath, targetFileName] of filesToSync) {
+  const sourcePath = path.resolve(__dirname, sourceRelativePath);
+  const targetPath = path.join(targetDir, targetFileName);
+  cpSync(sourcePath, targetPath);
+}
