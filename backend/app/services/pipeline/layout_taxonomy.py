@@ -19,17 +19,26 @@ LayoutGroup = Literal[
     "closing",
 ]
 
-LayoutVariantAxis = Literal["composition", "tone", "style", "density"]
+LayoutDesignTraitAxis = Literal["tone", "style", "density"]
 
 _SHARED_METADATA = load_layout_metadata()
 
 
 @dataclass(frozen=True)
-class LayoutVariantObject:
-    composition: str
-    tone: str
-    style: str
-    density: str
+class LayoutDesignTraits:
+    tone: str = ""
+    style: str = ""
+    density: str = ""
+
+
+@dataclass(frozen=True)
+class LayoutVariantDefinition:
+    id: str
+    label: str
+    description: str
+    usage: tuple[str, ...]
+    usage_bias: str
+    design_traits: LayoutDesignTraits
 
 
 @dataclass(frozen=True)
@@ -46,7 +55,8 @@ class LayoutTemplateNotes:
 class LayoutTaxonomyEntry:
     group: LayoutGroup
     sub_group: str
-    variant: LayoutVariantObject
+    variant_id: str
+    is_variant_default: bool
 
 
 GROUP_ORDER: tuple[LayoutGroup, ...] = tuple(
@@ -59,16 +69,11 @@ def get_layout_taxonomy(layout_id: str) -> LayoutTaxonomyEntry | None:
     if not isinstance(metadata, dict):
         return None
 
-    variant = metadata.get("variant", {})
     return LayoutTaxonomyEntry(
         group=cast(LayoutGroup, metadata.get("group", "narrative")),
         sub_group=str(metadata.get("subGroup", "default")),
-        variant=LayoutVariantObject(
-            composition=str(variant.get("composition", "")),
-            tone=str(variant.get("tone", "")),
-            style=str(variant.get("style", "")),
-            density=str(variant.get("density", "")),
-        ),
+        variant_id=str(metadata.get("variantId", "")),
+        is_variant_default=bool(metadata.get("isVariantDefault", False)),
     )
 
 
@@ -122,11 +127,46 @@ def get_sub_group_description(group: LayoutGroup, sub_group: str) -> str:
     )
 
 
-def get_variant_axis_label(axis: LayoutVariantAxis, value: str) -> str:
-    return str(_SHARED_METADATA["variantAxes"].get(axis, {}).get(value, {}).get("label", value))
+def get_layout_variant_definition(
+    group: LayoutGroup,
+    sub_group: str,
+    variant_id: str,
+) -> LayoutVariantDefinition | None:
+    definition = (
+        _SHARED_METADATA["variantsBySubGroup"]
+        .get(group, {})
+        .get(sub_group, {})
+        .get(variant_id)
+    )
+    if not isinstance(definition, dict):
+        return None
+
+    design_traits = definition.get("designTraits", {})
+    return LayoutVariantDefinition(
+        id=variant_id,
+        label=str(definition.get("label", variant_id)),
+        description=str(definition.get("description", "")),
+        usage=tuple(str(tag) for tag in definition.get("usage", [])),
+        usage_bias=str(definition.get("usageBias", "")),
+        design_traits=LayoutDesignTraits(
+            tone=str(design_traits.get("tone", "")),
+            style=str(design_traits.get("style", "")),
+            density=str(design_traits.get("density", "")),
+        ),
+    )
 
 
-def get_variant_axis_description(axis: LayoutVariantAxis, value: str) -> str:
+def get_variant_ids_for_sub_group(group: LayoutGroup, sub_group: str) -> tuple[str, ...]:
+    return tuple(
+        _SHARED_METADATA["variantsBySubGroup"].get(group, {}).get(sub_group, {}).keys()
+    )
+
+
+def get_design_trait_label(axis: LayoutDesignTraitAxis, value: str) -> str:
+    return str(_SHARED_METADATA["designTraitAxes"].get(axis, {}).get(value, {}).get("label", value))
+
+
+def get_design_trait_description(axis: LayoutDesignTraitAxis, value: str) -> str:
     return str(
-        _SHARED_METADATA["variantAxes"].get(axis, {}).get(value, {}).get("description", "")
+        _SHARED_METADATA["designTraitAxes"].get(axis, {}).get(value, {}).get("description", "")
     )

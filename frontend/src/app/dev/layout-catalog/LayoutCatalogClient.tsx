@@ -5,11 +5,17 @@ import type { ComponentType, ReactNode } from "react";
 
 import layoutMetadataJson from "@/generated/layout-metadata.json";
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
+import * as IntroSlideLeft from "@/components/slide-layouts/IntroSlideLeftLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
+import * as SectionHeaderSide from "@/components/slide-layouts/SectionHeaderSideLayout";
 import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
+import * as OutlineSlideRail from "@/components/slide-layouts/OutlineSlideRailLayout";
 import * as BulletWithIcons from "@/components/slide-layouts/BulletWithIconsLayout";
+import * as BulletWithIconsCards from "@/components/slide-layouts/BulletWithIconsCardsLayout";
 import * as NumberedBullets from "@/components/slide-layouts/NumberedBulletsLayout";
+import * as NumberedBulletsTrack from "@/components/slide-layouts/NumberedBulletsTrackLayout";
 import * as MetricsSlide from "@/components/slide-layouts/MetricsSlideLayout";
+import * as MetricsSlideBand from "@/components/slide-layouts/MetricsSlideBandLayout";
 import * as MetricsWithImage from "@/components/slide-layouts/MetricsWithImageLayout";
 import * as ChartWithBullets from "@/components/slide-layouts/ChartWithBulletsLayout";
 import * as TableInfo from "@/components/slide-layouts/TableInfoLayout";
@@ -17,9 +23,11 @@ import * as TwoColumnCompare from "@/components/slide-layouts/TwoColumnCompareLa
 import * as ImageAndDescription from "@/components/slide-layouts/ImageAndDescriptionLayout";
 import * as Timeline from "@/components/slide-layouts/TimelineLayout";
 import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
+import * as QuoteBanner from "@/components/slide-layouts/QuoteBannerLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
+import * as ThankYouContact from "@/components/slide-layouts/ThankYouContactLayout";
 import { getLayout, type LayoutEntry as RuntimeLayoutEntry } from "@/lib/template-registry";
 import {
   compareLayoutRoles,
@@ -35,11 +43,14 @@ import {
 } from "@/lib/layout-usage";
 import { compareLayoutNames } from "@/lib/sort";
 import {
+  getLayoutDesignTraitDescription,
+  getLayoutDesignTraitLabel,
   getLayoutSubGroupDescription,
   getLayoutSubGroupsForGroup,
   getLayoutSubGroupLabel,
-  getLayoutVariantAxisDescription,
-  getLayoutVariantAxisLabel,
+  getVariantDescription,
+  getVariantLabel,
+  getVariantsForSubGroup,
   type LayoutSubGroup,
 } from "@/lib/layout-taxonomy";
 
@@ -56,7 +67,11 @@ type CatalogEntry = {
   schemaName: string;
   group: LayoutRole;
   subGroup: RuntimeLayoutEntry["subGroup"];
-  variant: RuntimeLayoutEntry["variant"];
+  variantId: RuntimeLayoutEntry["variantId"];
+  variantLabel: RuntimeLayoutEntry["variantLabel"];
+  variantDescription: RuntimeLayoutEntry["variantDescription"];
+  designTraits: RuntimeLayoutEntry["designTraits"];
+  isVariantDefault: RuntimeLayoutEntry["isVariantDefault"];
   usage: LayoutUsageTag[];
   notes: RuntimeLayoutEntry["notes"];
   keyFields: string[];
@@ -75,12 +90,26 @@ function getRuntimeLayoutEntry(layoutId: string): RuntimeLayoutEntry {
 
 function getRuntimeCatalogFields(
   layoutId: string,
-): Pick<CatalogEntry, "group" | "subGroup" | "variant" | "notes"> {
+): Pick<
+  CatalogEntry,
+  | "group"
+  | "subGroup"
+  | "variantId"
+  | "variantLabel"
+  | "variantDescription"
+  | "designTraits"
+  | "isVariantDefault"
+  | "notes"
+> {
   const layout = getRuntimeLayoutEntry(layoutId);
   return {
     group: layout.group,
     subGroup: layout.subGroup,
-    variant: layout.variant,
+    variantId: layout.variantId,
+    variantLabel: layout.variantLabel,
+    variantDescription: layout.variantDescription,
+    designTraits: layout.designTraits,
+    isVariantDefault: layout.isVariantDefault,
     notes: layout.notes,
   };
 }
@@ -105,7 +134,7 @@ function svgDataUrl(stops: string[], label: string): string {
 
 const photoA = svgDataUrl(["#1d4ed8", "#06b6d4"], "Product View");
 const photoB = svgDataUrl(["#0f766e", "#65a30d"], "Dashboard");
-const VARIANT_AXIS_ORDER = ["composition", "tone", "style", "density"] as const;
+const DESIGN_TRAIT_ORDER = ["tone", "style", "density"] as const;
 const FORMAL_SUBGROUP_ROLES = LAYOUT_ROLE_ORDER.filter((role) =>
   getLayoutSubGroupsForGroup(role).some((subGroup) => subGroup !== "default"),
 );
@@ -123,6 +152,21 @@ const entries: CatalogEntry[] = [
       subtitle: "Preview every built-in layout with sample content.",
       author: "Codex",
       date: "2026-03-11",
+    },
+  },
+  {
+    module: IntroSlideLeft as unknown as LayoutModule,
+    fileName: "IntroSlideLeftLayout.tsx",
+    schemaName: "IntroSlideData",
+    ...getRuntimeCatalogFields("intro-slide-left"),
+    usage: getLayoutUsage("intro-slide-left"),
+    keyFields: ["title", "subtitle", "author?", "date?"],
+    data: {
+      title: "Variant-Led Layout Selection",
+      subtitle:
+        "Choose a left-aligned cover when the opening slide needs more narrative context and setup.",
+      author: "Zhiyan Team",
+      date: "2026-03-14",
     },
   },
   {
@@ -157,6 +201,25 @@ const entries: CatalogEntry[] = [
     },
   },
   {
+    module: OutlineSlideRail as unknown as LayoutModule,
+    fileName: "OutlineSlideRailLayout.tsx",
+    schemaName: "OutlineSlideData",
+    ...getRuntimeCatalogFields("outline-slide-rail"),
+    usage: getLayoutUsage("outline-slide-rail"),
+    keyFields: ["title", "subtitle?", "sections[4-6]"],
+    data: {
+      title: "Delivery Roadmap",
+      subtitle:
+        "A directional agenda variant that emphasizes sequence and stage progression over card symmetry.",
+      sections: [
+        { title: "Context", description: "Why the taxonomy needs a new variant layer" },
+        { title: "Model", description: "Define variant as a formal design option" },
+        { title: "Runtime", description: "Select variant first, then resolve layout" },
+        { title: "Templates", description: "Ship real layouts under variant tracks" },
+      ],
+    },
+  },
+  {
     module: SectionHeader as unknown as LayoutModule,
     fileName: "SectionHeaderLayout.tsx",
     schemaName: "SectionHeaderData",
@@ -166,6 +229,18 @@ const entries: CatalogEntry[] = [
     data: {
       title: "Platform Overview",
       subtitle: "A clean transition slide between major chapters.",
+    },
+  },
+  {
+    module: SectionHeaderSide as unknown as LayoutModule,
+    fileName: "SectionHeaderSideLayout.tsx",
+    schemaName: "SectionHeaderData",
+    ...getRuntimeCatalogFields("section-header-side"),
+    usage: getLayoutUsage("section-header-side"),
+    keyFields: ["title", "subtitle?"],
+    data: {
+      title: "Selector Contract",
+      subtitle: "Shift runtime choice from direct layout IDs to variant-first resolution.",
     },
   },
   {
@@ -194,6 +269,39 @@ const entries: CatalogEntry[] = [
           icon: { query: "shield-check" },
           title: "Reliable",
           description: "Predictable spacing keeps the page from feeling crowded.",
+        },
+      ],
+    },
+  },
+  {
+    module: BulletWithIconsCards as unknown as LayoutModule,
+    fileName: "BulletWithIconsCardsLayout.tsx",
+    schemaName: "BulletWithIconsData",
+    ...getRuntimeCatalogFields("bullet-with-icons-cards"),
+    usage: getLayoutUsage("bullet-with-icons-cards"),
+    keyFields: ["title", "items[3-4]"],
+    data: {
+      title: "Why Feature Cards Work",
+      items: [
+        {
+          icon: { query: "layout-grid" },
+          title: "Modular",
+          description: "Each capability becomes its own card with a cleaner boundary.",
+        },
+        {
+          icon: { query: "sparkles" },
+          title: "Productive",
+          description: "Useful when the story is closer to product modules than plain bullets.",
+        },
+        {
+          icon: { query: "shield-check" },
+          title: "Stable",
+          description: "Keeps a stronger visual system without changing the underlying content schema.",
+        },
+        {
+          icon: { query: "arrow-right-left" },
+          title: "Reusable",
+          description: "Lets the same icon-points structure host multiple official design variants.",
         },
       ],
     },
@@ -252,6 +360,26 @@ const entries: CatalogEntry[] = [
         { value: "92%", label: "Adoption", description: "active team usage" },
         { value: "14d", label: "Lead Time", description: "from brief to deck" },
         { value: "3.6x", label: "Reuse", description: "template leverage" },
+      ],
+    },
+  },
+  {
+    module: MetricsSlideBand as unknown as LayoutModule,
+    fileName: "MetricsSlideBandLayout.tsx",
+    schemaName: "MetricsSlideData",
+    ...getRuntimeCatalogFields("metrics-slide-band"),
+    usage: getLayoutUsage("metrics-slide-band"),
+    keyFields: ["title", "conclusion", "conclusionBrief", "metrics[2-4]"],
+    data: {
+      title: "Variant Delivery Progress",
+      conclusion:
+        "The variant layer now carries real design options instead of a single baseline tag.",
+      conclusionBrief:
+        "Metadata, selector, and catalog can all reference one canonical variant ID before the system resolves a specific template.",
+      metrics: [
+        { value: "8", label: "new layouts", description: "Fresh built-ins shipped under the new variant model" },
+        { value: "3", label: "design traits", description: "Tone, style, and density kept as helper descriptors" },
+        { value: "1", label: "selector chain", description: "group -> sub-group -> variant -> layoutId" },
       ],
     },
   },
@@ -397,6 +525,35 @@ const entries: CatalogEntry[] = [
     },
   },
   {
+    module: NumberedBulletsTrack as unknown as LayoutModule,
+    fileName: "NumberedBulletsTrackLayout.tsx",
+    schemaName: "NumberedBulletsData",
+    ...getRuntimeCatalogFields("numbered-bullets-track"),
+    usage: getLayoutUsage("numbered-bullets-track"),
+    keyFields: ["title", "items[3-5]"],
+    data: {
+      title: "Implementation Rollout",
+      items: [
+        {
+          title: "Model metadata",
+          description: "Move variant into canonical metadata and make it an explicit node.",
+        },
+        {
+          title: "Runtime selection",
+          description: "Have selector choose variant IDs before layout IDs.",
+        },
+        {
+          title: "Catalog surface",
+          description: "Expose grouped variants and real layouts in the internal catalog.",
+        },
+        {
+          title: "Template supply",
+          description: "Ship new concrete templates so the variants are actually selectable.",
+        },
+      ],
+    },
+  },
+  {
     module: Timeline as unknown as LayoutModule,
     fileName: "TimelineLayout.tsx",
     schemaName: "TimelineData",
@@ -444,6 +601,20 @@ const entries: CatalogEntry[] = [
     },
   },
   {
+    module: QuoteBanner as unknown as LayoutModule,
+    fileName: "QuoteBannerLayout.tsx",
+    schemaName: "QuoteSlideData",
+    ...getRuntimeCatalogFields("quote-banner"),
+    usage: getLayoutUsage("quote-banner"),
+    keyFields: ["quote", "author?", "context?"],
+    data: {
+      quote:
+        "Variant should name the design answer itself, not hide behind a stack of abstract axes.",
+      author: "Issue #102",
+      context: "product framing",
+    },
+  },
+  {
     module: ThankYou as unknown as LayoutModule,
     fileName: "ThankYouLayout.tsx",
     schemaName: "ThankYouData",
@@ -454,6 +625,20 @@ const entries: CatalogEntry[] = [
       title: "Thanks",
       subtitle: "Questions, feedback, or layout ideas are welcome.",
       contact: "design-system@zhiyan.local",
+    },
+  },
+  {
+    module: ThankYouContact as unknown as LayoutModule,
+    fileName: "ThankYouContactLayout.tsx",
+    schemaName: "ThankYouData",
+    ...getRuntimeCatalogFields("thank-you-contact"),
+    usage: getLayoutUsage("thank-you-contact"),
+    keyFields: ["title", "subtitle?", "contact?"],
+    data: {
+      title: "Thanks for Reviewing",
+      subtitle:
+        "Use the contact-card closing variant when the ending should invite a concrete next step.",
+      contact: "pm@zhiyan.ai",
     },
   },
 ];
@@ -472,15 +657,13 @@ const sortedEntries = [...entries].sort((left, right) => {
     return leftSubGroupIndex - rightSubGroupIndex;
   }
 
-  for (const axis of VARIANT_AXIS_ORDER) {
-    const axisDelta = compareLayoutNames(
-      getLayoutVariantAxisLabel(axis, left.variant[axis]),
-      getLayoutVariantAxisLabel(axis, right.variant[axis]),
-      left.variant[axis],
-      right.variant[axis],
-    );
-    if (axisDelta !== 0) return axisDelta;
-  }
+  const variantDelta = compareLayoutNames(
+    left.variantLabel,
+    right.variantLabel,
+    left.variantId,
+    right.variantId,
+  );
+  if (variantDelta !== 0) return variantDelta;
 
   return compareLayoutNames(
     left.module.layoutName,
@@ -490,7 +673,7 @@ const sortedEntries = [...entries].sort((left, right) => {
   );
 });
 
-const variantAxes = layoutMetadataJson.variantAxes;
+const designTraitAxes = layoutMetadataJson.designTraitAxes;
 
 function PreviewFrame({
   Component,
@@ -573,14 +756,32 @@ function SubGroupBadge({
   );
 }
 
-function VariantAxesCard({
-  variant,
+function VariantCard({
+  entry,
 }: {
-  variant: RuntimeLayoutEntry["variant"];
+  entry: Pick<
+    RuntimeLayoutEntry,
+    "variantId" | "variantLabel" | "variantDescription" | "designTraits" | "isVariantDefault"
+  >;
 }) {
   return (
-    <div className="space-y-2">
-      {VARIANT_AXIS_ORDER.map((axis) => (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-violet-100 bg-violet-50/40 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700">
+            Variant
+          </span>
+          {entry.isVariantDefault ? (
+            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+              baseline
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1 text-sm font-medium text-slate-900">{entry.variantLabel}</div>
+        <code className="mt-1 block text-xs text-violet-700">{entry.variantId}</code>
+        <p className="mt-2 text-sm leading-6 text-slate-700">{entry.variantDescription}</p>
+      </div>
+      {DESIGN_TRAIT_ORDER.map((axis) => (
         <div
           key={axis}
           className="rounded-lg border border-violet-100 bg-violet-50/40 p-3"
@@ -589,11 +790,18 @@ function VariantAxesCard({
             <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700">
               {axis}
             </span>
-            <code className="text-xs text-violet-700">{variant[axis]}</code>
+            <code className="text-xs text-violet-700">{entry.designTraits[axis] || "n/a"}</code>
           </div>
           <div className="mt-1 text-sm font-medium text-slate-900">
-            {getLayoutVariantAxisLabel(axis, variant[axis])}
+            {entry.designTraits[axis]
+              ? getLayoutDesignTraitLabel(axis, entry.designTraits[axis]!)
+              : "Not specified"}
           </div>
+          {entry.designTraits[axis] ? (
+            <p className="mt-2 text-sm leading-6 text-slate-700">
+              {getLayoutDesignTraitDescription(axis, entry.designTraits[axis]!)}
+            </p>
+          ) : null}
         </div>
       ))}
     </div>
@@ -686,11 +894,11 @@ export function LayoutCatalogClientPage() {
             can compare previews, inspect file locations, and review the schema
             fields each template expects. The taxonomy reference below defines
             the shared vocabulary, and the main table applies that same
-            `group / sub-group / variant` contract to each built-in template.
+            `group / sub-group / variant / layout` contract to each built-in template.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white">
-              Issue 98 taxonomy calibration
+              Issue 102 variant delivery
             </span>
             {FORMAL_SUBGROUP_ROLES.map((role) => (
               <span
@@ -728,11 +936,11 @@ export function LayoutCatalogClientPage() {
               Taxonomy reference
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              This quick reference lists the current `group`, `sub-group`, and
-              formal `variant` axes used by the built-in layouts. After the
-              latest taxonomy calibration, `evidence`, `comparison`, and
-              `process` now expose formal structure layers instead of staying in
-              `default`.
+              This quick reference lists the current `group`, `sub-group`,
+              formal `variant` nodes, and helper design traits used by the
+              built-in layouts. A single structure can now expose multiple
+              official variants, and each variant can map to one or more real
+              layouts.
             </p>
           </div>
           <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -803,37 +1011,41 @@ export function LayoutCatalogClientPage() {
             </article>
             <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-5">
               <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Variant axes
+                Variant definitions
               </h3>
               <div className="mt-4 space-y-4">
-                {Object.entries(variantAxes).map(([axis, values]) => (
-                  <div key={axis} className="rounded-lg border border-slate-200 bg-white p-4">
+                {LAYOUT_ROLE_ORDER.map((role) => (
+                  <div key={role} className="rounded-lg border border-slate-200 bg-white p-4">
                     <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium uppercase tracking-[0.08em] text-violet-700">
-                        {axis}
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {getLayoutRoleLabel(role)}
                       </span>
+                      <code className="text-xs text-slate-500">{role}</code>
                     </div>
                     <div className="mt-3 space-y-3">
-                      {Object.keys(values).map((value) => (
-                        <div
-                          key={`${axis}-${value}`}
-                          className="rounded-lg border border-slate-100 bg-slate-50 p-3"
-                        >
+                      {getLayoutSubGroupsForGroup(role).map((subGroup) => (
+                        <div key={`${role}-${subGroup}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-semibold text-slate-900">
-                              {getLayoutVariantAxisLabel(
-                                axis as keyof typeof variantAxes,
-                                value,
-                              )}
+                              {getLayoutSubGroupLabel(role, subGroup)}
                             </span>
-                            <code className="text-xs text-slate-500">{value}</code>
+                            <code className="text-xs text-slate-500">{subGroup}</code>
                           </div>
-                          <p className="mt-2 text-sm leading-6 text-slate-700">
-                            {getLayoutVariantAxisDescription(
-                              axis as keyof typeof variantAxes,
-                              value,
-                            )}
-                          </p>
+                          <div className="mt-3 space-y-3">
+                            {getVariantsForSubGroup(role, subGroup).map((variantId) => (
+                              <div key={`${role}-${subGroup}-${variantId}`} className="rounded-lg border border-violet-100 bg-white p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-semibold text-slate-900">
+                                    {getVariantLabel(role, subGroup, variantId)}
+                                  </span>
+                                  <code className="text-xs text-slate-500">{variantId}</code>
+                                </div>
+                                <p className="mt-2 text-sm leading-6 text-slate-700">
+                                  {getVariantDescription(role, subGroup, variantId)}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -853,7 +1065,7 @@ export function LayoutCatalogClientPage() {
                   <th className="w-[220px] px-5 py-4">Layout</th>
                   <th className="w-[160px] px-5 py-4">Group</th>
                   <th className="w-[240px] px-5 py-4">Structure sub-group</th>
-                  <th className="w-[300px] px-5 py-4">Variant axes</th>
+                  <th className="w-[300px] px-5 py-4">Variant</th>
                   <th className="w-[250px] px-5 py-4">Usage</th>
                   <th className="px-5 py-4">Details</th>
                 </tr>
@@ -897,7 +1109,15 @@ export function LayoutCatalogClientPage() {
                           />
                         </td>
                         <td className="px-5 py-5">
-                          <VariantAxesCard variant={entry.variant} />
+                          <VariantCard
+                            entry={{
+                              variantId: entry.variantId,
+                              variantLabel: entry.variantLabel,
+                              variantDescription: entry.variantDescription,
+                              designTraits: entry.designTraits,
+                              isVariantDefault: entry.isVariantDefault,
+                            }}
+                          />
                         </td>
                         <td className="px-5 py-5">
                           <UsageChips usage={entry.usage} />
