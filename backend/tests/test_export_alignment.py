@@ -20,6 +20,19 @@ def _slide_xml_text(pptx_bytes: bytes) -> str:
     return "\n".join(xml_parts)
 
 
+def _slide_xml_map(pptx_bytes: bytes) -> dict[str, str]:
+    with zipfile.ZipFile(io.BytesIO(pptx_bytes), "r") as archive:
+        slide_names = sorted(
+            name
+            for name in archive.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+        return {
+            name: archive.read(name).decode("utf-8", errors="ignore")
+            for name in slide_names
+        }
+
+
 def test_build_presentation_html_renders_content_data_without_components():
     payload = {
         "presentationId": "pres-test",
@@ -417,6 +430,128 @@ def test_export_pptx_accepts_alias_fields():
     assert "hello@example.com" in xml_text
     assert "问题A" in xml_text
     assert "方案A" in xml_text
+
+
+def test_export_pptx_wraps_scene_background_layouts_with_pptx_layers():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-scene-pptx",
+            "title": "Scene Backgrounds",
+            "theme": {
+                "primaryColor": "#1d4ed8",
+                "secondaryColor": "#0f766e",
+                "backgroundColor": "#f8fafc",
+            },
+            "slides": [
+                {
+                    "slideId": "slide-cover",
+                    "layoutType": "intro-slide",
+                    "layoutId": "intro-slide",
+                    "background": {
+                        "kind": "scene",
+                        "preset": "hero-glow",
+                        "emphasis": "immersive",
+                        "colorToken": "primary",
+                    },
+                    "contentData": {
+                        "title": "Launch Plan",
+                        "subtitle": "Scene-first opener",
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-section",
+                    "layoutType": "section-header",
+                    "layoutId": "section-header",
+                    "background": {
+                        "kind": "scene",
+                        "preset": "section-band",
+                        "emphasis": "immersive",
+                        "colorToken": "secondary",
+                    },
+                    "contentData": {
+                        "title": "Act II",
+                        "subtitle": "New chapter",
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-outline",
+                    "layoutType": "outline-slide",
+                    "layoutId": "outline-slide",
+                    "background": {
+                        "kind": "scene",
+                        "preset": "outline-grid",
+                        "emphasis": "immersive",
+                        "colorToken": "neutral",
+                    },
+                    "contentData": {
+                        "title": "Agenda",
+                        "sections": [
+                            {"title": "Context"},
+                            {"title": "Method"},
+                            {"title": "Findings"},
+                            {"title": "Next Steps"},
+                        ],
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-quote",
+                    "layoutType": "quote-slide",
+                    "layoutId": "quote-slide",
+                    "background": {
+                        "kind": "scene",
+                        "preset": "quote-focus",
+                        "emphasis": "immersive",
+                        "colorToken": "secondary",
+                    },
+                    "contentData": {
+                        "quote": "Design for clarity, then add atmosphere.",
+                        "author": "Design Team",
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-thanks",
+                    "layoutType": "thank-you",
+                    "layoutId": "thank-you",
+                    "background": {
+                        "kind": "scene",
+                        "preset": "closing-wash",
+                        "emphasis": "immersive",
+                        "colorToken": "secondary",
+                    },
+                    "contentData": {
+                        "title": "Thanks",
+                        "contact": "team@example.com",
+                    },
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-plain",
+                    "layoutType": "metrics-slide",
+                    "layoutId": "metrics-slide",
+                    "contentData": {
+                        "title": "Metrics",
+                        "metrics": [{"value": "10", "label": "Growth"}],
+                    },
+                    "components": [],
+                },
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    slides = _slide_xml_map(pptx_bytes)
+
+    assert 'scene-bg-hero-glow-immersive-orb-a' in slides["ppt/slides/slide1.xml"]
+    assert 'scene-bg-section-band-immersive-band-major' in slides["ppt/slides/slide2.xml"]
+    assert 'scene-bg-outline-grid-balanced-grid-v-1' in slides["ppt/slides/slide3.xml"]
+    assert 'scene-bg-outline-grid-immersive-grid-v-1' not in slides["ppt/slides/slide3.xml"]
+    assert 'scene-bg-quote-focus-immersive-halo' in slides["ppt/slides/slide4.xml"]
+    assert 'scene-bg-closing-wash-immersive-wash-main' in slides["ppt/slides/slide5.xml"]
+    assert "scene-bg-" not in slides["ppt/slides/slide6.xml"]
 
 
 def test_export_pptx_renders_bullet_status_panel_when_items_unavailable():

@@ -42,6 +42,31 @@ from app.services.fallback_semantics import (
 SLIDE_WIDTH = Inches(13.333)
 SLIDE_HEIGHT = Inches(7.5)
 
+WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+SCENE_EMPHASIS_PROFILES = {
+    "subtle": {
+        "base_tint": 0.05,
+        "accent_opacity": 0.14,
+        "secondary_opacity": 0.10,
+        "safe_opacity": 0.78,
+        "spread": 1.0,
+    },
+    "balanced": {
+        "base_tint": 0.09,
+        "accent_opacity": 0.22,
+        "secondary_opacity": 0.15,
+        "safe_opacity": 0.74,
+        "spread": 1.08,
+    },
+    "immersive": {
+        "base_tint": 0.14,
+        "accent_opacity": 0.31,
+        "secondary_opacity": 0.22,
+        "safe_opacity": 0.68,
+        "spread": 1.18,
+    },
+}
+
 
 def _pct_to_emu(pct: float, total: int) -> int:
     """百分比转 EMU"""
@@ -166,15 +191,190 @@ def _add_text_component(slide_obj, comp: Component) -> None:
                 p.alignment = alignment
 
 
-def _set_slide_background(slide_obj, bg_color: str | None) -> None:
-    """设置幻灯片背景色"""
-    color = _parse_color(bg_color)
+def _set_slide_background(slide_obj, bg_color: str | RGBColor | None) -> None:
+    """Set a slide background using either a hex string or RGBColor."""
+    color = bg_color if isinstance(bg_color, RGBColor) else _parse_color(bg_color)
     if not color:
         return
     background = slide_obj.background
     fill = background.fill
     fill.solid()
     fill.fore_color.rgb = color
+
+
+def _clamp_channel(value: float) -> int:
+    return max(0, min(255, int(round(value))))
+
+
+def _mix_rgb(base: RGBColor, overlay: RGBColor, overlay_ratio: float) -> RGBColor:
+    ratio = max(0.0, min(1.0, overlay_ratio))
+    return RGBColor(
+        _clamp_channel(base[0] * (1 - ratio) + overlay[0] * ratio),
+        _clamp_channel(base[1] * (1 - ratio) + overlay[1] * ratio),
+        _clamp_channel(base[2] * (1 - ratio) + overlay[2] * ratio),
+    )
+
+
+def _resolve_scene_palette(
+    theme,
+    color_token: str | None,
+) -> dict[str, RGBColor]:
+    background = _parse_color(theme.background_color if theme else None) or WHITE
+    primary = _parse_color(theme.primary_color if theme else None) or PRIMARY_COLOR
+    secondary = _parse_color(theme.secondary_color if theme else None) or primary
+
+    if color_token == "secondary":
+        accent = secondary
+        accent_alt = _mix_rgb(background, primary, 0.26)
+    elif color_token == "neutral":
+        accent = _mix_rgb(background, GRAY_900, 0.14)
+        accent_alt = _mix_rgb(background, primary, 0.12)
+    else:
+        accent = primary
+        accent_alt = secondary
+
+    return {
+        "background": background,
+        "accent": accent,
+        "accent_alt": accent_alt,
+        "surface": _mix_rgb(background, WHITE, 0.72),
+    }
+
+
+def _opacity_to_transparency(opacity: float) -> float:
+    return max(0.0, min(1.0, 1.0 - opacity))
+
+
+def _set_shape_name(shape, name: str) -> None:
+    try:
+        shape.name = name
+    except AttributeError:
+        c_nv_pr = shape._element.xpath(".//p:cNvPr")
+        if c_nv_pr:
+            c_nv_pr[0].set("name", name)
+
+
+def _add_scene_shape(
+    slide_obj,
+    preset: str,
+    emphasis: str,
+    layer_name: str,
+    shape_type,
+    left_inches: float,
+    top_inches: float,
+    width_inches: float,
+    height_inches: float,
+    fill_color: RGBColor,
+    *,
+    opacity: float = 1.0,
+    rotation: float | None = None,
+):
+    shape = slide_obj.shapes.add_shape(
+        shape_type,
+        Inches(left_inches),
+        Inches(top_inches),
+        Inches(width_inches),
+        Inches(height_inches),
+    )
+    _set_shape_name(shape, f"scene-bg-{preset}-{emphasis}-{layer_name}")
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = fill_color
+    shape.fill.transparency = _opacity_to_transparency(opacity)
+    shape.line.fill.background()
+    if rotation is not None:
+        shape.rotation = rotation
+    return shape
+
+
+def _apply_hero_glow_scene_background(slide_obj, palette: dict[str, RGBColor], emphasis: str) -> RGBColor:
+    profile = SCENE_EMPHASIS_PROFILES[emphasis]
+    spread = profile["spread"]
+    accent = palette["accent"]
+    accent_alt = palette["accent_alt"]
+    base = _mix_rgb(palette["background"], accent, profile["base_tint"])
+    _set_slide_background(slide_obj, base)
+    _add_scene_shape(slide_obj, "hero-glow", emphasis, "orb-a", MSO_SHAPE.OVAL, -1.2, -1.0, 5.6 * spread, 5.4 * spread, accent, opacity=profile["accent_opacity"])
+    _add_scene_shape(slide_obj, "hero-glow", emphasis, "orb-b", MSO_SHAPE.OVAL, 8.2 - 0.5 * (spread - 1), -0.8, 4.4 * spread, 4.1 * spread, accent_alt, opacity=profile["secondary_opacity"])
+    _add_scene_shape(slide_obj, "hero-glow", emphasis, "beam", MSO_SHAPE.RECTANGLE, 2.2, 0.5, 9.6, 2.3 * spread, _mix_rgb(accent, accent_alt, 0.4), opacity=profile["secondary_opacity"], rotation=-16)
+    _add_scene_shape(slide_obj, "hero-glow", emphasis, "safe-zone", MSO_SHAPE.ROUNDED_RECTANGLE, 1.35, 1.45, 10.6, 3.75, palette["surface"], opacity=profile["safe_opacity"])
+    return accent
+
+
+def _apply_section_band_scene_background(slide_obj, palette: dict[str, RGBColor], emphasis: str) -> RGBColor:
+    profile = SCENE_EMPHASIS_PROFILES[emphasis]
+    spread = profile["spread"]
+    accent = palette["accent"]
+    accent_alt = palette["accent_alt"]
+    base = _mix_rgb(palette["background"], accent, profile["base_tint"] * 0.85)
+    _set_slide_background(slide_obj, base)
+    _add_scene_shape(slide_obj, "section-band", emphasis, "band-major", MSO_SHAPE.ROUNDED_RECTANGLE, -1.8, 0.3, 8.7 * spread, 2.6 * spread, accent, opacity=profile["accent_opacity"], rotation=-12)
+    _add_scene_shape(slide_obj, "section-band", emphasis, "band-minor", MSO_SHAPE.ROUNDED_RECTANGLE, 7.5, 4.7, 6.0 * spread, 1.9 * spread, accent_alt, opacity=profile["secondary_opacity"], rotation=11)
+    _add_scene_shape(slide_obj, "section-band", emphasis, "safe-zone", MSO_SHAPE.ROUNDED_RECTANGLE, 1.9, 1.85, 9.4, 3.1, palette["surface"], opacity=profile["safe_opacity"])
+    return accent
+
+
+def _apply_outline_grid_scene_background(slide_obj, palette: dict[str, RGBColor], emphasis: str) -> RGBColor:
+    profile = SCENE_EMPHASIS_PROFILES[emphasis]
+    accent = palette["accent"]
+    base = _mix_rgb(palette["background"], accent, profile["base_tint"] * 0.65)
+    _set_slide_background(slide_obj, base)
+    for index, left in enumerate((0.9, 2.7, 4.5, 6.3, 8.1, 9.9, 11.7), start=1):
+        _add_scene_shape(slide_obj, "outline-grid", emphasis, f"grid-v-{index}", MSO_SHAPE.RECTANGLE, left, 0.45, 0.02, 6.45, accent, opacity=0.08 if emphasis == "subtle" else 0.12)
+    for index, top in enumerate((1.0, 2.35, 3.7, 5.05), start=1):
+        _add_scene_shape(slide_obj, "outline-grid", emphasis, f"grid-h-{index}", MSO_SHAPE.RECTANGLE, 0.65, top, 12.0, 0.02, accent, opacity=0.08 if emphasis == "subtle" else 0.12)
+    _add_scene_shape(slide_obj, "outline-grid", emphasis, "highlight", MSO_SHAPE.OVAL, 9.2, -0.55, 4.1, 3.4, palette["accent_alt"], opacity=profile["secondary_opacity"])
+    _add_scene_shape(slide_obj, "outline-grid", emphasis, "safe-zone", MSO_SHAPE.ROUNDED_RECTANGLE, 0.55, 0.55, 12.1, 5.95, palette["surface"], opacity=0.88)
+    return accent
+
+
+def _apply_quote_focus_scene_background(slide_obj, palette: dict[str, RGBColor], emphasis: str) -> RGBColor:
+    profile = SCENE_EMPHASIS_PROFILES[emphasis]
+    spread = profile["spread"]
+    accent = palette["accent"]
+    accent_alt = palette["accent_alt"]
+    base = _mix_rgb(palette["background"], accent, profile["base_tint"] * 0.72)
+    _set_slide_background(slide_obj, base)
+    _add_scene_shape(slide_obj, "quote-focus", emphasis, "halo", MSO_SHAPE.OVAL, 2.2 - 0.4 * (spread - 1), 1.15, 8.5 * spread, 4.2, accent, opacity=profile["accent_opacity"])
+    _add_scene_shape(slide_obj, "quote-focus", emphasis, "orb", MSO_SHAPE.OVAL, 0.9, 1.35, 2.2, 2.2, accent_alt, opacity=profile["secondary_opacity"])
+    _add_scene_shape(slide_obj, "quote-focus", emphasis, "safe-zone", MSO_SHAPE.ROUNDED_RECTANGLE, 1.65, 1.75, 10.05, 2.95, palette["surface"], opacity=0.8 if emphasis == "immersive" else 0.84)
+    return accent
+
+
+def _apply_closing_wash_scene_background(slide_obj, palette: dict[str, RGBColor], emphasis: str) -> RGBColor:
+    profile = SCENE_EMPHASIS_PROFILES[emphasis]
+    spread = profile["spread"]
+    accent = palette["accent"]
+    accent_alt = palette["accent_alt"]
+    base = _mix_rgb(palette["background"], accent, profile["base_tint"] * 0.92)
+    _set_slide_background(slide_obj, base)
+    _add_scene_shape(slide_obj, "closing-wash", emphasis, "wash-main", MSO_SHAPE.OVAL, 7.0, 2.5, 6.5 * spread, 4.6 * spread, accent, opacity=profile["accent_opacity"])
+    _add_scene_shape(slide_obj, "closing-wash", emphasis, "wash-edge", MSO_SHAPE.OVAL, -0.9, 4.6, 4.8 * spread, 3.2 * spread, accent_alt, opacity=profile["secondary_opacity"])
+    _add_scene_shape(slide_obj, "closing-wash", emphasis, "beam", MSO_SHAPE.RECTANGLE, 0.8, 4.0, 11.2, 2.4 * spread, _mix_rgb(accent, accent_alt, 0.5), opacity=profile["secondary_opacity"], rotation=9)
+    _add_scene_shape(slide_obj, "closing-wash", emphasis, "safe-zone", MSO_SHAPE.ROUNDED_RECTANGLE, 1.85, 1.95, 9.6, 3.15, palette["surface"], opacity=profile["safe_opacity"])
+    return accent
+
+
+def _apply_scene_background(slide_obj, slide_data, theme) -> RGBColor | None:
+    background = getattr(slide_data, "background", None)
+    if background is None or getattr(background, "kind", None) != "scene":
+        return None
+
+    preset = background.preset.value
+    emphasis = background.emphasis.value if background.emphasis else "balanced"
+    color_token = background.color_token.value if background.color_token else "primary"
+    palette = _resolve_scene_palette(theme, color_token)
+
+    if preset == "hero-glow":
+        return _apply_hero_glow_scene_background(slide_obj, palette, emphasis)
+    if preset == "section-band":
+        return _apply_section_band_scene_background(slide_obj, palette, emphasis)
+    if preset == "outline-grid":
+        return _apply_outline_grid_scene_background(slide_obj, palette, emphasis)
+    if preset == "quote-focus":
+        return _apply_quote_focus_scene_background(slide_obj, palette, emphasis)
+    if preset == "closing-wash":
+        return _apply_closing_wash_scene_background(slide_obj, palette, emphasis)
+    return None
 
 
 def _add_placeholder_component(slide_obj, comp: Component) -> None:
@@ -1048,12 +1248,16 @@ def export_pptx(presentation: Presentation) -> bytes:
 
     for slide_data in presentation.slides:
         slide_obj = prs.slides.add_slide(blank_layout)
+        slide_theme_color = theme_color
 
-        if presentation.theme and presentation.theme.background_color:
+        scene_color = _apply_scene_background(slide_obj, slide_data, presentation.theme)
+        if scene_color is not None:
+            slide_theme_color = scene_color
+        elif presentation.theme and presentation.theme.background_color:
             _set_slide_background(slide_obj, presentation.theme.background_color)
 
         if slide_data.content_data and slide_data.layout_id:
-            _render_content_data(slide_obj, slide_data.layout_id, slide_data.content_data, theme_color)
+            _render_content_data(slide_obj, slide_data.layout_id, slide_data.content_data, slide_theme_color)
         else:
             for comp in slide_data.components:
                 if comp.type.value == "text":
