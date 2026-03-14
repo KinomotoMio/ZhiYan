@@ -2,7 +2,7 @@
 
 ## 摘要
 本记录用于承接 `#62`，对当前 16 个 built-in template 做一次完整的人工审校，
-输出 `group / sub-group / variant` 三层归属结论。
+输出 `group / sub-group / variant` 三层归属结论与当前 built-in template 的基线示例。
 
 本记录消费 `#67` 中已经固定的 taxonomy 语义，不重新定义三层概念。
 它的目标是给后续 metadata、catalog、selector 与 notes 线路提供统一输入，
@@ -16,12 +16,14 @@
 - `group`：页面功能定位
 - `sub-group`：单个 group 内的信息结构细分，单选
 - `variant`：在 `group + sub-group` 已确定之后的设计排版扩散
+- `usage`：位于 `variant` 之下的适配偏好层，不是新的硬 taxonomy 层
+- `notes`：综合上游语义形成的解释层，不是新的分类层
 
 ### 当前阶段的默认规则
 - 如果模板的主要差异体现在信息如何被组织，则优先记为 `sub-group`
 - `variant` 的对象结构和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
-- 本记录不再把 `variant` 一律暂记为 `default`，而是回写当前 16 个 built-in template 的正式 variant 归属
-- 除 narrative 试点外，本轮仍不主动为其他 group 发明新的 `sub-group`
+- 本记录不再把 `variant` 一律暂记为 `default`，而是回写当前 16 个 built-in template 的当前基线归属
+- 本轮明确回写 `evidence / comparison / process` 的正式 `sub-group`
 - 本轮审校只对 built-in template 给出人工归属结论，不改共享 metadata，也不改 selector
 
 ### 审校来源
@@ -41,21 +43,21 @@
 | `bullet-with-icons` | `narrative / icon-points` | `narrative` | `icon-points` | `{ composition: icon-columns, tone: assertive, style: icon-led, density: medium }` | `新增或调整 sub-group + 定义 variant` | 图标分点属于结构层，同时其多列图标化编排和强调型气质可稳定沉淀为正式 variant。 |
 | `image-and-description` | `narrative / visual-explainer` | `narrative` | `visual-explainer` | `{ composition: media-split, tone: approachable, style: editorial, density: medium }` | `新增或调整 sub-group + 定义 variant` | 主视觉加说明文字继续作为 `sub-group`，设计层则定版为图文分栏、亲和讲解型 variant。 |
 | `bullet-icons-only` | `narrative / capability-grid` | `narrative` | `capability-grid` | `{ composition: capability-grid, tone: assertive, style: icon-led, density: high }` | `新增或调整 sub-group + 定义 variant` | 能力矩阵属于结构层，同时其高密度、图标驱动的网格呈现已具备稳定的设计变体语义。 |
-| `metrics-slide` | `evidence / default` | `evidence` | `default` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` | `补充正式 variant` | 指标卡片页在默认 evidence 结构下，可明确沉淀为数据优先、指标网格型 variant。 |
-| `metrics-with-image` | `evidence / default` | `evidence` | `default` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` | `补充正式 variant` | 虽仍归 evidence 默认结构，但设计层已稳定体现为数据与配图并置的分栏 variant。 |
-| `chart-with-bullets` | `evidence / default` | `evidence` | `default` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` | `补充正式 variant` | 图表与解读并置的分析骨架足以作为正式 variant，而不必先升级为新的 `sub-group`。 |
-| `table-info` | `evidence / default` | `evidence` | `default` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` | `补充正式 variant` | 表格主导的证据页目前仍可留在 evidence 默认结构，但设计层已能明确为高密度表格型 variant。 |
-| `two-column-compare` | `comparison / default` | `comparison` | `default` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` | `补充正式 variant` | 标准双栏对比页的设计特征主要体现在卡片化双栏骨架。 |
-| `challenge-outcome` | `comparison / default` | `comparison` | `default` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` | `补充正式 variant` | 问题到方案映射仍属 comparison 默认结构，但设计层气质和视觉语言已与标准对比页拉开差异。 |
-| `numbered-bullets` | `process / default` | `process` | `default` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` | `补充正式 variant` | 步骤页的稳定差异集中在顺序清单骨架和中性说明气质。 |
-| `timeline` | `process / default` | `process` | `default` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` | `补充正式 variant` | 时间线虽然仍保留 process 默认结构，但设计层已经形成清晰的带状时间轴 variant。 |
+| `metrics-slide` | `evidence / default` | `evidence` | `stat-summary` | `{ composition: stat-grid, tone: formal, style: data-first, density: medium }` | `新增或调整 sub-group + 定义 variant` | 指标卡片页的核心差异来自“少量 KPI 支撑结论”的承载结构，应正式升级为 evidence 的指标概览结构。 |
+| `metrics-with-image` | `evidence / default` | `evidence` | `visual-evidence` | `{ composition: media-split, tone: assertive, style: data-first, density: medium }` | `新增或调整 sub-group + 定义 variant` | 数据与配图并置已经构成稳定结构，不应继续只留在 design 层。 |
+| `chart-with-bullets` | `evidence / default` | `evidence` | `chart-analysis` | `{ composition: analysis-split, tone: formal, style: data-first, density: high }` | `新增或调整 sub-group + 定义 variant` | 图表主证据加右侧解读要点已经决定了阅读路径，属于正式结构层。 |
+| `table-info` | `evidence / default` | `evidence` | `table-matrix` | `{ composition: table-dominant, tone: formal, style: data-first, density: high }` | `新增或调整 sub-group + 定义 variant` | 表格或矩阵主导的证据页属于稳定结构差异，应正式从 default 中拆出。 |
+| `two-column-compare` | `comparison / default` | `comparison` | `side-by-side` | `{ composition: dual-columns, tone: formal, style: card-based, density: medium }` | `新增或调整 sub-group + 定义 variant` | 标准双栏对比页的核心差异在于稳定的左右并列对照结构。 |
+| `challenge-outcome` | `comparison / default` | `comparison` | `response-mapping` | `{ composition: dual-columns, tone: assertive, style: minimal, density: medium }` | `新增或调整 sub-group + 定义 variant` | 问题到结果或方案的映射关系属于比较组内另一类稳定结构，而不是普通双栏对照。 |
+| `numbered-bullets` | `process / default` | `process` | `step-flow` | `{ composition: step-list, tone: neutral, style: minimal, density: medium }` | `新增或调整 sub-group + 定义 variant` | 步骤、方法和执行路径的核心差异在于顺序步骤结构，应正式作为流程组的子类。 |
+| `timeline` | `process / default` | `process` | `timeline-milestone` | `{ composition: timeline-band, tone: formal, style: minimal, density: medium }` | `新增或调整 sub-group + 定义 variant` | 时间轴与里程碑结构已经独立于步骤流，应正式从 process default 中拆出。 |
 | `quote-slide` | `highlight / default` | `highlight` | `default` | `{ composition: quote-focus, tone: assertive, style: statement, density: low }` | `补充正式 variant` | 强调页的设计差异稳定落在单句聚焦和 statement 风格上。 |
 | `thank-you` | `closing / default` | `closing` | `default` | `{ composition: closing-hero, tone: celebratory, style: minimal, density: low }` | `补充正式 variant` | 结尾页的正式 variant 应表达收束感与庆祝/致谢型气质，而不是继续停留在默认占位。 |
 
 ## 分组结论摘要
 
 ### `narrative`
-本轮唯一明确需要从旧 `variant` 迁移出结构层的 `group` 仍然是 `narrative`。
+`narrative` 继续保持第一轮已经确认的三个正式 `sub-group`。
 
 最终结论：
 
@@ -64,39 +66,56 @@
 - `capability-grid` 作为 `bullet-icons-only` 的 `sub-group`
 - narrative 组下三个模板都已经补足正式 variant 对象
 
-这意味着 `narrative` 原来的“多 `variant` 试点”，在新语义下应理解为“多 `sub-group` 试点”。
+### `evidence`
+本轮正式确认 `evidence` 组内存在稳定结构层：
 
-### 其余 group
+- `stat-summary` -> `metrics-slide`
+- `visual-evidence` -> `metrics-with-image`
+- `chart-analysis` -> `chart-with-bullets`
+- `table-matrix` -> `table-info`
+
+这意味着证据页的主问题不是再补一个更大的 `variant` 名词，而是承认“少量 KPI / 数据配图 / 图表解读 / 表格矩阵”已经是不同的结构承载方式。
+
+### `comparison`
+本轮正式确认 `comparison` 组内至少包含两种稳定结构：
+
+- `side-by-side` -> `two-column-compare`
+- `response-mapping` -> `challenge-outcome`
+
+结论不是新增新的 `group`，而是在 comparison 组内承认“并列对照”和“问题到回应映射”是两类不同结构。
+
+### `process`
+本轮正式确认 `process` 组内至少包含两种稳定结构：
+
+- `step-flow` -> `numbered-bullets`
+- `timeline-milestone` -> `timeline`
+
+这意味着流程页中的“步骤方法”和“时间里程碑”不再继续共用 `default`。
+
+### 仍保留 `default` 的 group
 本轮继续保持以下 group 为默认结构：
 
 - `cover`
 - `agenda`
 - `section-divider`
-- `evidence`
-- `comparison`
-- `process`
 - `highlight`
 - `closing`
 
-原因不是这些组永远不需要细分，而是：
-
-- 当前 taxonomy 的首要目标是先让三层语义稳定
-- 除 narrative 外，其余 built-in template 虽然存在结构差异的讨论空间，但还不足以在本轮直接固化为正式 `sub-group`
-- 先把这些组统一记为 `sub-group=default`，可以避免在人工审校尚未完全收口时，把新的结构分类提前写死到实现层
-- 但这些组下的模板已经补足正式 `variant` 对象，用于表达设计排版扩散
+这些组当前 built-in 数量和结构差异都不足以支撑新的正式子类。
 
 ### 关于 `variant`
-本轮已经为所有 built-in template 输出正式 `variant` 对象归属。
+本轮已经为所有 built-in template 输出当前 `variant` 基线归属。
 
 统一结论：
 
 - 当前所有 built-in template 的 `variant` 都应视为四字段对象，而不再是单值 `default`
-- narrative 原来的三个旧 `variant` 名称已迁移为 `sub-group`
+- `narrative / evidence / comparison / process` 都已经拥有正式的结构层 `sub-group`
+- 当前表中的 `variant` 结果只代表 built-in template 的现阶段基线，不代表同一 `group + sub-group` 只能存在这一种设计变体
 - 具体字段和值域以 [layout-variant-decision.md](./layout-variant-decision.md) 为准
 
 ## 对后续实现的要求
 - metadata / catalog / selector 后续只能消费本记录中的审校结论，不得继续直接沿用旧 `group + variant` 假设
-- 若后续要为 `evidence / comparison / process` 增加新的 `sub-group`，应基于模板页的稳定结构差异另行决策
+- 后续若继续为其他 group 增加新的 `sub-group`，应仍然基于模板页的稳定结构差异推进
 - `#68` 应把本记录中的 `group / sub-group / variant` 结论视为 notes 聚合的上游输入
 - 后续实现 issue 不得把 `variant` 重新降回单值字符串语义
 
@@ -175,7 +194,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于展示少量核心 KPI 或指标摘要，不负责完整趋势解读。 |
-| `structure_signal` | `evidence / default` 在证据页中以指标卡片作为主载体，突出关键数字。 |
+| `structure_signal` | `evidence / stat-summary` 在证据页中以指标卡片作为主载体，突出关键数字。 |
 | `design_signal` | `stat-grid + formal + data-first + medium` 适合用少量数据建立可信度和概览感。 |
 | `use_when` | 当结论可以被 2-4 个核心数字直接支撑时使用。 |
 | `avoid_when` | 不适合需要详细趋势分析、表格参数或图片说明并重的内容。 |
@@ -186,7 +205,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于同时展示关键指标和配图场景，不负责高密度表格或复杂图表分析。 |
-| `structure_signal` | `evidence / default` 仍属于证据页，但通过图像补足语境和感知。 |
+| `structure_signal` | `evidence / visual-evidence` 以关键指标配合场景图像承载证据，同时补足语境和感知。 |
 | `design_signal` | `media-split + assertive + data-first + medium` 让数据结论和场景视觉同时成立。 |
 | `use_when` | 当你既需要展示 KPI，又希望让产品/场景画面增强说服力时使用。 |
 | `avoid_when` | 不适合没有图像语境的纯数字概览，也不适合大量数据对比。 |
@@ -197,7 +216,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于图表趋势与文字解读并置，不负责单页概览或大表格参数罗列。 |
-| `structure_signal` | `evidence / default` 中更偏分析型，图表负责主证据，右侧要点负责解释。 |
+| `structure_signal` | `evidence / chart-analysis` 以图表作为主证据，并用右侧要点完成趋势解读和结论提炼。 |
 | `design_signal` | `analysis-split + formal + data-first + high` 适合让图表阅读和观点提炼同时发生。 |
 | `use_when` | 当一张图表需要 2-3 个明确 takeaways 时使用。 |
 | `avoid_when` | 不适合只有一句结论的轻量证据页，也不适合纯表格信息。 |
@@ -208,7 +227,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于结构化参数、矩阵和行列对照，不负责情绪化展示或单点强调。 |
-| `structure_signal` | `evidence / default` 中更偏表格主导，适合行列清晰的结构化信息。 |
+| `structure_signal` | `evidence / table-matrix` 以表格或矩阵作为主载体，适合行列清晰的结构化信息。 |
 | `design_signal` | `table-dominant + formal + data-first + high` 强调信息完整度和严谨感。 |
 | `use_when` | 当核心信息天然需要按行列展开比较时使用。 |
 | `avoid_when` | 不适合需要图片主导、流程叙事或少量关键数字概览。 |
@@ -219,7 +238,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于并列比较两组对象或两种方案，不负责讲因果过程。 |
-| `structure_signal` | `comparison / default` 适合稳定的左右对照结构，突出两侧差异。 |
+| `structure_signal` | `comparison / side-by-side` 适合稳定的左右对照结构，突出两侧差异。 |
 | `design_signal` | `dual-columns + formal + card-based + medium` 让左右比较既清楚又有边界感。 |
 | `use_when` | 当你需要让观众快速比较 A/B、现状/目标、手工/自动化时使用。 |
 | `avoid_when` | 不适合讲问题到方案的映射链，也不适合多于两组对象的比较。 |
@@ -230,7 +249,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于呈现问题到结果、挑战到方案的映射，不负责纯并列优劣对照。 |
-| `structure_signal` | `comparison / default` 中更偏映射关系，每组内容带有明显的前后因果。 |
+| `structure_signal` | `comparison / response-mapping` 更偏问题到回应的映射关系，每组内容带有明显的前后因果。 |
 | `design_signal` | `dual-columns + assertive + minimal + medium` 让问题与回应之间形成更强的推进感。 |
 | `use_when` | 当内容是“痛点/挑战 -> 结果/方案”这类对应关系时优先使用。 |
 | `avoid_when` | 不适合无因果关系的普通双栏比较，也不适合步骤型内容。 |
@@ -241,7 +260,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于说明步骤、方法或执行路径，不负责表达真实时间里程碑。 |
-| `structure_signal` | `process / default` 中更偏步骤清单，强调顺序而非时间坐标。 |
+| `structure_signal` | `process / step-flow` 以步骤清单承载方法或执行路径，强调顺序而非时间坐标。 |
 | `design_signal` | `step-list + neutral + minimal + medium` 让执行步骤保持可读性和方法感。 |
 | `use_when` | 当你要讲做法、流程、操作步骤或 rollout path 时使用。 |
 | `avoid_when` | 不适合讲按日期推进的时间线，也不适合高密度并列能力页。 |
@@ -252,7 +271,7 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于表达时间顺序、里程碑或发展节奏，不负责方法步骤说明。 |
-| `structure_signal` | `process / default` 中更偏时间轴，将事件绑定到时间节点上。 |
+| `structure_signal` | `process / timeline-milestone` 以时间轴承载阶段推进，将事件绑定到时间节点上。 |
 | `design_signal` | `timeline-band + formal + minimal + medium` 强调时间推进与阶段变化，而不是操作方法。 |
 | `use_when` | 当信息核心是时间、阶段、里程碑或发展历程时使用。 |
 | `avoid_when` | 不适合没有时间语义的步骤说明，也不适合单点结论页。 |
@@ -290,5 +309,5 @@
 
 ## 状态
 本记录构成 `#62` 的人工审校定版结论。
-后续若需要进一步细化其他 group 的 `sub-group` 或为某些模板正式命名 `variant`，
-应通过新的 issue 或决策记录推进，而不是在实现 PR 中静默扩写。
+后续若需要进一步细化其他 group 的 `sub-group` 或扩展新的 built-in template，
+应继续通过新的 issue 或决策记录推进，而不是在实现 PR 中静默改写 taxonomy。

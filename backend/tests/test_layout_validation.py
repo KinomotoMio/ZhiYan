@@ -22,14 +22,15 @@ def test_generated_layout_metadata_matches_shared_taxonomy_fields():
 
     assert generated["groupOrder"] == shared["groupOrder"]
     assert generated["subGroupsByGroup"] == shared["subGroupsByGroup"]
-    assert generated["variantAxes"] == shared["variantAxes"]
+    assert generated["designTraitAxes"] == shared["designTraitAxes"]
+    assert generated["variantsBySubGroup"] == shared["variantsBySubGroup"]
     assert set(generated["layouts"]) == set(shared["layouts"])
 
     for layout_id, shared_layout in shared["layouts"].items():
         generated_layout = generated["layouts"][layout_id]
         assert generated_layout["group"] == shared_layout["group"]
         assert generated_layout["subGroup"] == shared_layout["subGroup"]
-        assert generated_layout["variant"] == shared_layout["variant"]
+        assert generated_layout["variantId"] == shared_layout["variantId"]
         assert generated_layout["notes"] == shared_layout["notes"]
 
 
@@ -51,6 +52,6 @@ def test_backend_layout_registry_matches_shared_metadata():
         assert entry is not None
         assert entry.group == expected["group"]
         assert entry.sub_group == expected["subGroup"]
-        assert entry.variant.__dict__ == expected["variant"]
+        assert entry.variant_id == expected["variantId"]
         assert entry.notes.__dict__ == expected["notes"]
         assert entry.description == expected["notes"]["purpose"]

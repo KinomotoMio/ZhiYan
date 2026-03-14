@@ -91,25 +91,25 @@ def test_infer_document_and_slide_usage_keeps_slide_tags_local_to_the_slide():
 def test_get_layout_catalog_includes_usage_metadata():
     catalog = get_layout_catalog()
     assert "角色:" in catalog
-    assert "变体:" in catalog
     assert "适用领域" in catalog
     assert "职责:" in catalog
     assert "结构:" in catalog
+    assert "变体:" in catalog
     assert "设计:" in catalog
     assert "适用时机:" in catalog
     assert "避免时机:" in catalog
     assert "usage 偏向:" in catalog
     assert "学术汇报" in catalog
     assert "商业汇报" in catalog
-    assert "图标要点 (icon-points)" in catalog
+    assert "图标立柱要点 (icon-pillars)" in catalog
     assert "用于正文中分点说明 3-4 个能力、优势或结论" in catalog
 
 
 def test_get_layout_variant_catalog_describes_role_to_variant_tracks():
     catalog = get_layout_variant_catalog()
-    assert "角色 `narrative` / 变体 `icon-points`" in catalog
+    assert "角色 `narrative` / 子组 `icon-points` / 变体 `icon-pillars`" in catalog
     assert "`bullet-with-icons`(图标要点)" in catalog
-    assert "角色 `evidence` / 变体 `default`" in catalog
+    assert "角色 `evidence` / 子组 `stat-summary` / 变体 `kpi-grid`" in catalog
 
 
 def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups():
@@ -117,10 +117,11 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert bullet_layout is not None
     assert bullet_layout.group == "narrative"
     assert bullet_layout.sub_group == "icon-points"
-    assert bullet_layout.variant.composition == "icon-columns"
-    assert bullet_layout.variant.tone == "assertive"
-    assert bullet_layout.variant.style == "icon-led"
-    assert bullet_layout.variant.density == "medium"
+    assert bullet_layout.variant_id == "icon-pillars"
+    assert bullet_layout.variant_label == "图标立柱要点"
+    assert bullet_layout.design_traits.tone == "assertive"
+    assert bullet_layout.design_traits.style == "icon-led"
+    assert bullet_layout.design_traits.density == "medium"
     assert bullet_layout.notes.purpose.startswith("用于正文中分点说明")
     assert "图标分点结构" in bullet_layout.notes.structure_signal
 
@@ -128,10 +129,11 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert outline_layout is not None
     assert outline_layout.group == "agenda"
     assert outline_layout.sub_group == "default"
-    assert outline_layout.variant.composition == "card-grid"
-    assert outline_layout.variant.tone == "formal"
-    assert outline_layout.variant.style == "card-based"
-    assert outline_layout.variant.density == "medium"
+    assert outline_layout.variant_id == "section-cards"
+    assert outline_layout.variant_label == "章节卡片目录"
+    assert outline_layout.design_traits.tone == "formal"
+    assert outline_layout.design_traits.style == "card-based"
+    assert outline_layout.design_traits.density == "medium"
     assert outline_layout.description.startswith("用于交代整份演示的章节骨架")
     assert outline_layout.notes.use_when.startswith("当你需要在正文前建立叙事顺序")
 
@@ -148,31 +150,41 @@ def test_layout_role_mapping_matches_expected_layout_roles():
 
 
 def test_layout_variant_mapping_matches_expected_layout_variants():
-    assert get_layout_variant("bullet-with-icons") == "icon-points"
-    assert get_layout_variant("image-and-description") == "visual-explainer"
-    assert get_layout_variant("bullet-icons-only") == "capability-grid"
-    assert get_layout_variant("metrics-slide") == "default"
+    assert get_layout_variant("bullet-with-icons") == "icon-pillars"
+    assert get_layout_variant("image-and-description") == "media-feature"
+    assert get_layout_variant("bullet-icons-only") == "icon-matrix"
+    assert get_layout_variant("metrics-slide") == "kpi-grid"
+    assert get_layout_variant("timeline") == "timeline-band"
 
-    assert get_layout_variant_label("narrative", "icon-points") == "图标要点"
-    assert get_layout_variant_description("narrative", "visual-explainer").startswith("以单张主视觉")
+    assert get_layout_variant_label("narrative", "icon-pillars") == "图标立柱要点"
+    assert get_layout_variant_description("narrative", "media-feature").startswith("以一张主视觉")
     assert get_variants_for_role("narrative") == (
-        "icon-points",
-        "visual-explainer",
-        "capability-grid",
+        "icon-pillars",
+        "feature-cards",
+        "media-feature",
+        "icon-matrix",
     )
-    assert get_variants_for_role("cover") == ("default",)
+    assert get_variants_for_role("evidence") == (
+        "kpi-grid",
+        "summary-band",
+        "context-metrics",
+        "chart-takeaways",
+        "data-matrix",
+    )
+    assert get_variants_for_role("cover") == ("title-centered", "title-left")
 
 
-def test_layout_role_contract_describes_page_function_and_variant_pilot():
+def test_layout_role_contract_describes_page_function_and_formal_sub_groups():
     assert get_layout_role_description("cover").startswith("定义演示开场身份")
     assert get_layout_role_description("narrative").startswith("承接常规正文叙述")
     assert is_variant_pilot_role("narrative") is True
-    assert is_variant_pilot_role("evidence") is False
+    assert is_variant_pilot_role("evidence") is True
+    assert is_variant_pilot_role("comparison") is True
 
     contract = format_role_contract_for_prompt()
     assert "`cover`" in contract
     assert "`agenda`" in contract
-    assert "首个 variant 试点组" in contract
+    assert "存在正式 sub-group" in contract
 
 
 def test_normalize_outline_items_roles_handles_legacy_categories_and_structure_rules():
@@ -322,13 +334,16 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
         assert "文档级 Usage 推断: 学术汇报" in prompt
         assert "页内 Usage:" in prompt
         assert "角色: evidence" in prompt
-        assert "角色匹配布局: `metrics-slide`, `metrics-with-image`, `chart-with-bullets`, `table-info`" in prompt
+        assert "角色匹配布局: `metrics-slide`, `metrics-slide-band`, `metrics-with-image`, `chart-with-bullets`, `table-info`" in prompt
         assert "候选子组:" in prompt
-        assert "`default`(标准论据页:" in prompt
-        assert "优先候选布局:" in prompt
-        assert "`chart-with-bullets`" in prompt
-        assert "尽量避免连续页面选择完全相同的 `layout_id`" in prompt
-        assert "请为每页输出 group、sub_group、layout_id 和 reason。不要输出 variant。" in prompt
+        assert "`stat-summary`(指标概览:" in prompt
+        assert "`visual-evidence`(图像佐证:" in prompt
+        assert "`chart-analysis`(图表解读:" in prompt
+        assert "`table-matrix`(表格矩阵:" in prompt
+        assert "优先候选变体:" in prompt
+        assert "`chart-takeaways`" in prompt
+        assert "系统会在你选中的 variant_id 下再解析具体 layout_id" in prompt
+        assert "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。" in prompt
 
     asyncio.run(_case())
 
@@ -371,7 +386,7 @@ def test_stage_select_layouts_prompt_falls_back_when_usage_missing(monkeypatch):
 
         prompt = agent.prompts[0]
         assert "文档级 Usage 推断: 未命中" in prompt
-        assert "无明确 usage 候选，按结构选择" in prompt
+        assert "无明确 usage 候选，按结构和设计方向选择" in prompt
 
     asyncio.run(_case())
 
@@ -441,11 +456,13 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
         assert state.layout_selections[0]["layout_id"] == "intro-slide"
         assert state.layout_selections[0]["group"] == "cover"
         assert state.layout_selections[0]["sub_group"] == "default"
-        assert state.layout_selections[0]["variant"]["composition"] == "hero-center"
+        assert state.layout_selections[0]["variant_id"] == "title-centered"
+        assert state.layout_selections[0]["design_traits"]["style"] == "editorial"
         assert state.layout_selections[1]["group"] == "narrative"
         assert state.layout_selections[1]["sub_group"] == "icon-points"
-        assert state.layout_selections[1]["variant"]["composition"] == "icon-columns"
-        assert state.layout_selections[1]["layout_id"] == "bullet-with-icons"
+        assert state.layout_selections[1]["variant_id"] == "feature-cards"
+        assert state.layout_selections[1]["design_traits"]["style"] == "card-based"
+        assert state.layout_selections[1]["layout_id"] == "bullet-with-icons-cards"
         assert state.layout_selections[2]["layout_id"] == "thank-you"
 
     asyncio.run(_case())
@@ -516,7 +533,8 @@ def test_stage_select_layouts_maps_narrative_sub_group_to_layout(monkeypatch):
         assert state.layout_selections[1]["group"] == "narrative"
         assert state.layout_selections[1]["sub_group"] == "visual-explainer"
         assert state.layout_selections[1]["layout_id"] == "image-and-description"
-        assert state.layout_selections[1]["variant"]["composition"] == "media-split"
+        assert state.layout_selections[1]["variant_id"] == "media-feature"
+        assert state.layout_selections[1]["design_traits"]["style"] == "editorial"
 
     asyncio.run(_case())
 
@@ -586,12 +604,13 @@ def test_stage_select_layouts_normalizes_invalid_sub_group_before_layout_fallbac
         assert state.layout_selections[1]["group"] == "narrative"
         assert state.layout_selections[1]["sub_group"] == "visual-explainer"
         assert state.layout_selections[1]["layout_id"] == "image-and-description"
-        assert state.layout_selections[1]["variant"]["style"] == "editorial"
+        assert state.layout_selections[1]["variant_id"] == "media-feature"
+        assert state.layout_selections[1]["design_traits"]["style"] == "editorial"
 
     asyncio.run(_case())
 
 
-def test_stage_select_layouts_forces_default_sub_group_for_non_narrative_groups(monkeypatch):
+def test_stage_select_layouts_normalizes_invalid_evidence_sub_group(monkeypatch):
     async def _case():
         from app.services.agents import layout_selector as layout_selector_mod
 
@@ -654,18 +673,192 @@ def test_stage_select_layouts_forces_default_sub_group_for_non_narrative_groups(
         await stage_select_layouts(state)
 
         assert state.layout_selections[1]["group"] == "evidence"
-        assert state.layout_selections[1]["sub_group"] == "default"
+        assert state.layout_selections[1]["sub_group"] == "stat-summary"
         assert state.layout_selections[1]["layout_id"] != "image-and-description"
-        assert state.layout_selections[1]["layout_id"] in {
-            "metrics-slide",
-            "metrics-with-image",
-            "chart-with-bullets",
-            "table-info",
+        assert state.layout_selections[1]["layout_id"] == "metrics-slide"
+        assert state.layout_selections[1]["variant_id"] == "kpi-grid"
+        assert state.layout_selections[1]["design_traits"] == {
+            "tone": "formal",
+            "style": "data-first",
+            "density": "medium",
         }
-        assert (
-            state.layout_selections[1]["variant"]
-            == get_layout(state.layout_selections[1]["layout_id"]).variant.__dict__
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_maps_evidence_chart_analysis_to_chart_layout(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "evidence",
+                    "sub_group": "chart-analysis",
+                    "layout_id": "metrics-slide",
+                    "reason": "需要图表与分析结论并置",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
         )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这一页展示趋势图表、同比变化和两条关键 takeaway。",
+            topic="实验结果分析",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "趋势图表分析",
+                        "content_brief": "通过图表展示趋势变化，并总结关键结论。",
+                        "suggested_slide_role": "evidence",
+                        "key_points": ["图表趋势", "同比变化", "关键 takeaway"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "chart-analysis"
+        assert state.layout_selections[1]["layout_id"] == "chart-with-bullets"
+        assert state.layout_selections[1]["variant_id"] == "chart-takeaways"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_infers_process_timeline_sub_group(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "process",
+                    "sub_group": "default",
+                    "layout_id": "numbered-bullets",
+                    "reason": "模型没有识别时间线结构",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="按季度推进 roadmap，包含里程碑与阶段目标。",
+            topic="项目里程碑",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "季度里程碑",
+                        "content_brief": "按时间线展示阶段推进和关键里程碑。",
+                        "suggested_slide_role": "process",
+                        "key_points": ["Q1", "Q2", "里程碑"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "timeline-milestone"
+        assert state.layout_selections[1]["layout_id"] == "timeline"
+        assert state.layout_selections[1]["variant_id"] == "timeline-band"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_infers_comparison_response_mapping(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "comparison",
+                    "sub_group": "default",
+                    "layout_id": "two-column-compare",
+                    "reason": "模型没有识别挑战到方案映射",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="先说明客户痛点，再给出对应方案和结果。",
+            topic="挑战与回应",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "挑战与方案",
+                        "content_brief": "将客户痛点映射到具体回应方案和结果。",
+                        "suggested_slide_role": "comparison",
+                        "key_points": ["客户挑战", "对应方案", "最终结果"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "response-mapping"
+        assert state.layout_selections[1]["layout_id"] == "challenge-outcome"
+        assert state.layout_selections[1]["variant_id"] == "challenge-response"
 
     asyncio.run(_case())
 
@@ -743,6 +936,7 @@ def test_stage_select_layouts_uses_safety_layout_when_default_layout_is_missing(
         await stage_select_layouts(state)
 
         assert state.layout_selections[1]["layout_id"] == "bullet-with-icons"
-        assert state.layout_selections[1]["variant"]["composition"] == "icon-columns"
+        assert state.layout_selections[1]["variant_id"] == "icon-pillars"
+        assert state.layout_selections[1]["design_traits"]["style"] == "icon-led"
 
     asyncio.run(_case())

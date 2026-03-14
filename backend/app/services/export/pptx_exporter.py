@@ -523,7 +523,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
     color = theme_color or PRIMARY_COLOR
     d = data
 
-    if layout_id == "intro-slide":
+    if layout_id in {"intro-slide", "intro-slide-left"}:
         _add_textbox(slide_obj,
                      Inches(1.5), Inches(2.0), Inches(10), Inches(1.5),
                      d.get("title", ""), font_size=48, bold=True, color=color,
@@ -545,7 +545,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          " | ".join(info_parts), font_size=16, color=GRAY_400,
                          alignment=PP_ALIGN.CENTER)
 
-    elif layout_id == "section-header":
+    elif layout_id in {"section-header", "section-header-side"}:
         if d.get("section_number"):
             _add_textbox(slide_obj,
                          Inches(2), Inches(2.2), Inches(9), Inches(0.6),
@@ -561,7 +561,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          d["subtitle"], font_size=22, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
 
-    elif layout_id == "outline-slide":
+    elif layout_id in {"outline-slide", "outline-slide-rail"}:
         outline = normalize_outline_slide_data(d)
         left_sections, right_sections = split_outline_sections(outline["sections"])
         _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
@@ -594,7 +594,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             OUTLINE_COLUMN_HEIGHT,
             color,
         )
-    elif layout_id == "bullet-with-icons":
+    elif layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         items_source = d.get("items")
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
@@ -759,7 +759,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                     _item_text(item), font_size=21 if compact else 24, bold=True,
                 )
 
-    elif layout_id == "numbered-bullets":
+    elif layout_id in {"numbered-bullets", "numbered-bullets-track"}:
         _add_textbox(slide_obj,
                      Inches(0.8), Inches(0.5), Inches(11), Inches(1.0),
                      d.get("title", ""), font_size=36, bold=True)
@@ -782,7 +782,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             else:
                 y += Inches(0.7)
 
-    elif layout_id == "metrics-slide":
+    elif layout_id in {"metrics-slide", "metrics-slide-band"}:
         normalized = normalize_metrics_slide_data(d)
         if normalized is None:
             return
@@ -977,7 +977,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                                  evt["description"], font_size=13, color=GRAY_600,
                                  alignment=PP_ALIGN.CENTER)
 
-    elif layout_id == "quote-slide":
+    elif layout_id in {"quote-slide", "quote-banner"}:
         _add_textbox(slide_obj,
                      Inches(1.5), Inches(2.0), Inches(10), Inches(2.5),
                      f'"{d.get("quote", "")}"', font_size=32, bold=False,
@@ -1012,7 +1012,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          f"• {outcome_text}", font_size=18)
             y += Inches(0.6)
 
-    elif layout_id == "thank-you":
+    elif layout_id in {"thank-you", "thank-you-contact"}:
         _add_textbox(slide_obj,
                      Inches(1.5), Inches(2.2), Inches(10), Inches(1.5),
                      d.get("title", "谢谢"), font_size=48, bold=True, color=color,

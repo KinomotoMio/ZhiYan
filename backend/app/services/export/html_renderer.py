@@ -206,7 +206,7 @@ def _render_outline_column(column: list[dict[str, str]], start_index: int) -> st
 
 def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     d = data
-    if layout_id == "intro-slide":
+    if layout_id in {"intro-slide", "intro-slide-left"}:
         author = _as_text(d.get("author")) or _as_text(d.get("presenter"))
         date = _as_text(d.get("date"))
         info_parts = [part for part in (author, date) if part]
@@ -218,7 +218,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div>"
         )
 
-    if layout_id == "section-header":
+    if layout_id in {"section-header", "section-header-side"}:
         section_no = d.get("section_number")
         badge_html = ""
         if section_no is not None and str(section_no).strip():
@@ -234,7 +234,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div>"
         )
 
-    if layout_id == "outline-slide":
+    if layout_id in {"outline-slide", "outline-slide-rail"}:
         sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
         left, right = _split_outline_sections(sections)
         subtitle = _as_text(d.get("subtitle"))
@@ -255,7 +255,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             '</div>'
         )
 
-    if layout_id == "bullet-with-icons":
+    if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         items_source = d.get("items")
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
@@ -326,7 +326,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div></div>"
         )
 
-    if layout_id == "numbered-bullets":
+    if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
         steps = d.get("items") if isinstance(d.get("items"), list) else d.get("steps", [])
         lines: list[str] = []
         for idx, item in enumerate(steps if isinstance(steps, list) else []):
@@ -348,7 +348,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div></div>"
         )
 
-    if layout_id == "metrics-slide":
+    if layout_id in {"metrics-slide", "metrics-slide-band"}:
         normalized = normalize_metrics_slide_data(d)
         if normalized is None:
             return ""
@@ -523,7 +523,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div>"
         )
 
-    if layout_id == "quote-slide":
+    if layout_id in {"quote-slide", "quote-banner"}:
         author = _as_text(d.get("author")) or _as_text(d.get("attribution"))
         context = _as_text(d.get("context"))
         meta = " · ".join(part for part in (author, context) if part)
@@ -552,7 +552,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div>"
         )
 
-    if layout_id == "thank-you":
+    if layout_id in {"thank-you", "thank-you-contact"}:
         contact = _as_text(d.get("contact")) or _as_text(d.get("contact_info"))
         return (
             '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px;">'

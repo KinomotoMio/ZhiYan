@@ -3,7 +3,11 @@
   "title": "Presentation",
   "description": "知演 Slide 数据模型 — single source of truth",
   "type": "object",
-  "required": ["presentationId", "title", "slides"],
+  "required": [
+    "presentationId",
+    "title",
+    "slides"
+  ],
   "properties": {
     "presentationId": {
       "type": "string",
@@ -27,16 +31,29 @@
     "Theme": {
       "type": "object",
       "properties": {
-        "primaryColor": { "type": "string" },
-        "secondaryColor": { "type": "string" },
-        "backgroundColor": { "type": "string" },
-        "fontFamily": { "type": "string" },
-        "headingFontFamily": { "type": "string" }
+        "primaryColor": {
+          "type": "string"
+        },
+        "secondaryColor": {
+          "type": "string"
+        },
+        "backgroundColor": {
+          "type": "string"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "headingFontFamily": {
+          "type": "string"
+        }
       }
     },
     "Slide": {
       "type": "object",
-      "required": ["slideId", "layoutType"],
+      "required": [
+        "slideId",
+        "layoutType"
+      ],
       "properties": {
         "slideId": {
           "type": "string",
@@ -51,12 +68,18 @@
             "two-column",
             "image-full",
             "section-header",
+            "section-header-side",
             "blank",
             "intro-slide",
+            "intro-slide-left",
             "outline-slide",
+            "outline-slide-rail",
             "bullet-with-icons",
+            "bullet-with-icons-cards",
             "numbered-bullets",
+            "numbered-bullets-track",
             "metrics-slide",
+            "metrics-slide-band",
             "metrics-with-image",
             "chart-with-bullets",
             "table-info",
@@ -64,9 +87,11 @@
             "image-and-description",
             "timeline",
             "quote-slide",
+            "quote-banner",
             "bullet-icons-only",
             "challenge-outcome",
-            "thank-you"
+            "thank-you",
+            "thank-you-contact"
           ],
           "description": "布局类型，对应模板中的 layout"
         },
@@ -91,14 +116,21 @@
         },
         "templateSlotMapping": {
           "type": "object",
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "模板插槽名到组件 ID 的映射"
         }
       }
     },
     "Component": {
       "type": "object",
-      "required": ["id", "type", "role", "position"],
+      "required": [
+        "id",
+        "type",
+        "role",
+        "position"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -106,12 +138,24 @@
         },
         "type": {
           "type": "string",
-          "enum": ["text", "image", "chart", "shape"],
+          "enum": [
+            "text",
+            "image",
+            "chart",
+            "shape"
+          ],
           "description": "组件类型"
         },
         "role": {
           "type": "string",
-          "enum": ["title", "subtitle", "body", "caption", "decoration", "illustration"],
+          "enum": [
+            "title",
+            "subtitle",
+            "body",
+            "caption",
+            "decoration",
+            "illustration"
+          ],
           "description": "组件在页面中的语义角色"
         },
         "content": {
@@ -132,25 +176,70 @@
     },
     "Position": {
       "type": "object",
-      "required": ["x", "y", "width", "height"],
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
       "properties": {
-        "x": { "type": "number", "description": "左边距百分比 (0-100)" },
-        "y": { "type": "number", "description": "上边距百分比 (0-100)" },
-        "width": { "type": "number", "description": "宽度百分比 (0-100)" },
-        "height": { "type": "number", "description": "高度百分比 (0-100)" }
+        "x": {
+          "type": "number",
+          "description": "左边距百分比 (0-100)"
+        },
+        "y": {
+          "type": "number",
+          "description": "上边距百分比 (0-100)"
+        },
+        "width": {
+          "type": "number",
+          "description": "宽度百分比 (0-100)"
+        },
+        "height": {
+          "type": "number",
+          "description": "高度百分比 (0-100)"
+        }
       }
     },
     "Style": {
       "type": "object",
       "properties": {
-        "fontSize": { "type": "number" },
-        "fontWeight": { "type": "string" },
-        "fontStyle": { "type": "string" },
-        "color": { "type": "string" },
-        "backgroundColor": { "type": "string" },
-        "textAlign": { "type": "string", "enum": ["left", "center", "right"] },
-        "verticalAlign": { "type": "string", "enum": ["top", "middle", "bottom"] },
-        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+        "fontSize": {
+          "type": "number"
+        },
+        "fontWeight": {
+          "type": "string"
+        },
+        "fontStyle": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "backgroundColor": {
+          "type": "string"
+        },
+        "textAlign": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "verticalAlign": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     }
   }

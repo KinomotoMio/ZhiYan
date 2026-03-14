@@ -8,11 +8,17 @@
 import type { ComponentType } from "react";
 
 import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
+import * as IntroSlideLeft from "@/components/slide-layouts/IntroSlideLeftLayout";
 import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
+import * as SectionHeaderSide from "@/components/slide-layouts/SectionHeaderSideLayout";
 import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
+import * as OutlineSlideRail from "@/components/slide-layouts/OutlineSlideRailLayout";
 import * as BulletWithIcons from "@/components/slide-layouts/BulletWithIconsLayout";
+import * as BulletWithIconsCards from "@/components/slide-layouts/BulletWithIconsCardsLayout";
 import * as NumberedBullets from "@/components/slide-layouts/NumberedBulletsLayout";
+import * as NumberedBulletsTrack from "@/components/slide-layouts/NumberedBulletsTrackLayout";
 import * as MetricsSlide from "@/components/slide-layouts/MetricsSlideLayout";
+import * as MetricsSlideBand from "@/components/slide-layouts/MetricsSlideBandLayout";
 import * as MetricsWithImage from "@/components/slide-layouts/MetricsWithImageLayout";
 import * as ChartWithBullets from "@/components/slide-layouts/ChartWithBulletsLayout";
 import * as TableInfo from "@/components/slide-layouts/TableInfoLayout";
@@ -20,16 +26,20 @@ import * as TwoColumnCompare from "@/components/slide-layouts/TwoColumnCompareLa
 import * as ImageAndDescription from "@/components/slide-layouts/ImageAndDescriptionLayout";
 import * as Timeline from "@/components/slide-layouts/TimelineLayout";
 import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
+import * as QuoteBanner from "@/components/slide-layouts/QuoteBannerLayout";
 import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
 import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
 import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
+import * as ThankYouContact from "@/components/slide-layouts/ThankYouContactLayout";
 import {
   getLayoutNotes,
   getLayoutTaxonomy,
+  getVariantDefinition,
   type LayoutGroup,
+  type LayoutDesignTraits,
   type LayoutSubGroup,
   type LayoutTemplateNotes,
-  type LayoutVariantObject,
+  type LayoutVariantId,
 } from "@/lib/layout-taxonomy";
 import { getLayoutUsage, type LayoutUsageTag } from "@/lib/layout-usage";
 
@@ -40,7 +50,11 @@ export interface LayoutEntry {
   notes: LayoutTemplateNotes;
   group: LayoutGroup;
   subGroup: LayoutSubGroup;
-  variant: LayoutVariantObject;
+  variantId: LayoutVariantId;
+  variantLabel: string;
+  variantDescription: string;
+  designTraits: LayoutDesignTraits;
+  isVariantDefault: boolean;
   usage: LayoutUsageTag[];
   component: ComponentType<{ data: Record<string, unknown> }>;
 }
@@ -54,11 +68,17 @@ interface LayoutModule {
 
 const allModules: LayoutModule[] = [
   IntroSlide as unknown as LayoutModule,
+  IntroSlideLeft as unknown as LayoutModule,
   SectionHeader as unknown as LayoutModule,
+  SectionHeaderSide as unknown as LayoutModule,
   OutlineSlide as unknown as LayoutModule,
+  OutlineSlideRail as unknown as LayoutModule,
   BulletWithIcons as unknown as LayoutModule,
+  BulletWithIconsCards as unknown as LayoutModule,
   NumberedBullets as unknown as LayoutModule,
+  NumberedBulletsTrack as unknown as LayoutModule,
   MetricsSlide as unknown as LayoutModule,
+  MetricsSlideBand as unknown as LayoutModule,
   MetricsWithImage as unknown as LayoutModule,
   ChartWithBullets as unknown as LayoutModule,
   TableInfo as unknown as LayoutModule,
@@ -66,9 +86,11 @@ const allModules: LayoutModule[] = [
   ImageAndDescription as unknown as LayoutModule,
   Timeline as unknown as LayoutModule,
   QuoteSlide as unknown as LayoutModule,
+  QuoteBanner as unknown as LayoutModule,
   BulletIconsOnly as unknown as LayoutModule,
   ChallengeOutcome as unknown as LayoutModule,
   ThankYou as unknown as LayoutModule,
+  ThankYouContact as unknown as LayoutModule,
 ];
 
 const _registry = new Map<string, LayoutEntry>();
@@ -83,6 +105,12 @@ function ensureInitialized() {
     const taxonomy = getLayoutTaxonomy(mod.layoutId);
     const notes = getLayoutNotes(mod.layoutId);
     if (!taxonomy || !notes) continue;
+    const variant = getVariantDefinition(
+      taxonomy.group,
+      taxonomy.subGroup,
+      taxonomy.variantId,
+    );
+    if (!variant) continue;
     _registry.set(mod.layoutId, {
       id: mod.layoutId,
       name: mod.layoutName || mod.layoutId,
@@ -90,7 +118,11 @@ function ensureInitialized() {
       notes,
       group: taxonomy.group,
       subGroup: taxonomy.subGroup,
-      variant: taxonomy.variant,
+      variantId: taxonomy.variantId,
+      variantLabel: variant.label,
+      variantDescription: variant.description,
+      designTraits: variant.designTraits,
+      isVariantDefault: taxonomy.isVariantDefault,
       usage: getLayoutUsage(mod.layoutId),
       component: mod.default,
     });

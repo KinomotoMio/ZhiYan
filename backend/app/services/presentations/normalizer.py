@@ -146,17 +146,17 @@ def _normalize_layout_content(
     data_with_image_source = normalize_image_content_data(layout_id, data)
     image_changed = data_with_image_source != data
 
-    if layout_id == "intro-slide":
+    if layout_id in {"intro-slide", "intro-slide-left"}:
         return _normalize_intro_slide(data_with_image_source)
-    if layout_id == "metrics-slide":
+    if layout_id in {"metrics-slide", "metrics-slide-band"}:
         return _normalize_metrics_slide(data_with_image_source)
-    if layout_id == "bullet-with-icons":
+    if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         return _normalize_bullet_with_icons(data_with_image_source)
-    if layout_id == "quote-slide":
+    if layout_id in {"quote-slide", "quote-banner"}:
         return _normalize_quote_slide(data_with_image_source)
-    if layout_id == "thank-you":
+    if layout_id in {"thank-you", "thank-you-contact"}:
         return _normalize_thank_you(data_with_image_source)
-    if layout_id == "outline-slide":
+    if layout_id in {"outline-slide", "outline-slide-rail"}:
         return _normalize_outline_slide(data_with_image_source)
     if layout_id == "two-column-compare":
         return _normalize_two_column_compare(data_with_image_source)

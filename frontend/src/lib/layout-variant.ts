@@ -1,47 +1,45 @@
 import {
-  getLayoutSubGroupDescription,
-  getLayoutSubGroupLabel,
-  getLayoutSubGroupsForGroup,
   getLayoutTaxonomy,
+  getVariantDescription,
+  getVariantLabel,
+  type LayoutTaxonomyEntry,
   type LayoutGroup,
+  type LayoutSubGroup,
+  type LayoutVariantId,
 } from "@/lib/layout-taxonomy";
+import layoutMetadataJson from "@/generated/layout-metadata.json";
 import { compareLayoutNames } from "@/lib/sort";
 
-// Compatibility wrapper for callers that still expect the old single-value
-// narrative variant track. The formal taxonomy entrypoint is layout-taxonomy.ts.
-export type LayoutVariant =
-  | "default"
-  | "icon-points"
-  | "visual-explainer"
-  | "capability-grid";
+// Compatibility wrapper for callers that still expect a single variant token.
+// The formal taxonomy entrypoint is layout-taxonomy.ts.
+export type LayoutVariant = LayoutVariantId;
 
 export function getLayoutVariant(layoutId: string): LayoutVariant {
   const taxonomy = getLayoutTaxonomy(layoutId);
-  if (!taxonomy) return "default";
-  return taxonomy.group === "narrative"
-    ? (taxonomy.subGroup as LayoutVariant)
-    : "default";
+  if (!taxonomy) return "title-centered" as LayoutVariant;
+  return taxonomy.variantId as LayoutVariant;
 }
 
 export function getLayoutVariantLabel(
   role: LayoutGroup,
   variant: LayoutVariant,
 ): string {
-  return getLayoutSubGroupLabel(role, variant) ?? variant;
+  const taxonomy = getLayoutTaxonomyByRole(role, variant);
+  if (!taxonomy) return variant;
+  return getVariantLabel(taxonomy.group, taxonomy.subGroup as LayoutSubGroup, variant);
 }
 
 export function getLayoutVariantDescription(
   role: LayoutGroup,
   variant: LayoutVariant,
 ): string {
-  return getLayoutSubGroupDescription(role, variant) ?? "";
+  const taxonomy = getLayoutTaxonomyByRole(role, variant);
+  if (!taxonomy) return "";
+  return getVariantDescription(taxonomy.group, taxonomy.subGroup as LayoutSubGroup, variant);
 }
 
 export function getLayoutVariantsForRole(role: LayoutGroup): LayoutVariant[] {
-  if (role !== "narrative") {
-    return ["default"];
-  }
-  return getLayoutSubGroupsForGroup(role) as LayoutVariant[];
+  return Object.keys((VARIANTS_BY_ROLE[role] ?? {})) as LayoutVariant[];
 }
 
 export function compareLayoutVariants(
@@ -63,5 +61,33 @@ export function compareLayoutVariants(
 }
 
 export function isDefaultLayoutVariant(variant: LayoutVariant): boolean {
-  return variant === "default";
+  return DEFAULT_VARIANTS.has(variant);
+}
+
+const VARIANTS_BY_ROLE = Object.fromEntries(
+  Object.entries(layoutMetadataJson.variantsBySubGroup).map(([group, subGroups]) => [
+    group,
+    Object.fromEntries(
+      Object.entries(subGroups).flatMap(([subGroup, variants]) =>
+        Object.keys(variants).map((variantId) => [variantId, subGroup]),
+      ),
+    ),
+  ]),
+) as Record<LayoutGroup, Record<string, string>>;
+
+const DEFAULT_VARIANTS = new Set<LayoutVariant>(
+  Object.values(layoutMetadataJson.layouts)
+    .filter((entry): entry is typeof entry & { isVariantDefault: true; variantId: string } =>
+      Boolean(entry.isVariantDefault && entry.variantId),
+    )
+    .map((entry) => entry.variantId as LayoutVariant),
+);
+
+function getLayoutTaxonomyByRole(role: LayoutGroup, variant: LayoutVariant) {
+  const variants = VARIANTS_BY_ROLE[role] as Record<string, string> | undefined;
+  const subGroup = variants?.[variant];
+  if (!subGroup) {
+    return null;
+  }
+  return { group: role, subGroup } as Pick<LayoutTaxonomyEntry, "group" | "subGroup">;
 }
