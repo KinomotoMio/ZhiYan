@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.models.layout_registry import (
+    get_all_layouts,
     get_layout,
     get_layout_catalog,
     get_layout_variant_catalog,
@@ -19,8 +20,16 @@ from app.services.pipeline.layout_variants import (
     get_layout_variant_label,
     get_variants_for_role,
 )
-from app.services.pipeline.graph import PipelineState, stage_select_layouts
-from app.services.pipeline.layout_usage import infer_document_and_slide_usage, infer_usage_tags
+from app.services.pipeline.graph import (
+    PipelineState,
+    _enforce_adjacent_layout_diversity,
+    stage_select_layouts,
+)
+from app.services.pipeline.layout_usage import (
+    infer_document_and_slide_usage,
+    infer_usage_tags,
+    rank_layouts_by_usage,
+)
 
 
 class _FakeResult:
@@ -387,6 +396,206 @@ def test_stage_select_layouts_prompt_falls_back_when_usage_missing(monkeypatch):
         prompt = agent.prompts[0]
         assert "文档级 Usage 推断: 未命中" in prompt
         assert "无明确 usage 候选，按结构和设计方向选择" in prompt
+
+    asyncio.run(_case())
+
+
+def test_adjacent_layout_diversity_skips_exempt_fixed_roles():
+    adjusted = _enforce_adjacent_layout_diversity(
+        [
+            {
+                "slide_number": 1,
+                "group": "cover",
+                "sub_group": "default",
+                "variant_id": "title-centered",
+                "layout_id": "intro-slide",
+                "design_traits": {"tone": "bold", "style": "editorial", "density": "low"},
+                "reason": "cover",
+            },
+            {
+                "slide_number": 2,
+                "group": "cover",
+                "sub_group": "default",
+                "variant_id": "title-centered",
+                "layout_id": "intro-slide",
+                "design_traits": {"tone": "bold", "style": "editorial", "density": "low"},
+                "reason": "cover-repeat",
+            },
+        ],
+        document_usage_tags=(),
+        slide_usage_tags={},
+        layout_entries=get_all_layouts(),
+        rank_layouts_by_usage_fn=rank_layouts_by_usage,
+    )
+
+    assert adjusted[1]["layout_id"] == "intro-slide"
+    assert adjusted[1]["variant_id"] == "title-centered"
+    assert adjusted[1]["reason"] == "cover-repeat"
+
+
+def test_adjacent_layout_diversity_keeps_repeat_when_no_safe_sibling_exists():
+    adjusted = _enforce_adjacent_layout_diversity(
+        [
+            {
+                "slide_number": 1,
+                "group": "narrative",
+                "sub_group": "visual-explainer",
+                "variant_id": "media-feature",
+                "layout_id": "image-and-description",
+                "design_traits": {"tone": "editorial", "style": "editorial", "density": "medium"},
+                "reason": "visual-a",
+            },
+            {
+                "slide_number": 2,
+                "group": "narrative",
+                "sub_group": "visual-explainer",
+                "variant_id": "media-feature",
+                "layout_id": "image-and-description",
+                "design_traits": {"tone": "editorial", "style": "editorial", "density": "medium"},
+                "reason": "visual-b",
+            },
+        ],
+        document_usage_tags=("product-demo",),
+        slide_usage_tags={},
+        layout_entries=get_all_layouts(),
+        rank_layouts_by_usage_fn=rank_layouts_by_usage,
+    )
+
+    assert adjusted[1]["layout_id"] == "image-and-description"
+    assert adjusted[1]["variant_id"] == "media-feature"
+    assert adjusted[1]["reason"] == "visual-b"
+
+
+def test_stage_select_layouts_rebalances_adjacent_duplicate_layouts(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "layout_id": "intro-slide",
+                    "reason": "cover",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "agenda",
+                    "sub_group": "default",
+                    "layout_id": "outline-slide",
+                    "reason": "agenda",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "process",
+                    "sub_group": "step-flow",
+                    "layout_id": "numbered-bullets",
+                    "reason": "step-a",
+                },
+                {
+                    "slide_number": 4,
+                    "group": "process",
+                    "sub_group": "step-flow",
+                    "layout_id": "numbered-bullets",
+                    "reason": "step-b",
+                },
+                {
+                    "slide_number": 5,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "layout_id": "thank-you",
+                    "reason": "closing",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="The deck includes two consecutive process slides that should not repeat the same layout.",
+            topic="Delivery plan",
+            num_pages=5,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "Cover", "suggested_slide_role": "cover"},
+                    {"slide_number": 2, "title": "Agenda", "suggested_slide_role": "agenda"},
+                    {
+                        "slide_number": 3,
+                        "title": "Execution Step A",
+                        "content_brief": "Describe the first execution step and expected output.",
+                        "suggested_slide_role": "process",
+                        "key_points": ["step one", "step two"],
+                    },
+                    {
+                        "slide_number": 4,
+                        "title": "Execution Step B",
+                        "content_brief": "Describe the second execution step and expected output.",
+                        "suggested_slide_role": "process",
+                        "key_points": ["step three", "step four"],
+                    },
+                    {"slide_number": 5, "title": "Closing", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[2]["layout_id"] == "numbered-bullets"
+        assert state.layout_selections[3]["layout_id"] == "numbered-bullets-track"
+        assert state.layout_selections[3]["variant_id"] == "progress-track"
+        assert "adjusted to avoid adjacent layout repeat" in state.layout_selections[3]["reason"]
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_enforces_diversity_in_fallback_path(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        class _ExplodingLayoutSelectorAgent:
+            async def run(self, prompt: str):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            layout_selector_mod,
+            "layout_selector_agent",
+            _ExplodingLayoutSelectorAgent(),
+            raising=False,
+        )
+
+        state = PipelineState(
+            raw_content="This deck needs two consecutive narrative slides after the agenda.",
+            topic="Product overview",
+            num_pages=5,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "Cover", "suggested_slide_role": "cover"},
+                    {"slide_number": 2, "title": "Agenda", "suggested_slide_role": "agenda"},
+                    {
+                        "slide_number": 3,
+                        "title": "Capability A",
+                        "content_brief": "Explain the first capability.",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["point a1", "point a2"],
+                    },
+                    {
+                        "slide_number": 4,
+                        "title": "Capability B",
+                        "content_brief": "Explain the second capability.",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["point b1", "point b2"],
+                    },
+                    {"slide_number": 5, "title": "Closing", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[2]["layout_id"] == "bullet-with-icons"
+        assert state.layout_selections[3]["layout_id"] == "bullet-with-icons-cards"
+        assert state.layout_selections[3]["variant_id"] == "feature-cards"
+        assert "adjusted to avoid adjacent layout repeat" in state.layout_selections[3]["reason"]
 
     asyncio.run(_case())
 

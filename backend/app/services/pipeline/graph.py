@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 6
 _SLIDE_CONTEXT_MAX_CHARS = 2000
+_ADJACENT_LAYOUT_DIVERSITY_EXEMPT_GROUPS = {
+    "cover",
+    "agenda",
+    "section-divider",
+    "closing",
+}
 _VISUAL_EXPLAINER_KEYWORDS = (
     "图片",
     "配图",
@@ -402,7 +408,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             sel["variant_id"] = final_entry.variant_id
             sel["design_traits"] = _serialize_design_traits_from_entry(final_entry)
 
-        state.layout_selections = selections
+        state.layout_selections = _enforce_adjacent_layout_diversity(
+            selections,
+            document_usage_tags=document_usage_tags,
+            slide_usage_tags=slide_usage_tags,
+            layout_entries=layout_entries,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage,
+        )
         logger.info(
             "Layout selection call done",
             extra={
@@ -450,6 +462,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             }
             for item in outline_items
         ]
+        state.layout_selections = _enforce_adjacent_layout_diversity(
+            state.layout_selections,
+            document_usage_tags=document_usage_tags,
+            slide_usage_tags=slide_usage_tags,
+            layout_entries=layout_entries,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage,
+        )
 
 
 def _group_sub_group_to_default_variant(group: str, sub_group: str) -> str:
@@ -974,6 +993,113 @@ def _rank_group_sub_group_variant_layouts(
         if ranked:
             return ranked
     return variant_matched
+
+
+def _rank_sibling_layouts_for_repeat_guard(
+    layout_entries: list[Any],
+    *,
+    group: str,
+    sub_group: str,
+    usage_tags: tuple[str, ...],
+    rank_layouts_by_usage_fn,
+) -> list[Any]:
+    matched = [
+        entry
+        for entry in layout_entries
+        if str(entry.group) == group and str(entry.sub_group) == sub_group
+    ]
+    if not matched:
+        return []
+
+    if usage_tags:
+        ranked = rank_layouts_by_usage_fn(
+            matched,
+            usage_tags,
+            limit=len(matched),
+        )
+        if ranked:
+            ranked_ids = {entry.id for entry in ranked}
+            return ranked + [entry for entry in matched if entry.id not in ranked_ids]
+
+    return matched
+
+
+def _enforce_adjacent_layout_diversity(
+    selections: list[dict[str, Any]],
+    *,
+    document_usage_tags: tuple[str, ...],
+    slide_usage_tags: dict[int, tuple[str, ...]],
+    layout_entries: list[Any],
+    rank_layouts_by_usage_fn,
+) -> list[dict[str, Any]]:
+    if len(selections) < 2:
+        return selections
+
+    adjusted = [dict(selection) for selection in selections]
+    ordered_indexes = sorted(
+        range(len(adjusted)),
+        key=lambda idx: (
+            adjusted[idx]["slide_number"]
+            if isinstance(adjusted[idx].get("slide_number"), int)
+            else idx + 1,
+            idx,
+        ),
+    )
+    previous_selection: dict[str, Any] | None = None
+
+    for idx in ordered_indexes:
+        selection = adjusted[idx]
+        current_layout_id = str(selection.get("layout_id") or "")
+        current_group = str(selection.get("group") or "")
+        current_sub_group = str(selection.get("sub_group") or "default")
+
+        if previous_selection is None:
+            previous_selection = selection
+            continue
+
+        previous_layout_id = str(previous_selection.get("layout_id") or "")
+        if (
+            not current_layout_id
+            or current_layout_id != previous_layout_id
+            or current_group in _ADJACENT_LAYOUT_DIVERSITY_EXEMPT_GROUPS
+        ):
+            previous_selection = selection
+            continue
+
+        slide_number = selection.get("slide_number")
+        effective_usage = (
+            slide_usage_tags.get(slide_number, ())
+            if isinstance(slide_number, int)
+            else ()
+        ) or document_usage_tags
+        sibling_entries = _rank_sibling_layouts_for_repeat_guard(
+            layout_entries,
+            group=current_group,
+            sub_group=current_sub_group,
+            usage_tags=effective_usage,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage_fn,
+        )
+        replacement = next(
+            (
+                entry
+                for entry in sibling_entries
+                if entry.id not in {current_layout_id, previous_layout_id}
+            ),
+            None,
+        )
+        if replacement is None:
+            previous_selection = selection
+            continue
+
+        selection["layout_id"] = replacement.id
+        selection["variant_id"] = replacement.variant_id
+        selection["design_traits"] = _serialize_design_traits_from_entry(replacement)
+        reason = str(selection.get("reason") or "").strip()
+        diversity_reason = f"adjusted to avoid adjacent layout repeat from {current_layout_id}"
+        selection["reason"] = f"{reason}; {diversity_reason}" if reason else diversity_reason
+        previous_selection = selection
+
+    return adjusted
 
 
 def _resolve_layout_sub_group(
