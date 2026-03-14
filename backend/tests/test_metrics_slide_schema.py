@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models.layouts.schemas import MetricsSlideData, ThankYouData
+from app.models.layouts.schemas import BulletWithIconsData, MetricsSlideData, ThankYouData
 from app.services.presentations.normalizer import normalize_metrics_slide_data
 
 
@@ -54,3 +54,38 @@ def test_thank_you_schema_keeps_readable_default_title():
     result = ThankYouData.model_validate({})
 
     assert result.title == "谢谢"
+
+
+def test_bullet_with_icons_schema_accepts_explicit_status_fallback_shape():
+    result = BulletWithIconsData.model_validate(
+        {
+            "title": "关键发现",
+            "items": [],
+            "status": {
+                "title": "内容暂未就绪",
+                "message": "该页正在生成或已回退，可稍后重试。",
+            },
+        }
+    )
+
+    assert result.items == []
+    assert result.status is not None
+    assert result.status.title == "内容暂未就绪"
+
+
+def test_bullet_with_icons_schema_rejects_mixed_items_and_status():
+    with pytest.raises(ValidationError):
+        BulletWithIconsData.model_validate(
+            {
+                "title": "关键发现",
+                "items": [
+                    {"icon": {"query": "star"}, "title": "发现一", "description": "说明一"},
+                    {"icon": {"query": "star"}, "title": "发现二", "description": "说明二"},
+                    {"icon": {"query": "star"}, "title": "发现三", "description": "说明三"},
+                ],
+                "status": {
+                    "title": "内容暂未就绪",
+                    "message": "该页正在生成或已回退，可稍后重试。",
+                },
+            }
+        )

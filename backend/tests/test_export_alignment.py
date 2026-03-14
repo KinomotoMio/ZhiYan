@@ -231,6 +231,111 @@ def test_build_presentation_html_renders_editorial_bullet_columns():
     assert "grid-template-columns:repeat(3,1fr)" in html
 
 
+def test_build_presentation_html_renders_bullet_status_panel_when_items_unavailable():
+    payload = {
+        "presentationId": "pres-bullets-status-html",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "bullet-with-icons",
+                "layoutId": "bullet-with-icons",
+                "contentData": {
+                    "title": "关键发现",
+                    "items": [],
+                    "status": {
+                        "title": "内容暂未就绪",
+                        "message": "该页正在生成或已回退，可稍后重试。",
+                    },
+                },
+                "components": [],
+            }
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "关键发现" in html
+    assert "内容暂未就绪" in html
+    assert "该页正在生成或已回退，可稍后重试。" in html
+    assert "grid-template-columns:repeat(0,1fr)" not in html
+
+
+def test_build_presentation_html_canonicalizes_compare_and_challenge_alias_placeholders():
+    payload = {
+        "presentationId": "pres-fallback-alias-html",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-compare",
+                "layoutType": "two-column-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Compare",
+                    "items": ["Content unavailable", "Pending"],
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-challenge",
+                "layoutType": "challenge-outcome",
+                "layoutId": "challenge-outcome",
+                "contentData": {
+                    "title": "问题与方案",
+                    "items": [
+                        {"challenge": "Content unavailable", "outcome": "Pending"},
+                    ],
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "内容生成中" in html
+    assert "待补充" in html
+    assert "Content unavailable" not in html
+    assert "Fallback generated" not in html
+
+
+def test_build_presentation_html_preserves_legitimate_english_pending_content():
+    payload = {
+        "presentationId": "pres-pending-html",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-compare",
+                "layoutType": "two-column-compare",
+                "layoutId": "two-column-compare",
+                "contentData": {
+                    "title": "Workflow",
+                    "items": ["Security review", "Pending"],
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-bullets",
+                "layoutType": "bullet-with-icons",
+                "layoutId": "bullet-with-icons",
+                "contentData": {
+                    "title": "Status",
+                    "items": [
+                        {"icon": {"query": "clock-3"}, "title": "Pending", "description": "Awaiting approval"},
+                        {"icon": {"query": "shield"}, "title": "Approved", "description": "Security cleared"},
+                        {"icon": {"query": "rocket"}, "title": "Ready", "description": "Queued for launch"},
+                    ],
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "Security review" in html
+    assert "Pending" in html
+    assert "Awaiting approval" in html
+    assert "待补充" not in html
+
+
 def test_build_presentation_html_renders_bullet_icons_only_icon_tokens():
     payload = {
         "presentationId": "pres-icons-html",
@@ -312,6 +417,38 @@ def test_export_pptx_accepts_alias_fields():
     assert "hello@example.com" in xml_text
     assert "问题A" in xml_text
     assert "方案A" in xml_text
+
+
+def test_export_pptx_renders_bullet_status_panel_when_items_unavailable():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-bullets-status-pptx",
+            "title": "状态导出",
+            "slides": [
+                {
+                    "slideId": "slide-bullets-status",
+                    "layoutType": "bullet-with-icons",
+                    "layoutId": "bullet-with-icons",
+                    "contentData": {
+                        "title": "关键发现",
+                        "items": [],
+                        "status": {
+                            "title": "内容暂未就绪",
+                            "message": "该页正在生成或已回退，可稍后重试。",
+                        },
+                    },
+                    "components": [],
+                }
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "关键发现" in xml_text
+    assert "内容暂未就绪" in xml_text
+    assert "该页正在生成或已回退，可稍后重试。" in xml_text
 
 
 def test_build_presentation_html_renders_outline_slide_structure():

@@ -15,6 +15,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.models.slide import Slide
+from app.services.fallback_semantics import (
+    CONTENT_GENERATING,
+    FALLBACK_GENERATED,
+    get_bullet_fallback_status,
+    is_placeholder_text,
+)
 from app.services.image_semantics import normalize_image_content_data
 
 logger = logging.getLogger(__name__)
@@ -1286,7 +1292,7 @@ def _normalize_fallback_points(raw_points: Any) -> list[str]:
 
 
 def _is_placeholder_point(text: str) -> bool:
-    return text.strip() in {"内容生成中", "待补充", "自动回退生成"}
+    return is_placeholder_text(text)
 
 
 def _bullet_with_icons_fallback(item_title: str, points: list[str]) -> dict[str, Any]:
@@ -1295,10 +1301,7 @@ def _bullet_with_icons_fallback(item_title: str, points: list[str]) -> dict[str,
         return {
             "title": item_title,
             "items": [],
-            "status": {
-                "title": "内容暂未就绪",
-                "message": "该页正在生成或已回退，可稍后重试。",
-            },
+            "status": get_bullet_fallback_status(),
         }
 
     items = meaningful_points[:4]
@@ -1340,17 +1343,17 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         return _bullet_with_icons_fallback(title, points)
     if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
-        items = points[:5] if points else ["内容生成中"]
+        items = points[:5] if points else [CONTENT_GENERATING]
         while len(items) < 3:
-            items.append("内容生成中")
+            items.append(CONTENT_GENERATING)
         return {
             "title": title,
             "items": [{"title": f"要点 {i + 1}", "description": p} for i, p in enumerate(items)],
         }
     if layout_id in {"metrics-slide", "metrics-slide-band"}:
-        metrics = points[:3] if points else ["内容生成中", "内容生成中"]
+        metrics = points[:3] if points else [CONTENT_GENERATING, CONTENT_GENERATING]
         if len(metrics) < 2:
-            metrics.append("内容生成中")
+            metrics.append(CONTENT_GENERATING)
         conclusion = points[0] if points else f"{title}的核心指标整体可读。"
         conclusion_brief = (
             points[1]
@@ -1367,9 +1370,9 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
             ],
         }
     if layout_id == "metrics-with-image":
-        metrics = points[:3] if points else ["内容生成中", "内容生成中"]
+        metrics = points[:3] if points else [CONTENT_GENERATING, CONTENT_GENERATING]
         if len(metrics) < 2:
-            metrics.append("内容生成中")
+            metrics.append(CONTENT_GENERATING)
         return {
             "title": title,
             "metrics": [
@@ -1382,9 +1385,9 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
             },
         }
     if layout_id == "chart-with-bullets":
-        bullets = points[:4] if points else ["内容生成中", "内容生成中"]
+        bullets = points[:4] if points else [CONTENT_GENERATING, CONTENT_GENERATING]
         while len(bullets) < 2:
-            bullets.append("内容生成中")
+            bullets.append(CONTENT_GENERATING)
         return {
             "title": title,
             "chart": {
@@ -1395,20 +1398,20 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
             "bullets": [{"text": text} for text in bullets],
         }
     if layout_id == "table-info":
-        rows = [[f"项{i + 1}", points[i] if i < len(points) else "内容生成中"] for i in range(3)]
+        rows = [[f"项{i + 1}", points[i] if i < len(points) else CONTENT_GENERATING] for i in range(3)]
         return {
             "title": title,
             "headers": ["主题", "说明"],
             "rows": rows,
-            "caption": "自动回退生成内容",
+            "caption": f"{FALLBACK_GENERATED}内容",
         }
     if layout_id == "two-column-compare":
-        candidates = points[:6] if points else ["内容生成中", "内容生成中"]
+        candidates = points[:6] if points else [CONTENT_GENERATING, CONTENT_GENERATING]
         if len(candidates) < 2:
-            candidates.append("内容生成中")
+            candidates.append(CONTENT_GENERATING)
         mid = max(1, (len(candidates) + 1) // 2)
-        left_items = candidates[:mid] or ["内容生成中"]
-        right_items = candidates[mid:] or ["内容生成中"]
+        left_items = candidates[:mid] or [CONTENT_GENERATING]
+        right_items = candidates[mid:] or [CONTENT_GENERATING]
         return {
             "title": title,
             "left": {"heading": "要点 A", "items": left_items, "icon": {"query": "layers"}},
@@ -1421,17 +1424,17 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
                 "source": "ai",
                 "prompt": "business presentation illustration",
             },
-            "description": points[0] if points else "内容生成中",
+            "description": points[0] if points else CONTENT_GENERATING,
             "bullets": points[:3],
         }
     if layout_id == "timeline":
-        events = points[:4] if points else ["内容生成中", "内容生成中", "内容生成中"]
+        events = points[:4] if points else [CONTENT_GENERATING, CONTENT_GENERATING, CONTENT_GENERATING]
         while len(events) < 3:
-            events.append("内容生成中")
+            events.append(CONTENT_GENERATING)
         return {
             "title": title,
             "events": [
-                {"date": f"阶段 {i + 1}", "title": event, "description": "自动回退生成"}
+                {"date": f"阶段 {i + 1}", "title": event, "description": FALLBACK_GENERATED}
                 for i, event in enumerate(events)
             ],
         }
@@ -1446,18 +1449,18 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
             "items": [{"icon": {"query": "sparkles"}, "label": label[:20]} for label in labels],
         }
     if layout_id == "challenge-outcome":
-        pairs = points[:4] if points else ["内容生成中", "内容生成中"]
+        pairs = points[:4] if points else [CONTENT_GENERATING, CONTENT_GENERATING]
         while len(pairs) < 2:
-            pairs.append("内容生成中")
+            pairs.append(CONTENT_GENERATING)
         return {
             "title": title,
             "items": [{"challenge": text, "outcome": "建议下一步行动"} for text in pairs],
         }
 
     # Unknown layout falls back to a known-safe bullet schema.
-    fallback_items = points[:4] if points else ["内容生成中", "内容生成中", "内容生成中"]
+    fallback_items = points[:4] if points else [CONTENT_GENERATING, CONTENT_GENERATING, CONTENT_GENERATING]
     while len(fallback_items) < 3:
-        fallback_items.append("内容生成中")
+        fallback_items.append(CONTENT_GENERATING)
     return {
         "title": title,
         "items": [

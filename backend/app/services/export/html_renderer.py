@@ -18,6 +18,16 @@ from app.services.export.scene_background import (
     build_theme_root_css,
     render_scene_background_frame,
 )
+from app.services.fallback_semantics import (
+    CONTENT_GENERATING,
+    PENDING_SUPPLEMENT,
+    STATUS_MESSAGE,
+    STATUS_TITLE,
+    are_all_placeholder_texts,
+    canonicalize_fallback_text,
+    get_bullet_fallback_status,
+    is_placeholder_text,
+)
 from app.services.presentations.normalizer import normalize_metrics_slide_data
 
 
@@ -255,6 +265,12 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
+        status = _bullet_status(d, items)
+        if status is not None and len(items) == 0:
+            return _render_bullet_status_panel(_as_text(d.get("title")), status)
+        if status is not None and _placeholder_only_bullet_items(items):
+            return _render_bullet_status_panel(_as_text(d.get("title")), status)
+
         col_count = get_bullet_with_icons_columns(len(items))
         compact = col_count == 4
         cards: list[str] = []
@@ -704,6 +720,49 @@ def _normalize_column_items(raw: Any) -> list[str]:
     return [item for item in items if item]
 
 
+def _normalize_status(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = _as_text(raw.get("title"), STATUS_TITLE)
+    message = _as_text(raw.get("message"), STATUS_MESSAGE)
+    return {"title": title, "message": message}
+
+
+def _placeholder_only_bullet_items(raw_items: list[Any]) -> bool:
+    if not raw_items:
+        return False
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            return False
+        title = canonicalize_fallback_text(_as_text(raw_item.get("title")))
+        description = canonicalize_fallback_text(_as_text(raw_item.get("description")))
+        if not title or title != description or not is_placeholder_text(title):
+            return False
+    return True
+
+
+def _bullet_status(data: dict[str, Any], raw_items: list[Any]) -> dict[str, str] | None:
+    explicit_status = _normalize_status(data.get("status"))
+    if explicit_status is not None:
+        return explicit_status
+    if _placeholder_only_bullet_items(raw_items):
+        return get_bullet_fallback_status()
+    return None
+
+
+def _render_bullet_status_panel(title: str, status: dict[str, str]) -> str:
+    return (
+        '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;">'
+        f'<h2 style="font-size:36px;font-weight:700;line-height:1.3;color:#111827;margin:0 0 40px;">{escape(title)}</h2>'
+        '<div style="display:flex;flex:1;align-items:center;justify-content:center;">'
+        '<div style="max-width:720px;border:1px solid #fde68a;border-radius:24px;background:#fffbeb;padding:36px 40px;text-align:center;box-shadow:0 10px 30px rgba(15,23,42,0.06);">'
+        '<div style="margin:0 auto 16px;width:56px;height:56px;border-radius:18px;background:#fef3c7;color:#d97706;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;">!</div>'
+        f'<h3 style="font-size:24px;font-weight:700;line-height:1.3;color:#111827;margin:0;">{escape(status["title"])}</h3>'
+        f'<p style="font-size:17px;line-height:1.6;color:rgba(17,24,39,0.7);margin:12px 0 0;">{escape(status["message"])}</p>'
+        "</div></div></div>"
+    )
+
+
 def _compare_columns(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     left = data.get("left") if isinstance(data.get("left"), dict) else None
     right = data.get("right") if isinstance(data.get("right"), dict) else None
@@ -720,13 +779,27 @@ def _compare_columns(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
             "items": _normalize_column_items(outcome.get("items")),
         }
 
+    left_items_probe = left.get("items") if isinstance(left, dict) else []
+    right_items_probe = right.get("items") if isinstance(right, dict) else []
+    if (not left and not right) or (not left_items_probe and not right_items_probe):
+        items = _normalize_column_items(data.get("items"))
+        if are_all_placeholder_texts(items):
+            items = [canonicalize_fallback_text(item) for item in items]
+        if items:
+            midpoint = max(1, (len(items) + 1) // 2)
+            left = {"heading": "要点 A", "items": items[:midpoint]}
+            right = {"heading": "要点 B", "items": items[midpoint:]}
+
     left = left or {}
     right = right or {}
     left_items = _normalize_column_items(left.get("items"))
     right_items = _normalize_column_items(right.get("items"))
+    if are_all_placeholder_texts([*left_items, *right_items]):
+        left_items = [canonicalize_fallback_text(item) for item in left_items]
+        right_items = [canonicalize_fallback_text(item) for item in right_items]
     return (
-        {"heading": _column_heading(left, "要点 A"), "items": left_items or ["内容生成中"]},
-        {"heading": _column_heading(right, "要点 B"), "items": right_items or ["内容生成中"]},
+        {"heading": _column_heading(left, "要点 A"), "items": left_items or [CONTENT_GENERATING]},
+        {"heading": _column_heading(right, "要点 B"), "items": right_items or [CONTENT_GENERATING]},
     )
 
 
@@ -749,13 +822,21 @@ def _challenge_outcome_pairs(data: dict[str, Any]) -> list[dict[str, str]]:
     if isinstance(raw_items, list):
         for row in raw_items:
             if isinstance(row, dict):
-                challenge = _as_text(row.get("challenge"), "内容生成中")
-                outcome = _as_text(row.get("outcome"), "待补充")
+                challenge = _as_text(row.get("challenge"), CONTENT_GENERATING)
+                outcome = _as_text(row.get("outcome"), PENDING_SUPPLEMENT)
+                if are_all_placeholder_texts([challenge, outcome]):
+                    challenge = canonicalize_fallback_text(challenge)
+                    outcome = canonicalize_fallback_text(outcome)
                 pairs.append({"challenge": challenge, "outcome": outcome})
             elif isinstance(row, str):
                 text = row.strip()
                 if text:
-                    pairs.append({"challenge": text, "outcome": "待补充"})
+                    pairs.append(
+                        {
+                            "challenge": text,
+                            "outcome": PENDING_SUPPLEMENT,
+                        }
+                    )
     if pairs:
         return pairs
 
@@ -763,12 +844,15 @@ def _challenge_outcome_pairs(data: dict[str, Any]) -> list[dict[str, str]]:
     outcome = data.get("outcome") if isinstance(data.get("outcome"), dict) else {}
     challenge_items = _normalize_column_items(challenge.get("items"))
     outcome_items = _normalize_column_items(outcome.get("items"))
+    if are_all_placeholder_texts([*challenge_items, *outcome_items]):
+        challenge_items = [canonicalize_fallback_text(item) for item in challenge_items]
+        outcome_items = [canonicalize_fallback_text(item) for item in outcome_items]
     count = max(len(challenge_items), len(outcome_items))
     for idx in range(count):
         pairs.append(
             {
-                "challenge": challenge_items[idx] if idx < len(challenge_items) else "内容生成中",
-                "outcome": outcome_items[idx] if idx < len(outcome_items) else "待补充",
+                "challenge": challenge_items[idx] if idx < len(challenge_items) else CONTENT_GENERATING,
+                "outcome": outcome_items[idx] if idx < len(outcome_items) else PENDING_SUPPLEMENT,
             }
         )
-    return pairs or [{"challenge": "内容生成中", "outcome": "待补充"}]
+    return pairs or [{"challenge": CONTENT_GENERATING, "outcome": PENDING_SUPPLEMENT}]

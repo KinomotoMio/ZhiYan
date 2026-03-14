@@ -7,6 +7,8 @@ from app.models.layout_registry import get_all_layouts, get_layout
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHARED_METADATA_PATH = REPO_ROOT / "shared" / "layout-metadata.json"
 GENERATED_METADATA_PATH = REPO_ROOT / "frontend" / "src" / "generated" / "layout-metadata.json"
+SHARED_FALLBACK_SEMANTICS_PATH = REPO_ROOT / "shared" / "fallback-semantics.json"
+GENERATED_FALLBACK_SEMANTICS_PATH = REPO_ROOT / "frontend" / "src" / "generated" / "fallback-semantics.json"
 
 
 def _load_json(path: Path) -> dict:
@@ -30,6 +32,12 @@ def test_generated_layout_metadata_matches_shared_taxonomy_fields():
         assert generated_layout["subGroup"] == shared_layout["subGroup"]
         assert generated_layout["variantId"] == shared_layout["variantId"]
         assert generated_layout["notes"] == shared_layout["notes"]
+
+
+def test_generated_fallback_semantics_match_shared_copy():
+    shared = _load_json(SHARED_FALLBACK_SEMANTICS_PATH)
+    generated = _load_json(GENERATED_FALLBACK_SEMANTICS_PATH)
+    assert generated == shared
 
 
 def test_backend_layout_registry_matches_shared_metadata():

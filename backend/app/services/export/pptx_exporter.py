@@ -27,6 +27,16 @@ from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
     is_bullet_icons_only_compact,
 )
+from app.services.fallback_semantics import (
+    CONTENT_GENERATING,
+    PENDING_SUPPLEMENT,
+    STATUS_MESSAGE,
+    STATUS_TITLE,
+    are_all_placeholder_texts,
+    canonicalize_fallback_text,
+    get_bullet_fallback_status,
+    is_placeholder_text,
+)
 
 # 16:9 宽屏尺寸
 SLIDE_WIDTH = Inches(13.333)
@@ -275,20 +285,53 @@ def _extract_compare_column(raw: Any, fallback: str) -> tuple[str, list[str]]:
     return heading, [item for item in items if item]
 
 
+def _normalize_status(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = _as_text(raw.get("title"), STATUS_TITLE)
+    message = _as_text(raw.get("message"), STATUS_MESSAGE)
+    return {"title": title, "message": message}
+
+
+def _placeholder_only_bullet_items(raw_items: list[Any]) -> bool:
+    if not raw_items:
+        return False
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            return False
+        title = canonicalize_fallback_text(_as_text(raw_item.get("title")))
+        description = canonicalize_fallback_text(_as_text(raw_item.get("description")))
+        if not title or title != description or not is_placeholder_text(title):
+            return False
+    return True
+
+
+def _bullet_status(data: dict[str, Any], raw_items: list[Any]) -> dict[str, str] | None:
+    explicit_status = _normalize_status(data.get("status"))
+    if explicit_status is not None:
+        return explicit_status
+    if _placeholder_only_bullet_items(raw_items):
+        return get_bullet_fallback_status()
+    return None
+
+
 def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     raw_items = data.get("items")
     if isinstance(raw_items, list):
         for row in raw_items:
             if isinstance(row, dict):
+                challenge = _as_text(row.get("challenge"), CONTENT_GENERATING)
+                outcome = _as_text(row.get("outcome"), PENDING_SUPPLEMENT)
+                if are_all_placeholder_texts([challenge, outcome]):
+                    challenge = canonicalize_fallback_text(challenge)
+                    outcome = canonicalize_fallback_text(outcome)
                 pairs.append(
-                    (
-                        _as_text(row.get("challenge"), "内容生成中"),
-                        _as_text(row.get("outcome"), "待补充"),
-                    )
+                    (challenge, outcome)
                 )
             elif isinstance(row, str) and row.strip():
-                pairs.append((row.strip(), "待补充"))
+                text = row.strip()
+                pairs.append((text, PENDING_SUPPLEMENT))
     if pairs:
         return pairs
 
@@ -299,14 +342,17 @@ def _extract_challenge_outcome_pairs(data: dict[str, Any]) -> list[tuple[str, st
     outcome_items_raw = data["outcome"].get("items")
     challenge_items = [_item_text(item) for item in challenge_items_raw] if isinstance(challenge_items_raw, list) else []
     outcome_items = [_item_text(item) for item in outcome_items_raw] if isinstance(outcome_items_raw, list) else []
+    if are_all_placeholder_texts([*challenge_items, *outcome_items]):
+        challenge_items = [canonicalize_fallback_text(item) for item in challenge_items]
+        outcome_items = [canonicalize_fallback_text(item) for item in outcome_items]
     count = max(len(challenge_items), len(outcome_items))
     if count == 0:
         return []
     for idx in range(count):
         pairs.append(
             (
-                challenge_items[idx] if idx < len(challenge_items) and challenge_items[idx] else "内容生成中",
-                outcome_items[idx] if idx < len(outcome_items) and outcome_items[idx] else "待补充",
+                challenge_items[idx] if idx < len(challenge_items) and challenge_items[idx] else CONTENT_GENERATING,
+                outcome_items[idx] if idx < len(outcome_items) and outcome_items[idx] else PENDING_SUPPLEMENT,
             )
         )
     return pairs
@@ -334,6 +380,77 @@ OUTLINE_RIGHT_COLUMN_LEFT = Inches(6.90)
 OUTLINE_CONTENT_TOP = Inches(2.18)
 OUTLINE_COLUMN_WIDTH = Inches(5.45)
 OUTLINE_COLUMN_HEIGHT = Inches(4.75)
+
+
+def _render_bullet_status_panel(slide_obj, title: str, status: dict[str, str]) -> None:
+    _add_textbox(
+        slide_obj,
+        Inches(0.8),
+        Inches(0.5),
+        Inches(11),
+        Inches(0.8),
+        title,
+        font_size=36,
+        bold=True,
+    )
+
+    panel = slide_obj.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(2.15),
+        Inches(2.0),
+        Inches(9.05),
+        Inches(2.55),
+    )
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = RGBColor(0xFF, 0xFB, 0xEB)
+    panel.line.color.rgb = RGBColor(0xFD, 0xE6, 0x8A)
+
+    icon = slide_obj.shapes.add_shape(
+        MSO_SHAPE.OVAL,
+        Inches(6.38),
+        Inches(2.28),
+        Inches(0.58),
+        Inches(0.58),
+    )
+    icon.fill.solid()
+    icon.fill.fore_color.rgb = RGBColor(0xFE, 0xF3, 0xC7)
+    icon.line.fill.background()
+    _add_textbox(
+        slide_obj,
+        Inches(6.42),
+        Inches(2.37),
+        Inches(0.50),
+        Inches(0.22),
+        "!",
+        font_size=18,
+        bold=True,
+        color=RGBColor(0xD9, 0x77, 0x06),
+        alignment=PP_ALIGN.CENTER,
+    )
+
+    _add_textbox(
+        slide_obj,
+        Inches(3.0),
+        Inches(3.02),
+        Inches(7.4),
+        Inches(0.45),
+        status["title"],
+        font_size=22,
+        bold=True,
+        color=GRAY_900,
+        alignment=PP_ALIGN.CENTER,
+    )
+    _add_textbox(
+        slide_obj,
+        Inches(2.7),
+        Inches(3.48),
+        Inches(8.0),
+        Inches(0.75),
+        status["message"],
+        font_size=14,
+        color=GRAY_600,
+        alignment=PP_ALIGN.CENTER,
+    )
 
 
 def _add_rule(slide_obj, left: int, top: int, width: int, height: int, color: RGBColor):
@@ -478,104 +595,108 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             color,
         )
     elif layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
-        _add_textbox(slide_obj,
-                     Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
-                     d.get("title", ""), font_size=36, bold=True)
         items_source = d.get("items")
         if not isinstance(items_source, list):
             items_source = d.get("features", [])
         items = items_source if isinstance(items_source, list) else []
-        columns = get_bullet_with_icons_columns(len(items))
-        compact = columns == 4
-        gutter = 0.18 if compact else 0.28
-        content_width = 11.4
-        column_width = (content_width - gutter * (columns - 1)) / columns
-        base_left = 0.8
+        status = _bullet_status(d, items)
+        if status is not None and (len(items) == 0 or _placeholder_only_bullet_items(items)):
+            _render_bullet_status_panel(slide_obj, _as_text(d.get("title")), status)
+        else:
+            _add_textbox(slide_obj,
+                         Inches(0.8), Inches(0.5), Inches(11), Inches(0.8),
+                         d.get("title", ""), font_size=36, bold=True)
+            columns = get_bullet_with_icons_columns(len(items))
+            compact = columns == 4
+            gutter = 0.18 if compact else 0.28
+            content_width = 11.4
+            column_width = (content_width - gutter * (columns - 1)) / columns
+            base_left = 0.8
 
-        for idx, item in enumerate(items[:4]):
-            left = base_left + idx * (column_width + gutter)
-            title = _item_text(item)
-            desc = _item_description(item)
-            icon_token = _icon_token(_item_icon_query(item))
+            for idx, item in enumerate(items[:4]):
+                left = base_left + idx * (column_width + gutter)
+                title = _item_text(item)
+                desc = _item_description(item)
+                icon_token = _icon_token(_item_icon_query(item))
 
-            rule = slide_obj.shapes.add_shape(
-                1,
-                Inches(left),
-                Inches(2.55),
-                Inches(0.015),
-                Inches(2.25 if compact else 2.45),
-            )
-            rule.fill.solid()
-            rule.fill.fore_color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
-            rule.line.fill.background()
+                rule = slide_obj.shapes.add_shape(
+                    1,
+                    Inches(left),
+                    Inches(2.55),
+                    Inches(0.015),
+                    Inches(2.25 if compact else 2.45),
+                )
+                rule.fill.solid()
+                rule.fill.fore_color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+                rule.line.fill.background()
 
-            title_bg = slide_obj.shapes.add_shape(
-                1,
-                Inches(left + 0.18),
-                Inches(2.0),
-                Inches(max(column_width - 0.28, 0.8)),
-                Inches(0.34),
-            )
-            title_bg.fill.solid()
-            title_bg.fill.fore_color.rgb = RGBColor(0xEF, 0xF5, 0xFE)
-            title_bg.line.fill.background()
+                title_bg = slide_obj.shapes.add_shape(
+                    1,
+                    Inches(left + 0.18),
+                    Inches(2.0),
+                    Inches(max(column_width - 0.28, 0.8)),
+                    Inches(0.34),
+                )
+                title_bg.fill.solid()
+                title_bg.fill.fore_color.rgb = RGBColor(0xEF, 0xF5, 0xFE)
+                title_bg.line.fill.background()
 
-            icon_box = slide_obj.shapes.add_shape(
-                1,
-                Inches(left + 0.18),
-                Inches(1.22),
-                Inches(0.42),
-                Inches(0.42),
-            )
-            icon_box.fill.solid()
-            icon_box.fill.fore_color.rgb = RGBColor(0xEF, 0xF6, 0xFF)
-            icon_box.line.color.rgb = RGBColor(0xBF, 0xDB, 0xFE)
+                icon_box = slide_obj.shapes.add_shape(
+                    1,
+                    Inches(left + 0.18),
+                    Inches(1.22),
+                    Inches(0.42),
+                    Inches(0.42),
+                )
+                icon_box.fill.solid()
+                icon_box.fill.fore_color.rgb = RGBColor(0xEF, 0xF6, 0xFF)
+                icon_box.line.color.rgb = RGBColor(0xBF, 0xDB, 0xFE)
 
-            _add_textbox(
-                slide_obj,
-                Inches(left + 0.19),
-                Inches(1.31),
-                Inches(0.40),
-                Inches(0.18),
-                icon_token,
-                font_size=10,
-                bold=True,
-                color=PRIMARY_COLOR,
-                alignment=PP_ALIGN.CENTER,
-            )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.19),
+                    Inches(1.31),
+                    Inches(0.40),
+                    Inches(0.18),
+                    icon_token,
+                    font_size=10,
+                    bold=True,
+                    color=PRIMARY_COLOR,
+                    alignment=PP_ALIGN.CENTER,
+                )
 
-            _add_textbox(
-                slide_obj,
-                Inches(left + 0.18),
-                Inches(1.9),
-                Inches(max(column_width - 0.24, 0.8)),
-                Inches(0.7),
-                title,
-                font_size=19 if compact else 21,
-                bold=True,
-                color=PRIMARY_COLOR,
-            )
-            if desc:
                 _add_textbox(
                     slide_obj,
                     Inches(left + 0.18),
-                    Inches(2.72),
+                    Inches(1.9),
                     Inches(max(column_width - 0.24, 0.8)),
-                    Inches(1.15 if compact else 1.35),
-                    desc,
-                    font_size=11.5 if compact else 12.5,
-                    color=GRAY_600,
+                    Inches(0.7),
+                    title,
+                    font_size=19 if compact else 21,
+                    bold=True,
+                    color=PRIMARY_COLOR,
                 )
-            _add_textbox(
-                slide_obj,
-                Inches(left + 0.18),
-                Inches(5.42),
-                Inches(max(column_width - 0.24, 0.8)),
-                Inches(0.65),
-                str(idx + 1).zfill(2),
-                font_size=40 if compact else 46,
-                color=RGBColor(0x11, 0x18, 0x27),
-            )
+                if desc:
+                    _add_textbox(
+                        slide_obj,
+                        Inches(left + 0.18),
+                        Inches(2.72),
+                        Inches(max(column_width - 0.24, 0.8)),
+                        Inches(1.15 if compact else 1.35),
+                        desc,
+                        font_size=11.5 if compact else 12.5,
+                        color=GRAY_600,
+                    )
+                _add_textbox(
+                    slide_obj,
+                    Inches(left + 0.18),
+                    Inches(5.42),
+                    Inches(max(column_width - 0.24, 0.8)),
+                    Inches(0.65),
+                    str(idx + 1).zfill(2),
+                    font_size=40 if compact else 46,
+                    color=RGBColor(0x11, 0x18, 0x27),
+                )
 
     elif layout_id == "bullet-icons-only":
         _add_textbox(
@@ -795,6 +916,19 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
         if not left_col[1] and not right_col[1]:
             left_col = _extract_compare_column(d.get("challenge"), "要点 A")
             right_col = _extract_compare_column(d.get("outcome"), "要点 B")
+        if not left_col[1] and not right_col[1]:
+            items_raw = d.get("items")
+            items = [_item_text(item) for item in items_raw] if isinstance(items_raw, list) else []
+            items = [item for item in items if item]
+            if are_all_placeholder_texts(items):
+                items = [canonicalize_fallback_text(item) for item in items]
+            if items:
+                midpoint = max(1, (len(items) + 1) // 2)
+                left_col = ("要点 A", items[:midpoint])
+                right_col = ("要点 B", items[midpoint:])
+        if are_all_placeholder_texts([*left_col[1], *right_col[1]]):
+            left_col = (left_col[0], [canonicalize_fallback_text(item) for item in left_col[1]])
+            right_col = (right_col[0], [canonicalize_fallback_text(item) for item in right_col[1]])
         for (col_title, col_items), x_offset in [(left_col, 0.8), (right_col, 7.0)]:
             _add_textbox(slide_obj,
                          Inches(x_offset), Inches(1.8), Inches(5.0), Inches(0.6),

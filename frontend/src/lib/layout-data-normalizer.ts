@@ -1,3 +1,13 @@
+import {
+  CONTENT_GENERATING,
+  PENDING_SUPPLEMENT,
+  STATUS_MESSAGE,
+  STATUS_TITLE,
+  areAllFallbackPlaceholders,
+  canonicalizeFallbackText,
+  getBulletFallbackStatus,
+} from "@/lib/fallback-semantics";
+
 export interface LayoutNormalizeResult {
   data: Record<string, unknown>;
   recoverable: boolean;
@@ -7,10 +17,7 @@ export interface LayoutNormalizeResult {
 
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
-const DEFAULT_FILLER = "内容生成中";
 const OUTLINE_FALLBACK_TITLES = ["背景", "分析", "方案", "结论", "实施", "总结"] as const;
-const BULLET_PLACEHOLDER_TITLE = "内容暂未就绪";
-const BULLET_PLACEHOLDER_MESSAGE = "该页正在生成或已回退，可稍后重试。";
 
 type RecordLike = Record<string, unknown>;
 
@@ -87,15 +94,17 @@ function normalizeIcon(value: unknown): RecordLike | null {
   return null;
 }
 
-function isPlaceholderText(text: string): boolean {
-  return ["\u5185\u5bb9\u751f\u6210\u4e2d", "\u5f85\u8865\u5145", "\u81ea\u52a8\u56de\u9000\u751f\u6210", "Content unavailable", "Pending", "Fallback generated"].includes(text.trim());
-}
-
 function normalizeStatus(raw: unknown): RecordLike | null {
   if (!isRecordLike(raw)) return null;
-  const title = asText(raw.title, BULLET_PLACEHOLDER_TITLE);
-  const message = asText(raw.message, BULLET_PLACEHOLDER_MESSAGE);
+  const title = asText(raw.title, STATUS_TITLE);
+  const message = asText(raw.message, STATUS_MESSAGE);
   return { title, message };
+}
+
+function canonicalizePlaceholderSequence(items: string[]): string[] {
+  return areAllFallbackPlaceholders(items)
+    ? items.map((item) => canonicalizeFallbackText(item))
+    : items;
 }
 
 function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
@@ -107,21 +116,20 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
       if (!isRecordLike(rawItem)) return false;
       const itemTitle = asText(rawItem.title);
       const itemDescription = asText(rawItem.description);
+      const canonicalTitle = canonicalizeFallbackText(itemTitle);
+      const canonicalDescription = canonicalizeFallbackText(itemDescription);
       return Boolean(
         itemTitle &&
           itemDescription &&
-          itemTitle === itemDescription &&
-          isPlaceholderText(itemTitle)
+          canonicalTitle === canonicalDescription &&
+          areAllFallbackPlaceholders([itemTitle, itemDescription])
       );
     });
   if (placeholderOnly) {
     const repaired: RecordLike = {
       title,
       items: [],
-      status: {
-        title: BULLET_PLACEHOLDER_TITLE,
-        message: BULLET_PLACEHOLDER_MESSAGE,
-      },
+      status: getBulletFallbackStatus(),
     };
     const changed = JSON.stringify(repaired) !== JSON.stringify(data);
     return {
@@ -142,7 +150,13 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
 
     if (!text) continue;
 
-    const repeatedPlaceholder = itemTitle && itemDescription && itemTitle === itemDescription && isPlaceholderText(itemTitle);
+    const canonicalTitle = canonicalizeFallbackText(itemTitle);
+    const canonicalDescription = canonicalizeFallbackText(itemDescription);
+    const repeatedPlaceholder =
+      itemTitle &&
+      itemDescription &&
+      canonicalTitle === canonicalDescription &&
+      areAllFallbackPlaceholders([itemTitle, itemDescription]);
     if (repeatedPlaceholder) {
       continue;
     }
@@ -158,10 +172,7 @@ function normalizeBulletWithIcons(data: RecordLike): LayoutNormalizeResult {
   const explicitStatus = normalizeStatus(data.status);
   const inferredStatus =
     placeholderOnly || items.length === 0
-      ? {
-          title: BULLET_PLACEHOLDER_TITLE,
-          message: BULLET_PLACEHOLDER_MESSAGE,
-        }
+      ? getBulletFallbackStatus()
       : null;
 
   const repaired: RecordLike = {
@@ -268,14 +279,14 @@ function splitTwoColumns(items: string[]): [string[], string[]] {
   const left = items.slice(0, midpoint);
   const right = items.slice(midpoint);
   return [
-    left.length > 0 ? left : [DEFAULT_FILLER],
-    right.length > 0 ? right : [DEFAULT_FILLER],
+    left.length > 0 ? left : [CONTENT_GENERATING],
+    right.length > 0 ? right : [CONTENT_GENERATING],
   ];
 }
 
 function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLike | null {
   if (typeof raw === "string" && raw.trim()) {
-    const items = extractTextItemsFromText(raw);
+    const items = canonicalizePlaceholderSequence(extractTextItemsFromText(raw));
     if (items.length === 0) return null;
     return {
       heading: fallbackHeading,
@@ -284,10 +295,10 @@ function normalizeCompareColumn(raw: unknown, fallbackHeading: string): RecordLi
   }
   if (!isRecordLike(raw)) return null;
   const heading = asText(raw.heading) || asText(raw.title) || fallbackHeading;
-  const items = extractTextItems(raw.items);
+  const items = canonicalizePlaceholderSequence(extractTextItems(raw.items));
   const column: RecordLike = {
     heading,
-    items: items.length > 0 ? items : [DEFAULT_FILLER],
+    items: items.length > 0 ? items : [CONTENT_GENERATING],
   };
   const icon = normalizeIcon(raw.icon);
   if (icon) column.icon = icon;
@@ -305,7 +316,7 @@ function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
   }
 
   if (!left && !right) {
-    const items = extractTextItems(data.items);
+    const items = canonicalizePlaceholderSequence(extractTextItems(data.items));
     if (items.length === 0) {
       return { data, recoverable: false, changed: false, reason: "missing two-column data" };
     }
@@ -320,8 +331,8 @@ function normalizeTwoColumnCompare(data: RecordLike): LayoutNormalizeResult {
 
   const repaired: RecordLike = {
     title,
-    left: left ?? { heading: DEFAULT_LEFT_HEADING, items: [DEFAULT_FILLER] },
-    right: right ?? { heading: DEFAULT_RIGHT_HEADING, items: [DEFAULT_FILLER] },
+    left: left ?? { heading: DEFAULT_LEFT_HEADING, items: [CONTENT_GENERATING] },
+    right: right ?? { heading: DEFAULT_RIGHT_HEADING, items: [CONTENT_GENERATING] },
   };
   const changed = JSON.stringify(repaired) !== JSON.stringify(data);
   return { data: repaired, recoverable: true, changed, reason: changed ? "normalize compare shape" : null };
@@ -423,7 +434,7 @@ function normalizeNumberedBullets(data: RecordLike): LayoutNormalizeResult {
     .filter((item): item is RecordLike => isRecordLike(item))
     .map((item, index) => ({
       title: asText(item.title, `步骤 ${index + 1}`),
-      description: asText(item.description, asText(item.detail, DEFAULT_FILLER)),
+      description: asText(item.description, asText(item.detail, CONTENT_GENERATING)),
     }))
     .slice(0, 5);
 
@@ -504,26 +515,35 @@ function normalizeChallengeOutcome(data: RecordLike): LayoutNormalizeResult {
       if (isRecordLike(row)) {
         const challenge = asText(row.challenge);
         const outcome = asText(row.outcome);
+        const placeholderOnlyRow = areAllFallbackPlaceholders([challenge, outcome]);
         if (challenge || outcome) {
           pairs.push({
-            challenge: challenge || DEFAULT_FILLER,
-            outcome: outcome || "待补充",
+            challenge: placeholderOnlyRow ? canonicalizeFallbackText(challenge) || CONTENT_GENERATING : challenge || CONTENT_GENERATING,
+            outcome: placeholderOnlyRow ? canonicalizeFallbackText(outcome) || PENDING_SUPPLEMENT : outcome || PENDING_SUPPLEMENT,
           });
         }
       } else if (typeof row === "string" && row.trim()) {
-        pairs.push({ challenge: row.trim(), outcome: "待补充" });
+        const text = row.trim();
+        pairs.push({
+          challenge: text,
+          outcome: PENDING_SUPPLEMENT,
+        });
       }
     }
   }
 
   if (pairs.length === 0) {
-    const challenges = extractSideItems(data.challenge);
-    const outcomes = extractSideItems(data.outcome);
+    let challenges = extractSideItems(data.challenge);
+    let outcomes = extractSideItems(data.outcome);
+    if (areAllFallbackPlaceholders([...challenges, ...outcomes])) {
+      challenges = challenges.map((item) => canonicalizeFallbackText(item));
+      outcomes = outcomes.map((item) => canonicalizeFallbackText(item));
+    }
     const count = Math.max(challenges.length, outcomes.length);
     for (let i = 0; i < count; i += 1) {
       pairs.push({
-        challenge: challenges[i] || DEFAULT_FILLER,
-        outcome: outcomes[i] || "待补充",
+        challenge: challenges[i] || CONTENT_GENERATING,
+        outcome: outcomes[i] || PENDING_SUPPLEMENT,
       });
     }
   }
