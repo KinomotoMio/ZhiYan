@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TypeAlias, cast
 
+from app.services.pipeline.layout_metadata import load_layout_metadata
 from app.services.pipeline.layout_roles import LayoutRole, normalize_slide_role
 from app.services.pipeline.layout_taxonomy import (
     get_group_order,
@@ -13,35 +14,23 @@ from app.services.pipeline.layout_taxonomy import (
 
 LayoutVariant: TypeAlias = str
 
-_VARIANT_SUB_GROUPS: dict[LayoutRole, dict[LayoutVariant, str]] = {
-    "cover": {"title-centered": "default", "title-left": "default"},
-    "agenda": {"section-cards": "default", "chapter-rail": "default"},
-    "section-divider": {"centered-divider": "default", "side-label": "default"},
-    "narrative": {
-        "icon-pillars": "icon-points",
-        "feature-cards": "icon-points",
-        "media-feature": "visual-explainer",
-        "icon-matrix": "capability-grid",
-    },
-    "evidence": {
-        "kpi-grid": "stat-summary",
-        "summary-band": "stat-summary",
-        "context-metrics": "visual-evidence",
-        "chart-takeaways": "chart-analysis",
-        "data-matrix": "table-matrix",
-    },
-    "comparison": {
-        "balanced-columns": "side-by-side",
-        "challenge-response": "response-mapping",
-    },
-    "process": {
-        "numbered-steps": "step-flow",
-        "progress-track": "step-flow",
-        "timeline-band": "timeline-milestone",
-    },
-    "highlight": {"quote-focus": "default", "banner-highlight": "default"},
-    "closing": {"closing-center": "default", "contact-card": "default"},
-}
+def _build_variant_sub_groups() -> dict[LayoutRole, dict[LayoutVariant, str]]:
+    metadata = load_layout_metadata()
+    variants_by_sub_group = metadata.get("variantsBySubGroup", {})
+    variant_sub_groups: dict[LayoutRole, dict[LayoutVariant, str]] = {}
+
+    for role in get_group_order():
+        sub_groups = variants_by_sub_group.get(role, {})
+        variant_sub_groups[role] = {
+            cast(LayoutVariant, variant_id): str(sub_group)
+            for sub_group, variants in sub_groups.items()
+            for variant_id in variants.keys()
+        }
+
+    return variant_sub_groups
+
+
+_VARIANT_SUB_GROUPS = _build_variant_sub_groups()
 
 
 def _variant_entry(role: LayoutRole, variant: LayoutVariant) -> dict[str, str]:
