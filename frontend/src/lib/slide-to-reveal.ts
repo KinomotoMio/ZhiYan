@@ -7,6 +7,14 @@ import { getLayoutIconNode } from "@/lib/layout-icons";
 import { getImagePlaceholderCopy } from "@/lib/image-source";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 import {
+  CONTENT_GENERATING,
+  PENDING_SUPPLEMENT,
+  STATUS_MESSAGE,
+  STATUS_TITLE,
+  canonicalizeFallbackText,
+  getBulletFallbackStatus,
+} from "@/lib/fallback-semantics";
+import {
   getBulletWithIconsColumns,
   isBulletIconsOnlyCompact,
 } from "@/lib/layout-rules";
@@ -70,6 +78,23 @@ function sanitizeFontStyle(value: unknown): string {
   if (typeof value !== "string") return "";
   const fontStyle = value.trim();
   return /^(?:normal|italic|oblique)$/.test(fontStyle) ? fontStyle : "";
+}
+
+function renderBulletStatusPanel(
+  title: string,
+  status: { title: string; message: string },
+): string {
+  return `
+    <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
+      <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(title)}</h2>
+      <div style="display:flex;flex:1;align-items:center;justify-content:center;">
+        <div style="max-width:720px;border:1px solid #fde68a;border-radius:24px;background:#fffbeb;padding:36px 40px;text-align:center;box-shadow:0 10px 30px rgba(15,23,42,0.06);">
+          <div style="margin:0 auto 16px;width:56px;height:56px;border-radius:18px;background:#fef3c7;color:#d97706;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;">!</div>
+          <h3 style="font-size:24px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0;">${escapeHtml(status.title)}</h3>
+          <p style="font-size:17px;line-height:1.6;color:${backgroundTextMix(70)};margin:12px 0 0;">${escapeHtml(status.message)}</p>
+        </div>
+      </div>
+    </div>`;
 }
 
 function styleToCSS(style?: Style): string {
@@ -263,12 +288,12 @@ function compareColumns(data: Record<string, unknown>) {
   return {
     left: {
       heading: left.heading,
-      items: left.items.length > 0 ? left.items : ["Content unavailable"],
+      items: left.items.length > 0 ? left.items.map(canonicalizeFallbackText) : [CONTENT_GENERATING],
       iconQuery: left.iconQuery,
     },
     right: {
       heading: right.heading,
-      items: right.items.length > 0 ? right.items : ["Content unavailable"],
+      items: right.items.length > 0 ? right.items.map(canonicalizeFallbackText) : [CONTENT_GENERATING],
       iconQuery: right.iconQuery,
     },
   };
@@ -281,11 +306,11 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
       if (entry && typeof entry === "object") {
         const rec = entry as Record<string, unknown>;
         pairs.push({
-          challenge: asText(rec.challenge, "Content unavailable"),
-          outcome: asText(rec.outcome, "Pending"),
+          challenge: canonicalizeFallbackText(asText(rec.challenge, CONTENT_GENERATING)),
+          outcome: canonicalizeFallbackText(asText(rec.outcome, PENDING_SUPPLEMENT)),
         });
       } else if (typeof entry === "string" && entry.trim()) {
-        pairs.push({ challenge: entry.trim(), outcome: "Pending" });
+        pairs.push({ challenge: canonicalizeFallbackText(entry.trim()), outcome: PENDING_SUPPLEMENT });
       }
     }
   }
@@ -307,11 +332,11 @@ function challengeOutcomePairs(data: Record<string, unknown>) {
   const count = Math.max(challengeItems.length, outcomeItems.length);
   for (let i = 0; i < count; i += 1) {
     pairs.push({
-      challenge: challengeItems[i] || "Content unavailable",
-      outcome: outcomeItems[i] || "Pending",
+      challenge: canonicalizeFallbackText(challengeItems[i] || CONTENT_GENERATING),
+      outcome: canonicalizeFallbackText(outcomeItems[i] || PENDING_SUPPLEMENT),
     });
   }
-  return pairs.length > 0 ? pairs : [{ challenge: "Content unavailable", outcome: "Pending" }];
+  return pairs.length > 0 ? pairs : [{ challenge: CONTENT_GENERATING, outcome: PENDING_SUPPLEMENT }];
 }
 
 
@@ -390,6 +415,20 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     }
     case "bullet-with-icons": {
       const raw = Array.isArray(d.items) ? d.items : [];
+      const fallbackStatus = getBulletFallbackStatus();
+      const status =
+        d.status && typeof d.status === "object"
+          ? {
+              title: asText((d.status as Record<string, unknown>).title, STATUS_TITLE),
+              message: asText((d.status as Record<string, unknown>).message, STATUS_MESSAGE),
+            }
+          : raw.length === 0
+            ? fallbackStatus
+            : null;
+      if (status && raw.length === 0) {
+        return renderBulletStatusPanel(asText(d.title), status);
+      }
+
       const columns = getBulletWithIconsColumns(raw.length);
       const compact = columns === 4;
       return `
@@ -410,14 +449,14 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
                     <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
                       <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
                         <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
-                          ${escapeHtml(itemText(item))}
+                          ${escapeHtml(canonicalizeFallbackText(itemText(item)))}
                         </span>
                       </span>
                     </h3>
                     ${itemDescription(item)
                       ? `<p style="font-size:${compact ? 11.5 : 12.5}px;line-height:1.42;color:${backgroundTextMix(72)};margin:0;max-width:240px;">
                           <span style="display:-webkit-box;-webkit-line-clamp:${compact ? 4 : 5};-webkit-box-orient:vertical;overflow:hidden;">
-                            ${escapeHtml(itemDescription(item))}
+                            ${escapeHtml(canonicalizeFallbackText(itemDescription(item)))}
                           </span>
                         </p>`
                       : ""}

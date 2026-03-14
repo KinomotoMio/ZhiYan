@@ -134,3 +134,47 @@ test("normalizeLayoutData collapses placeholder-only bullet-with-icons items int
     },
   });
 });
+
+test("normalizeLayoutData canonicalizes legacy placeholder aliases for bullet-with-icons", () => {
+  const result = normalizeLayoutData("bullet-with-icons", {
+    title: "Auto fallback",
+    items: [
+      { title: "Content unavailable", description: "Content unavailable" },
+      { title: "Fallback generated", description: "Fallback generated" },
+    ],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.data, {
+    title: "Auto fallback",
+    items: [],
+    status: {
+      title: "内容暂未就绪",
+      message: "该页正在生成或已回退，可稍后重试。",
+    },
+  });
+});
+
+test("normalizeLayoutData canonicalizes legacy compare and challenge placeholders", () => {
+  const compare = normalizeLayoutData("two-column-compare", {
+    title: "Compare",
+    items: ["Content unavailable", "Pending"],
+  });
+  assert.equal(compare.recoverable, true);
+  assert.deepEqual(compare.data, {
+    title: "Compare",
+    left: { heading: "要点 A", items: ["内容生成中"] },
+    right: { heading: "要点 B", items: ["待补充"] },
+  });
+
+  const challenge = normalizeLayoutData("challenge-outcome", {
+    title: "问题与方案",
+    items: [{ challenge: "Content unavailable", outcome: "Pending" }],
+  });
+  assert.equal(challenge.recoverable, true);
+  assert.deepEqual(challenge.data, {
+    title: "问题与方案",
+    items: [{ challenge: "内容生成中", outcome: "待补充" }],
+  });
+});

@@ -256,6 +256,66 @@ test("presentationToRevealHTML normalizes malformed compare layout data", () => 
   assert.match(html, /(Point B|要点 B)/);
 });
 
+test("presentationToRevealHTML renders bullet-with-icons status panels", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-status",
+        layoutType: "bullet-with-icons",
+        layoutId: "bullet-with-icons",
+        contentData: {
+          title: "关键发现",
+          items: [],
+          status: {
+            title: "内容暂未就绪",
+            message: "该页正在生成或已回退，可稍后重试。",
+          },
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /关键发现/);
+  assert.match(html, /内容暂未就绪/);
+  assert.match(html, /该页正在生成或已回退，可稍后重试。/);
+  assert.doesNotMatch(html, /grid-template-columns:repeat\(0,minmax\(0,1fr\)\)/);
+});
+
+test("presentationToRevealHTML canonicalizes legacy fallback placeholder aliases", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-compare-alias",
+        layoutType: "two-column-compare",
+        layoutId: "two-column-compare",
+        contentData: {
+          title: "Compare",
+          items: ["Content unavailable", "Pending"],
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-challenge-alias",
+        layoutType: "challenge-outcome",
+        layoutId: "challenge-outcome",
+        contentData: {
+          title: "问题与方案",
+          items: [{ challenge: "Content unavailable", outcome: "Pending" }],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /内容生成中/);
+  assert.match(html, /待补充/);
+  assert.doesNotMatch(html, /Content unavailable/);
+  assert.doesNotMatch(html, /Fallback generated/);
+});
+
 test("presentationToRevealHTML renders a fallback message for unrecoverable layout data", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,

@@ -6,6 +6,15 @@ from copy import deepcopy
 import re
 from typing import Any
 
+from app.services.fallback_semantics import (
+    CONTENT_GENERATING,
+    PENDING_SUPPLEMENT,
+    STATUS_MESSAGE,
+    STATUS_TITLE,
+    canonicalize_fallback_text,
+    get_bullet_fallback_status,
+    is_placeholder_text,
+)
 from app.services.image_semantics import normalize_image_content_data
 
 _RE_UNORDERED_LIST_PREFIX = re.compile(r"^\s*[-*\u2022+]\s*")
@@ -15,7 +24,6 @@ _RE_TABLE_SEPARATOR = re.compile(r"[-:]+")
 
 DEFAULT_LEFT_HEADING = "\u8981\u70b9 A"
 DEFAULT_RIGHT_HEADING = "\u8981\u70b9 B"
-DEFAULT_FILLER_TEXT = "\u5185\u5bb9\u751f\u6210\u4e2d"
 OUTLINE_FALLBACK_TITLES = (
     "\u80cc\u666f",
     "\u5206\u6790",
@@ -142,6 +150,8 @@ def _normalize_layout_content(
         return _normalize_intro_slide(data_with_image_source)
     if layout_id == "metrics-slide":
         return _normalize_metrics_slide(data_with_image_source)
+    if layout_id == "bullet-with-icons":
+        return _normalize_bullet_with_icons(data_with_image_source)
     if layout_id == "quote-slide":
         return _normalize_quote_slide(data_with_image_source)
     if layout_id == "thank-you":
@@ -225,6 +235,62 @@ def _normalize_metrics_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool
     return normalized, changed, True, "metrics-slide-shape" if changed else ""
 
 
+def _normalize_status(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = _as_text(raw.get("title"), STATUS_TITLE)
+    message = _as_text(raw.get("message"), STATUS_MESSAGE)
+    return {"title": title, "message": message}
+
+
+def _normalize_bullet_with_icons(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
+    title = _as_text(data.get("title"), "\u8981\u70b9\u6982\u89c8")
+    raw_items = data.get("items") if isinstance(data.get("items"), list) else []
+
+    placeholder_only = bool(raw_items) and all(
+        isinstance(raw_item, dict)
+        and (item_title := canonicalize_fallback_text(_as_text(raw_item.get("title"), "")))
+        and (item_description := canonicalize_fallback_text(_as_text(raw_item.get("description"), "")))
+        and item_title == item_description
+        and is_placeholder_text(item_title)
+        for raw_item in raw_items
+    )
+
+    items: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        item_title = canonicalize_fallback_text(_as_text(raw_item.get("title"), ""))
+        item_description = canonicalize_fallback_text(_as_text(raw_item.get("description"), ""))
+        text = item_title or item_description
+        if not text:
+            continue
+        if item_title and item_description and item_title == item_description and is_placeholder_text(item_title):
+            continue
+
+        icon = _normalize_icon(raw_item.get("icon")) or {"query": "star"}
+        items.append(
+            {
+                "icon": icon,
+                "title": item_title or text[:25],
+                "description": item_description or text,
+            }
+        )
+
+    normalized: dict[str, Any] = {
+        "title": title,
+        "items": items,
+    }
+    status = _normalize_status(data.get("status"))
+    if status is None and (placeholder_only or len(items) == 0):
+        status = get_bullet_fallback_status()
+    if status is not None:
+        normalized["status"] = status
+
+    changed = normalized != data
+    return normalized, changed, True, "bullet-with-icons-fallback-state" if changed else ""
+
+
 def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
     title = _as_text(data.get("title"), "\u5bf9\u6bd4\u5206\u6790")
 
@@ -251,8 +317,8 @@ def _normalize_two_column_compare(data: dict[str, Any]) -> tuple[dict[str, Any],
 
     normalized = {
         "title": title,
-        "left": left or {"heading": DEFAULT_LEFT_HEADING, "items": [DEFAULT_FILLER_TEXT]},
-        "right": right or {"heading": DEFAULT_RIGHT_HEADING, "items": [DEFAULT_FILLER_TEXT]},
+        "left": left or {"heading": DEFAULT_LEFT_HEADING, "items": [CONTENT_GENERATING]},
+        "right": right or {"heading": DEFAULT_RIGHT_HEADING, "items": [CONTENT_GENERATING]},
     }
     changed = normalized != data
     return normalized, changed, True, "two-column-compare-shape" if changed else ""
@@ -306,14 +372,19 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
                 if challenge or outcome:
                     items.append(
                         {
-                            "challenge": challenge or DEFAULT_FILLER_TEXT,
-                            "outcome": outcome or "\u5f85\u8865\u5145",
+                            "challenge": canonicalize_fallback_text(challenge) or CONTENT_GENERATING,
+                            "outcome": canonicalize_fallback_text(outcome) or PENDING_SUPPLEMENT,
                         }
                     )
             elif isinstance(item, str):
                 text = item.strip()
                 if text:
-                    items.append({"challenge": text, "outcome": "\u5f85\u8865\u5145"})
+                    items.append(
+                        {
+                            "challenge": canonicalize_fallback_text(text),
+                            "outcome": PENDING_SUPPLEMENT,
+                        }
+                    )
 
     if not items:
         challenges = _extract_side_texts(data.get("challenge"))
@@ -323,8 +394,8 @@ def _normalize_challenge_outcome(data: dict[str, Any]) -> tuple[dict[str, Any], 
             for idx in range(count):
                 items.append(
                     {
-                        "challenge": challenges[idx] if idx < len(challenges) else DEFAULT_FILLER_TEXT,
-                        "outcome": outcomes[idx] if idx < len(outcomes) else "\u5f85\u8865\u5145",
+                        "challenge": challenges[idx] if idx < len(challenges) else CONTENT_GENERATING,
+                        "outcome": outcomes[idx] if idx < len(outcomes) else PENDING_SUPPLEMENT,
                     }
                 )
 
@@ -409,7 +480,7 @@ def _normalize_compare_column(raw: Any, fallback_heading: str) -> dict[str, Any]
     heading = _as_text(raw.get("heading") or raw.get("title"), fallback_heading)
     items = _extract_text_items(raw.get("items"))
     if not items:
-        items = [DEFAULT_FILLER_TEXT]
+        items = [CONTENT_GENERATING]
 
     result: dict[str, Any] = {"heading": heading, "items": items}
     icon = _normalize_icon(raw.get("icon"))
@@ -454,7 +525,7 @@ def _extract_text_items(raw: Any) -> list[str]:
                 text = challenge or outcome
 
         if text:
-            items.append(text)
+            items.append(canonicalize_fallback_text(text))
 
     return items
 
@@ -467,13 +538,13 @@ def _extract_text_items_from_text(text: str) -> list[str]:
     items: list[str] = []
     for line in lines:
         if line.startswith("|"):
-            cells = [_clean_markdown_text(cell) for cell in line.strip("|").split("|")]
+            cells = [canonicalize_fallback_text(_clean_markdown_text(cell)) for cell in line.strip("|").split("|")]
             for cell in cells:
                 if _should_keep_cell(cell):
                     items.append(cell)
             continue
 
-        cleaned = _clean_markdown_text(line)
+        cleaned = canonicalize_fallback_text(_clean_markdown_text(line))
         if _should_keep_cell(cleaned):
             items.append(cleaned)
 
@@ -521,8 +592,8 @@ def _normalize_icon(raw: Any) -> dict[str, str] | None:
 
 def _split_two_columns(items: list[str]) -> tuple[list[str], list[str]]:
     midpoint = max(1, (len(items) + 1) // 2)
-    left = items[:midpoint] or [DEFAULT_FILLER_TEXT]
-    right = items[midpoint:] or [DEFAULT_FILLER_TEXT]
+    left = items[:midpoint] or [CONTENT_GENERATING]
+    right = items[midpoint:] or [CONTENT_GENERATING]
     return left, right
 
 
