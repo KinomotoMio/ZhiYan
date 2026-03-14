@@ -2,10 +2,12 @@ import {
   getLayoutTaxonomy,
   getVariantDescription,
   getVariantLabel,
+  type LayoutTaxonomyEntry,
   type LayoutGroup,
   type LayoutSubGroup,
   type LayoutVariantId,
 } from "@/lib/layout-taxonomy";
+import layoutMetadataJson from "@/generated/layout-metadata.json";
 import { compareLayoutNames } from "@/lib/sort";
 
 // Compatibility wrapper for callers that still expect a single variant token.
@@ -62,69 +64,24 @@ export function isDefaultLayoutVariant(variant: LayoutVariant): boolean {
   return DEFAULT_VARIANTS.has(variant);
 }
 
-const VARIANTS_BY_ROLE = {
-  cover: {
-    "title-centered": "default",
-    "title-left": "default",
-  },
-  agenda: {
-    "section-cards": "default",
-    "chapter-rail": "default",
-  },
-  "section-divider": {
-    "centered-divider": "default",
-    "side-label": "default",
-  },
-  narrative: {
-    "icon-pillars": "icon-points",
-    "feature-cards": "icon-points",
-    "media-feature": "visual-explainer",
-    "icon-matrix": "capability-grid",
-  },
-  evidence: {
-    "kpi-grid": "stat-summary",
-    "summary-band": "stat-summary",
-    "context-metrics": "visual-evidence",
-    "chart-takeaways": "chart-analysis",
-    "data-matrix": "table-matrix",
-  },
-  comparison: {
-    "balanced-columns": "side-by-side",
-    "challenge-response": "response-mapping",
-  },
-  process: {
-    "numbered-steps": "step-flow",
-    "progress-track": "step-flow",
-    "timeline-band": "timeline-milestone",
-  },
-  highlight: {
-    "quote-focus": "default",
-    "banner-highlight": "default",
-  },
-  closing: {
-    "closing-center": "default",
-    "contact-card": "default",
-  },
-} as const satisfies Record<LayoutGroup, Record<string, string>>;
+const VARIANTS_BY_ROLE = Object.fromEntries(
+  Object.entries(layoutMetadataJson.variantsBySubGroup).map(([group, subGroups]) => [
+    group,
+    Object.fromEntries(
+      Object.entries(subGroups).flatMap(([subGroup, variants]) =>
+        Object.keys(variants).map((variantId) => [variantId, subGroup]),
+      ),
+    ),
+  ]),
+) as Record<LayoutGroup, Record<string, string>>;
 
-const DEFAULT_VARIANTS = new Set<LayoutVariant>([
-  "title-centered",
-  "section-cards",
-  "centered-divider",
-  "icon-pillars",
-  "media-feature",
-  "icon-matrix",
-  "kpi-grid",
-  "context-metrics",
-  "chart-takeaways",
-  "data-matrix",
-  "balanced-columns",
-  "challenge-response",
-  "numbered-steps",
-  "timeline-band",
-  "quote-focus",
-  "closing-center",
-]);
+const DEFAULT_VARIANTS = new Set<LayoutVariant>(
+  Object.values(layoutMetadataJson.layouts)
+    .filter((entry): entry is typeof entry & { isVariantDefault: true; variantId: string } =>
+      Boolean(entry.isVariantDefault && entry.variantId),
+    )
+    .map((entry) => entry.variantId as LayoutVariant),
+);
 
 function getLayoutTaxonomyByRole(role: LayoutGroup, variant: LayoutVariant) {
   const variants = VARIANTS_BY_ROLE[role] as Record<string, string> | undefined;
@@ -132,5 +89,5 @@ function getLayoutTaxonomyByRole(role: LayoutGroup, variant: LayoutVariant) {
   if (!subGroup) {
     return null;
   }
-  return { group: role, subGroup } as const;
+  return { group: role, subGroup } as Pick<LayoutTaxonomyEntry, "group" | "subGroup">;
 }
