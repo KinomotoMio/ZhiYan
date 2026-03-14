@@ -46,6 +46,121 @@ def test_build_presentation_html_renders_content_data_without_components():
     assert "内容为空" not in html
 
 
+def test_build_presentation_html_wraps_scene_layouts_with_background_metadata():
+    payload = {
+        "presentationId": "pres-scene-html",
+        "title": "Scene Backgrounds",
+        "theme": {
+            "primaryColor": "#1d4ed8",
+            "secondaryColor": "#0f766e",
+            "backgroundColor": "#f8fafc",
+        },
+        "slides": [
+            {
+                "slideId": "slide-cover",
+                "layoutType": "intro-slide",
+                "layoutId": "intro-slide",
+                "background": {
+                    "kind": "scene",
+                    "preset": "hero-glow",
+                    "emphasis": "immersive",
+                    "colorToken": "primary",
+                },
+                "contentData": {
+                    "title": "Launch Plan",
+                    "subtitle": "Scene-first opener",
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-thanks",
+                "layoutType": "thank-you",
+                "layoutId": "thank-you",
+                "background": {
+                    "kind": "scene",
+                    "preset": "closing-wash",
+                    "emphasis": "immersive",
+                    "colorToken": "secondary",
+                },
+                "contentData": {
+                    "title": "Thanks",
+                    "contact": "team@example.com",
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-plain",
+                "layoutType": "metrics-slide",
+                "layoutId": "metrics-slide",
+                "contentData": {
+                    "title": "Metrics",
+                    "metrics": [{"value": "10", "label": "Growth"}],
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert 'data-scene-preset="hero-glow"' in html
+    assert 'data-scene-preset="closing-wash"' in html
+    assert 'data-scene-emphasis="immersive"' in html
+    assert html.count('data-scene-background="scene"') == 2
+    assert "--secondary-color: #0f766e;" in html
+
+
+def test_build_presentation_html_keeps_outline_scene_background_outside_content_layout():
+    payload = {
+        "presentationId": "pres-outline-scene-html",
+        "title": "Outline Scene",
+        "slides": [
+            {
+                "slideId": "slide-outline",
+                "layoutType": "outline-slide",
+                "layoutId": "outline-slide",
+                "background": {
+                    "kind": "scene",
+                    "preset": "outline-grid",
+                    "emphasis": "balanced",
+                    "colorToken": "neutral",
+                },
+                "contentData": {
+                    "title": "Agenda",
+                    "sections": [
+                        {"title": "Context"},
+                        {"title": "Method"},
+                        {"title": "Findings"},
+                        {"title": "Next Steps"},
+                    ],
+                },
+                "components": [],
+            },
+            {
+                "slideId": "slide-quote",
+                "layoutType": "quote-slide",
+                "layoutId": "quote-slide",
+                "background": {
+                    "kind": "scene",
+                    "preset": "quote-focus",
+                    "emphasis": "balanced",
+                    "colorToken": "secondary",
+                },
+                "contentData": {
+                    "quote": "Design for clarity, then add atmosphere.",
+                    "author": "Design Team",
+                },
+                "components": [],
+            },
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert 'data-scene-preset="outline-grid"' in html
+    assert 'data-scene-preset="quote-focus"' in html
+    assert 'data-scene-emphasis="balanced"' in html
+    assert "background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%)" not in html
+
+
 def test_build_presentation_html_renders_outline_slide_cards():
     payload = {
         "presentationId": "pres-outline-html",

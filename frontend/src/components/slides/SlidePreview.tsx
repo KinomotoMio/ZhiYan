@@ -7,6 +7,7 @@ import { getLayoutComponent } from "@/lib/template-registry";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 import { normalizeSlideSceneBackground } from "@/lib/scene-background";
 import LayoutErrorFallback from "@/components/slides/LayoutErrorFallback";
+import SceneBackgroundFrame from "@/components/slides/SceneBackgroundFrame";
 
 // ---------- 旧版 Component 渲染器（向后兼容） ----------
 
@@ -163,10 +164,11 @@ function RenderLayoutSlide({ slide }: { slide: Slide }) {
         height: 720,
         transformOrigin: "top left",
       }}
-      className="bg-[var(--background-color,#ffffff)]"
     >
-      {/* eslint-disable-next-line react-hooks/static-components */}
-      <LayoutComponent data={normalized.data} />
+      <SceneBackgroundFrame background={normalizedSlide.background}>
+        {/* eslint-disable-next-line react-hooks/static-components */}
+        <LayoutComponent data={normalized.data} />
+      </SceneBackgroundFrame>
     </div>
   );
 }
