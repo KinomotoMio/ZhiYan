@@ -395,6 +395,55 @@ function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
   };
 }
 
+function normalizeSectionHeader(data: RecordLike): LayoutNormalizeResult {
+  const repaired: RecordLike = {
+    title: asText(data.title, "章节标题"),
+  };
+  const subtitle = asText(data.subtitle);
+  if (subtitle) {
+    repaired.subtitle = subtitle;
+  }
+
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize section-header shape" : null,
+  };
+}
+
+function normalizeNumberedBullets(data: RecordLike): LayoutNormalizeResult {
+  const rawItems = Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.steps)
+      ? data.steps
+      : [];
+  const items = rawItems
+    .filter((item): item is RecordLike => isRecordLike(item))
+    .map((item, index) => ({
+      title: asText(item.title, `步骤 ${index + 1}`),
+      description: asText(item.description, asText(item.detail, DEFAULT_FILLER)),
+    }))
+    .slice(0, 5);
+
+  if (items.length === 0) {
+    return { data, recoverable: false, changed: false, reason: "missing numbered-bullets items" };
+  }
+
+  const repaired: RecordLike = {
+    title: asText(data.title, "执行步骤"),
+    items,
+  };
+  const changed = JSON.stringify(repaired) !== JSON.stringify(data);
+  return {
+    data: repaired,
+    recoverable: true,
+    changed,
+    reason: changed ? "normalize numbered-bullets shape" : null,
+  };
+}
+
 function normalizeTableInfo(data: RecordLike): LayoutNormalizeResult {
   const headers = extractTextItems(data.headers).length > 0
     ? extractTextItems(data.headers)
@@ -536,23 +585,29 @@ function normalizeThankYou(data: RecordLike): LayoutNormalizeResult {
 }
 
 export function normalizeLayoutData(layoutId: string, data: Record<string, unknown>): LayoutNormalizeResult {
-  if (layoutId === "intro-slide") {
+  if (layoutId === "intro-slide" || layoutId === "intro-slide-left") {
     return normalizeIntroSlide(data);
   }
-  if (layoutId === "metrics-slide") {
+  if (layoutId === "metrics-slide" || layoutId === "metrics-slide-band") {
     return normalizeMetricsSlide(data);
   }
-  if (layoutId === "bullet-with-icons") {
+  if (layoutId === "bullet-with-icons" || layoutId === "bullet-with-icons-cards") {
     return normalizeBulletWithIcons(data);
   }
-  if (layoutId === "outline-slide") {
+  if (layoutId === "outline-slide" || layoutId === "outline-slide-rail") {
     return normalizeOutlineSlide(data);
   }
-  if (layoutId === "quote-slide") {
+  if (layoutId === "quote-slide" || layoutId === "quote-banner") {
     return normalizeQuoteSlide(data);
   }
-  if (layoutId === "thank-you") {
+  if (layoutId === "thank-you" || layoutId === "thank-you-contact") {
     return normalizeThankYou(data);
+  }
+  if (layoutId === "section-header-side") {
+    return normalizeSectionHeader(data);
+  }
+  if (layoutId === "numbered-bullets-track") {
+    return normalizeNumberedBullets(data);
   }
   if (layoutId === "two-column-compare") {
     return normalizeTwoColumnCompare(data);

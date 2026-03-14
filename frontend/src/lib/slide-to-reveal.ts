@@ -346,7 +346,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
   const d = data as Record<string, unknown>;
 
   switch (layoutId) {
-    case "intro-slide": {
+    case "intro-slide":
+    case "intro-slide-left": {
       const author = asText(d.author) || asText(d.presenter);
       const date = asText(d.date);
       const meta = [author, date].filter(Boolean);
@@ -358,7 +359,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "section-header": {
+    case "section-header":
+    case "section-header-side": {
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 96px;text-align:center;">
           <div style="width:48px;height:4px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:32px;"></div>
@@ -367,7 +369,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "outline-slide": {
+    case "outline-slide":
+    case "outline-slide-rail": {
       const sections = Array.isArray(d.sections)
         ? d.sections.filter((section): section is Record<string, unknown> => !!section && typeof section === "object")
         : [];
@@ -388,7 +391,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           </div>
         </div>`;
     }
-    case "bullet-with-icons": {
+    case "bullet-with-icons":
+    case "bullet-with-icons-cards": {
       const raw = Array.isArray(d.items) ? d.items : [];
       const columns = getBulletWithIconsColumns(raw.length);
       const compact = columns === 4;
@@ -431,7 +435,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "numbered-bullets": {
+    case "numbered-bullets":
+    case "numbered-bullets-track": {
       const raw = Array.isArray(d.items) ? d.items : Array.isArray(d.steps) ? d.steps : [];
       return `
         <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
@@ -451,7 +456,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "metrics-slide": {
+    case "metrics-slide":
+    case "metrics-slide-band": {
       const metrics = Array.isArray(d.metrics) ? d.metrics : [];
       const columns = metrics.length <= 1 ? 1 : metrics.length === 2 ? 2 : metrics.length === 3 ? 3 : 4;
       const conclusion = asText(d.conclusion);
@@ -643,7 +649,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "quote-slide": {
+    case "quote-slide":
+    case "quote-banner": {
       const author = asText(d.author) || asText(d.attribution);
       const context = asText(d.context);
       return `
@@ -712,7 +719,8 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "thank-you": {
+    case "thank-you":
+    case "thank-you-contact": {
       const contact = asText(d.contact) || asText(d.contact_info);
       return `
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 96px;text-align:center;">

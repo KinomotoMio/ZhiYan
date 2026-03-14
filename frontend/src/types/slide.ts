@@ -20,10 +20,15 @@ export type LayoutType =
   | "blank"
   // 新版 layout IDs
   | "intro-slide"
+  | "intro-slide-left"
   | "outline-slide"
+  | "outline-slide-rail"
   | "bullet-with-icons"
+  | "bullet-with-icons-cards"
   | "numbered-bullets"
+  | "numbered-bullets-track"
   | "metrics-slide"
+  | "metrics-slide-band"
   | "metrics-with-image"
   | "chart-with-bullets"
   | "table-info"
@@ -31,9 +36,12 @@ export type LayoutType =
   | "image-and-description"
   | "timeline"
   | "quote-slide"
+  | "quote-banner"
   | "bullet-icons-only"
   | "challenge-outcome"
-  | "thank-you";
+  | "thank-you"
+  | "thank-you-contact"
+  | "section-header-side";
 
 export interface Position {
   x: number;
