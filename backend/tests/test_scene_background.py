@@ -53,14 +53,6 @@ def test_slide_schema_layout_enum_stays_in_sync_with_backend_layout_types():
     assert layout_enum == {layout.value for layout in LayoutType}
 
 
-def test_slide_schema_layout_enum_stays_in_sync_with_backend_layout_types():
-    schema_path = Path(__file__).resolve().parents[2] / "shared" / "schemas" / "slide.schema.json"
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    layout_enum = set(schema["$defs"]["Slide"]["properties"]["layoutType"]["enum"])
-
-    assert layout_enum == {layout.value for layout in LayoutType}
-
-
 def test_slide_model_accepts_legal_scene_background_on_eligible_layout():
     slide = Slide.model_validate(
         {
