@@ -1,4 +1,7 @@
-from app.models.slide import Slide
+import json
+from pathlib import Path
+
+from app.models.slide import LayoutType, Slide
 from app.services.presentations.normalizer import normalize_presentation_payload
 from app.utils.scene_background import (
     build_generated_scene_background,
@@ -25,7 +28,6 @@ def test_scene_background_rules_match_expected_layout_defaults():
     )
     assert get_scene_background_rule("thank-you").emphasis == "immersive"
 
-
 def test_build_generated_scene_background_only_for_matching_role_layout_pairs():
     assert build_generated_scene_background("intro-slide", "cover") == {
         "kind": "scene",
@@ -41,6 +43,14 @@ def test_build_generated_scene_background_only_for_matching_role_layout_pairs():
     }
     assert build_generated_scene_background("quote-slide", "narrative") is None
     assert build_generated_scene_background("quote-banner", "highlight") is None
+
+
+def test_slide_schema_layout_enum_stays_in_sync_with_backend_layout_types():
+    schema_path = Path(__file__).resolve().parents[2] / "shared" / "schemas" / "slide.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    layout_enum = set(schema["$defs"]["Slide"]["properties"]["layoutType"]["enum"])
+
+    assert layout_enum == {layout.value for layout in LayoutType}
 
 
 def test_slide_model_accepts_legal_scene_background_on_eligible_layout():
