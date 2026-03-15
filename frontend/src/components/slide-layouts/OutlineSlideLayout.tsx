@@ -16,7 +16,7 @@ export default function OutlineSlideLayout({ data }: { data: OutlineSlideData })
   const columns = [leftColumn, rightColumn].filter((column) => column.length > 0);
 
   return (
-    <div className="flex h-full flex-col bg-[linear-gradient(180deg,var(--slide-bg-start,#ffffff)_0%,var(--slide-bg-end,#f8fafc)_100%)] px-16 py-14 text-[var(--background-text,#111827)]">
+    <div className="flex h-full flex-col px-16 py-14 text-[var(--background-text,#111827)]">
       <div className="flex items-end gap-10">
         <div className="max-w-[560px]">
           <div className="mb-5 h-1.5 w-16 rounded-full bg-[var(--primary-color,#3b82f6)]" />

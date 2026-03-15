@@ -14,6 +14,10 @@ from app.services.export.layout_rules import (
     get_bullet_with_icons_columns,
     is_bullet_icons_only_compact,
 )
+from app.services.export.scene_background import (
+    build_theme_root_css,
+    render_scene_background_frame,
+)
 from app.services.fallback_semantics import (
     CONTENT_GENERATING,
     PENDING_SUPPLEMENT,
@@ -30,6 +34,9 @@ from app.services.presentations.normalizer import normalize_metrics_slide_data
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
     slides = presentation_dict.get("slides", [])
     total = len(slides)
+    theme_css = build_theme_root_css(
+        presentation_dict.get("theme") if isinstance(presentation_dict.get("theme"), dict) else None
+    )
     slides_html = "".join(
         _render_single_slide(slide, idx + 1, total) for idx, slide in enumerate(slides)
     )
@@ -43,8 +50,11 @@ def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', sans-serif; }}
+        body {{ font-family: 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', sans-serif; background: var(--background-color,#ffffff); color: var(--background-text,#111827); }}
+        {theme_css}
         .slide {{ margin: 0; }}
+        .slide-shell {{ position: relative; width: 100%; height: 100%; background: var(--background-color,#ffffff); overflow: hidden; isolation: isolate; }}
+        .slide-content {{ position: relative; z-index: 1; width: 100%; height: 100%; }}
         @page {{ size: landscape; margin: 0; }}
     </style>
 </head>
@@ -65,14 +75,16 @@ def _render_single_slide(slide: dict[str, Any], page_num: int, total: int) -> st
         content_html = _render_components(slide.get("components", []))
 
     if not content_html:
-        content_html = '<div style="padding:60px;color:#9ca3af;">内容为空</div>'
+        content_html = '<div style="padding:60px;color:#9ca3af;">Content unavailable</div>'
+
+    content_html = render_scene_background_frame(slide.get("background"), content_html)
 
     page_number_html = (
         f'<div style="position:absolute;bottom:2%;right:3%;'
         f'font-size:10px;color:#9ca3af;">{page_num} / {total}</div>'
     )
     return f"""
-    <div class="slide" style="position:relative;width:100%;aspect-ratio:16/9;background:white;page-break-after:always;overflow:hidden;">
+    <div class="slide" style="position:relative;width:100%;aspect-ratio:16/9;background:var(--background-color,#ffffff);page-break-after:always;overflow:hidden;">
         {content_html}
         {page_number_html}
     </div>
@@ -182,17 +194,17 @@ def _render_outline_column(column: list[dict[str, str]], start_index: int) -> st
         title = escape(section.get("title", f"Section {index}"))
         description = escape(section.get("description", ""))
         description_html = (
-            f'<p style="font-size:15px;line-height:1.6;color:#64748b;margin:12px 0 0;max-width:420px;">{description}</p>'
+            f'<p style="font-size:15px;line-height:1.6;color:color-mix(in srgb, var(--background-text,#111827) 58%, transparent);margin:12px 0 0;max-width:420px;">{description}</p>'
             if description
             else ""
         )
         articles.append(
             '<article style="border-top:1px solid #dbe2ea;padding-top:18px;display:flex;gap:20px;">'
             '<div style="width:48px;flex-shrink:0;padding-top:4px;">'
-            f'<div style="font-size:13px;font-weight:700;letter-spacing:0.18em;color:#2563eb;">{index:02d}</div>'
+            f'<div style="font-size:13px;font-weight:700;letter-spacing:0.18em;color:var(--primary-color,#3b82f6);">{index:02d}</div>'
             '</div>'
             '<div style="min-width:0;">'
-            f'<h3 style="font-size:28px;font-weight:600;line-height:1.05;color:#0f172a;margin:0;letter-spacing:-0.04em;">{title}</h3>'
+            f'<h3 style="font-size:28px;font-weight:600;line-height:1.05;color:var(--background-text,#111827);margin:0;letter-spacing:-0.04em;">{title}</h3>'
             f'{description_html}'
             '</div>'
             '</article>'
@@ -211,26 +223,19 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         date = _as_text(d.get("date"))
         info_parts = [part for part in (author, date) if part]
         return (
-            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:60px;">'
-            f'<h1 style="font-size:56px;font-weight:bold;color:#3b82f6;margin-bottom:24px;">{escape(_as_text(d.get("title")))}</h1>'
-            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:28px;color:#6b7280;margin-bottom:40px;")}'
-            f'{_optional_paragraph(" · ".join(info_parts), "font-size:18px;color:#9ca3af;")}'
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 80px;text-align:center;">'
+            f'<h1 style="font-size:52px;font-weight:700;line-height:1.2;color:var(--background-text,#111827);margin:0 0 16px;max-width:900px;">{escape(_as_text(d.get("title")))}</h1>'
+            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:24px;line-height:1.5;color:color-mix(in srgb, var(--background-text,#111827) 60%, transparent);margin:0 0 40px;max-width:700px;")}'
+            f'{_optional_paragraph(" / ".join(info_parts), "font-size:16px;line-height:1.5;color:color-mix(in srgb, var(--background-text,#111827) 40%, transparent);")}'
             "</div>"
         )
 
     if layout_id in {"section-header", "section-header-side"}:
-        section_no = d.get("section_number")
-        badge_html = ""
-        if section_no is not None and str(section_no).strip():
-            badge_html = (
-                f'<span style="font-size:20px;color:#3b82f6;margin-bottom:16px;">'
-                f'{escape(str(section_no))}</span>'
-            )
         return (
-            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px;">'
-            f"{badge_html}"
-            f'<h2 style="font-size:48px;font-weight:bold;margin-bottom:20px;">{escape(_as_text(d.get("title")))}</h2>'
-            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:24px;color:#6b7280;")}'
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 96px;text-align:center;">'
+            '<div style="width:48px;height:4px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:32px;"></div>'
+            f'<h2 style="font-size:44px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 16px;max-width:800px;">{escape(_as_text(d.get("title")))}</h2>'
+            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:20px;line-height:1.5;color:color-mix(in srgb, var(--background-text,#111827) 50%, transparent);margin:0;max-width:600px;")}'
             "</div>"
         )
 
@@ -239,14 +244,14 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         left, right = _split_outline_sections(sections)
         subtitle = _as_text(d.get("subtitle"))
         return (
-            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);">'
+            '<div style="padding:56px 64px;height:100%;display:flex;flex-direction:column;">'
             '<div style="display:flex;align-items:flex-end;gap:40px;">'
             '<div style="max-width:560px;">'
-            '<div style="width:64px;height:6px;border-radius:9999px;background:#2563eb;margin-bottom:20px;"></div>'
-            f'<h2 style="font-size:42px;font-weight:bold;line-height:1.12;letter-spacing:-0.045em;color:#0f172a;margin:0 0 16px;">{escape(_as_text(d.get("title"), "Outline"))}</h2>'
-            f'{_optional_paragraph(subtitle, "font-size:17px;line-height:1.6;color:#64748b;margin:0;max-width:520px;")}'
+            '<div style="width:64px;height:6px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:20px;"></div>'
+            f'<h2 style="font-size:42px;font-weight:700;line-height:1.12;letter-spacing:-0.045em;color:var(--background-text,#111827);margin:0 0 16px;">{escape(_as_text(d.get("title"), "Outline"))}</h2>'
+            f'{_optional_paragraph(subtitle, "font-size:17px;line-height:1.6;color:color-mix(in srgb, var(--background-text,#111827) 60%, transparent);margin:0;max-width:520px;")}'
             '</div>'
-            '<div style="height:1px;flex:1;background:#dbe2ea;margin-bottom:12px;"></div>'
+            '<div style="height:1px;flex:1;background:color-mix(in srgb, var(--background-text,#111827) 12%, transparent);margin-bottom:12px;"></div>'
             '</div>'
             '<div style="display:flex;gap:56px;flex:1;margin-top:48px;">'
             f'{_render_outline_column(left, 0)}'
@@ -526,11 +531,20 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     if layout_id in {"quote-slide", "quote-banner"}:
         author = _as_text(d.get("author")) or _as_text(d.get("attribution"))
         context = _as_text(d.get("context"))
-        meta = " · ".join(part for part in (author, context) if part)
+        meta = " / ".join(part for part in (author, context) if part)
+        meta_html = (
+            '<div style="display:flex;align-items:center;gap:12px;">'
+            '<div style="width:32px;height:2px;background:color-mix(in srgb, var(--primary-color,#3b82f6) 30%, transparent);"></div>'
+            f'<span style="font-size:16px;line-height:1.5;color:color-mix(in srgb, var(--background-text,#111827) 50%, transparent);">{escape(meta)}</span>'
+            '</div>'
+            if meta
+            else ""
+        )
         return (
-            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px 120px;">'
-            f'<p style="font-size:36px;font-style:italic;color:#374151;line-height:1.5;">"{escape(_as_text(d.get("quote")))}"</p>'
-            f'{_optional_paragraph(meta, "font-size:20px;color:#9ca3af;margin-top:32px;")}'
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 96px;text-align:center;">'
+            '<div style="font-size:80px;line-height:1;color:color-mix(in srgb, var(--primary-color,#3b82f6) 20%, transparent);margin-bottom:8px;">&ldquo;</div>'
+            f'<blockquote style="font-size:30px;font-weight:500;line-height:1.6;color:var(--background-text,#111827);text-align:center;max-width:850px;margin:0 0 24px;">{escape(_as_text(d.get("quote")))}</blockquote>'
+            f"{meta_html}"
             "</div>"
         )
 
@@ -555,10 +569,11 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     if layout_id in {"thank-you", "thank-you-contact"}:
         contact = _as_text(d.get("contact")) or _as_text(d.get("contact_info"))
         return (
-            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:80px;">'
-            f'<h1 style="font-size:56px;font-weight:bold;color:#3b82f6;margin-bottom:24px;">{escape(_as_text(d.get("title"), "谢谢"))}</h1>'
-            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:24px;color:#6b7280;margin-bottom:40px;")}'
-            f'{_optional_paragraph(contact, "font-size:18px;color:#9ca3af;")}'
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0 96px;text-align:center;">'
+            '<div style="width:64px;height:4px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:40px;"></div>'
+            f'<h1 style="font-size:56px;font-weight:800;line-height:1.2;color:var(--background-text,#111827);margin:0 0 24px;">{escape(_as_text(d.get("title"), "Thanks"))}</h1>'
+            f'{_optional_paragraph(_as_text(d.get("subtitle")), "font-size:22px;line-height:1.5;color:color-mix(in srgb, var(--background-text,#111827) 50%, transparent);margin:0 0 16px;max-width:600px;")}'
+            f'{_optional_paragraph(contact, "font-size:16px;line-height:1.5;color:var(--primary-color,#3b82f6);margin:0;")}'
             "</div>"
         )
 

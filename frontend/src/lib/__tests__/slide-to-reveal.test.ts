@@ -571,3 +571,108 @@ test("presentationToRevealHTML uses a generic alt fallback for image-and-descrip
 
   assert.match(html, /<img src="https:\/\/example\.com\/description-image\.png" alt="Image"/);
 });
+
+test("presentationToRevealHTML wraps scene slides with page-level background metadata", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-cover-bg",
+        layoutType: "intro-slide",
+        layoutId: "intro-slide",
+        background: {
+          kind: "scene",
+          preset: "hero-glow",
+          emphasis: "immersive",
+          colorToken: "primary",
+        },
+        contentData: {
+          title: "Cover",
+          subtitle: "Scene-first opener",
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-thanks-bg",
+        layoutType: "thank-you",
+        layoutId: "thank-you",
+        background: {
+          kind: "scene",
+          preset: "closing-wash",
+          emphasis: "immersive",
+          colorToken: "secondary",
+        },
+        contentData: {
+          title: "Thanks",
+          contact: "team@example.com",
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-plain",
+        layoutType: "metrics-slide",
+        layoutId: "metrics-slide",
+        contentData: {
+          title: "Metrics",
+          metrics: [{ value: "10", label: "Growth" }],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /data-scene-preset="hero-glow"/);
+  assert.match(html, /data-scene-preset="closing-wash"/);
+  assert.match(html, /data-scene-emphasis="immersive"/);
+  assert.equal((html.match(/data-scene-background="scene"/g) ?? []).length, 2);
+});
+
+test("presentationToRevealHTML keeps outline backgrounds restrained and quote backgrounds distinct", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-outline-bg",
+        layoutType: "outline-slide",
+        layoutId: "outline-slide",
+        background: {
+          kind: "scene",
+          preset: "outline-grid",
+          emphasis: "balanced",
+          colorToken: "neutral",
+        },
+        contentData: {
+          title: "Agenda",
+          sections: [
+            { title: "Context" },
+            { title: "Method" },
+            { title: "Findings" },
+            { title: "Next Steps" },
+          ],
+        },
+        components: [],
+      },
+      {
+        slideId: "slide-quote-bg",
+        layoutType: "quote-slide",
+        layoutId: "quote-slide",
+        background: {
+          kind: "scene",
+          preset: "quote-focus",
+          emphasis: "balanced",
+          colorToken: "secondary",
+        },
+        contentData: {
+          quote: "Design for clarity, then add atmosphere.",
+          author: "Design Team",
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /data-scene-preset="outline-grid"/);
+  assert.match(html, /data-scene-preset="quote-focus"/);
+  assert.match(html, /data-scene-emphasis="balanced"/);
+  assert.doesNotMatch(html, /padding:56px 64px;background:linear-gradient\(180deg,#ffffff 0%,#f8fafc 100%\)/);
+});

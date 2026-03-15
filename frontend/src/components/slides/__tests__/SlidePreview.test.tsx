@@ -279,3 +279,99 @@ test("image source placeholders render explicit user guidance", () => {
   assert.match(html, /\u5f85\u7ed1\u5b9a\u73b0\u6709\u7d20\u6750/);
   assert.match(html, /\u4f7f\u7528\u54c1\u724c\u56fe\u5e93\u5c01\u9762\u56fe/);
 });
+
+test("scene backgrounds render as page-level wrappers in preview", () => {
+  const html = renderToStaticMarkup(
+    <div>
+      <SlidePreview
+        slide={{
+          slideId: "slide-cover-bg",
+          layoutType: "intro-slide",
+          layoutId: "intro-slide",
+          background: {
+            kind: "scene",
+            preset: "hero-glow",
+            emphasis: "immersive",
+            colorToken: "primary",
+          },
+          contentData: {
+            title: "Launch Plan",
+            subtitle: "Scene-first opener",
+          },
+          components: [],
+        }}
+      />
+      <SlidePreview
+        slide={{
+          slideId: "slide-plain-body",
+          layoutType: "metrics-slide",
+          layoutId: "metrics-slide",
+          contentData: {
+            title: "Plain body",
+            metrics: [{ value: "10", label: "Growth" }],
+          },
+          components: [],
+        }}
+      />
+    </div>
+  );
+
+  assert.match(html, /data-scene-background="scene"/);
+  assert.match(html, /data-scene-preset="hero-glow"/);
+  assert.match(html, /data-scene-emphasis="immersive"/);
+  assert.equal((html.match(/data-scene-background="scene"/g) ?? []).length, 1);
+});
+
+test("outline and quote scene backgrounds stay layout-aware in preview", () => {
+  const html = renderToStaticMarkup(
+    <div>
+      <SlidePreview
+        slide={{
+          slideId: "slide-outline-bg",
+          layoutType: "outline-slide",
+          layoutId: "outline-slide",
+          background: {
+            kind: "scene",
+            preset: "outline-grid",
+            emphasis: "balanced",
+            colorToken: "neutral",
+          },
+          contentData: {
+            title: "Agenda",
+            sections: [
+              { title: "Context" },
+              { title: "Approach" },
+              { title: "Findings" },
+              { title: "Next Steps" },
+            ],
+          },
+          components: [],
+        }}
+      />
+      <SlidePreview
+        slide={{
+          slideId: "slide-quote-bg",
+          layoutType: "quote-slide",
+          layoutId: "quote-slide",
+          background: {
+            kind: "scene",
+            preset: "quote-focus",
+            emphasis: "balanced",
+            colorToken: "secondary",
+          },
+          contentData: {
+            quote: "Design for clarity, then add atmosphere.",
+            author: "Design Team",
+          },
+          components: [],
+        }}
+      />
+    </div>
+  );
+
+  assert.match(html, /data-scene-preset="outline-grid"/);
+  assert.match(html, /data-scene-preset="quote-focus"/);
+  assert.equal((html.match(/data-scene-emphasis="balanced"/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /data-scene-emphasis="immersive"/);
+  assert.doesNotMatch(html, /bg-\[linear-gradient\(180deg,var\(--slide-bg-start,#ffffff\)_0%,var\(--slide-bg-end,#f8fafc\)_100%\)\]/);
+});
