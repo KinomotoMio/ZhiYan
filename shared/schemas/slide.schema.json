@@ -1,21 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Presentation",
-  "description": "知演 Slide 数据模型 — single source of truth",
+  "description": "ZhiYan presentation payload schema",
   "type": "object",
-  "required": [
-    "presentationId",
-    "title",
-    "slides"
-  ],
+  "required": ["presentationId", "title", "slides"],
   "properties": {
     "presentationId": {
       "type": "string",
-      "description": "演示文稿唯一标识"
+      "description": "Unique presentation identifier"
     },
     "title": {
       "type": "string",
-      "description": "演示文稿标题"
+      "description": "Presentation title"
     },
     "theme": {
       "$ref": "#/$defs/Theme"
@@ -31,33 +27,20 @@
     "Theme": {
       "type": "object",
       "properties": {
-        "primaryColor": {
-          "type": "string"
-        },
-        "secondaryColor": {
-          "type": "string"
-        },
-        "backgroundColor": {
-          "type": "string"
-        },
-        "fontFamily": {
-          "type": "string"
-        },
-        "headingFontFamily": {
-          "type": "string"
-        }
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "headingFontFamily": { "type": "string" }
       }
     },
     "Slide": {
       "type": "object",
-      "required": [
-        "slideId",
-        "layoutType"
-      ],
+      "required": ["slideId", "layoutType"],
       "properties": {
         "slideId": {
           "type": "string",
-          "description": "幻灯片唯一标识"
+          "description": "Unique slide identifier"
         },
         "layoutType": {
           "type": "string",
@@ -93,74 +76,93 @@
             "thank-you",
             "thank-you-contact"
           ],
-          "description": "布局类型，对应模板中的 layout"
+          "description": "Layout type used by the slide"
         },
         "layoutId": {
           "type": "string",
-          "description": "推荐的主渲染字段：模板布局 ID（配合 contentData）"
+          "description": "Template layout identifier paired with contentData"
         },
         "contentData": {
           "type": "object",
-          "description": "推荐的主渲染字段：布局结构化内容数据"
+          "description": "Structured payload for the selected layout"
+        },
+        "background": {
+          "anyOf": [
+            { "$ref": "#/$defs/SceneBackground" },
+            { "type": "null" }
+          ],
+          "description": "Optional scene-background metadata for eligible slides"
         },
         "components": {
           "type": "array",
-          "description": "旧版兼容字段（只读兼容）",
+          "description": "Legacy component payload kept for read compatibility",
           "items": {
             "$ref": "#/$defs/Component"
           }
         },
         "speakerNotes": {
           "type": "string",
-          "description": "演讲者注释"
+          "description": "Presenter notes"
         },
         "templateSlotMapping": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
           },
-          "description": "模板插槽名到组件 ID 的映射"
+          "description": "Template slot name to component identifier map"
         }
       }
     },
+    "SceneBackground": {
+      "type": "object",
+      "required": ["kind", "preset"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "scene"
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "hero-glow",
+            "section-band",
+            "outline-grid",
+            "quote-focus",
+            "closing-wash"
+          ]
+        },
+        "emphasis": {
+          "type": "string",
+          "enum": ["subtle", "balanced", "immersive"]
+        },
+        "colorToken": {
+          "type": "string",
+          "enum": ["primary", "secondary", "neutral"]
+        }
+      },
+      "additionalProperties": false
+    },
     "Component": {
       "type": "object",
-      "required": [
-        "id",
-        "type",
-        "role",
-        "position"
-      ],
+      "required": ["id", "type", "role", "position"],
       "properties": {
         "id": {
           "type": "string",
-          "description": "组件唯一标识"
+          "description": "Unique component identifier"
         },
         "type": {
           "type": "string",
-          "enum": [
-            "text",
-            "image",
-            "chart",
-            "shape"
-          ],
-          "description": "组件类型"
+          "enum": ["text", "image", "chart", "shape"],
+          "description": "Component type"
         },
         "role": {
           "type": "string",
-          "enum": [
-            "title",
-            "subtitle",
-            "body",
-            "caption",
-            "decoration",
-            "illustration"
-          ],
-          "description": "组件在页面中的语义角色"
+          "enum": ["title", "subtitle", "body", "caption", "decoration", "illustration"],
+          "description": "Semantic role within the slide"
         },
         "content": {
           "type": "string",
-          "description": "文本内容（text 类型）或图片 URL（image 类型）"
+          "description": "Text content or image URL"
         },
         "position": {
           "$ref": "#/$defs/Position"
@@ -170,76 +172,31 @@
         },
         "chartData": {
           "type": "object",
-          "description": "图表数据（chart 类型）"
+          "description": "Chart payload for chart components"
         }
       }
     },
     "Position": {
       "type": "object",
-      "required": [
-        "x",
-        "y",
-        "width",
-        "height"
-      ],
+      "required": ["x", "y", "width", "height"],
       "properties": {
-        "x": {
-          "type": "number",
-          "description": "左边距百分比 (0-100)"
-        },
-        "y": {
-          "type": "number",
-          "description": "上边距百分比 (0-100)"
-        },
-        "width": {
-          "type": "number",
-          "description": "宽度百分比 (0-100)"
-        },
-        "height": {
-          "type": "number",
-          "description": "高度百分比 (0-100)"
-        }
+        "x": { "type": "number", "description": "Left percentage (0-100)" },
+        "y": { "type": "number", "description": "Top percentage (0-100)" },
+        "width": { "type": "number", "description": "Width percentage (0-100)" },
+        "height": { "type": "number", "description": "Height percentage (0-100)" }
       }
     },
     "Style": {
       "type": "object",
       "properties": {
-        "fontSize": {
-          "type": "number"
-        },
-        "fontWeight": {
-          "type": "string"
-        },
-        "fontStyle": {
-          "type": "string"
-        },
-        "color": {
-          "type": "string"
-        },
-        "backgroundColor": {
-          "type": "string"
-        },
-        "textAlign": {
-          "type": "string",
-          "enum": [
-            "left",
-            "center",
-            "right"
-          ]
-        },
-        "verticalAlign": {
-          "type": "string",
-          "enum": [
-            "top",
-            "middle",
-            "bottom"
-          ]
-        },
-        "opacity": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        }
+        "fontSize": { "type": "number" },
+        "fontWeight": { "type": "string" },
+        "fontStyle": { "type": "string" },
+        "color": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "textAlign": { "type": "string", "enum": ["left", "center", "right"] },
+        "verticalAlign": { "type": "string", "enum": ["top", "middle", "bottom"] },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     }
   }

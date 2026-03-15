@@ -5,6 +5,7 @@ import { ImageIcon, BarChart3 } from "lucide-react";
 import type { Slide, Component as SlideComponent } from "@/types/slide";
 import { getLayoutComponent } from "@/lib/template-registry";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import { normalizeSlideSceneBackground } from "@/lib/scene-background";
 import LayoutErrorFallback from "@/components/slides/LayoutErrorFallback";
 
 // ---------- 旧版 Component 渲染器（向后兼容） ----------
@@ -132,7 +133,8 @@ function RenderSkeletonSlide({ slide }: { slide: Slide }) {
 // ---------- 新版 Layout 渲染器 ----------
 
 function RenderLayoutSlide({ slide }: { slide: Slide }) {
-  const layoutId = slide.layoutId || slide.layoutType;
+  const normalizedSlide = normalizeSlideSceneBackground(slide);
+  const layoutId = normalizedSlide.layoutId || normalizedSlide.layoutType;
   if (!layoutId) {
     return <LayoutErrorFallback layoutId="unknown" reason="缺少 layoutId" />;
   }
@@ -142,13 +144,13 @@ function RenderLayoutSlide({ slide }: { slide: Slide }) {
     return <LayoutErrorFallback layoutId={layoutId} reason="未注册的布局组件" />;
   }
 
-  if (!slide.contentData || typeof slide.contentData !== "object") {
+  if (!normalizedSlide.contentData || typeof normalizedSlide.contentData !== "object") {
     return <LayoutErrorFallback layoutId={layoutId} reason="缺少 contentData" />;
   }
 
   const normalized = normalizeLayoutData(
     layoutId,
-    slide.contentData as Record<string, unknown>
+    normalizedSlide.contentData as Record<string, unknown>
   );
   if (!normalized.recoverable) {
     return <LayoutErrorFallback layoutId={layoutId} reason={normalized.reason} />;
@@ -184,13 +186,14 @@ export default function SlidePreview({
   onClick,
   isActive,
 }: SlidePreviewProps) {
+  const normalizedSlide = normalizeSlideSceneBackground(slide);
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.5);
 
   // 判断是否为 skeleton 加载态
-  const isSkeleton = !!(slide.contentData as Record<string, unknown> | undefined)?._loading;
+  const isSkeleton = !!(normalizedSlide.contentData as Record<string, unknown> | undefined)?._loading;
   // 判断是否使用新版 layout 渲染
-  const useNewLayout = !isSkeleton && !!(slide.layoutId && slide.contentData);
+  const useNewLayout = !isSkeleton && !!(normalizedSlide.layoutId && normalizedSlide.contentData);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -237,10 +240,10 @@ export default function SlidePreview({
             height: 720,
           }}
         >
-          <RenderLayoutSlide slide={slide} />
+          <RenderLayoutSlide slide={normalizedSlide} />
         </div>
       ) : (
-        (slide.components ?? []).map((comp) => (
+        (normalizedSlide.components ?? []).map((comp) => (
           <RenderComponent key={comp.id} comp={comp} scale={scale} />
         ))
       )}

@@ -6,6 +6,7 @@
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { getImagePlaceholderCopy } from "@/lib/image-source";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import { normalizeSlideSceneBackground } from "@/lib/scene-background";
 import {
   CONTENT_GENERATING,
   PENDING_SUPPLEMENT,
@@ -809,20 +810,24 @@ function renderLayoutContent(layoutId: string, data: Record<string, unknown>): s
 }
 
 function slideToSection(slide: Slide): string {
-  const useNewLayout = !!(slide.layoutId && slide.contentData);
+  const normalizedSlide = normalizeSlideSceneBackground(slide);
+  const useNewLayout = !!(normalizedSlide.layoutId && normalizedSlide.contentData);
 
   let content: string;
   if (useNewLayout) {
-    content = renderLayoutContent(slide.layoutId!, slide.contentData as Record<string, unknown>);
+    content = renderLayoutContent(
+      normalizedSlide.layoutId!,
+      normalizedSlide.contentData as Record<string, unknown>
+    );
   } else {
-    content = (slide.components ?? []).map(componentToHTML).join("\n    ");
+    content = (normalizedSlide.components ?? []).map(componentToHTML).join("\n    ");
   }
 
-  const notes = slide.speakerNotes
-    ? `\n    <aside class="notes">${escapeHtml(slide.speakerNotes)}</aside>`
+  const notes = normalizedSlide.speakerNotes
+    ? `\n    <aside class="notes">${escapeHtml(normalizedSlide.speakerNotes)}</aside>`
     : "";
 
-  return `  <section data-slide-id="${escapeAttribute(slide.slideId)}">
+  return `  <section data-slide-id="${escapeAttribute(normalizedSlide.slideId)}">
     <div class="slide-shell">
       ${content}${notes}
     </div>
