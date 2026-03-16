@@ -1324,9 +1324,6 @@ def _suggest_sub_group_for_outline_item(item: dict[str, Any], role: str) -> str:
         if has_visual_signal:
             return "visual-explainer"
 
-        if has_capability_signal:
-            return "capability-grid"
-
         return "icon-points"
 
     if role == "evidence":
