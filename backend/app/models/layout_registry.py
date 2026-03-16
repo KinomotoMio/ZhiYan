@@ -28,6 +28,7 @@ from app.models.layouts.schemas import (
     MetricsSlideData,
     MetricsWithImageData,
     NumberedBulletsData,
+    OutlineRailSlideData,
     OutlineSlideData,
     QuoteSlideData,
     SectionHeaderData,
@@ -120,7 +121,7 @@ _LAYOUTS: list[LayoutEntry] = [
     _build_layout_entry(
         layout_id="outline-slide-rail",
         name="目录导航页（导轨）",
-        output_model=OutlineSlideData,
+        output_model=OutlineRailSlideData,
     ),
     _build_layout_entry(
         layout_id="bullet-with-icons",

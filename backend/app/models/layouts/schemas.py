@@ -48,6 +48,12 @@ class OutlineSlideData(BaseModel):
     sections: list[OutlineSectionItem] = Field(min_length=4, max_length=10, description="Outline sections")
 
 
+class OutlineRailSlideData(BaseModel):
+    title: str = Field(min_length=2, max_length=32, description="Outline rail slide title")
+    subtitle: str | None = Field(None, max_length=120, description="Outline rail slide subtitle")
+    sections: list[OutlineSectionItem] = Field(min_length=1, max_length=10, description="Outline rail sections")
+
+
 class BulletIconItem(BaseModel):
     icon: IconRef
     title: str = Field(min_length=2, max_length=25, description="Bullet title")

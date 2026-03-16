@@ -842,7 +842,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             color,
         )
     elif layout_id == "outline-slide-rail":
-        outline = normalize_outline_slide_data(d)
+        outline = normalize_outline_slide_data(d, min_sections=1)
         left_sections, right_sections = _split_outline_rail_sections(outline["sections"])
         _render_outline_header(slide_obj, outline, color)
         if right_sections:

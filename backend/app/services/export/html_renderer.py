@@ -143,7 +143,7 @@ MAX_OUTLINE_SECTIONS = 10
 OUTLINE_RAIL_SINGLE_COLUMN_MAX = 3
 
 
-def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
+def _normalize_outline_sections(raw: Any, *, min_sections: int = 4) -> list[dict[str, str]]:
     if not isinstance(raw, list):
         raw = []
 
@@ -181,7 +181,7 @@ def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
         sections.append(section)
 
     sections = sections[:MAX_OUTLINE_SECTIONS]
-    while len(sections) < 4:
+    while len(sections) < min_sections:
         sections.append({"title": OUTLINE_FALLBACK_TITLES[len(sections)]})
     return sections
 
@@ -297,7 +297,10 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "outline-slide":
-        sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
+        sections = _normalize_outline_sections(
+            d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"),
+            min_sections=4,
+        )
         left, right = _split_outline_sections(sections)
         subtitle = _as_text(d.get("subtitle"))
         return (
@@ -318,7 +321,10 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "outline-slide-rail":
-        sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
+        sections = _normalize_outline_sections(
+            d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"),
+            min_sections=1,
+        )
         left, right = _split_outline_rail_sections(sections)
         subtitle = _as_text(d.get("subtitle"))
         is_multi_column = bool(right)

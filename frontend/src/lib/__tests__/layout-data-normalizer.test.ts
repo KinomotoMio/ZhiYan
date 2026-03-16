@@ -58,6 +58,19 @@ test("normalizeLayoutData trims outline-slide sections to ten entries", () => {
     { title: "Ten" },
   ]);
 });
+
+test("normalizeLayoutData keeps outline-slide-rail with three sections in a single column payload", () => {
+  const result = normalizeLayoutData("outline-slide-rail", {
+    title: "Delivery Roadmap",
+    sections: [{ title: "Context" }, { title: "Model" }, { title: "Runtime" }],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, false);
+  assert.equal((result.data.sections as unknown[]).length, 3);
+  assert.deepEqual(result.data.sections, [{ title: "Context" }, { title: "Model" }, { title: "Runtime" }]);
+});
+
 test("normalizeLayoutData repairs executive-summary metrics-slide items without losing the new fields", () => {
   const result = normalizeLayoutData("metrics-slide", {
     title: "Quarterly Snapshot",

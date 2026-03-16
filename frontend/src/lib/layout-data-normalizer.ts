@@ -367,7 +367,7 @@ function normalizeOutlineSection(value: unknown, index: number): RecordLike | nu
   return section;
 }
 
-function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
+function normalizeOutlineSlide(data: RecordLike, minSections = 4): LayoutNormalizeResult {
   const title = asText(data.title, "目录");
   const subtitle = asText(data.subtitle);
   const sourceSections = Array.isArray(data.sections)
@@ -385,7 +385,7 @@ function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
   }
 
   const repairedSections = sections.slice(0, MAX_OUTLINE_SECTIONS);
-  while (repairedSections.length < 4) {
+  while (repairedSections.length < minSections) {
     const index = repairedSections.length;
     repairedSections.push({ title: OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}` });
   }
@@ -616,7 +616,7 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
     return normalizeBulletWithIcons(data);
   }
   if (layoutId === "outline-slide" || layoutId === "outline-slide-rail") {
-    return normalizeOutlineSlide(data);
+    return normalizeOutlineSlide(data, layoutId === "outline-slide-rail" ? 1 : 4);
   }
   if (layoutId === "quote-slide" || layoutId === "quote-banner") {
     return normalizeQuoteSlide(data);

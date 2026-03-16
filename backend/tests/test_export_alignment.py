@@ -237,6 +237,35 @@ def test_build_presentation_html_splits_outline_slide_rail_after_three_sections(
     assert "05" in html
 
 
+def test_build_presentation_html_keeps_outline_slide_rail_single_column_with_three_sections():
+    payload = {
+        "presentationId": "pres-outline-rail-html-single",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-rail-single",
+                "layoutType": "outline-slide-rail",
+                "layoutId": "outline-slide-rail",
+                "contentData": {
+                    "title": "Delivery Roadmap",
+                    "sections": [
+                        {"title": "Context"},
+                        {"title": "Model"},
+                        {"title": "Runtime"},
+                    ],
+                },
+                "components": [],
+            }
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" not in html
+    assert "grid-template-rows:repeat(3,minmax(0,1fr))" in html
+    assert "03" in html
+    assert "04" not in html
+
+
 def test_build_presentation_html_renders_editorial_bullet_columns():
     payload = {
         "presentationId": "pres-bullets",
@@ -716,6 +745,39 @@ def test_export_pptx_renders_outline_slide_rail_text_with_ten_sections():
     assert "Project Outline" in xml_text
     assert "Section 1" in xml_text
     assert "Section 10" in xml_text
+
+
+def test_export_pptx_keeps_outline_slide_rail_three_sections_without_padding():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-outline-rail-pptx-single",
+            "title": "Outline Rail Export",
+            "slides": [
+                {
+                    "slideId": "slide-outline-rail-single",
+                    "layoutType": "outline-slide-rail",
+                    "layoutId": "outline-slide-rail",
+                    "contentData": {
+                        "title": "Project Outline",
+                        "sections": [
+                            {"title": "Section 1"},
+                            {"title": "Section 2"},
+                            {"title": "Section 3"},
+                        ],
+                    },
+                    "components": [],
+                }
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "Project Outline" in xml_text
+    assert "Section 1" in xml_text
+    assert "Section 3" in xml_text
+    assert "Section 4" not in xml_text
 
 
 def test_export_pptx_renders_bullet_with_icons_as_columns():
