@@ -961,6 +961,11 @@ class GenerationRunner:
         state = PipelineState(
             raw_content=job.request.resolved_content or job.request.topic,
             source_ids=list(job.request.source_ids),
+            source_hints=(
+                job.request.source_hints.model_dump()
+                if getattr(job.request, "source_hints", None) is not None
+                else {}
+            ),
             topic=job.request.title,
             template_id=job.request.template_id,
             num_pages=max(3, min(job.request.num_pages, 50)),

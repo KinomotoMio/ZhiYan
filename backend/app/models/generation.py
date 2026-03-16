@@ -62,11 +62,21 @@ TERMINAL_EVENTS = {
 }
 
 
+class SourceHints(BaseModel):
+    total_count: int = 0
+    image_count: int = 0
+    data_file_count: int = 0
+    document_count: int = 0
+    text_count: int = 0
+    other_count: int = 0
+
+
 class GenerationRequestData(BaseModel):
     topic: str = ""
     content: str = ""
     session_id: str | None = None
     source_ids: list[str] = Field(default_factory=list)
+    source_hints: SourceHints = Field(default_factory=SourceHints)
     template_id: str | None = None
     num_pages: int = 5
     title: str = "新演示文稿"

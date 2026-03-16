@@ -439,6 +439,58 @@ def test_stage_select_layouts_prompt_falls_back_when_usage_missing(monkeypatch):
     asyncio.run(_case())
 
 
+def test_stage_select_layouts_prompt_includes_source_hints(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "narrative",
+                    "sub_group": "visual-explainer",
+                    "layout_id": "image-and-description",
+                    "reason": "素材匹配",
+                }
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这是包含图示和数据说明的页面内容。",
+            topic="素材感知测试",
+            source_hints={
+                "total_count": 3,
+                "image_count": 1,
+                "data_file_count": 1,
+                "document_count": 1,
+                "text_count": 0,
+                "other_count": 0,
+            },
+            num_pages=1,
+            outline={
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "关键结果",
+                        "content_brief": "展示图示与数据要点",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["配图说明", "指标趋势"],
+                    }
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        prompt = agent.prompts[0]
+        assert "素材资源统计: 总计3；图片1；数据文件1；文档1；文本0；其他0" in prompt
+        assert "若图片素材数量 > 0 且页面内容需要视觉承载" in prompt
+        assert "若数据素材数量 > 0 且页面内容偏数据分析" in prompt
+
+    asyncio.run(_case())
+
+
 def test_adjacent_layout_diversity_skips_exempt_fixed_roles():
     adjusted = _enforce_adjacent_layout_diversity(
         [

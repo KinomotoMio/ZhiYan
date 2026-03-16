@@ -124,6 +124,13 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert create_ok.status_code == 200
     assert create_ok.json()["session_id"] == session_id
     created_job_id = create_ok.json()["job_id"]
+    job_detail = client.get(f"/api/v2/generation/jobs/{created_job_id}", headers=h1)
+    assert job_detail.status_code == 200
+    hints = job_detail.json()["request"]["source_hints"]
+    assert hints["total_count"] == 1
+    assert hints["text_count"] == 1
+    assert hints["image_count"] == 0
+    assert hints["data_file_count"] == 0
 
     detail = client.get(f"/api/v1/sessions/{session_id}", headers=h1)
     assert detail.status_code == 200

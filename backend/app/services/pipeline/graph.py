@@ -146,6 +146,7 @@ class PipelineState:
 
     raw_content: str = ""
     source_ids: list[str] = field(default_factory=list)
+    source_hints: dict[str, int] = field(default_factory=dict)
     topic: str = ""
     template_id: str | None = None
     num_pages: int = 5
@@ -159,6 +160,26 @@ class PipelineState:
     slides: list[Slide] = field(default_factory=list)
     verification_issues: list[dict[str, Any]] = field(default_factory=list)
     failed_slide_indices: list[int] = field(default_factory=list)
+
+
+def _format_source_hints_for_prompt(source_hints: dict[str, int] | None) -> str:
+    if not source_hints:
+        return "总计0；图片0；数据文件0；文档0；文本0；其他0"
+
+    def _as_int(key: str) -> int:
+        value = source_hints.get(key, 0)
+        return value if isinstance(value, int) and value >= 0 else 0
+
+    total_count = _as_int("total_count")
+    image_count = _as_int("image_count")
+    data_file_count = _as_int("data_file_count")
+    document_count = _as_int("document_count")
+    text_count = _as_int("text_count")
+    other_count = _as_int("other_count")
+    return (
+        f"总计{total_count}；图片{image_count}；数据文件{data_file_count}；"
+        f"文档{document_count}；文本{text_count}；其他{other_count}"
+    )
 
 
 async def stage_parse_document(state: PipelineState, progress: ProgressHook | None = None) -> None:
@@ -175,6 +196,7 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
         "char_count": len(content),
         "estimated_tokens": token_count,
         "heading_count": heading_count,
+        "source_hints": dict(state.source_hints),
     }
 
     logger.info(
@@ -207,7 +229,10 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     prompt = (
         f"演示文稿主题：{state.topic or '综合演示'}\n"
         f"目标页数：{state.num_pages} 页\n\n"
+        f"素材资源统计：{_format_source_hints_for_prompt(state.source_hints)}\n"
         f"{content_section}\n\n"
+        "规划要求：若图片素材充足，适度安排需要图片位的页面；"
+        "若数据素材充足，适度安排图表或表格导向页面。\n\n"
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
     )
 
@@ -314,6 +339,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     prompt = (
         f"可用布局列表:\n{get_layout_taxonomy_catalog()}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
+        f"素材资源统计: {_format_source_hints_for_prompt(state.source_hints)}\n"
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
         "- 先确定 group，再确定 sub_group，再输出 variant_id\n"
@@ -325,6 +351,8 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "- 其余 group 统一使用 sub_group=default\n"
         "- 优先选择 usage 匹配且结构匹配的 variant_id\n"
         "- 若 usage 匹配不足但结构明显更合适，可越过 usage\n"
+        "- 若图片素材数量 > 0 且页面内容需要视觉承载，优先考虑含图片位的结构与变体\n"
+        "- 若数据素材数量 > 0 且页面内容偏数据分析，优先考虑图表/表格结构与变体\n"
         "- 系统会在你选中的 variant_id 下再解析具体 layout_id\n"
         "- 当 usage 未命中时，按内容结构与叙事节奏选择\n\n"
         f"大纲:\n{items_text}\n\n"

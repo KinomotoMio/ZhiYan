@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from app.models.generation import (
     GenerationJob,
     GenerationMode,
     GenerationRequestData,
+    SourceHints,
     JobActionResponse,
     JobStatus,
     StageStatus,
@@ -35,6 +37,30 @@ from app.services.sessions.workspace import get_workspace_id_from_request
 
 router = APIRouter(prefix="/generation", tags=["generation-v2"])
 logger = logging.getLogger(__name__)
+_DATA_FILE_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx", ".json"}
+_DOCUMENT_CATEGORIES = {"pdf", "docx", "markdown", "pptx"}
+
+
+def _build_source_hints(source_metas: list[dict]) -> SourceHints:
+    hints = SourceHints(total_count=len(source_metas))
+    for meta in source_metas:
+        category = str(meta.get("fileCategory") or "").strip().lower()
+        name = str(meta.get("name") or "")
+        suffix = Path(name).suffix.lower()
+
+        if category == "image":
+            hints.image_count += 1
+        elif category in _DOCUMENT_CATEGORIES:
+            hints.document_count += 1
+        elif category == "text":
+            hints.text_count += 1
+        else:
+            hints.other_count += 1
+
+        if suffix in _DATA_FILE_SUFFIXES:
+            hints.data_file_count += 1
+
+    return hints
 
 
 @router.post("/jobs", response_model=CreateJobResponse)
@@ -44,6 +70,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
 
     combined = req.content
     session_id = req.session_id
+    source_hints = SourceHints()
     if not session_id:
         title_seed = req.topic[:30] if req.topic else "未命名会话"
         created_session = await session_store.create_session(workspace_id, title_seed)
@@ -57,6 +84,14 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         raise HTTPException(status_code=409, detail="当前会话已有演示稿，请新建会话生成")
 
     if req.source_ids:
+        source_metas: list[dict] = []
+        for source_id in dict.fromkeys(req.source_ids):
+            with suppress(ValueError):
+                source_metas.append(
+                    await session_store.get_workspace_source(workspace_id, source_id)
+                )
+        source_hints = _build_source_hints(source_metas)
+
         source_content = await session_store.get_combined_source_content(
             workspace_id,
             session_id,
@@ -79,6 +114,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
             content=req.content,
             session_id=session_id,
             source_ids=req.source_ids,
+            source_hints=source_hints,
             template_id=req.template_id,
             num_pages=max(3, min(req.num_pages, settings.max_slide_pages)),
             title=title,
