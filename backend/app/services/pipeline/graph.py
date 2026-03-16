@@ -458,21 +458,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                     "used_safety_default": used_safety_default,
                 }
 
-        state.layout_selections = _enforce_adjacent_layout_diversity(
-            selections,
-            document_usage_tags=document_usage_tags,
-            slide_usage_tags=slide_usage_tags,
-            layout_entries=layout_entries,
-            rank_layouts_by_usage_fn=rank_layouts_by_usage,
-        )
-        _log_layout_selection_diagnostics(
-            job_id=state.job_id,
-            outline_items=outline_items,
-            selections=state.layout_selections,
-            decision_traces=decision_traces,
-            document_usage_tags=document_usage_tags,
-            slide_usage_tags=slide_usage_tags,
-        )
+        state.layout_selections = selections
         logger.info(
             "Layout selection call done",
             extra={
@@ -536,21 +522,16 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                     ),
                     "used_safety_default": False,
                 }
-        state.layout_selections = _enforce_adjacent_layout_diversity(
-            state.layout_selections,
-            document_usage_tags=document_usage_tags,
-            slide_usage_tags=slide_usage_tags,
-            layout_entries=layout_entries,
-            rank_layouts_by_usage_fn=rank_layouts_by_usage,
-        )
-        _log_layout_selection_diagnostics(
-            job_id=state.job_id,
-            outline_items=outline_items,
-            selections=state.layout_selections,
-            decision_traces=decision_traces,
-            document_usage_tags=document_usage_tags,
-            slide_usage_tags=slide_usage_tags,
-        )
+    state.layout_selections = _finalize_layout_selections(
+        selections=state.layout_selections,
+        job_id=state.job_id,
+        outline_items=outline_items,
+        decision_traces=decision_traces,
+        document_usage_tags=document_usage_tags,
+        slide_usage_tags=slide_usage_tags,
+        layout_entries=layout_entries,
+        rank_layouts_by_usage_fn=rank_layouts_by_usage,
+    )
 
 
 def _group_sub_group_to_default_variant(group: str, sub_group: str) -> str:
@@ -1112,6 +1093,35 @@ def _log_layout_selection_diagnostics(
                 "used_safety_default": bool(trace.get("used_safety_default") or False),
             },
         )
+
+
+def _finalize_layout_selections(
+    *,
+    selections: list[dict[str, Any]],
+    job_id: str,
+    outline_items: list[dict[str, Any]],
+    decision_traces: dict[int, dict[str, Any]],
+    document_usage_tags: tuple[str, ...],
+    slide_usage_tags: dict[int, tuple[str, ...]],
+    layout_entries: list[Any],
+    rank_layouts_by_usage_fn,
+) -> list[dict[str, Any]]:
+    finalized = _enforce_adjacent_layout_diversity(
+        selections,
+        document_usage_tags=document_usage_tags,
+        slide_usage_tags=slide_usage_tags,
+        layout_entries=layout_entries,
+        rank_layouts_by_usage_fn=rank_layouts_by_usage_fn,
+    )
+    _log_layout_selection_diagnostics(
+        job_id=job_id,
+        outline_items=outline_items,
+        selections=finalized,
+        decision_traces=decision_traces,
+        document_usage_tags=document_usage_tags,
+        slide_usage_tags=slide_usage_tags,
+    )
+    return finalized
 
 
 def _rank_group_sub_group_variant_layouts(
