@@ -33,6 +33,7 @@ OUTLINE_FALLBACK_TITLES = (
     "\u5b9e\u65bd",
     "\u603b\u7ed3",
 )
+MAX_OUTLINE_SECTIONS = 10
 
 
 def normalize_outline_slide_data(
@@ -52,7 +53,7 @@ def normalize_outline_slide_data(
         if normalized is not None:
             sections.append(normalized)
 
-    sections = sections[:6]
+    sections = sections[:MAX_OUTLINE_SECTIONS]
     while len(sections) < 4:
         sections.append({"title": fallback_titles[len(sections)]})
 
@@ -463,7 +464,8 @@ def _normalize_outline_section(
     if not title and not description:
         return None
 
-    normalized = {"title": title or fallback_titles[index]}
+    fallback_title = fallback_titles[index] if index < len(fallback_titles) else f"\u7ae0\u8282 {index + 1}"
+    normalized = {"title": title or fallback_title}
     if description:
         normalized["description"] = description
     return normalized

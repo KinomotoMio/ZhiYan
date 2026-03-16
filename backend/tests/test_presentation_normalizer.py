@@ -342,6 +342,28 @@ def test_normalize_outline_slide_from_items_alias_and_pad_sections():
         {"title": "\u7ed3\u8bba"},
     ]
 
+
+def test_normalize_outline_slide_trims_sections_to_ten_entries():
+    payload = _wrap_slides(
+        [
+            {
+                "slideId": "slide-outline-limit",
+                "layoutId": "outline-slide",
+                "contentData": {
+                    "title": "Outline",
+                    "sections": [{"title": f"Section {index}"} for index in range(1, 12)],
+                },
+            }
+        ]
+    )
+
+    normalized, changed, report = normalize_presentation_payload(payload)
+    assert changed is True
+    assert "outline-slide-shape" in report["repair_types"]
+    content = normalized["slides"][0]["contentData"]
+    assert len(content["sections"]) == 10
+    assert content["sections"][-1] == {"title": "Section 10"}
+
 def test_normalize_image_layout_backfills_source_from_url():
     payload = _wrap_slides(
         [

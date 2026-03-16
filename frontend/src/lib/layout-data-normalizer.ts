@@ -18,6 +18,7 @@ export interface LayoutNormalizeResult {
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
 const OUTLINE_FALLBACK_TITLES = ["背景", "分析", "方案", "结论", "实施", "总结"] as const;
+const MAX_OUTLINE_SECTIONS = 10;
 
 type RecordLike = Record<string, unknown>;
 
@@ -383,7 +384,7 @@ function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
     }
   }
 
-  const repairedSections = sections.slice(0, 6);
+  const repairedSections = sections.slice(0, MAX_OUTLINE_SECTIONS);
   while (repairedSections.length < 4) {
     const index = repairedSections.length;
     repairedSections.push({ title: OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}` });

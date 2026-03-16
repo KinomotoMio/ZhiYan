@@ -175,7 +175,7 @@ const entries: CatalogEntry[] = [
     schemaName: "OutlineSlideData",
     ...getRuntimeCatalogFields("outline-slide"),
     usage: getLayoutUsage("outline-slide"),
-    keyFields: ["title", "subtitle?", "sections[4-6]"],
+    keyFields: ["title", "subtitle?", "sections[4-10]"],
     data: {
       title: "Presentation Outline",
       subtitle:
@@ -206,7 +206,7 @@ const entries: CatalogEntry[] = [
     schemaName: "OutlineSlideData",
     ...getRuntimeCatalogFields("outline-slide-rail"),
     usage: getLayoutUsage("outline-slide-rail"),
-    keyFields: ["title", "subtitle?", "sections[4-6]"],
+    keyFields: ["title", "subtitle?", "sections[4-10]"],
     data: {
       title: "Delivery Roadmap",
       subtitle:

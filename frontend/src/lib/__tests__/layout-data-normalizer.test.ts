@@ -25,7 +25,7 @@ test("normalizeLayoutData repairs outline-slide items alias and pads to four sec
   ]);
 });
 
-test("normalizeLayoutData trims outline-slide sections to six entries", () => {
+test("normalizeLayoutData trims outline-slide sections to ten entries", () => {
   const result = normalizeLayoutData("outline-slide", {
     title: "Agenda",
     sections: [
@@ -36,11 +36,15 @@ test("normalizeLayoutData trims outline-slide sections to six entries", () => {
       { title: "Five" },
       { title: "Six" },
       { title: "Seven" },
+      { title: "Eight" },
+      { title: "Nine" },
+      { title: "Ten" },
+      { title: "Eleven" },
     ],
   });
 
   assert.equal(result.recoverable, true);
-  assert.equal((result.data.sections as unknown[]).length, 6);
+  assert.equal((result.data.sections as unknown[]).length, 10);
   assert.deepEqual(result.data.sections, [
     { title: "One" },
     { title: "Two" },
@@ -48,6 +52,10 @@ test("normalizeLayoutData trims outline-slide sections to six entries", () => {
     { title: "Four" },
     { title: "Five" },
     { title: "Six" },
+    { title: "Seven" },
+    { title: "Eight" },
+    { title: "Nine" },
+    { title: "Ten" },
   ]);
 });
 test("normalizeLayoutData repairs executive-summary metrics-slide items without losing the new fields", () => {

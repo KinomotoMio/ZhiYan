@@ -580,6 +580,8 @@ OUTLINE_RIGHT_COLUMN_LEFT = Inches(6.90)
 OUTLINE_CONTENT_TOP = Inches(2.18)
 OUTLINE_COLUMN_WIDTH = Inches(5.45)
 OUTLINE_COLUMN_HEIGHT = Inches(4.75)
+OUTLINE_FULL_WIDTH = OUTLINE_RIGHT_COLUMN_LEFT + OUTLINE_COLUMN_WIDTH - OUTLINE_LEFT_COLUMN_LEFT
+OUTLINE_RAIL_SINGLE_COLUMN_MAX = 3
 
 
 def _render_bullet_status_panel(slide_obj, title: str, status: dict[str, str]) -> None:
@@ -718,6 +720,14 @@ def _render_outline_column(
                 color=GRAY_600,
             )
 
+
+def _split_outline_rail_sections(
+    sections: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    if len(sections) <= OUTLINE_RAIL_SINGLE_COLUMN_MAX:
+        return sections, []
+    return split_outline_sections(sections)
+
 def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGBColor | None = None) -> None:
     """根据 layout_id 和 contentData 渲染幻灯片内容"""
     color = theme_color or PRIMARY_COLOR
@@ -761,7 +771,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
                          d["subtitle"], font_size=22, color=GRAY_600,
                          alignment=PP_ALIGN.CENTER)
 
-    elif layout_id in {"outline-slide", "outline-slide-rail"}:
+    elif layout_id == "outline-slide":
         outline = normalize_outline_slide_data(d)
         left_sections, right_sections = split_outline_sections(outline["sections"])
         _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
@@ -794,6 +804,51 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
             OUTLINE_COLUMN_HEIGHT,
             color,
         )
+    elif layout_id == "outline-slide-rail":
+        outline = normalize_outline_slide_data(d)
+        left_sections, right_sections = _split_outline_rail_sections(outline["sections"])
+        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
+        _add_textbox(slide_obj,
+                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
+                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
+        subtitle = _as_text(outline.get("subtitle"))
+        if subtitle:
+            _add_textbox(slide_obj,
+                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
+                         subtitle, font_size=14, color=GRAY_600)
+        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
+        if right_sections:
+            _render_outline_column(
+                slide_obj,
+                left_sections,
+                0,
+                OUTLINE_LEFT_COLUMN_LEFT,
+                OUTLINE_CONTENT_TOP,
+                OUTLINE_COLUMN_WIDTH,
+                OUTLINE_COLUMN_HEIGHT,
+                color,
+            )
+            _render_outline_column(
+                slide_obj,
+                right_sections,
+                len(left_sections),
+                OUTLINE_RIGHT_COLUMN_LEFT,
+                OUTLINE_CONTENT_TOP,
+                OUTLINE_COLUMN_WIDTH,
+                OUTLINE_COLUMN_HEIGHT,
+                color,
+            )
+        else:
+            _render_outline_column(
+                slide_obj,
+                left_sections,
+                0,
+                OUTLINE_LEFT_COLUMN_LEFT,
+                OUTLINE_CONTENT_TOP,
+                OUTLINE_FULL_WIDTH,
+                OUTLINE_COLUMN_HEIGHT,
+                color,
+            )
     elif layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
         items_source = d.get("items")
         if not isinstance(items_source, list):

@@ -117,6 +117,34 @@ test("presentationToRevealHTML renders outline-slide as a two-column agenda layo
   assert.match(html, /Background/);
   assert.match(html, /Results/);
 });
+
+test("presentationToRevealHTML splits outline-slide-rail into two columns after three sections", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-outline-rail-double",
+        layoutType: "outline-slide-rail",
+        layoutId: "outline-slide-rail",
+        contentData: {
+          title: "Delivery Roadmap",
+          sections: [
+            { title: "Context" },
+            { title: "Model" },
+            { title: "Runtime" },
+            { title: "Templates" },
+            { title: "QA" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(html, /grid-template-rows:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.match(html, /05/);
+});
 test("presentationToRevealHTML keeps bullet-with-icons columns aligned with the preview layout", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,

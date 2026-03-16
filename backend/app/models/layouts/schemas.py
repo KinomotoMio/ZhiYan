@@ -45,7 +45,7 @@ class OutlineSectionItem(BaseModel):
 class OutlineSlideData(BaseModel):
     title: str = Field(min_length=2, max_length=32, description="Outline slide title")
     subtitle: str | None = Field(None, max_length=120, description="Outline slide subtitle")
-    sections: list[OutlineSectionItem] = Field(min_length=4, max_length=6, description="Outline sections")
+    sections: list[OutlineSectionItem] = Field(min_length=4, max_length=10, description="Outline sections")
 
 
 class BulletIconItem(BaseModel):

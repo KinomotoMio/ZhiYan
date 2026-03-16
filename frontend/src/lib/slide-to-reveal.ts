@@ -377,6 +377,15 @@ function splitOutlineSections<T>(sections: T[]): [T[], T[]] {
   return [sections.slice(0, midpoint), sections.slice(midpoint)];
 }
 
+const OUTLINE_RAIL_SINGLE_COLUMN_MAX = 3;
+
+function splitOutlineRailSections<T>(sections: T[]): [T[], T[]] {
+  if (sections.length <= OUTLINE_RAIL_SINGLE_COLUMN_MAX) {
+    return [sections, []];
+  }
+  return splitOutlineSections(sections);
+}
+
 function renderOutlineColumn(column: Array<Record<string, unknown>>, startIndex: number): string {
   if (column.length === 0) return "";
 
@@ -397,6 +406,36 @@ function renderOutlineColumn(column: Array<Record<string, unknown>>, startIndex:
             </div>
           </article>`;
       }).join("")}
+    </div>`;
+}
+
+function renderOutlineRailColumn(
+  column: Array<Record<string, unknown>>,
+  startIndex: number,
+  dense: boolean,
+): string {
+  if (column.length === 0) return "";
+
+  return `
+    <div style="position:relative;display:grid;grid-template-rows:repeat(${column.length},minmax(0,1fr));gap:20px;min-height:0;">
+      <div style="position:absolute;left:22px;top:12px;bottom:12px;width:1px;background:#e2e8f0;"></div>
+      ${column
+        .map((section, index) => {
+          const sectionIndex = startIndex + index;
+          const title = asText(section.title, `Section ${sectionIndex + 1}`);
+          const description = asText(section.description);
+          return `
+            <article style="position:relative;display:flex;gap:20px;min-height:0;">
+              <div style="position:relative;z-index:1;display:flex;height:44px;width:44px;flex-shrink:0;align-items:center;justify-content:center;border-radius:9999px;background:var(--primary-color,#3b82f6);font-size:14px;font-weight:700;color:#ffffff;box-shadow:0 1px 2px rgba(15,23,42,0.12);">
+                ${String(sectionIndex + 1).padStart(2, "0")}
+              </div>
+              <div style="min-width:0;border:1px solid #f1f5f9;border-radius:16px;background:#f8fafc;padding:${dense ? "12px 16px" : "16px 20px"};">
+                <h3 style="font-size:${dense ? "20px" : "23px"};font-weight:700;line-height:1.2;color:var(--background-text,#111827);margin:0;">${escapeHtml(title)}</h3>
+                ${description ? `<p style="font-size:${dense ? "13px" : "14px"};line-height:1.6;color:#475569;margin:8px 0 0;">${escapeHtml(description)}</p>` : ""}
+              </div>
+            </article>`;
+        })
+        .join("")}
     </div>`;
 }
 function contentDataToHTML(layoutId: string, data: Record<string, unknown>): string {
@@ -426,8 +465,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         </div>`;
     }
 
-    case "outline-slide":
-    case "outline-slide-rail": {
+    case "outline-slide": {
       const sections = Array.isArray(d.sections)
         ? d.sections.filter((section): section is Record<string, unknown> => !!section && typeof section === "object")
         : [];
@@ -445,6 +483,29 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           <div style="display:flex;gap:56px;flex:1;margin-top:48px;">
             ${renderOutlineColumn(leftColumn, 0)}
             ${renderOutlineColumn(rightColumn, leftColumn.length)}
+          </div>
+        </div>`;
+    }
+    case "outline-slide-rail": {
+      const sections = Array.isArray(d.sections)
+        ? d.sections.filter((section): section is Record<string, unknown> => !!section && typeof section === "object")
+        : [];
+      const [leftColumn, rightColumn] = splitOutlineRailSections(sections);
+      const isMultiColumn = rightColumn.length > 0;
+      return `
+        <div style="display:flex;height:100%;padding:56px 64px;background:linear-gradient(160deg,var(--slide-bg-start,#ffffff) 0%,var(--slide-bg-end,#f8fafc) 100%);color:var(--background-text,#111827);">
+          <div style="display:flex;width:100%;gap:48px;">
+            <section style="width:38%;flex-shrink:0;">
+              <div style="margin-bottom:20px;font-size:12px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:var(--primary-color,#3b82f6);">Chapter Rail</div>
+              <h2 style="font-size:42px;font-weight:800;line-height:1.08;letter-spacing:-0.05em;color:var(--background-text,#111827);margin:0;">${escapeHtml(asText(d.title))}</h2>
+              ${asText(d.subtitle) ? `<p style="font-size:17px;line-height:1.65;color:#475569;margin:20px 0 0;">${escapeHtml(asText(d.subtitle))}</p>` : ""}
+            </section>
+            <section style="flex:1;border:1px solid #e2e8f0;border-radius:32px;background:#ffffff;padding:32px;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
+              <div style="${isMultiColumn ? "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;" : ""}height:100%;min-height:0;">
+                ${renderOutlineRailColumn(leftColumn, 0, isMultiColumn)}
+                ${isMultiColumn ? renderOutlineRailColumn(rightColumn, leftColumn.length, isMultiColumn) : ""}
+              </div>
+            </section>
           </div>
         </div>`;
     }

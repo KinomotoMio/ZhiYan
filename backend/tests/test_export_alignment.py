@@ -207,6 +207,36 @@ def test_build_presentation_html_renders_outline_slide_cards():
     assert "04" in html
 
 
+def test_build_presentation_html_splits_outline_slide_rail_after_three_sections():
+    payload = {
+        "presentationId": "pres-outline-rail-html-double",
+        "title": "测试文稿",
+        "slides": [
+            {
+                "slideId": "slide-rail-double",
+                "layoutType": "outline-slide-rail",
+                "layoutId": "outline-slide-rail",
+                "contentData": {
+                    "title": "Delivery Roadmap",
+                    "sections": [
+                        {"title": "Context"},
+                        {"title": "Model"},
+                        {"title": "Runtime"},
+                        {"title": "Templates"},
+                        {"title": "QA"},
+                    ],
+                },
+                "components": [],
+            }
+        ],
+    }
+
+    html = build_presentation_html(payload)
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in html
+    assert "grid-template-rows:repeat(3,minmax(0,1fr))" in html
+    assert "05" in html
+
+
 def test_build_presentation_html_renders_editorial_bullet_columns():
     payload = {
         "presentationId": "pres-bullets",
@@ -654,6 +684,38 @@ def test_export_pptx_renders_outline_slide_text():
     assert "Used to verify PPTX export." in xml_text
     assert "Background" in xml_text
     assert "Next Steps" in xml_text
+
+
+def test_export_pptx_renders_outline_slide_rail_text_with_ten_sections():
+    presentation = Presentation.model_validate(
+        {
+            "presentationId": "pres-outline-rail-pptx",
+            "title": "Outline Rail Export",
+            "slides": [
+                {
+                    "slideId": "slide-outline-rail",
+                    "layoutType": "outline-slide-rail",
+                    "layoutId": "outline-slide-rail",
+                    "contentData": {
+                        "title": "Project Outline",
+                        "subtitle": "Used to verify rail export structure.",
+                        "sections": [
+                            {"title": f"Section {index}", "description": f"Description {index}"}
+                            for index in range(1, 11)
+                        ],
+                    },
+                    "components": [],
+                }
+            ],
+        }
+    )
+
+    pptx_bytes = export_pptx(presentation)
+    xml_text = _slide_xml_text(pptx_bytes)
+
+    assert "Project Outline" in xml_text
+    assert "Section 1" in xml_text
+    assert "Section 10" in xml_text
 
 
 def test_export_pptx_renders_bullet_with_icons_as_columns():
