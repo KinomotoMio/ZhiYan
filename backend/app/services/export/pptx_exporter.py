@@ -728,6 +728,52 @@ def _split_outline_rail_sections(
         return sections, []
     return split_outline_sections(sections)
 
+
+def _render_outline_header(
+    slide_obj,
+    outline: dict[str, Any],
+    accent_color: RGBColor,
+) -> None:
+    _add_rule(
+        slide_obj,
+        OUTLINE_ACCENT_LEFT,
+        OUTLINE_ACCENT_TOP,
+        OUTLINE_ACCENT_WIDTH,
+        OUTLINE_ACCENT_HEIGHT,
+        accent_color,
+    )
+    _add_textbox(
+        slide_obj,
+        OUTLINE_ACCENT_LEFT,
+        OUTLINE_TITLE_TOP,
+        OUTLINE_TITLE_WIDTH,
+        OUTLINE_TITLE_HEIGHT,
+        _as_text(outline.get("title"), "Outline"),
+        font_size=32,
+        bold=True,
+        color=GRAY_900,
+    )
+    subtitle = _as_text(outline.get("subtitle"))
+    if subtitle:
+        _add_textbox(
+            slide_obj,
+            OUTLINE_ACCENT_LEFT,
+            OUTLINE_SUBTITLE_TOP,
+            OUTLINE_SUBTITLE_WIDTH,
+            OUTLINE_SUBTITLE_HEIGHT,
+            subtitle,
+            font_size=14,
+            color=GRAY_600,
+        )
+    _add_rule(
+        slide_obj,
+        OUTLINE_DIVIDER_LEFT,
+        OUTLINE_DIVIDER_TOP,
+        OUTLINE_DIVIDER_WIDTH,
+        OUTLINE_DIVIDER_HEIGHT,
+        GRAY_200,
+    )
+
 def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGBColor | None = None) -> None:
     """根据 layout_id 和 contentData 渲染幻灯片内容"""
     color = theme_color or PRIMARY_COLOR
@@ -774,16 +820,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
     elif layout_id == "outline-slide":
         outline = normalize_outline_slide_data(d)
         left_sections, right_sections = split_outline_sections(outline["sections"])
-        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
-        _add_textbox(slide_obj,
-                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
-                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
-        subtitle = _as_text(outline.get("subtitle"))
-        if subtitle:
-            _add_textbox(slide_obj,
-                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
-                         subtitle, font_size=14, color=GRAY_600)
-        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
+        _render_outline_header(slide_obj, outline, color)
         _render_outline_column(
             slide_obj,
             left_sections,
@@ -807,16 +844,7 @@ def _render_content_data(slide_obj, layout_id: str, data: dict, theme_color: RGB
     elif layout_id == "outline-slide-rail":
         outline = normalize_outline_slide_data(d)
         left_sections, right_sections = _split_outline_rail_sections(outline["sections"])
-        _add_rule(slide_obj, OUTLINE_ACCENT_LEFT, OUTLINE_ACCENT_TOP, OUTLINE_ACCENT_WIDTH, OUTLINE_ACCENT_HEIGHT, color)
-        _add_textbox(slide_obj,
-                     OUTLINE_ACCENT_LEFT, OUTLINE_TITLE_TOP, OUTLINE_TITLE_WIDTH, OUTLINE_TITLE_HEIGHT,
-                     _as_text(outline.get("title"), "Outline"), font_size=32, bold=True, color=GRAY_900)
-        subtitle = _as_text(outline.get("subtitle"))
-        if subtitle:
-            _add_textbox(slide_obj,
-                         OUTLINE_ACCENT_LEFT, OUTLINE_SUBTITLE_TOP, OUTLINE_SUBTITLE_WIDTH, OUTLINE_SUBTITLE_HEIGHT,
-                         subtitle, font_size=14, color=GRAY_600)
-        _add_rule(slide_obj, OUTLINE_DIVIDER_LEFT, OUTLINE_DIVIDER_TOP, OUTLINE_DIVIDER_WIDTH, OUTLINE_DIVIDER_HEIGHT, GRAY_200)
+        _render_outline_header(slide_obj, outline, color)
         if right_sections:
             _render_outline_column(
                 slide_obj,
