@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from app.models.layout_registry import (
@@ -317,6 +318,49 @@ def test_normalize_outline_items_roles_preserves_valid_section_dividers_for_long
         "evidence",
         "section-divider",
         "process",
+        "closing",
+    ]
+
+
+def test_normalize_outline_items_roles_infers_content_roles_when_missing():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "AI 时代的人才策略"},
+            {
+                "slide_number": 2,
+                "title": "市场规模与增长数据",
+                "content_brief": "展示 adoption、ROI 与增长趋势。",
+                "key_points": ["渗透率 63%", "ROI 提升 28%"],
+            },
+            {
+                "slide_number": 3,
+                "title": "手工流程 vs AI 流程",
+                "content_brief": "对照传统方式与自动化方式的差异。",
+                "key_points": ["现状", "目标"],
+            },
+            {
+                "slide_number": 4,
+                "title": "落地实施路径",
+                "content_brief": "分阶段说明 rollout 计划。",
+                "key_points": ["试点", "推广", "复盘"],
+            },
+            {
+                "slide_number": 5,
+                "title": "核心结论",
+                "content_brief": "一句话总结最关键判断。",
+                "key_points": ["AI 将重塑岗位分工"],
+            },
+            {"slide_number": 6, "title": "谢谢"},
+        ],
+        num_pages=6,
+    )
+
+    assert [item["suggested_slide_role"] for item in items] == [
+        "cover",
+        "agenda",
+        "comparison",
+        "process",
+        "highlight",
         "closing",
     ]
 
@@ -712,6 +756,123 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
         assert state.layout_selections[1]["design_traits"]["style"] == "card-based"
         assert state.layout_selections[1]["layout_id"] == "bullet-with-icons-cards"
         assert state.layout_selections[2]["layout_id"] == "thank-you"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_logs_layout_decision_trace(monkeypatch, caplog):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "variant_id": "title-centered",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "narrative",
+                    "sub_group": "default",
+                    "variant_id": "unknown-variant",
+                    "reason": "普通正文说明",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "variant_id": "closing-center",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这是一页常规介绍页，没有截图或时间线。",
+            topic="产品概览",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "主要结论",
+                        "content_brief": "介绍三个核心结论和价值点。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["结论一", "结论二", "结论三"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        caplog.set_level(logging.INFO, logger="app.services.pipeline.graph")
+        await stage_select_layouts(state)
+
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Layout decision resolved"
+            and getattr(record, "slide_number", None) == 2
+        ]
+        assert len(records) == 1
+        record = records[0]
+        assert record.selection_source == "model"
+        assert record.outline_role == "narrative"
+        assert record.requested_sub_group == "default"
+        assert record.resolved_sub_group == "icon-points"
+        assert record.requested_variant_id == "unknown-variant"
+        assert record.resolved_variant_id == "icon-pillars"
+        assert record.final_layout_id == "bullet-with-icons"
+        assert record.diversity_adjusted is False
+        assert record.used_safety_default is False
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_fallback_uses_capability_grid_for_four_capabilities(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        class _ExplodingLayoutSelectorAgent:
+            async def run(self, prompt: str):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            layout_selector_mod,
+            "layout_selector_agent",
+            _ExplodingLayoutSelectorAgent(),
+            raising=False,
+        )
+
+        state = PipelineState(
+            raw_content="这一页要总览四个核心能力模块。",
+            topic="产品能力总览",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "核心能力矩阵",
+                        "content_brief": "总览四个能力模块与适用场景。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["能力一", "能力二", "能力三", "能力四"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "capability-grid"
+        assert state.layout_selections[1]["layout_id"] == "bullet-icons-only"
+        assert state.layout_selections[1]["reason"] == "fallback"
 
     asyncio.run(_case())
 
