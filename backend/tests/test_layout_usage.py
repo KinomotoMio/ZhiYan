@@ -145,7 +145,7 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert outline_layout.design_traits.style == "card-based"
     assert outline_layout.design_traits.density == "medium"
     assert outline_layout.description.startswith("用于交代整份演示的章节骨架")
-    assert outline_layout.notes.use_when.startswith("当目录需要让 4-6 个章节被并列扫读")
+    assert outline_layout.notes.use_when.startswith("当目录需要让 4-10 个章节被并列扫读")
 
 
 def test_sibling_layout_notes_stay_distinct_after_runtime_sync():

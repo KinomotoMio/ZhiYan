@@ -77,6 +77,55 @@ test("outline-slide malformed sections do not crash preview rendering", () => {
   assert.match(html, /\u7ed3\u8bba/);
 });
 
+test("outline-slide-rail keeps up to three sections in a single rail column through SlidePreview", () => {
+  const slide: Slide = {
+    slideId: "slide-outline-rail-single",
+    layoutType: "outline-slide-rail",
+    layoutId: "outline-slide-rail",
+    contentData: {
+      title: "Delivery Roadmap",
+      subtitle: "Three stages stay in one rail without overflow.",
+      sections: [
+        { title: "Context", description: "Why the work matters" },
+        { title: "Model", description: "How the system is shaped" },
+        { title: "Runtime", description: "How the renderer resolves data" },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
+  assert.match(html, /Chapter Rail/);
+  assert.match(html, /grid-template-rows:repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.doesNotMatch(html, /grid-cols-2/);
+  assert.match(html, />03<\/div>/);
+  assert.doesNotMatch(html, />04<\/div>/);
+});
+
+test("outline-slide-rail switches to balanced two columns after three sections", () => {
+  const slide: Slide = {
+    slideId: "slide-outline-rail-double",
+    layoutType: "outline-slide-rail",
+    layoutId: "outline-slide-rail",
+    contentData: {
+      title: "Delivery Roadmap",
+      sections: [
+        { title: "Context" },
+        { title: "Model" },
+        { title: "Runtime" },
+        { title: "Templates" },
+        { title: "QA" },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
+  assert.match(html, /grid-cols-2/);
+  assert.match(html, /grid-template-rows:repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(html, />05<\/div>/);
+});
+
 test("unrecoverable layout data renders fallback card", () => {
   const brokenSlide: Slide = {
     slideId: "slide-2",

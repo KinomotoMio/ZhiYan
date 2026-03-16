@@ -139,9 +139,9 @@
 | 槽位 | 内容 |
 |---|---|
 | `purpose` | 用于交代整份演示的章节骨架，不负责深入解释单个章节内容。 |
-| `structure_signal` | `agenda / default` 适合把 4-6 个章节块组织成统一目录视图。 |
+| `structure_signal` | `agenda / default` 适合把 4-10 个章节块组织成统一目录视图。 |
 | `design_signal` | `card-grid + formal + card-based + medium` 让目录既可扫读又保持章节边界。 |
-| `use_when` | 当目录需要让 4-6 个章节被并列扫读，并快速建立模块边界时使用。 |
+| `use_when` | 当目录需要让 4-10 个章节被并列扫读，并快速建立模块边界时使用。 |
 | `avoid_when` | 不适合强调严格推进顺序、纵向路线感、单一结论、图表分析或具体案例内容。 |
 | `usage_bias` | 强偏 `academic-report`、`business-report`、`project-status`，对 `training-workshop` 也较友好。 |
 

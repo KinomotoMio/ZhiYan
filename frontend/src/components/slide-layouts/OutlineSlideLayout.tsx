@@ -4,7 +4,7 @@ import type { OutlineSectionItem, OutlineSlideData } from "@/types/layout-data";
 
 export const layoutId = "outline-slide";
 export const layoutName = "目录导航页";
-export const layoutDescription = "展示整体汇报框架的目录页，使用 4-6 个章节清单呈现内容结构。";
+export const layoutDescription = "展示整体汇报框架的目录页，使用 4-10 个章节清单呈现内容结构。";
 
 function splitSections(sections: OutlineSectionItem[]) {
   const midpoint = Math.ceil(sections.length / 2);

@@ -18,6 +18,7 @@ export interface LayoutNormalizeResult {
 const DEFAULT_LEFT_HEADING = "要点 A";
 const DEFAULT_RIGHT_HEADING = "要点 B";
 const OUTLINE_FALLBACK_TITLES = ["背景", "分析", "方案", "结论", "实施", "总结"] as const;
+const MAX_OUTLINE_SECTIONS = 10;
 
 type RecordLike = Record<string, unknown>;
 
@@ -366,7 +367,7 @@ function normalizeOutlineSection(value: unknown, index: number): RecordLike | nu
   return section;
 }
 
-function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
+function normalizeOutlineSlide(data: RecordLike, minSections = 4): LayoutNormalizeResult {
   const title = asText(data.title, "目录");
   const subtitle = asText(data.subtitle);
   const sourceSections = Array.isArray(data.sections)
@@ -383,8 +384,8 @@ function normalizeOutlineSlide(data: RecordLike): LayoutNormalizeResult {
     }
   }
 
-  const repairedSections = sections.slice(0, 6);
-  while (repairedSections.length < 4) {
+  const repairedSections = sections.slice(0, MAX_OUTLINE_SECTIONS);
+  while (repairedSections.length < minSections) {
     const index = repairedSections.length;
     repairedSections.push({ title: OUTLINE_FALLBACK_TITLES[index] || `章节 ${index + 1}` });
   }
@@ -615,7 +616,7 @@ export function normalizeLayoutData(layoutId: string, data: Record<string, unkno
     return normalizeBulletWithIcons(data);
   }
   if (layoutId === "outline-slide" || layoutId === "outline-slide-rail") {
-    return normalizeOutlineSlide(data);
+    return normalizeOutlineSlide(data, layoutId === "outline-slide-rail" ? 1 : 4);
   }
   if (layoutId === "quote-slide" || layoutId === "quote-banner") {
     return normalizeQuoteSlide(data);

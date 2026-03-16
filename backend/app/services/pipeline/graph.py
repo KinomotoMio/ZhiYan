@@ -1634,7 +1634,7 @@ def _fallback_content(item: dict[str, Any], layout_id: str) -> dict[str, Any]:
     if layout_id in {"section-header", "section-header-side"}:
         return {"title": title}
     if layout_id in {"outline-slide", "outline-slide-rail"}:
-        sections = points[:6] if points else ["议题概览", "核心内容", "后续安排"]
+        sections = points[:10] if points else ["议题概览", "核心内容", "后续安排"]
         while len(sections) < 3:
             sections.append(f"章节 {len(sections) + 1}")
         return {

@@ -139,9 +139,11 @@ def _render_components(components: Any) -> str:
 
 
 OUTLINE_FALLBACK_TITLES = ("Background", "Analysis", "Solution", "Conclusion", "Implementation", "Summary")
+MAX_OUTLINE_SECTIONS = 10
+OUTLINE_RAIL_SINGLE_COLUMN_MAX = 3
 
 
-def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
+def _normalize_outline_sections(raw: Any, *, min_sections: int = 4) -> list[dict[str, str]]:
     if not isinstance(raw, list):
         raw = []
 
@@ -168,13 +170,18 @@ def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
         if not title and not description:
             continue
 
-        section = {"title": title or OUTLINE_FALLBACK_TITLES[index]}
+        fallback_title = (
+            OUTLINE_FALLBACK_TITLES[index]
+            if index < len(OUTLINE_FALLBACK_TITLES)
+            else f"Section {index + 1}"
+        )
+        section = {"title": title or fallback_title}
         if description:
             section["description"] = description
         sections.append(section)
 
-    sections = sections[:6]
-    while len(sections) < 4:
+    sections = sections[:MAX_OUTLINE_SECTIONS]
+    while len(sections) < min_sections:
         sections.append({"title": OUTLINE_FALLBACK_TITLES[len(sections)]})
     return sections
 
@@ -182,6 +189,14 @@ def _normalize_outline_sections(raw: Any) -> list[dict[str, str]]:
 def _split_outline_sections(sections: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     midpoint = (len(sections) + 1) // 2
     return sections[:midpoint], sections[midpoint:]
+
+
+def _split_outline_rail_sections(
+    sections: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    if len(sections) <= OUTLINE_RAIL_SINGLE_COLUMN_MAX:
+        return sections, []
+    return _split_outline_sections(sections)
 
 
 def _render_outline_column(column: list[dict[str, str]], start_index: int) -> str:
@@ -216,6 +231,48 @@ def _render_outline_column(column: list[dict[str, str]], start_index: int) -> st
         '</div>'
     )
 
+
+def _render_outline_rail_column(
+    column: list[dict[str, str]],
+    start_index: int,
+    *,
+    dense: bool,
+) -> str:
+    if not column:
+        return ""
+
+    articles = []
+    for offset, section in enumerate(column):
+        index = start_index + offset + 1
+        title = escape(section.get("title", f"Section {index}"))
+        description = escape(section.get("description", ""))
+        title_size = 20 if dense else 23
+        description_size = 13 if dense else 14
+        padding = "12px 16px" if dense else "16px 20px"
+        description_html = (
+            f'<p style="font-size:{description_size}px;line-height:1.6;color:#475569;margin:8px 0 0;">{description}</p>'
+            if description
+            else ""
+        )
+        articles.append(
+            '<article style="position:relative;display:flex;gap:20px;min-height:0;">'
+            '<div style="position:relative;z-index:1;display:flex;height:44px;width:44px;flex-shrink:0;align-items:center;justify-content:center;border-radius:9999px;background:var(--primary-color,#3b82f6);font-size:14px;font-weight:700;color:#ffffff;box-shadow:0 1px 2px rgba(15,23,42,0.12);">'
+            f"{index:02d}"
+            '</div>'
+            f'<div style="min-width:0;border:1px solid #f1f5f9;border-radius:16px;background:#f8fafc;padding:{padding};">'
+            f'<h3 style="font-size:{title_size}px;font-weight:700;line-height:1.2;color:var(--background-text,#111827);margin:0;">{title}</h3>'
+            f"{description_html}"
+            '</div>'
+            '</article>'
+        )
+
+    return (
+        f'<div style="position:relative;display:grid;grid-template-rows:repeat({len(column)},minmax(0,1fr));gap:20px;min-height:0;">'
+        '<div style="position:absolute;left:22px;top:12px;bottom:12px;width:1px;background:#e2e8f0;"></div>'
+        f'{"".join(articles)}'
+        '</div>'
+    )
+
 def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     d = data
     if layout_id in {"intro-slide", "intro-slide-left"}:
@@ -239,8 +296,11 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             "</div>"
         )
 
-    if layout_id in {"outline-slide", "outline-slide-rail"}:
-        sections = _normalize_outline_sections(d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"))
+    if layout_id == "outline-slide":
+        sections = _normalize_outline_sections(
+            d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"),
+            min_sections=4,
+        )
         left, right = _split_outline_sections(sections)
         subtitle = _as_text(d.get("subtitle"))
         return (
@@ -256,6 +316,33 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             '<div style="display:flex;gap:56px;flex:1;margin-top:48px;">'
             f'{_render_outline_column(left, 0)}'
             f'{_render_outline_column(right, len(left))}'
+            '</div>'
+            '</div>'
+        )
+
+    if layout_id == "outline-slide-rail":
+        sections = _normalize_outline_sections(
+            d.get("sections") if isinstance(d.get("sections"), list) else d.get("items"),
+            min_sections=1,
+        )
+        left, right = _split_outline_rail_sections(sections)
+        subtitle = _as_text(d.get("subtitle"))
+        is_multi_column = bool(right)
+        layout_style = "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;height:100%;min-height:0;"
+        return (
+            '<div style="display:flex;height:100%;padding:56px 64px;background:linear-gradient(160deg,var(--slide-bg-start,#ffffff) 0%,var(--slide-bg-end,#f8fafc) 100%);color:var(--background-text,#111827);">'
+            '<div style="display:flex;width:100%;gap:48px;">'
+            '<section style="width:38%;flex-shrink:0;">'
+            '<div style="margin-bottom:20px;font-size:12px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:var(--primary-color,#3b82f6);">Chapter Rail</div>'
+            f'<h2 style="font-size:42px;font-weight:800;line-height:1.08;letter-spacing:-0.05em;color:var(--background-text,#111827);margin:0;">{escape(_as_text(d.get("title"), "Outline"))}</h2>'
+            f'{_optional_paragraph(subtitle, "font-size:17px;line-height:1.65;color:#475569;margin:20px 0 0;")}'
+            '</section>'
+            '<section style="flex:1;border:1px solid #e2e8f0;border-radius:32px;background:#ffffff;padding:32px;box-shadow:0 1px 3px rgba(15,23,42,0.08);">'
+            f'<div style="{"height:100%;min-height:0;" if not is_multi_column else layout_style}">'
+            f'{_render_outline_rail_column(left, 0, dense=is_multi_column)}'
+            f'{_render_outline_rail_column(right, len(left), dense=is_multi_column) if is_multi_column else ""}'
+            '</div>'
+            '</section>'
             '</div>'
             '</div>'
         )
