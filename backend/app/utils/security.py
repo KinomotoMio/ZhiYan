@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import socket
 from collections.abc import Awaitable, Callable
@@ -20,6 +21,11 @@ HTTPS_DOMAIN_POLICY_ERROR = (
     "\u57df\u540d\u5730\u5740\u8fdb\u884c\u6821\u9a8c\uff0c\u4e0d\u5141\u8bb8"
     " localhost \u6216 IP \u5730\u5740"
 )
+INVALID_UPLOAD_FILENAME_ERROR = (
+    "\u65e0\u6548\u6587\u4ef6\u540d: "
+    "\u4ec5\u5141\u8bb8\u666e\u901a\u6587\u4ef6\u540d\uff0c"
+    "\u4e0d\u5141\u8bb8\u8def\u5f84\u3001\u7edd\u5bf9\u8def\u5f84\u6216\u76ee\u5f55\u7a7f\u8d8a"
+)
 
 _DOMAIN_LABEL_RE = re.compile(r"^[A-Za-z0-9-]{1,63}$")
 _LOCAL_HOSTNAMES = {
@@ -39,6 +45,31 @@ _PRIVATE_USE_HOSTNAME_SUFFIXES = (
     ".local",
     ".localdomain",
 )
+
+
+def sanitize_upload_filename(filename: str) -> str:
+    raw = (filename or "").strip()
+    if not raw or "\x00" in raw or raw in {".", ".."}:
+        raise ValueError(INVALID_UPLOAD_FILENAME_ERROR)
+
+    posix_name = PurePosixPath(raw).name
+    windows_name = PureWindowsPath(raw).name
+    if raw != posix_name or raw != windows_name:
+        raise ValueError(INVALID_UPLOAD_FILENAME_ERROR)
+
+    if PurePosixPath(raw).is_absolute() or PureWindowsPath(raw).is_absolute():
+        raise ValueError(INVALID_UPLOAD_FILENAME_ERROR)
+
+    return raw
+
+
+def build_safe_upload_path(file_dir: Path, filename: str) -> Path:
+    safe_name = sanitize_upload_filename(filename)
+    root = file_dir.resolve()
+    file_path = (root / safe_name).resolve()
+    if root not in file_path.parents:
+        raise ValueError(INVALID_UPLOAD_FILENAME_ERROR)
+    return file_path
 
 
 def _is_ip_literal(hostname: str) -> bool:

@@ -469,6 +469,30 @@ def test_workspace_sources_link_count_and_bulk_delete_cascade(monkeypatch, tmp_p
     assert session_sources.json() == []
 
 
+def test_workspace_upload_rejects_dangerous_filename(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-upload-security"}
+
+    traversal = client.post(
+        "/api/v1/workspace/sources/upload",
+        headers=headers,
+        files={"file": ("../../evil.txt", b"evil", "text/plain")},
+    )
+    assert traversal.status_code == 400
+
+    absolute = client.post(
+        "/api/v1/workspace/sources/upload",
+        headers=headers,
+        files={"file": ("C:/Users/Public/evil.txt", b"evil", "text/plain")},
+    )
+    assert absolute.status_code == 400
+
+    listed = client.get("/api/v1/workspace/sources", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
 def test_workspaces_current_and_owner_unique_index(monkeypatch, tmp_path):
     store = _install_temp_session_store(monkeypatch, tmp_path)
     client = TestClient(app)

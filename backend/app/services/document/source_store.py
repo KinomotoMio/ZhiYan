@@ -21,7 +21,11 @@ from app.models.source import (
     SourceType,
     detect_file_category,
 )
-from app.utils.security import get_safe_httpx_client
+from app.utils.security import (
+    build_safe_upload_path,
+    get_safe_httpx_client,
+    sanitize_upload_filename,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,17 +73,18 @@ async def _generate_meta_background(source_id: str, content: str, file_name: str
 
 async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
     """保存上传文件并解析"""
+    safe_filename = sanitize_upload_filename(filename)
     source_id = str(uuid.uuid4())
     file_dir = _UPLOAD_DIR / source_id
     file_dir.mkdir(parents=True, exist_ok=True)
-    file_path = file_dir / filename
+    file_path = build_safe_upload_path(file_dir, safe_filename)
 
     file_path.write_bytes(file_bytes)
 
-    category = detect_file_category(filename)
+    category = detect_file_category(safe_filename)
     meta = SourceMeta(
         id=source_id,
-        name=filename,
+        name=safe_filename,
         type=SourceType.FILE,
         fileCategory=category,
         size=len(file_bytes),
@@ -103,9 +108,9 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
 
         layer = DocumentLayer(
             id=source_id,
-            title=filename,
+            title=safe_filename,
             source_type=category.value if category else "unknown",
-            file_name=filename,
+            file_name=safe_filename,
             metadata={
                 "size": len(file_bytes),
                 "estimated_tokens": estimate_tokens(content),
@@ -115,7 +120,7 @@ async def add_file(filename: str, file_bytes: bytes) -> SourceMeta:
         _sources[source_id]["document_layer"] = layer
 
         # 后台生成 AI 元数据（不阻塞返回）
-        asyncio.create_task(_generate_meta_background(source_id, content, filename))
+        asyncio.create_task(_generate_meta_background(source_id, content, safe_filename))
     except Exception as e:
         meta.status = SourceStatus.ERROR
         meta.error = str(e)
@@ -162,7 +167,7 @@ async def add_url(url: str) -> SourceMeta:
 
         path = urlparse(url).path
         filename = Path(path).name or "page.html"
-        file_path = file_dir / filename
+        file_path = build_safe_upload_path(file_dir, filename)
 
         file_path.write_bytes(resp.content)
         meta.size = len(resp.content)
