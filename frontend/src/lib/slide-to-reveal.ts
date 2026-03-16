@@ -6,6 +6,11 @@
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { getImagePlaceholderCopy } from "@/lib/image-source";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
+import { normalizeSlideSceneBackground } from "@/lib/scene-background";
+import {
+  getSceneBackgroundRenderModel,
+  styleMapToCss,
+} from "@/lib/scene-background-renderer";
 import {
   CONTENT_GENERATING,
   PENDING_SUPPLEMENT,
@@ -31,6 +36,12 @@ function escapeHtml(str: string): string {
 
 function escapeAttribute(str: string): string {
   return escapeHtml(str).replace(/'/g, "&#39;");
+}
+
+function attributesToHtml(attributes: Record<string, string>): string {
+  return Object.entries(attributes)
+    .map(([key, value]) => `${key}="${escapeAttribute(value)}"`)
+    .join(" ");
 }
 
 function normalizeFiniteNumber(value: unknown, fallback = 0): number {
@@ -422,7 +433,7 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         : [];
       const [leftColumn, rightColumn] = splitOutlineSections(sections);
       return `
-        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);">
+        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
           <div style="display:flex;align-items:flex-end;gap:40px;">
             <div style="max-width:560px;">
               <div style="width:64px;height:6px;border-radius:9999px;background:var(--primary-color,#3b82f6);margin-bottom:20px;"></div>
@@ -808,24 +819,45 @@ function renderLayoutContent(layoutId: string, data: Record<string, unknown>): s
   return contentDataToHTML(layoutId, normalized.data);
 }
 
+function renderSceneBackgroundFrame(content: string, slide: Slide): string {
+  const renderModel = getSceneBackgroundRenderModel(slide.background);
+  if (!renderModel) {
+    return `<div class="slide-shell"><div class="slide-content">${content}</div></div>`;
+  }
+
+  const frameAttributes = attributesToHtml(renderModel.attributes);
+  const frameStyle = escapeAttribute(styleMapToCss(renderModel.frameStyle));
+  const contentStyle = escapeAttribute(styleMapToCss(renderModel.contentStyle));
+  const layers = renderModel.layers
+    .map(
+      (layer) =>
+        `<div aria-hidden="true" data-scene-layer="${escapeAttribute(layer.key)}" style="${escapeAttribute(styleMapToCss(layer.style))}"></div>`
+    )
+    .join("");
+
+  return `<div class="slide-shell" ${frameAttributes} style="${frameStyle}">${layers}<div class="slide-content" style="${contentStyle}">${content}</div></div>`;
+}
+
 function slideToSection(slide: Slide): string {
-  const useNewLayout = !!(slide.layoutId && slide.contentData);
+  const normalizedSlide = normalizeSlideSceneBackground(slide);
+  const useNewLayout = !!(normalizedSlide.layoutId && normalizedSlide.contentData);
 
   let content: string;
   if (useNewLayout) {
-    content = renderLayoutContent(slide.layoutId!, slide.contentData as Record<string, unknown>);
+    content = renderLayoutContent(
+      normalizedSlide.layoutId!,
+      normalizedSlide.contentData as Record<string, unknown>
+    );
   } else {
-    content = (slide.components ?? []).map(componentToHTML).join("\n    ");
+    content = (normalizedSlide.components ?? []).map(componentToHTML).join("\n    ");
   }
 
-  const notes = slide.speakerNotes
-    ? `\n    <aside class="notes">${escapeHtml(slide.speakerNotes)}</aside>`
+  const notes = normalizedSlide.speakerNotes
+    ? `\n    <aside class="notes">${escapeHtml(normalizedSlide.speakerNotes)}</aside>`
     : "";
 
-  return `  <section data-slide-id="${escapeAttribute(slide.slideId)}">
-    <div class="slide-shell">
-      ${content}${notes}
-    </div>
+  return `  <section data-slide-id="${escapeAttribute(normalizedSlide.slideId)}">
+    ${renderSceneBackgroundFrame(content, normalizedSlide)}${notes}
   </section>`;
 }
 
@@ -877,6 +909,15 @@ export function presentationToRevealHTML(pres: Presentation): string {
       width: 100%;
       height: 100%;
       box-sizing: border-box;
+      background: var(--background-color);
+      overflow: hidden;
+      isolation: isolate;
+    }
+    .reveal .slides section .slide-content {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
     }
     .reveal h1, .reveal h2, .reveal h3, .reveal p, .reveal blockquote {
       margin: 0;
