@@ -21,9 +21,9 @@ test("session sorting uses timestamp comparator instead of localeCompare", () =>
   const storeSource = readSourceFile("../store.ts");
   const dialogSource = readSourceFile("../../components/home/SessionListDialog.tsx");
 
-  assert.match(storeSource, /compareUpdatedAt/);
+  assert.match(storeSource, /compareUpdatedAt\(/);
   assert.doesNotMatch(storeSource, /\.localeCompare\(/);
 
-  assert.match(dialogSource, /compareUpdatedAt/);
+  assert.match(dialogSource, /compareUpdatedAt\(/);
   assert.doesNotMatch(dialogSource, /\.localeCompare\(/);
 });
