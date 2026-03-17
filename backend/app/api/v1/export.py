@@ -36,12 +36,24 @@ def _build_content_disposition(title: str, extension: str) -> str:
 async def export_pptx(req: ExportRequest):
     from app.services.export.pptx_exporter import export_pptx as do_export
 
-    pptx_bytes = do_export(req.presentation)
+    mode = "structured"
+    try:
+        pptx_bytes = do_export(req.presentation)
+    except Exception:
+        # Export stability > editability. This fallback keeps delivery predictable.
+        logger.exception("Structured PPTX export failed; falling back to image PPTX")
+        from app.services.export.pptx_image_exporter import export_pptx_as_images
+
+        pptx_bytes = await export_pptx_as_images(req.presentation)
+        mode = "fallback-image"
 
     return Response(
         content=pptx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        headers={"Content-Disposition": _build_content_disposition(req.presentation.title, "pptx")},
+        headers={
+            "Content-Disposition": _build_content_disposition(req.presentation.title, "pptx"),
+            "X-Zhiyan-Export-Mode": mode,
+        },
     )
 
 
