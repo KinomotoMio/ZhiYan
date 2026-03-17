@@ -258,7 +258,7 @@ def evaluate_window(
                 try:
                     if v is not None:
                         values.append(int(v))
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         return values
 
