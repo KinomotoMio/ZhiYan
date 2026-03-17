@@ -408,6 +408,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
     async def _run_layout_selector_with_fallback(prompt_text: str):
         from app.core.config import settings
+        from app.core.model_resolver import resolve_model
         from app.services.agents.layout_selector import layout_selector_agent
 
         primary_model = settings.fast_model or settings.default_model
@@ -420,6 +421,12 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             if not fallback_model or fallback_model == primary_model or not _should_fallback_layout_model(e):
                 raise
 
+            # Track attempt so caller can include both errors if fallback also fails.
+            fallback_attempted_info["attempted"] = True
+            fallback_attempted_info["primary_model"] = primary_model
+            fallback_attempted_info["fallback_model"] = fallback_model
+            fallback_attempted_info["primary_error"] = e
+
             logger.warning(
                 "Layout selector model unavailable; retrying with strong_model",
                 extra={
@@ -431,11 +438,26 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                     "error_type": type(e).__name__,
                 },
             )
-            result = await layout_selector_agent.run(prompt_text, model=fallback_model)
-            return result, fallback_model, True, e
+            try:
+                # Use resolve_model to ensure provider credentials/base_url are applied (env vars are
+                # not guaranteed to be set in local validation environments).
+                resolved_fallback = resolve_model(fallback_model)
+                result = await layout_selector_agent.run(prompt_text, model=resolved_fallback)
+                return result, fallback_model, True, e
+            except Exception as e2:
+                fallback_attempted_info["fallback_error"] = e2
+                raise RuntimeError(f"layout selector fallback failed: {e2}") from e2
 
     try:
         from app.core.config import settings
+
+        fallback_attempted_info: dict[str, object] = {
+            "attempted": False,
+            "primary_model": None,
+            "fallback_model": None,
+            "primary_error": None,
+            "fallback_error": None,
+        }
 
         result, model_used, fallback_used, fallback_error = await _run_layout_selector_with_fallback(prompt)
         usage = result.usage()
@@ -456,6 +478,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 "fallback_from": (settings.fast_model or settings.default_model) if fallback_used else None,
                 "fallback_error_type": type(fallback_error).__name__ if fallback_error else None,
                 "fallback_error": str(fallback_error)[:500] if fallback_error else None,
+                "fallback_attempted": bool(fallback_attempted_info.get("attempted")),
             }
         )
 
@@ -570,6 +593,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 "fallback_from": None,
                 "fallback_error_type": type(e).__name__,
                 "fallback_error": str(e)[:500],
+                "fallback_attempted": bool(fallback_attempted_info.get("attempted")) if "fallback_attempted_info" in locals() else False,
+                "fallback_primary_error": str(fallback_attempted_info.get("primary_error"))[:500]
+                if "fallback_attempted_info" in locals() and fallback_attempted_info.get("primary_error")
+                else None,
+                "fallback_secondary_error": str(fallback_attempted_info.get("fallback_error"))[:500]
+                if "fallback_attempted_info" in locals() and fallback_attempted_info.get("fallback_error")
+                else None,
                 "selection_source": "role_mapping_fallback",
             }
         )
