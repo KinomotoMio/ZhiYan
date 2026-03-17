@@ -139,8 +139,8 @@ function readGenerationMeta(slide: Slide): SlideGenerationMeta | null {
   const data = (slide.contentData ?? {}) as Record<string, unknown>;
   const raw = data._generation as SlideGenerationMeta | undefined;
   if (!raw || typeof raw !== "object") return null;
-  const tier_rank = typeof raw.tier_rank === "number" ? raw.tier_rank : asSafeInt(raw.tier_rank, 0);
-  const seq = typeof raw.seq === "number" ? raw.seq : asSafeInt(raw.seq, 0);
+  const tier_rank = asSafeInt(raw.tier_rank, 0);
+  const seq = asSafeInt(raw.seq, 0);
   return {
     tier: raw.tier,
     tier_rank,
