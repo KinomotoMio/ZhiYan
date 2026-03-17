@@ -59,7 +59,7 @@ class EngineGuardStore:
         raw = await asyncio.to_thread(self._path.read_text, "utf-8")
         try:
             loaded = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             return {"version": 1, "engines": {}}
         if not isinstance(loaded, dict):
             return {"version": 1, "engines": {}}
