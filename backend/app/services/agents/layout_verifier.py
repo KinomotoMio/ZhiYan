@@ -229,7 +229,11 @@ async def run_aesthetic_verification(
         result = await agent.run(
             f"请评估以下演示文稿的设计质量：\n{slides_summary}"
         )
-        usage = result.usage()
+        usage = None
+        try:
+            usage = result.usage()
+        except Exception:
+            usage = None
         logger.info(
             "aesthetic_verification_call_done",
             extra={
@@ -237,8 +241,8 @@ async def run_aesthetic_verification(
                 "job_id": presentation_dict.get("job_id") if isinstance(presentation_dict, dict) else None,
                 "stage": "verify",
                 "mode": "text",
-                "attempt": usage.requests,
-                "token_usage": str(usage),
+                "attempt": getattr(usage, "requests", None) if usage is not None else None,
+                "token_usage": str(usage) if usage is not None else None,
                 "elapsed_ms": int((time.monotonic() - t0) * 1000),
             },
         )
@@ -296,15 +300,19 @@ async def _run_vision_verification(
 
     call_t0 = time.monotonic()
     result = await agent.run(user_prompt)
-    usage = result.usage()
+    usage = None
+    try:
+        usage = result.usage()
+    except Exception:
+        usage = None
     logger.info(
         "aesthetic_verification_vision_call_done",
         extra={
             "event": "aesthetic_verification_vision_call_done",
             "job_id": job_id,
             "stage": "verify",
-            "attempt": usage.requests,
-            "token_usage": str(usage),
+            "attempt": getattr(usage, "requests", None) if usage is not None else None,
+            "token_usage": str(usage) if usage is not None else None,
             "elapsed_ms": int((time.monotonic() - call_t0) * 1000),
         },
     )
