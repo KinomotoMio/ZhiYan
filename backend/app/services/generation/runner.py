@@ -15,17 +15,12 @@ import httpx
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
+from app.services.generation.engine_router import decide_engine_route
+from app.services.generation.engines import InternalV2Engine
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.pipeline.graph import (
     PipelineState,
-    stage_fix_slides_once,
-    stage_generate_outline,
-    stage_generate_slides,
-    stage_parse_document,
-    stage_resolve_assets,
-    stage_select_layouts,
-    stage_verify_slides,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,6 +105,24 @@ class GenerationRunner:
         job.error = None
         job.cancel_requested = False
         job.updated_at = now_iso()
+
+        # --- Engine routing (Phase 1 foundation) ---
+        # Persist a single, auditable routing decision on the job metadata, so retries/resumes
+        # keep the same engine unless explicitly overridden by a future governance layer.
+        route = None
+        if isinstance(job.document_metadata, dict):
+            route = job.document_metadata.get("engine_route")
+        if not isinstance(route, dict) or not str(route.get("primary_engine") or "").strip():
+            decision = decide_engine_route(job)
+            job.document_metadata.setdefault("engine_route", decision.to_metadata())
+        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
+        primary_engine = primary_engine.strip().lower() or "internal_v2"
+
+        # Phase 1 supports internal engine only; external engines are introduced later behind the router.
+        if primary_engine != "internal_v2":
+            raise RuntimeError(f"Unsupported generation engine: {primary_engine}")
+        engine = InternalV2Engine()
+
         await self._store.save_job(job)
         if job.request.session_id:
             from app.services.sessions import session_store
@@ -127,6 +140,7 @@ class GenerationRunner:
                 payload={
                     "mode": job.mode.value,
                     "num_pages": job.request.num_pages,
+                    "engine": primary_engine,
                 },
             )
 
@@ -178,7 +192,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.PARSE,
                         timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_parse_document(state, progress=progress_hook),
+                        stage_coro=engine.parse(state, progress=progress_hook),
                     )
                 elif stage == StageStatus.OUTLINE:
                     await self._run_stage(
@@ -186,7 +200,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.OUTLINE,
                         timeout=float(settings.outline_timeout_seconds),
-                        stage_coro=stage_generate_outline(state, progress=progress_hook),
+                        stage_coro=engine.outline(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
                     await self._emit_event(
@@ -228,7 +242,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.LAYOUT,
                         timeout=float(settings.layout_timeout_seconds),
-                        stage_coro=stage_select_layouts(state, progress=progress_hook),
+                        stage_coro=engine.layout(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
                     await self._emit_event(
@@ -244,7 +258,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.SLIDES,
                         timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_generate_slides(
+                        stage_coro=engine.slides(
                             state,
                             per_slide_timeout=float(settings.per_slide_timeout_seconds),
                             progress=progress_hook,
@@ -258,7 +272,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.ASSETS,
                         timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_resolve_assets(state, progress=progress_hook),
+                        stage_coro=engine.assets(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
                 elif stage == StageStatus.VERIFY:
@@ -267,7 +281,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.VERIFY,
                         timeout=float(settings.verify_timeout_seconds),
-                        stage_coro=stage_verify_slides(
+                        stage_coro=engine.verify(
                             state,
                             progress=progress_hook,
                             enable_vision=settings.enable_vision_verification,
@@ -425,7 +439,9 @@ class GenerationRunner:
             raise RuntimeError("当前任务没有可修复的硬错误页面")
 
         preview_state = self._build_state(job)
-        await stage_fix_slides_once(
+        from app.services.pipeline import graph as graph_mod
+
+        await graph_mod.stage_fix_slides_once(
             preview_state,
             per_slide_timeout=float(settings.per_slide_timeout_seconds),
             target_slide_ids=set(target_ids),
@@ -837,7 +853,14 @@ class GenerationRunner:
         return "rate limit" in msg or "status code: 429" in msg or "http 429" in msg
 
     async def _sync_state_to_job(self, job: GenerationJob, state: PipelineState) -> None:
-        job.document_metadata = state.document_metadata
+        # Preserve router metadata stored on the job while syncing stage-produced metadata.
+        # PipelineState may overwrite document_metadata entirely (tests do), so merge here.
+        merged_metadata: dict = {}
+        if isinstance(job.document_metadata, dict):
+            merged_metadata.update(job.document_metadata)
+        if isinstance(state.document_metadata, dict):
+            merged_metadata.update(state.document_metadata)
+        job.document_metadata = merged_metadata
         job.outline = state.outline
         job.layouts = state.layout_selections
         if state.slides:

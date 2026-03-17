@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     log_format: str = "text"  # text | json
     log_sse_debug: bool = False
 
+    # Generation engines (C-plan foundation). Default keeps current internal pipeline.
+    generation_primary_engine: str = "internal_v2"  # internal_v2 | slidev | presenton
+
     # TTS
     tts_model: str = "tts-1"
     tts_voice: str = "alloy"
