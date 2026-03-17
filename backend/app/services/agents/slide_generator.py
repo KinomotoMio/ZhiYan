@@ -59,6 +59,7 @@ async def generate_slide_content(
     content_brief: str,
     key_points: list[str],
     source_content: str,
+    source_references: list[str] | None = None,
     job_id: str | None = None,
     stage: str = "slides",
 ) -> dict:
@@ -69,12 +70,16 @@ async def generate_slide_content(
     agent = _get_agent_for_layout(layout_id, output_model)
 
     points_text = "\n".join(f"- {p}" for p in key_points) if key_points else "无"
+    refs = [str(ref).strip() for ref in (source_references or []) if str(ref).strip()]
+    refs = refs[:20]
+    refs_text = "\n".join(f"- {ref}" for ref in refs) if refs else "无"
     prompt = (
         f"幻灯片 #{slide_number}\n"
         f"布局类型: {layout_id}\n"
         f"标题方向: {title}\n"
         f"内容简述: {content_brief}\n"
         f"核心要点:\n{points_text}\n\n"
+        f"证据引用(source_references):\n{refs_text}\n\n"
         f"源文档内容:\n{source_content[:3000]}"
     )
 

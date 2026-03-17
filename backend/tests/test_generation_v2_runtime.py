@@ -518,9 +518,11 @@ def test_stage_generate_slides_uses_per_slide_context(monkeypatch):
         from app.services.agents import slide_generator
 
         captured_source: list[str] = []
+        captured_refs: list[list[str]] = []
 
         async def fake_generate(**kwargs):
             captured_source.append(str(kwargs.get("source_content", "")))
+            captured_refs.append(list(kwargs.get("source_references") or []))
             return {"title": kwargs.get("title", ""), "items": [{"title": "要点", "description": "说明"}]}
 
         monkeypatch.setattr(slide_generator, "generate_slide_content", fake_generate)
@@ -542,12 +544,14 @@ def test_stage_generate_slides_uses_per_slide_context(monkeypatch):
                         "title": "苹果战略",
                         "content_brief": "介绍苹果品牌策略",
                         "key_points": ["苹果", "品牌升级"],
+                        "source_references": ["source:apple#1"],
                     },
                     {
                         "slide_number": 2,
                         "title": "香蕉供应链",
                         "content_brief": "介绍香蕉供应链优化",
                         "key_points": ["香蕉", "冷链"],
+                        "source_references": ["source:banana#2", "chunk:banana#5"],
                     },
                 ]
             },
@@ -559,9 +563,12 @@ def test_stage_generate_slides_uses_per_slide_context(monkeypatch):
 
         await stage_generate_slides(state, per_slide_timeout=0.5)
         assert len(captured_source) == 2
+        assert len(captured_refs) == 2
         assert captured_source[0] != captured_source[1]
         assert "苹果" in captured_source[0]
         assert "香蕉" in captured_source[1]
+        assert captured_refs[0] == ["source:apple#1"]
+        assert captured_refs[1] == ["source:banana#2", "chunk:banana#5"]
 
     asyncio.run(_case())
 
