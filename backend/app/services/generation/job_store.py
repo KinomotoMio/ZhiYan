@@ -69,7 +69,7 @@ class GenerationJobStore:
         raw = await asyncio.to_thread(path.read_text, "utf-8")
         try:
             loaded = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             return None
         return loaded if isinstance(loaded, dict) else None
 
