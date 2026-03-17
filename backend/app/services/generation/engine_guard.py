@@ -295,7 +295,9 @@ def evaluate_window(
             if isinstance(v, (int, float)):
                 fallback_rates.append(float(v))
         if fallback_rates:
-            p95_fallback = sorted(fallback_rates)[max(0, min(len(fallback_rates) - 1, int(0.95 * len(fallback_rates))))]  # noqa: E501
+            vals = sorted(fallback_rates)
+            idx = max(0, min(len(vals) - 1, int(0.95 * len(vals) + 0.5) - 1))
+            p95_fallback = float(vals[idx])
             if p95_fallback > fallback_threshold:
                 reason = f"p95_fallback_rate={p95_fallback:.3f} > threshold={fallback_threshold:.3f}"
                 return GuardDecision(allowed=False, open=True, reason=reason, opened_at=_now_iso())
