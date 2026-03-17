@@ -7,12 +7,14 @@ import { Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
 import {
+  acceptOutline,
   cancelJob,
   exportPptx,
   exportPdf,
   fixApply,
   fixPreview,
   fixSkip,
+  runJob,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -78,8 +80,10 @@ export default function EditorWorkspace({
   const [previewingFix, setPreviewingFix] = useState(false);
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
+  const [acceptingOutline, setAcceptingOutline] = useState(false);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
+  const waitingOutlineReview = jobStatus === "waiting_outline_review";
 
   const handleResume = async () => {
     if (!jobId || resuming) return;
@@ -119,6 +123,27 @@ export default function EditorWorkspace({
       toast.info("已取消生成");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "取消任务失败");
+    }
+  };
+
+  const handleAcceptOutline = async () => {
+    if (!jobId || acceptingOutline) return;
+    setAcceptingOutline(true);
+    try {
+      await acceptOutline(jobId);
+      // acceptOutline already resumes the runner from layout, but runJob helps cover edge cases.
+      await runJob(jobId);
+      updateJobState({
+        jobId,
+        jobStatus: "running",
+        currentStage: "layout",
+      });
+      setIsGenerating(true);
+      toast.success("已确认大纲，继续生成");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "确认大纲失败");
+    } finally {
+      setAcceptingOutline(false);
     }
   };
 
@@ -447,6 +472,18 @@ export default function EditorWorkspace({
             >
               {resuming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {resuming ? "继续中..." : "继续任务"}
+            </button>
+          )}
+          {waitingOutlineReview && (
+            <button
+              onClick={() => {
+                void handleAcceptOutline();
+              }}
+              disabled={acceptingOutline || isGenerating}
+              className="px-3 py-1 text-sm rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 transition-all duration-200 inline-flex items-center gap-1.5"
+            >
+              {acceptingOutline && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {acceptingOutline ? "确认中..." : "确认大纲并继续"}
             </button>
           )}
           {isGenerating && (

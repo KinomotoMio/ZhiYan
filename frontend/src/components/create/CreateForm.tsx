@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -66,6 +67,19 @@ export default function CreateForm() {
     (selectedReadySources.length > 0 || topic.trim().length > 0) &&
     !hasUploadingOrParsing;
 
+  const shouldSuggestOutlineReview = useMemo(() => {
+    const topicLen = topic.trim().length;
+    return numPages >= 8 || selectedReadySources.length >= 2 || topicLen >= 280;
+  }, [numPages, selectedReadySources.length, topic]);
+
+  const [reviewOutline, setReviewOutline] = useState(false);
+  const [reviewOutlineTouched, setReviewOutlineTouched] = useState(false);
+
+  useEffect(() => {
+    if (reviewOutlineTouched) return;
+    setReviewOutline(shouldSuggestOutlineReview);
+  }, [reviewOutlineTouched, shouldSuggestOutlineReview]);
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
     resetJobState();
@@ -79,7 +93,7 @@ export default function CreateForm() {
         source_ids: selectedReadySources.map((s) => s.id),
         template_id: selectedTemplateId,
         num_pages: numPages,
-        mode: "auto",
+        mode: reviewOutline ? "review_outline" : "auto",
       });
 
       if (created.session_id) {
@@ -150,6 +164,31 @@ export default function CreateForm() {
             </div>
 
             <TemplateSelector />
+
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 px-4 py-3">
+              <label className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-200">
+                  生成前先审大纲
+                  {shouldSuggestOutlineReview && !reviewOutlineTouched && (
+                    <span className="ml-2 text-xs font-normal text-emerald-600">
+                      建议开启
+                    </span>
+                  )}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={reviewOutline}
+                  onChange={(e) => {
+                    setReviewOutlineTouched(true);
+                    setReviewOutline(e.target.checked);
+                  }}
+                  className="h-4 w-4 accent-cyan-600"
+                />
+              </label>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                复杂任务先确认结构，避免生成到后面才发现方向不对。
+              </p>
+            </div>
 
             <div className="space-y-2">
               <button
