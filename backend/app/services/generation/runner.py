@@ -59,6 +59,12 @@ class GenerationRunner:
         self._shadow_tasks: dict[str, asyncio.Task[None]] = {}
         self._shadow_tasks_lock = asyncio.Lock()
 
+    @staticmethod
+    def _get_primary_engine(job: GenerationJob) -> str:
+        """Extract primary engine ID from job metadata with a stable fallback."""
+        engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
+        return engine.strip().lower() or "internal_v2"
+
     async def start_job(self, job_id: str, from_stage: StageStatus | None = None) -> bool:
         async with self._tasks_lock:
             current = self._tasks.get(job_id)
@@ -118,8 +124,7 @@ class GenerationRunner:
         if job.status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
             job.status = JobStatus.CANCELLED
             job.current_stage = None
-            primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-            primary_engine = primary_engine.strip().lower() or "internal_v2"
+            primary_engine = self._get_primary_engine(job)
             await self._emit_event(
                 job,
                 EventType.JOB_CANCELLED,
@@ -152,8 +157,7 @@ class GenerationRunner:
         if not isinstance(route, dict) or not str(route.get("primary_engine") or "").strip():
             decision = decide_engine_route(job)
             job.document_metadata.setdefault("engine_route", decision.to_metadata())
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         # --- Shadow mode (Phase 2): determine whether to run a secondary engine in background ---
         shadow_route = None
@@ -529,8 +533,7 @@ class GenerationRunner:
             return
 
         engine_id = str(shadow_route_raw.get("shadow_engine") or "internal_v2").strip().lower() or "internal_v2"
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         await self._ensure_shadow_record(job, primary_engine=primary_engine)
 
