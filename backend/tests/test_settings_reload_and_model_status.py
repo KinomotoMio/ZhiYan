@@ -35,7 +35,14 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
 
 
 def test_build_model_status_for_known_and_unknown_providers():
-    test_settings = config.Settings()
+    # Ensure this test is stable even when developers have API keys set in env/.env.
+    test_settings = config.Settings(
+        openai_api_key="",
+        anthropic_api_key="",
+        google_api_key="",
+        deepseek_api_key="",
+        openrouter_api_key="",
+    )
 
     missing_key_status = build_model_status("openai:gpt-4o-mini", test_settings)
     assert missing_key_status.provider == "openai"
