@@ -381,11 +381,63 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。"
     )
 
-    try:
+    def _should_fallback_layout_model(exc: Exception) -> bool:
+        """Return True when we should retry layout selection with a different model.
+
+        This targets deterministic configuration/channel issues (e.g. model not available),
+        not transient network/timeout errors.
+        """
+        try:
+            from pydantic_ai.exceptions import ModelHTTPError
+
+            if isinstance(exc, ModelHTTPError) and int(getattr(exc, "status_code", 0) or 0) == 400:
+                body = getattr(exc, "body", None)
+                if isinstance(body, dict):
+                    message = str(body.get("message") or "").lower()
+                    error_type = str(body.get("type") or "").lower()
+                    if "no available channels" in message:
+                        return True
+                    if error_type == "invalid_request_error":
+                        return True
+                return True
+        except Exception:
+            pass
+
+        text = str(exc).lower()
+        return ("no available channels" in text) or ("invalid_request_error" in text)
+
+    async def _run_layout_selector_with_fallback(prompt_text: str):
         from app.core.config import settings
         from app.services.agents.layout_selector import layout_selector_agent
 
-        result = await layout_selector_agent.run(prompt)
+        primary_model = settings.fast_model or settings.default_model
+        fallback_model = settings.strong_model
+
+        try:
+            result = await layout_selector_agent.run(prompt_text)
+            return result, primary_model, False, None
+        except Exception as e:
+            if not fallback_model or fallback_model == primary_model or not _should_fallback_layout_model(e):
+                raise
+
+            logger.warning(
+                "Layout selector model unavailable; retrying with strong_model",
+                extra={
+                    "event": "layout_model_fallback",
+                    "job_id": state.job_id,
+                    "stage": "layout",
+                    "primary_model": primary_model,
+                    "fallback_model": fallback_model,
+                    "error_type": type(e).__name__,
+                },
+            )
+            result = await layout_selector_agent.run(prompt_text, model=fallback_model)
+            return result, fallback_model, True, e
+
+    try:
+        from app.core.config import settings
+
+        result, model_used, fallback_used, fallback_error = await _run_layout_selector_with_fallback(prompt)
         usage = result.usage()
         usage_payload = {
             key: int(value)
@@ -395,6 +447,17 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         _accumulate_llm_usage(state, "layout", usage_payload)
         selections = result.output.model_dump()["slides"]
         decision_traces: dict[int, dict[str, Any]] = {}
+
+        state.document_metadata.setdefault("layout_selection", {})
+        state.document_metadata["layout_selection"].update(
+            {
+                "model_used": model_used,
+                "fallback_used": bool(fallback_used),
+                "fallback_from": (settings.fast_model or settings.default_model) if fallback_used else None,
+                "fallback_error_type": type(fallback_error).__name__ if fallback_error else None,
+                "fallback_error": str(fallback_error)[:500] if fallback_error else None,
+            }
+        )
 
         for sel in selections:
             item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
@@ -490,14 +553,26 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             extra={
                 "job_id": state.job_id,
                 "stage": "layout",
-                "model": settings.fast_model or settings.default_model,
-                "provider": (settings.fast_model or settings.default_model).split(":", 1)[0],
+                "model": model_used,
+                "provider": str(model_used).split(":", 1)[0] if isinstance(model_used, str) else None,
+                "fallback_used": bool(fallback_used),
                 "attempt": usage.requests,
                 "token_usage": str(usage),
                 "elapsed_ms": int((time.monotonic() - t0) * 1000),
             },
         )
     except Exception as e:
+        state.document_metadata.setdefault("layout_selection", {})
+        state.document_metadata["layout_selection"].update(
+            {
+                "model_used": settings.fast_model or settings.default_model,
+                "fallback_used": False,
+                "fallback_from": None,
+                "fallback_error_type": type(e).__name__,
+                "fallback_error": str(e)[:500],
+                "selection_source": "role_mapping_fallback",
+            }
+        )
         logger.warning(
             "Layout selection failed: %s, using role mapping",
             e,
