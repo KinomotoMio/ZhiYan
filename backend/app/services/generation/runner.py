@@ -17,7 +17,8 @@ from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.generation_shadow import EngineMetrics, ShadowABRecord, ShadowRoute
 from app.models.slide import Presentation, Slide
-from app.services.generation.engine_router import decide_engine_route, decide_shadow_route
+from app.services.generation.engine_guard import guard as engine_guard
+from app.services.generation.engine_router import decide_engine_route_with_guard, decide_shadow_route_with_guard
 from app.services.generation.engines import InternalV2Engine
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
@@ -150,7 +151,7 @@ class GenerationRunner:
         if isinstance(job.document_metadata, dict):
             route = job.document_metadata.get("engine_route")
         if not isinstance(route, dict) or not str(route.get("primary_engine") or "").strip():
-            decision = decide_engine_route(job)
+            decision = await decide_engine_route_with_guard(job)
             job.document_metadata.setdefault("engine_route", decision.to_metadata())
         primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
         primary_engine = primary_engine.strip().lower() or "internal_v2"
@@ -160,13 +161,30 @@ class GenerationRunner:
         if isinstance(job.document_metadata, dict):
             shadow_route = job.document_metadata.get("shadow_route")
         if not isinstance(shadow_route, dict) or "decided_at" not in shadow_route:
-            shadow_decision = decide_shadow_route(job)
+            shadow_decision = await decide_shadow_route_with_guard(job)
             job.document_metadata.setdefault("shadow_route", shadow_decision.to_metadata())
             shadow_route = job.document_metadata.get("shadow_route")
 
-        # Phase 1 supports internal engine only; external engines are introduced later behind the router.
+        # Phase 4 guardrails: always keep a stable baseline. If an engine is configured/routed
+        # but not yet implemented in this codebase, fall back to internal_v2 and record it.
+        requested_engine = primary_engine
         if primary_engine != "internal_v2":
-            raise RuntimeError(f"Unsupported generation engine: {primary_engine}")
+            logger.warning(
+                "Unsupported generation engine requested; falling back to internal_v2",
+                extra={
+                    "event": "engine_fallback_unsupported",
+                    "job_id": job.job_id,
+                    "requested_engine": requested_engine,
+                },
+            )
+            if isinstance(job.document_metadata, dict):
+                route_meta = job.document_metadata.get("engine_route")
+                if isinstance(route_meta, dict):
+                    route_meta.setdefault("requested_engine", requested_engine)
+                    route_meta["primary_engine"] = "internal_v2"
+                    route_meta["fallback_reason"] = "ENGINE_UNSUPPORTED"
+                    route_meta["fallback_at"] = now_iso()
+            primary_engine = "internal_v2"
         engine = InternalV2Engine()
 
         await self._store.save_job(job)
@@ -317,6 +335,7 @@ class GenerationRunner:
                                 JobStatus.WAITING_OUTLINE_REVIEW.value,
                             )
                         await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
+                        await self._record_guardrail_primary(job, primary_engine=primary_engine)
                         return
                 elif stage == StageStatus.LAYOUT:
                     await self._run_stage(
@@ -405,6 +424,7 @@ class GenerationRunner:
                     },
                 )
                 await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
+                await self._record_guardrail_primary(job, primary_engine=primary_engine)
                 return
 
             job.presentation = self._build_presentation_payload(job, state.slides)
@@ -437,6 +457,7 @@ class GenerationRunner:
                 },
             )
             await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
+            await self._record_guardrail_primary(job, primary_engine=primary_engine)
 
         except asyncio.CancelledError:
             job.status = JobStatus.CANCELLED
@@ -456,6 +477,7 @@ class GenerationRunner:
                 payload={"engine_id": primary_engine},
             )
             await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
+            await self._record_guardrail_primary(job, primary_engine=primary_engine)
             return
         except Exception as e:
             partial_saved = False
@@ -505,6 +527,7 @@ class GenerationRunner:
                 payload=payload,
             )
             await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
+            await self._record_guardrail_primary(job, primary_engine=primary_engine)
             logger.exception(
                 "generation job failed",
                 extra={
@@ -642,8 +665,23 @@ class GenerationRunner:
             metrics.extra = {
                 "failed_slide_indices": list(state.failed_slide_indices),
                 "issue_count": len(state.verification_issues or []),
+                "requested_pages": int(state.num_pages or 0),
             }
             await self._set_shadow_metrics(job_id, metrics)
+            total_tokens = metrics.llm_usage.get("total_tokens") if isinstance(metrics.llm_usage, dict) else None
+            requested_pages = int(state.num_pages or 0)
+            fallback_rate = (
+                (len(state.failed_slide_indices or []) / requested_pages) if requested_pages > 0 else 0.0
+            )
+            await self._record_guardrail_metrics(
+                mode="shadow",
+                engine_id=engine_id,
+                status=metrics.status,
+                ttfs_ms=metrics.ttfs_ms,
+                duration_ms=metrics.duration_ms,
+                total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
+                fallback_rate=fallback_rate,
+            )
 
     async def preview_fix(
         self,
@@ -1248,6 +1286,49 @@ class GenerationRunner:
             )
             saved_to_session = True
         return saved_to_session, presentation_payload
+
+    async def _record_guardrail_metrics(
+        self,
+        *,
+        mode: str,
+        engine_id: str,
+        status: str,
+        ttfs_ms: int | None,
+        duration_ms: int | None,
+        total_tokens: int | None,
+        fallback_rate: float | None,
+    ) -> None:
+        if not bool(getattr(settings, "generation_guardrails_enabled", False)):
+            return
+        payload: dict[str, object] = {
+            "status": status,
+            "ttfs_ms": ttfs_ms,
+            "duration_ms": duration_ms,
+            "total_tokens": total_tokens,
+        }
+        if fallback_rate is not None:
+            payload["fallback_rate"] = float(fallback_rate)
+        with suppress(Exception):
+            await engine_guard.record(mode=mode, engine_id=engine_id, metrics=payload)
+
+    async def _record_guardrail_primary(self, job: GenerationJob, *, primary_engine: str) -> None:
+        if not bool(getattr(settings, "generation_guardrails_enabled", False)):
+            return
+        events = await self._store.list_events(job.job_id)
+        metrics = _build_primary_engine_metrics(job, events, primary_engine=primary_engine)
+        total_tokens = metrics.llm_usage.get("total_tokens") if isinstance(metrics.llm_usage, dict) else None
+        requested_pages = int(getattr(job.request, "num_pages", 0) or 0)
+        fallback_count = len(job.failed_slide_indices or [])
+        fallback_rate = (fallback_count / requested_pages) if requested_pages > 0 else 0.0
+        await self._record_guardrail_metrics(
+            mode="primary",
+            engine_id=primary_engine,
+            status=metrics.status,
+            ttfs_ms=metrics.ttfs_ms,
+            duration_ms=metrics.duration_ms,
+            total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
+            fallback_rate=fallback_rate,
+        )
 
     async def _load_shadow_record(self, job_id: str) -> ShadowABRecord | None:
         raw = await self._store.get_shadow_record(job_id)

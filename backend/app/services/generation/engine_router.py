@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.models.generation import GenerationJob, now_iso
+from app.services.generation.engine_guard import guard
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,33 @@ def decide_engine_route(job: GenerationJob) -> EngineRouteDecision:
         },
     )
     return decision
+
+
+async def decide_engine_route_with_guard(job: GenerationJob) -> EngineRouteDecision:
+    """Primary engine decision with guardrails applied.
+
+    Guardrails are off by default; when enabled and breaker is open for the desired engine,
+    this forces a fallback to internal_v2.
+    """
+    base = decide_engine_route(job)
+    desired = (base.primary_engine or "").strip().lower() or "internal_v2"
+
+    if not bool(getattr(settings, "generation_guardrails_enabled", False)):
+        return base
+
+    if desired == "internal_v2":
+        return base
+
+    decision = await guard.should_allow(mode="primary", engine_id=desired)
+    if decision.allowed:
+        return base
+
+    return EngineRouteDecision(
+        primary_engine="internal_v2",
+        strategy="guard_fallback",
+        reason=f"guard_open({desired}): {decision.reason}",
+        decided_at=now_iso(),
+    )
 
 
 @dataclass(frozen=True)
@@ -145,3 +173,30 @@ def decide_shadow_route(job: GenerationJob) -> ShadowRouteDecision:
         },
     )
     return decision
+
+
+async def decide_shadow_route_with_guard(job: GenerationJob) -> ShadowRouteDecision:
+    """Shadow routing decision with guardrails applied.
+
+    If breaker is open, disable sampling so shadow won't run.
+    """
+    base = decide_shadow_route(job)
+    if not base.enabled or not base.sampled:
+        return base
+
+    if not bool(getattr(settings, "generation_guardrails_enabled", False)):
+        return base
+
+    decision = await guard.should_allow(mode="shadow", engine_id=base.shadow_engine)
+    if decision.allowed:
+        return base
+
+    return ShadowRouteDecision(
+        enabled=base.enabled,
+        shadow_engine=base.shadow_engine,
+        sample_rate=base.sample_rate,
+        sampled=False,
+        strategy="guard_fallback",
+        reason=f"guard_open({base.shadow_engine}): {decision.reason}",
+        decided_at=now_iso(),
+    )
