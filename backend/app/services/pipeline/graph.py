@@ -697,6 +697,12 @@ async def stage_generate_slides(
         async with semaphore:
             slide_num = item["slide_number"]
             layout_id = layout_map.get(slide_num, "bullet-with-icons")
+            raw_refs = item.get("source_references")
+            source_references = (
+                [str(ref) for ref in raw_refs if ref]
+                if isinstance(raw_refs, list)
+                else []
+            )
 
             source_content = _extract_slide_context(
                 raw_content=state.raw_content,
@@ -715,6 +721,7 @@ async def stage_generate_slides(
                     content_brief=item.get("content_brief", ""),
                     key_points=item.get("key_points", []),
                     source_content=source_content,
+                    source_references=source_references,
                     job_id=state.job_id,
                     stage="slides",
                 )
@@ -734,6 +741,7 @@ async def stage_generate_slides(
                         "stage": "slides",
                         "slide_index": idx,
                         "layout_id": layout_id,
+                        "source_reference_count": len(source_references),
                         "fallback": True,
                         "fallback_reason": "slide_timeout",
                         "error_type": "timeout",
@@ -755,6 +763,7 @@ async def stage_generate_slides(
                         "stage": "slides",
                         "slide_index": idx,
                         "layout_id": layout_id,
+                        "source_reference_count": len(source_references),
                         "fallback": True,
                         "fallback_reason": "slide_exception",
                         "error_type": type(e).__name__,
@@ -779,6 +788,7 @@ async def stage_generate_slides(
                     {
                         "slide_index": idx,
                         "slide": slide.model_dump(mode="json", by_alias=True),
+                        "source_references": source_references,
                     }
                 )
 
