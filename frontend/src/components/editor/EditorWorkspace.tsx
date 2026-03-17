@@ -14,7 +14,6 @@ import {
   fixApply,
   fixPreview,
   fixSkip,
-  runJob,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -130,15 +129,13 @@ export default function EditorWorkspace({
     if (!jobId || acceptingOutline) return;
     setAcceptingOutline(true);
     try {
-      await acceptOutline(jobId);
-      // acceptOutline already resumes the runner from layout, but runJob helps cover edge cases.
-      await runJob(jobId);
+      const result = await acceptOutline(jobId);
       updateJobState({
-        jobId,
-        jobStatus: "running",
-        currentStage: "layout",
+        jobId: result.job_id,
+        jobStatus: result.status,
+        currentStage: result.current_stage,
       });
-      setIsGenerating(true);
+      setIsGenerating(result.status === "running");
       toast.success("已确认大纲，继续生成");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "确认大纲失败");
