@@ -365,6 +365,20 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         from app.core.config import settings
         from app.services.agents.layout_selector import layout_selector_agent
 
+        model = settings.fast_model or settings.default_model
+        provider = model.split(":", 1)[0] if ":" in model else None
+        logger.info(
+            "layout_selection_call_start",
+            extra={
+                "event": "layout_selection_call_start",
+                "job_id": state.job_id,
+                "stage": "layout",
+                "model": model,
+                "provider": provider,
+                "outline_items": len(outline_items),
+                "prompt_chars": len(prompt),
+            },
+        )
         result = await layout_selector_agent.run(prompt)
         usage = result.usage()
         selections = result.output.model_dump()["slides"]
@@ -825,12 +839,24 @@ async def stage_verify_slides(
     from app.services.agents.layout_verifier import run_aesthetic_verification, verify_programmatic
 
     issues = []
+    prog_t0 = time.monotonic()
     for issue in verify_programmatic(state.slides):
         issue_dict = issue.model_dump(mode="json")
         issue_dict["source"] = issue_dict.get("source") or "programmatic"
         severity = str(issue_dict.get("severity") or "warning").lower()
         issue_dict["tier"] = "hard" if severity == "error" else "advisory"
         issues.append(issue_dict)
+    logger.info(
+        "verify_programmatic_done",
+        extra={
+            "event": "verify_programmatic_done",
+            "job_id": state.job_id,
+            "stage": "verify",
+            "slide_count": len(state.slides),
+            "issue_count": len(issues),
+            "elapsed_ms": int((time.monotonic() - prog_t0) * 1000),
+        },
+    )
 
     if enable_vision and state.slides:
         if vision_timeout_seconds is None or aesthetic_timeout_seconds is None:
@@ -851,8 +877,10 @@ async def stage_verify_slides(
             "presentationId": "verification-temp",
             "title": state.topic or "演示文稿",
             "slides": [s.model_dump(mode="json", by_alias=True) for s in state.slides],
+            "job_id": state.job_id,
         }
         try:
+            aesthetic_t0 = time.monotonic()
             if aesthetic_timeout_seconds and aesthetic_timeout_seconds > 0:
                 aesthetic = await asyncio.wait_for(
                     run_aesthetic_verification(
@@ -868,6 +896,18 @@ async def stage_verify_slides(
                     presentation_dict=presentation_dict,
                     vision_timeout_seconds=vision_timeout_seconds,
                 )
+            logger.info(
+                "verify_aesthetic_done",
+                extra={
+                    "event": "verify_aesthetic_done",
+                    "job_id": state.job_id,
+                    "stage": "verify",
+                    "slide_count": len(state.slides),
+                    "has_result": bool(aesthetic),
+                    "issue_count": len(aesthetic.issues) if aesthetic else 0,
+                    "elapsed_ms": int((time.monotonic() - aesthetic_t0) * 1000),
+                },
+            )
         except asyncio.TimeoutError:
             logger.warning(
                 "Aesthetic verification exceeded %.1fs and was skipped to keep verify stage healthy",

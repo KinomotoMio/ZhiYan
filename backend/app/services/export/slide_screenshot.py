@@ -5,6 +5,7 @@
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ class SlideScreenshot:
 
 async def capture_slide_screenshots(
     presentation_dict: dict,
+    *,
+    job_id: str | None = None,
 ) -> list[SlideScreenshot]:
     """将每页 Slide 渲染为 PNG 截图
 
@@ -33,6 +36,7 @@ async def capture_slide_screenshots(
     if not slides:
         return []
 
+    t0 = time.monotonic()
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -65,5 +69,13 @@ async def capture_slide_screenshots(
 
         await browser.close()
 
-    logger.info("Captured %d slide screenshots", len(results))
+    logger.info(
+        "slide_screenshots_done",
+        extra={
+            "event": "slide_screenshots_done",
+            "job_id": job_id,
+            "slide_count": len(results),
+            "elapsed_ms": int((time.monotonic() - t0) * 1000),
+        },
+    )
     return results
