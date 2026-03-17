@@ -185,6 +185,20 @@ class PipelineState:
     failed_slide_indices: list[int] = field(default_factory=list)
 
 
+def _accumulate_llm_usage(state: PipelineState, stage: str, usage: dict[str, int]) -> None:
+    """Accumulate per-job LLM usage onto state.document_metadata for later auditing."""
+    if not usage:
+        return
+    total = state.document_metadata.setdefault("llm_usage_total", {})
+    by_stage = state.document_metadata.setdefault("llm_usage_by_stage", {})
+    stage_total = by_stage.setdefault(stage, {})
+    for key, value in usage.items():
+        if not isinstance(value, int):
+            continue
+        total[key] = int(total.get(key, 0)) + value
+        stage_total[key] = int(stage_total.get(key, 0)) + value
+
+
 async def stage_parse_document(state: PipelineState, progress: ProgressHook | None = None) -> None:
     from app.services.document.parser import estimate_tokens
 
@@ -252,6 +266,12 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     try:
         result = await outline_synthesizer_agent.run(prompt)
         usage = result.usage()
+        usage_payload = {
+            key: int(value)
+            for key in ("requests", "input_tokens", "output_tokens", "total_tokens")
+            if (value := getattr(usage, key, None)) is not None
+        }
+        _accumulate_llm_usage(state, "outline", usage_payload)
         outline = result.output.model_dump()
         raw_outline_items = list(outline.get("items", []))
         outline["items"] = normalize_outline_items_roles(
@@ -367,6 +387,12 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
         result = await layout_selector_agent.run(prompt)
         usage = result.usage()
+        usage_payload = {
+            key: int(value)
+            for key in ("requests", "input_tokens", "output_tokens", "total_tokens")
+            if (value := getattr(usage, key, None)) is not None
+        }
+        _accumulate_llm_usage(state, "layout", usage_payload)
         selections = result.output.model_dump()["slides"]
         decision_traces: dict[int, dict[str, Any]] = {}
 
@@ -717,6 +743,7 @@ async def stage_generate_slides(
                     source_content=source_content,
                     job_id=state.job_id,
                     stage="slides",
+                    usage_hook=lambda payload: _accumulate_llm_usage(state, "slides", payload),
                 )
                 content_data = await asyncio.wait_for(coro, timeout=per_slide_timeout)
                 results[idx] = {
@@ -954,6 +981,7 @@ async def stage_fix_slides_once(
                 source_content=source_content,
                 job_id=state.job_id,
                 stage="fix",
+                usage_hook=lambda payload: _accumulate_llm_usage(state, "fix", payload),
             )
             content_data = await asyncio.wait_for(coro, timeout=per_slide_timeout)
         except Exception as e:

@@ -8,14 +8,17 @@ import time
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
+from app.models.generation_shadow import EngineMetrics, ShadowABRecord, ShadowRoute
 from app.models.slide import Presentation, Slide
-from app.services.generation.engine_router import decide_engine_route
+from app.services.generation.engine_router import decide_engine_route, decide_shadow_route
 from app.services.generation.engines import InternalV2Engine
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
@@ -53,6 +56,9 @@ class GenerationRunner:
         self._event_bus = event_bus
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tasks_lock = asyncio.Lock()
+        # Shadow tasks are best-effort background evaluations; they must not block the primary job.
+        self._shadow_tasks: dict[str, asyncio.Task[None]] = {}
+        self._shadow_tasks_lock = asyncio.Lock()
 
     async def start_job(self, job_id: str, from_stage: StageStatus | None = None) -> bool:
         async with self._tasks_lock:
@@ -68,6 +74,31 @@ class GenerationRunner:
     async def _drop_task(self, job_id: str) -> None:
         async with self._tasks_lock:
             self._tasks.pop(job_id, None)
+
+    async def _drop_shadow_task(self, job_id: str) -> None:
+        async with self._shadow_tasks_lock:
+            self._shadow_tasks.pop(job_id, None)
+
+    async def _start_shadow_job(self, job_id: str) -> None:
+        async with self._shadow_tasks_lock:
+            current = self._shadow_tasks.get(job_id)
+            if current and not current.done():
+                return
+            task = asyncio.create_task(self._run_shadow_job(job_id))
+            self._shadow_tasks[job_id] = task
+
+            def _on_done(t: asyncio.Task[None], jid: str = job_id) -> None:
+                with suppress(Exception):
+                    exc = t.exception()
+                    if exc is not None:
+                        logger.warning(
+                            "shadow job failed",
+                            extra={"event": "shadow_job_failed", "job_id": jid, "error_type": type(exc).__name__},
+                            exc_info=exc,
+                        )
+                asyncio.create_task(self._drop_shadow_task(jid))
+
+            task.add_done_callback(_on_done)
 
     async def cancel_job(self, job_id: str) -> None:
         job = await self._store.get_job(job_id)
@@ -118,12 +149,28 @@ class GenerationRunner:
         primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
         primary_engine = primary_engine.strip().lower() or "internal_v2"
 
+        # --- Shadow mode (Phase 2): determine whether to run a secondary engine in background ---
+        shadow_route = None
+        if isinstance(job.document_metadata, dict):
+            shadow_route = job.document_metadata.get("shadow_route")
+        if not isinstance(shadow_route, dict) or "decided_at" not in shadow_route:
+            shadow_decision = decide_shadow_route(job)
+            job.document_metadata.setdefault("shadow_route", shadow_decision.to_metadata())
+            shadow_route = job.document_metadata.get("shadow_route")
         # Phase 1 supports internal engine only; external engines are introduced later behind the router.
         if primary_engine != "internal_v2":
             raise RuntimeError(f"Unsupported generation engine: {primary_engine}")
         engine = InternalV2Engine()
 
         await self._store.save_job(job)
+        await self._ensure_shadow_record(job, primary_engine=primary_engine)
+        shadow_route_saved = job.document_metadata.get("shadow_route") if isinstance(job.document_metadata, dict) else None
+        if (
+            isinstance(shadow_route_saved, dict)
+            and bool(shadow_route_saved.get("enabled"))
+            and bool(shadow_route_saved.get("sampled"))
+        ):
+            await self._start_shadow_job(job.job_id)
         if job.request.session_id:
             from app.services.sessions import session_store
 
@@ -244,6 +291,7 @@ class GenerationRunner:
                                 job.job_id,
                                 JobStatus.WAITING_OUTLINE_REVIEW.value,
                             )
+                        await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
                         return
                 elif stage == StageStatus.LAYOUT:
                     await self._run_stage(
@@ -360,6 +408,7 @@ class GenerationRunner:
                         "failed_slide_indices": job.failed_slide_indices,
                     },
                 )
+                await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
                 return
 
             job.presentation = self._build_presentation_payload(job, state.slides)
@@ -390,6 +439,7 @@ class GenerationRunner:
                     "failed_slide_indices": job.failed_slide_indices,
                 },
             )
+            await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
 
         except asyncio.CancelledError:
             job.status = JobStatus.CANCELLED
@@ -403,6 +453,7 @@ class GenerationRunner:
                     JobStatus.CANCELLED.value,
                 )
             await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
+            await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
             return
         except Exception as e:
             partial_saved = False
@@ -450,6 +501,7 @@ class GenerationRunner:
                 message="任务失败",
                 payload=payload,
             )
+            await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
             logger.exception(
                 "generation job failed",
                 extra={
@@ -461,6 +513,134 @@ class GenerationRunner:
                     "elapsed_ms": elapsed_ms,
                 },
             )
+
+    async def _run_shadow_job(self, job_id: str) -> None:
+        job = await self._store.get_job(job_id)
+        if job is None:
+            return
+
+        shadow_route_raw = job.document_metadata.get("shadow_route") if isinstance(job.document_metadata, dict) else None
+        if not isinstance(shadow_route_raw, dict) or not bool(shadow_route_raw.get("enabled")):
+            return
+        if not bool(shadow_route_raw.get("sampled")):
+            return
+
+        engine_id = str(shadow_route_raw.get("shadow_engine") or "internal_v2").strip().lower() or "internal_v2"
+        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
+        primary_engine = primary_engine.strip().lower() or "internal_v2"
+
+        await self._ensure_shadow_record(job, primary_engine=primary_engine)
+
+        metrics = EngineMetrics(engine_id=engine_id, status="running", started_at=now_iso())
+        await self._set_shadow_metrics(job_id, metrics)
+
+        if job.mode.value == "review_outline" and not job.outline_accepted:
+            metrics.status = "skipped"
+            metrics.ended_at = now_iso()
+            metrics.duration_ms = 0
+            metrics.error_code = "SKIPPED_OUTLINE_REVIEW"
+            metrics.error_message = "job is waiting for outline acceptance; shadow run skipped"
+            await self._set_shadow_metrics(job_id, metrics)
+            return
+
+        if engine_id != "internal_v2":
+            metrics.status = "failed"
+            metrics.ended_at = now_iso()
+            metrics.duration_ms = 0
+            metrics.error_code = "ENGINE_UNSUPPORTED"
+            metrics.error_message = f"shadow engine not implemented: {engine_id}"
+            await self._set_shadow_metrics(job_id, metrics)
+            return
+
+        state = self._build_state(job)
+        engine = InternalV2Engine()
+
+        started_monotonic = time.monotonic()
+        first_slide_monotonic: float | None = None
+
+        async def slide_hook(payload: dict) -> None:  # noqa: ARG001
+            nonlocal first_slide_monotonic
+            if first_slide_monotonic is None:
+                first_slide_monotonic = time.monotonic()
+
+        stage_durations: dict[str, int] = {}
+        current_stage: StageStatus | None = None
+        current_timeout: float | None = None
+        try:
+            sequence = [
+                StageStatus.PARSE,
+                StageStatus.OUTLINE,
+                StageStatus.LAYOUT,
+                StageStatus.SLIDES,
+                StageStatus.ASSETS,
+                StageStatus.VERIFY,
+            ]
+            for stage in sequence:
+                current_stage = stage
+                if stage == StageStatus.PARSE:
+                    current_timeout = float(settings.job_timeout_seconds)
+                    coro = engine.parse(state, progress=None)
+                elif stage == StageStatus.OUTLINE:
+                    current_timeout = float(settings.outline_timeout_seconds)
+                    coro = engine.outline(state, progress=None)
+                elif stage == StageStatus.LAYOUT:
+                    current_timeout = float(settings.layout_timeout_seconds)
+                    coro = engine.layout(state, progress=None)
+                elif stage == StageStatus.SLIDES:
+                    current_timeout = float(settings.job_timeout_seconds)
+                    coro = engine.slides(
+                        state,
+                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                        progress=None,
+                        on_slide=slide_hook,
+                    )
+                elif stage == StageStatus.ASSETS:
+                    current_timeout = float(settings.job_timeout_seconds)
+                    coro = engine.assets(state, progress=None)
+                elif stage == StageStatus.VERIFY:
+                    current_timeout = float(settings.verify_timeout_seconds)
+                    coro = engine.verify(
+                        state,
+                        progress=None,
+                        enable_vision=settings.enable_vision_verification,
+                    )
+                else:
+                    continue
+
+                t0 = time.monotonic()
+                try:
+                    await asyncio.wait_for(coro, timeout=current_timeout)
+                except asyncio.TimeoutError as e:
+                    raise StageTimeoutError(stage=stage, timeout_seconds=float(current_timeout)) from e
+                stage_durations[stage.value] = int((time.monotonic() - t0) * 1000)
+
+            metrics.status = "completed"
+        except Exception as e:
+            classified = self._classify_generation_error(
+                e,
+                stage=current_stage,
+                timeout_seconds=current_timeout,
+            )
+            metrics.status = "failed"
+            metrics.error_code = classified.error_code
+            metrics.error_message = classified.error_message
+            metrics.retriable = classified.retriable
+        finally:
+            elapsed_ms = int((time.monotonic() - started_monotonic) * 1000)
+            metrics.ended_at = now_iso()
+            metrics.duration_ms = elapsed_ms
+            metrics.stage_durations_ms = stage_durations
+            metrics.ttfs_ms = (
+                int((first_slide_monotonic - started_monotonic) * 1000)
+                if first_slide_monotonic is not None
+                else None
+            )
+            metrics.llm_usage = self._extract_llm_usage(state.document_metadata)
+            metrics.extra = {
+                "failed_slide_indices": list(state.failed_slide_indices),
+                "issue_count": len(state.verification_issues or []),
+            }
+            await self._set_shadow_metrics(job_id, metrics)
 
     async def preview_fix(
         self,
@@ -995,6 +1175,83 @@ class GenerationRunner:
             saved_to_session = True
         return saved_to_session, presentation_payload
 
+    async def _load_shadow_record(self, job_id: str) -> ShadowABRecord | None:
+        raw = await self._store.get_shadow_record(job_id)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ShadowABRecord.model_validate(raw)
+        except ValidationError:
+            return None
+
+    @staticmethod
+    def _extract_llm_usage(metadata: dict | None) -> dict[str, int]:
+        if not isinstance(metadata, dict):
+            return {}
+        raw = metadata.get("llm_usage_total")
+        if not isinstance(raw, dict):
+            return {}
+        usage: dict[str, int] = {}
+        for key, value in raw.items():
+            if isinstance(value, int):
+                usage[str(key)] = value
+            else:
+                with suppress(Exception):
+                    usage[str(key)] = int(value)
+        return usage
+
+    async def _ensure_shadow_record(self, job: GenerationJob, *, primary_engine: str) -> None:
+        """Create/update the persisted shadow record (only for sampled shadow jobs)."""
+        shadow_route_raw = job.document_metadata.get("shadow_route") if isinstance(job.document_metadata, dict) else None
+        if (
+            not isinstance(shadow_route_raw, dict)
+            or not bool(shadow_route_raw.get("enabled"))
+            or not bool(shadow_route_raw.get("sampled"))
+        ):
+            return
+
+        record = await self._load_shadow_record(job.job_id) or ShadowABRecord(job_id=job.job_id)
+        record.primary_engine = primary_engine
+        try:
+            record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
+        except ValidationError:
+            record.shadow_route = ShadowRoute()
+        record.updated_at = now_iso()
+        await self._store.save_shadow_record(job.job_id, record.model_dump(mode="json"))
+
+    async def _set_shadow_metrics(self, job_id: str, metrics: EngineMetrics) -> None:
+        record = await self._load_shadow_record(job_id) or ShadowABRecord(job_id=job_id)
+        record.shadow = metrics
+        record.updated_at = now_iso()
+        record.deltas = _compute_shadow_deltas(record.primary, record.shadow)
+        await self._store.save_shadow_record(job_id, record.model_dump(mode="json"))
+
+    async def _sync_primary_metrics_to_shadow_record(self, job: GenerationJob, *, primary_engine: str) -> None:
+        shadow_route_raw = job.document_metadata.get("shadow_route") if isinstance(job.document_metadata, dict) else None
+        if (
+            not isinstance(shadow_route_raw, dict)
+            or not bool(shadow_route_raw.get("enabled"))
+            or not bool(shadow_route_raw.get("sampled"))
+        ):
+            return
+
+        record = await self._load_shadow_record(job.job_id) or ShadowABRecord(job_id=job.job_id)
+        record.primary_engine = primary_engine
+        try:
+            record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
+        except ValidationError:
+            record.shadow_route = ShadowRoute()
+
+        events = await self._store.list_events(job.job_id)
+        record.primary = _build_primary_engine_metrics(
+            job,
+            events,
+            primary_engine=primary_engine,
+        )
+        record.updated_at = now_iso()
+        record.deltas = _compute_shadow_deltas(record.primary, record.shadow)
+        await self._store.save_shadow_record(job.job_id, record.model_dump(mode="json"))
+
     async def _emit_event(
         self,
         job: GenerationJob,
@@ -1057,3 +1314,98 @@ def _parse_stage(raw: str) -> StageStatus | None:
     with suppress(ValueError):
         return StageStatus(raw)
     return None
+
+
+def _parse_event_ts(ts: str | None) -> datetime | None:
+    if not ts or not isinstance(ts, str):
+        return None
+    # now_iso() uses datetime.isoformat() with timezone offset.
+    with suppress(Exception):
+        return datetime.fromisoformat(ts)
+    with suppress(Exception):
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return None
+
+
+def _build_primary_engine_metrics(
+    job: GenerationJob,
+    events: list[GenerationEvent],
+    *,
+    primary_engine: str,
+) -> EngineMetrics:
+    job_started_ts = next((evt.ts for evt in events if evt.type == EventType.JOB_STARTED), None)
+    first_slide_ts = next((evt.ts for evt in events if evt.type == EventType.SLIDE_READY), None)
+
+    if job.status == JobStatus.COMPLETED:
+        terminal_ts = next((evt.ts for evt in reversed(events) if evt.type == EventType.JOB_COMPLETED), None)
+    elif job.status == JobStatus.FAILED:
+        terminal_ts = next((evt.ts for evt in reversed(events) if evt.type == EventType.JOB_FAILED), None)
+    elif job.status == JobStatus.CANCELLED:
+        terminal_ts = next((evt.ts for evt in reversed(events) if evt.type == EventType.JOB_CANCELLED), None)
+    else:
+        terminal_ts = job.updated_at
+
+    started_dt = _parse_event_ts(job_started_ts) or _parse_event_ts(job.created_at) or _parse_event_ts(job.updated_at)
+    ended_dt = _parse_event_ts(terminal_ts) or _parse_event_ts(job.updated_at)
+
+    duration_ms: int | None = None
+    if started_dt and ended_dt:
+        duration_ms = int((ended_dt - started_dt).total_seconds() * 1000)
+
+    ttfs_ms: int | None = None
+    first_dt = _parse_event_ts(first_slide_ts)
+    if started_dt and first_dt:
+        ttfs_ms = int((first_dt - started_dt).total_seconds() * 1000)
+
+    stage_durations: dict[str, int] = {}
+    for result in job.stage_results or []:
+        if result.duration_ms is None:
+            continue
+        stage_durations[result.stage.value] = int(result.duration_ms)
+
+    usage = {}
+    if isinstance(job.document_metadata, dict):
+        raw_usage = job.document_metadata.get("llm_usage_total")
+        if isinstance(raw_usage, dict):
+            for key, value in raw_usage.items():
+                with suppress(Exception):
+                    usage[str(key)] = int(value)
+
+    return EngineMetrics(
+        engine_id=primary_engine,
+        status=job.status.value,
+        started_at=job_started_ts or job.created_at,
+        ended_at=terminal_ts,
+        duration_ms=duration_ms,
+        ttfs_ms=ttfs_ms,
+        stage_durations_ms=stage_durations,
+        llm_usage=usage,
+        extra={
+            "mode": job.mode.value,
+            "failed_slide_indices": list(job.failed_slide_indices or []),
+            "issue_count": len(job.issues or []),
+        },
+        error_code=None,
+        error_message=job.error,
+        retriable=None,
+    )
+
+
+def _compute_shadow_deltas(primary: EngineMetrics | None, shadow: EngineMetrics | None) -> dict[str, int | float | None]:
+    if primary is None or shadow is None:
+        return {}
+    deltas: dict[str, int | float | None] = {}
+    if isinstance(primary.ttfs_ms, int) and isinstance(shadow.ttfs_ms, int):
+        deltas["ttfs_ms_delta"] = shadow.ttfs_ms - primary.ttfs_ms
+    if isinstance(primary.duration_ms, int) and isinstance(shadow.duration_ms, int):
+        deltas["duration_ms_delta"] = shadow.duration_ms - primary.duration_ms
+    if isinstance(primary.llm_usage, dict) and isinstance(shadow.llm_usage, dict):
+        p_req = primary.llm_usage.get("requests")
+        s_req = shadow.llm_usage.get("requests")
+        if isinstance(p_req, int) and isinstance(s_req, int):
+            deltas["llm_requests_delta"] = s_req - p_req
+        p_tok = primary.llm_usage.get("total_tokens")
+        s_tok = shadow.llm_usage.get("total_tokens")
+        if isinstance(p_tok, int) and isinstance(s_tok, int):
+            deltas["llm_total_tokens_delta"] = s_tok - p_tok
+    return deltas

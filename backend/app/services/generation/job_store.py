@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 from app.models.generation import GenerationEvent, GenerationJob
 
@@ -29,6 +30,9 @@ class GenerationJobStore:
 
     def _events_path(self, job_id: str) -> Path:
         return self._root_dir / f"{job_id}.events.ndjson"
+
+    def _shadow_path(self, job_id: str) -> Path:
+        return self._root_dir / f"{job_id}.shadow.json"
 
     async def create_job(self, job: GenerationJob) -> None:
         lock = await self._get_lock(job.job_id)
@@ -56,6 +60,28 @@ class GenerationJobStore:
             return None
         raw = await asyncio.to_thread(path.read_text, "utf-8")
         return GenerationJob.model_validate_json(raw)
+
+    async def get_shadow_record(self, job_id: str) -> dict[str, Any] | None:
+        """Load persisted shadow/A-B record for a job (if present)."""
+        path = self._shadow_path(job_id)
+        if not path.exists():
+            return None
+        raw = await asyncio.to_thread(path.read_text, "utf-8")
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    async def save_shadow_record(self, job_id: str, record: dict[str, Any]) -> None:
+        """Persist shadow/A-B record for a job atomically."""
+        lock = await self._get_lock(job_id)
+        async with lock:
+            path = self._shadow_path(job_id)
+            tmp = path.with_name(path.name + ".tmp")
+            data = json.dumps(record, ensure_ascii=False, indent=2)
+            await asyncio.to_thread(tmp.write_text, data, "utf-8")
+            await asyncio.to_thread(tmp.replace, path)
 
     async def append_event(self, event: GenerationEvent) -> None:
         lock = await self._get_lock(event.job_id)

@@ -67,6 +67,12 @@ class Settings(BaseSettings):
 
     # Generation engines (C-plan foundation). Default keeps current internal pipeline.
     generation_primary_engine: str = "internal_v2"  # internal_v2 | slidev | presenton
+    # Shadow mode (Phase 2): run a secondary engine in the background for evaluation.
+    # Off by default; safe to enable progressively via sample rate.
+    generation_shadow_enabled: bool = False
+    generation_shadow_engine: str = "internal_v2"  # internal_v2 | slidev | presenton
+    # 0.0 ~ 1.0; deterministic per job_id sampling to keep retries stable.
+    generation_shadow_sample_rate: float = 0.0
 
     # TTS
     tts_model: str = "tts-1"
