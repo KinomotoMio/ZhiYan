@@ -157,7 +157,6 @@ class GenerationRunner:
             shadow_decision = decide_shadow_route(job)
             job.document_metadata.setdefault("shadow_route", shadow_decision.to_metadata())
             shadow_route = job.document_metadata.get("shadow_route")
-
         # Phase 1 supports internal engine only; external engines are introduced later behind the router.
         if primary_engine != "internal_v2":
             raise RuntimeError(f"Unsupported generation engine: {primary_engine}")
@@ -215,6 +214,15 @@ class GenerationRunner:
                 stage=StageStatus.SLIDES,
                 message=f"第 {idx + 1} 页已生成",
                 payload=payload,
+            )
+            layer_payload = dict(payload)
+            layer_payload["layer"] = "content"
+            await self._emit_event(
+                job,
+                EventType.SLIDE_LAYER_READY,
+                stage=StageStatus.SLIDES,
+                message=f"第 {idx + 1} 页内容已就绪",
+                payload=layer_payload,
             )
 
         job_started_monotonic = time.monotonic()
@@ -324,6 +332,19 @@ class GenerationRunner:
                         stage_coro=engine.assets(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
+                    for idx, slide in enumerate(state.slides):
+                        payload = {
+                            "slide_index": idx,
+                            "slide": slide.model_dump(mode="json", by_alias=True),
+                            "layer": "assets",
+                        }
+                        await self._emit_event(
+                            job,
+                            EventType.SLIDE_LAYER_READY,
+                            stage=StageStatus.ASSETS,
+                            message=f"第 {idx + 1} 页资源已就绪",
+                            payload=payload,
+                        )
                 elif stage == StageStatus.VERIFY:
                     await self._run_stage(
                         job,
@@ -337,6 +358,27 @@ class GenerationRunner:
                         ),
                     )
                     await self._sync_state_to_job(job, state)
+                    issues_by_slide_id: dict[str, list[dict]] = {}
+                    for issue in state.verification_issues:
+                        sid = str(issue.get("slide_id") or "").strip()
+                        if not sid:
+                            continue
+                        issues_by_slide_id.setdefault(sid, []).append(issue)
+                    for idx, slide in enumerate(state.slides):
+                        slide_payload = slide.model_dump(mode="json", by_alias=True)
+                        payload = {
+                            "slide_index": idx,
+                            "slide": slide_payload,
+                            "layer": "verify",
+                            "issues": issues_by_slide_id.get(slide.slide_id, []),
+                        }
+                        await self._emit_event(
+                            job,
+                            EventType.SLIDE_LAYER_READY,
+                            stage=StageStatus.VERIFY,
+                            message=f"第 {idx + 1} 页验证已就绪",
+                            payload=payload,
+                        )
 
             hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
             if hard_slide_ids:

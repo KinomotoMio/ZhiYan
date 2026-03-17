@@ -66,7 +66,6 @@ def decide_engine_route(job: GenerationJob) -> EngineRouteDecision:
     )
     return decision
 
-
 @dataclass(frozen=True)
 class ShadowRouteDecision:
     enabled: bool

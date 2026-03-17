@@ -95,6 +95,42 @@ def test_export_pdf_returns_non_ascii_filename_header(monkeypatch):
     assert "filename*=UTF-8''" in resp.headers["content-disposition"]
 
 
+def test_export_pptx_sets_mode_header(monkeypatch):
+    from app.services.export import pptx_exporter
+
+    def fake_export_pptx(presentation):  # noqa: ARG001
+        return b"structured-pptx"
+
+    monkeypatch.setattr(pptx_exporter, "export_pptx", fake_export_pptx)
+
+    client = TestClient(app)
+    resp = client.post("/api/v1/export/pptx", json=_sample_export_payload())
+
+    assert resp.status_code == 200
+    assert resp.content == b"structured-pptx"
+    assert resp.headers.get("x-zhiyan-export-mode") == "structured"
+
+
+def test_export_pptx_falls_back_to_image_mode_on_failure(monkeypatch):
+    from app.services.export import pptx_exporter, pptx_image_exporter
+
+    def fake_export_pptx(presentation):  # noqa: ARG001
+        raise RuntimeError("boom")
+
+    async def fake_export_pptx_as_images(presentation):  # noqa: ARG001
+        return b"fallback-pptx"
+
+    monkeypatch.setattr(pptx_exporter, "export_pptx", fake_export_pptx)
+    monkeypatch.setattr(pptx_image_exporter, "export_pptx_as_images", fake_export_pptx_as_images)
+
+    client = TestClient(app)
+    resp = client.post("/api/v1/export/pptx", json=_sample_export_payload())
+
+    assert resp.status_code == 200
+    assert resp.content == b"fallback-pptx"
+    assert resp.headers.get("x-zhiyan-export-mode") == "fallback-image"
+
+
 def test_cors_preflight_allows_localhost_and_loopback():
     client = TestClient(app)
 
