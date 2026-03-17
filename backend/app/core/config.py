@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     # Guardrails (Phase 4): SLO / cost thresholds + automatic circuit breaker fallback.
     generation_guardrails_enabled: bool = False
     generation_guard_window_size: int = 50
+    # Minimum samples required before evaluating a breaker open condition.
+    generation_guard_min_samples: int = 10
     # If failure rate exceeds threshold in window => open breaker.
     generation_guard_fail_rate_threshold: float = 0.2
     # P95 thresholds (ms / tokens). 0 disables the check.

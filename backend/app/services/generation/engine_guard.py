@@ -233,7 +233,12 @@ def evaluate_window(
 
     statuses = [str(item.get("status") or "") for item in window if isinstance(item, dict)]
     fail_count = sum(1 for s in statuses if s and not _is_success_status(s))
-    total = max(1, len(statuses))
+    total = len(statuses)
+    min_samples = int(getattr(settings, "generation_guard_min_samples", 10) or 10)
+    if total < max(1, min_samples):
+        return GuardDecision(allowed=True, open=False, reason=f"insufficient_samples(n={total})")
+
+    total = max(1, total)
     fail_rate = fail_count / total
 
     fail_rate_threshold = float(getattr(settings, "generation_guard_fail_rate_threshold", 0.2) or 0.2)

@@ -560,24 +560,6 @@ class GenerationRunner:
         metrics = EngineMetrics(engine_id=engine_id, status="running", started_at=now_iso())
         await self._set_shadow_metrics(job_id, metrics)
 
-        if job.mode.value == "review_outline" and not job.outline_accepted:
-            metrics.status = "skipped"
-            metrics.ended_at = now_iso()
-            metrics.duration_ms = 0
-            metrics.error_code = "SKIPPED_OUTLINE_REVIEW"
-            metrics.error_message = "job is waiting for outline acceptance; shadow run skipped"
-            await self._set_shadow_metrics(job_id, metrics)
-            return
-
-        if engine_id != "internal_v2":
-            metrics.status = "failed"
-            metrics.ended_at = now_iso()
-            metrics.duration_ms = 0
-            metrics.error_code = "ENGINE_UNSUPPORTED"
-            metrics.error_message = f"shadow engine not implemented: {engine_id}"
-            await self._set_shadow_metrics(job_id, metrics)
-            return
-
         state = self._build_state(job)
         engine = InternalV2Engine()
 
@@ -592,55 +574,67 @@ class GenerationRunner:
         stage_durations: dict[str, int] = {}
         current_stage: StageStatus | None = None
         current_timeout: float | None = None
+        should_record_guard = True
         try:
-            sequence = [
-                StageStatus.PARSE,
-                StageStatus.OUTLINE,
-                StageStatus.LAYOUT,
-                StageStatus.SLIDES,
-                StageStatus.ASSETS,
-                StageStatus.VERIFY,
-            ]
-            for stage in sequence:
-                current_stage = stage
-                if stage == StageStatus.PARSE:
-                    current_timeout = float(settings.job_timeout_seconds)
-                    coro = engine.parse(state, progress=None)
-                elif stage == StageStatus.OUTLINE:
-                    current_timeout = float(settings.outline_timeout_seconds)
-                    coro = engine.outline(state, progress=None)
-                elif stage == StageStatus.LAYOUT:
-                    current_timeout = float(settings.layout_timeout_seconds)
-                    coro = engine.layout(state, progress=None)
-                elif stage == StageStatus.SLIDES:
-                    current_timeout = float(settings.job_timeout_seconds)
-                    coro = engine.slides(
-                        state,
-                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
-                        progress=None,
-                        on_slide=slide_hook,
-                    )
-                elif stage == StageStatus.ASSETS:
-                    current_timeout = float(settings.job_timeout_seconds)
-                    coro = engine.assets(state, progress=None)
-                elif stage == StageStatus.VERIFY:
-                    current_timeout = float(settings.verify_timeout_seconds)
-                    coro = engine.verify(
-                        state,
-                        progress=None,
-                        enable_vision=settings.enable_vision_verification,
-                    )
-                else:
-                    continue
+            if job.mode.value == "review_outline" and not job.outline_accepted:
+                metrics.status = "skipped"
+                metrics.error_code = "SKIPPED_OUTLINE_REVIEW"
+                metrics.error_message = "job is waiting for outline acceptance; shadow run skipped"
+                # This is a control-flow skip, not engine health; don't pollute breaker windows.
+                should_record_guard = False
+            elif engine_id != "internal_v2":
+                metrics.status = "failed"
+                metrics.error_code = "ENGINE_UNSUPPORTED"
+                metrics.error_message = f"shadow engine not implemented: {engine_id}"
+            else:
+                sequence = [
+                    StageStatus.PARSE,
+                    StageStatus.OUTLINE,
+                    StageStatus.LAYOUT,
+                    StageStatus.SLIDES,
+                    StageStatus.ASSETS,
+                    StageStatus.VERIFY,
+                ]
+                for stage in sequence:
+                    current_stage = stage
+                    if stage == StageStatus.PARSE:
+                        current_timeout = float(settings.job_timeout_seconds)
+                        coro = engine.parse(state, progress=None)
+                    elif stage == StageStatus.OUTLINE:
+                        current_timeout = float(settings.outline_timeout_seconds)
+                        coro = engine.outline(state, progress=None)
+                    elif stage == StageStatus.LAYOUT:
+                        current_timeout = float(settings.layout_timeout_seconds)
+                        coro = engine.layout(state, progress=None)
+                    elif stage == StageStatus.SLIDES:
+                        current_timeout = float(settings.job_timeout_seconds)
+                        coro = engine.slides(
+                            state,
+                            per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                            progress=None,
+                            on_slide=slide_hook,
+                        )
+                    elif stage == StageStatus.ASSETS:
+                        current_timeout = float(settings.job_timeout_seconds)
+                        coro = engine.assets(state, progress=None)
+                    elif stage == StageStatus.VERIFY:
+                        current_timeout = float(settings.verify_timeout_seconds)
+                        coro = engine.verify(
+                            state,
+                            progress=None,
+                            enable_vision=settings.enable_vision_verification,
+                        )
+                    else:
+                        continue
 
-                t0 = time.monotonic()
-                try:
-                    await asyncio.wait_for(coro, timeout=current_timeout)
-                except asyncio.TimeoutError as e:
-                    raise StageTimeoutError(stage=stage, timeout_seconds=float(current_timeout)) from e
-                stage_durations[stage.value] = int((time.monotonic() - t0) * 1000)
+                    t0 = time.monotonic()
+                    try:
+                        await asyncio.wait_for(coro, timeout=current_timeout)
+                    except asyncio.TimeoutError as e:
+                        raise StageTimeoutError(stage=stage, timeout_seconds=float(current_timeout)) from e
+                    stage_durations[stage.value] = int((time.monotonic() - t0) * 1000)
 
-            metrics.status = "completed"
+                metrics.status = "completed"
         except Exception as e:
             classified = self._classify_generation_error(
                 e,
@@ -673,15 +667,16 @@ class GenerationRunner:
             fallback_rate = (
                 (len(state.failed_slide_indices or []) / requested_pages) if requested_pages > 0 else 0.0
             )
-            await self._record_guardrail_metrics(
-                mode="shadow",
-                engine_id=engine_id,
-                status=metrics.status,
-                ttfs_ms=metrics.ttfs_ms,
-                duration_ms=metrics.duration_ms,
-                total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
-                fallback_rate=fallback_rate,
-            )
+            if should_record_guard and metrics.status in {"completed", "failed"}:
+                await self._record_guardrail_metrics(
+                    mode="shadow",
+                    engine_id=engine_id,
+                    status=metrics.status,
+                    ttfs_ms=metrics.ttfs_ms,
+                    duration_ms=metrics.duration_ms,
+                    total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
+                    fallback_rate=fallback_rate,
+                )
 
     async def preview_fix(
         self,

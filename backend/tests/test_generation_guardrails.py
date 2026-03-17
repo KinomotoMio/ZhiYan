@@ -64,6 +64,7 @@ def test_guard_store_opens_on_fail_rate(tmp_path, monkeypatch):
         monkeypatch.setattr(settings, "generation_guardrails_enabled", True)
         monkeypatch.setattr(settings, "generation_guard_fail_rate_threshold", 0.1)
         monkeypatch.setattr(settings, "generation_guard_window_size", 10)
+        monkeypatch.setattr(settings, "generation_guard_min_samples", 1)
 
         for _ in range(5):
             decision = await guard.record(
@@ -75,4 +76,3 @@ def test_guard_store_opens_on_fail_rate(tmp_path, monkeypatch):
         assert decision.allowed is False
 
     asyncio.run(_case())
-
