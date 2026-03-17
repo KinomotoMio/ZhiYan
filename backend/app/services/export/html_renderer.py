@@ -29,6 +29,7 @@ from app.services.fallback_semantics import (
     is_placeholder_text,
 )
 from app.services.presentations.normalizer import normalize_metrics_slide_data
+from app.services.image_semantics import infer_image_source
 
 
 def render_presentation_html(presentation_dict: dict[str, Any]) -> str:
@@ -743,10 +744,8 @@ def _get_image_placeholder_copy(image: Any) -> tuple[str, str]:
     if not isinstance(image, dict):
         return ("待用户补图/上传", "")
 
-    source = _as_text(image.get("source")).lower()
+    source = infer_image_source(image)
     prompt = _as_text(image.get("prompt"))
-    if source not in {"ai", "user", "existing"}:
-        source = "existing" if _as_text(image.get("url")) else ("ai" if "prompt" in image else "user")
 
     if source == "ai":
         return (prompt or "AI 图片待生成", "")
