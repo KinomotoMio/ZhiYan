@@ -1000,7 +1000,7 @@ async def stage_generate_slides(
             layout_id = layout_map.get(slide_num, "bullet-with-icons")
             raw_refs = item.get("source_references")
             source_references = (
-                [str(ref) for ref in raw_refs if ref]
+                [stripped for ref in raw_refs if (stripped := str(ref).strip())]
                 if isinstance(raw_refs, list)
                 else []
             )
