@@ -98,7 +98,7 @@ def decide_shadow_route(job: GenerationJob) -> ShadowRouteDecision:
     shadow_engine = (getattr(settings, "generation_shadow_engine", "") or "").strip().lower() or "internal_v2"
     try:
         sample_rate = float(getattr(settings, "generation_shadow_sample_rate", 0.0) or 0.0)
-    except Exception:
+    except (ValueError, TypeError):
         sample_rate = 0.0
     sample_rate = max(0.0, min(sample_rate, 1.0))
 
