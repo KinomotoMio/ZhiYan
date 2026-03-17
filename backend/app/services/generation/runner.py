@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
@@ -1138,7 +1139,7 @@ class GenerationRunner:
             return None
         try:
             return ShadowABRecord.model_validate(raw)
-        except Exception:
+        except ValidationError:
             return None
 
     @staticmethod
