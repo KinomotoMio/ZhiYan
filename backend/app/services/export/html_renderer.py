@@ -503,6 +503,15 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
     if layout_id == "metrics-with-image":
         metrics = d.get("metrics")
         metrics = metrics if isinstance(metrics, list) else []
+        image = d.get("image")
+        image = image if isinstance(image, dict) else {}
+        url = _sanitize_image_src(image.get("url"))
+        alt = _as_text(image.get("alt")) or _as_text(image.get("prompt")) or "Image"
+        if url:
+            image_html = _render_image_fill(url, alt)
+        else:
+            title, detail = _get_image_placeholder_copy(image)
+            image_html = _render_image_placeholder(title, detail)
         metric_html = "".join(
             (
                 '<div style="margin-bottom:20px;">'
@@ -517,7 +526,8 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
             '<div style="padding:60px;display:flex;flex-direction:column;justify-content:center;">'
             f'<h2 style="font-size:36px;font-weight:bold;margin-bottom:32px;">{escape(_as_text(d.get("title")))}</h2>'
             f"{metric_html}"
-            '</div><div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[图片]</div>'
+            '</div>'
+            f'<div style="background:#f3f4f6;overflow:hidden;">{image_html}</div>'
             "</div>"
         )
 
@@ -576,6 +586,15 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
 
     if layout_id == "image-and-description":
+        image = d.get("image")
+        image = image if isinstance(image, dict) else {}
+        url = _sanitize_image_src(image.get("url"))
+        alt = _as_text(image.get("alt")) or _as_text(image.get("prompt")) or "Image"
+        if url:
+            image_html = _render_image_fill(url, alt)
+        else:
+            title, detail = _get_image_placeholder_copy(image)
+            image_html = _render_image_placeholder(title, detail)
         bullets = d.get("bullets")
         bullets = bullets if isinstance(bullets, list) else []
         bullets_html = "".join(
@@ -585,7 +604,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         )
         return (
             '<div style="display:grid;grid-template-columns:1fr 1fr;height:100%;">'
-            '<div style="background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#9ca3af;">[图片]</div>'
+            f'<div style="background:#f3f4f6;overflow:hidden;">{image_html}</div>'
             '<div style="padding:60px;display:flex;flex-direction:column;justify-content:center;">'
             f'<h2 style="font-size:36px;font-weight:bold;margin-bottom:20px;">{escape(_as_text(d.get("title")))}</h2>'
             f'<p style="font-size:20px;color:#4b5563;line-height:1.6;">{escape(_as_text(d.get("description")))}</p>'
@@ -706,6 +725,58 @@ def _as_text(value: Any, default: str = "") -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     return default
+
+
+_IMAGE_SRC_ALLOWED_RE = re.compile(r"^(https?://|data:image/)", re.IGNORECASE)
+
+
+def _sanitize_image_src(value: Any) -> str:
+    url = _as_text(value)
+    if not url:
+        return ""
+    if _IMAGE_SRC_ALLOWED_RE.match(url):
+        return url
+    return ""
+
+
+def _get_image_placeholder_copy(image: Any) -> tuple[str, str]:
+    if not isinstance(image, dict):
+        return ("待用户补图/上传", "")
+
+    source = _as_text(image.get("source")).lower()
+    prompt = _as_text(image.get("prompt"))
+    if source not in {"ai", "user", "existing"}:
+        source = "existing" if _as_text(image.get("url")) else ("ai" if "prompt" in image else "user")
+
+    if source == "ai":
+        return (prompt or "AI 图片待生成", "")
+    if source == "user":
+        return ("待用户补图/上传", prompt)
+    return ("待绑定现有素材", prompt)
+
+
+def _render_image_placeholder(title: str, detail: str = "") -> str:
+    title_html = escape(title) if title else "图片不可用"
+    detail_html = escape(detail) if detail else ""
+    detail_block = (
+        f'<div style="margin-top:8px;font-size:12px;line-height:1.4;opacity:0.75;text-align:center;padding:0 24px;">{detail_html}</div>'
+        if detail_html
+        else ""
+    )
+    return (
+        '<div style="height:100%;width:100%;background:#f3f4f6;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9ca3af;overflow:hidden;">'
+        f'<div style="font-size:13px;font-weight:600;opacity:0.85;text-align:center;padding:0 24px;">{title_html}</div>'
+        f"{detail_block}"
+        "</div>"
+    )
+
+
+def _render_image_fill(url: str, alt: str) -> str:
+    # Match the frontend preview baseline: fill the container with cover cropping.
+    return (
+        f'<img src="{escape(url)}" alt="{escape(alt)}" '
+        'style="width:100%;height:100%;object-fit:cover;display:block;" />'
+    )
 
 
 def _item_text(item: Any) -> str:
