@@ -1172,7 +1172,7 @@ class GenerationRunner:
         record.primary_engine = primary_engine
         try:
             record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
-        except Exception:
+        except ValidationError:
             record.shadow_route = ShadowRoute()
         record.updated_at = now_iso()
         await self._store.save_shadow_record(job.job_id, record.model_dump(mode="json"))
@@ -1197,7 +1197,7 @@ class GenerationRunner:
         record.primary_engine = primary_engine
         try:
             record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
-        except Exception:
+        except ValidationError:
             record.shadow_route = ShadowRoute()
 
         events = await self._store.list_events(job.job_id)
