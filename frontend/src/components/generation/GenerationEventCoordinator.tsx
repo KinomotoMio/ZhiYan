@@ -13,6 +13,35 @@ import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
 import type { Presentation, Slide } from "@/types/slide";
 
+function stageRank(stage: string | null): number {
+  if (!stage) return 0;
+  switch (stage) {
+    case "parse":
+      return 1;
+    case "outline":
+      return 2;
+    case "layout":
+      return 3;
+    case "slides":
+      return 4;
+    case "assets":
+      return 5;
+    case "verify":
+      return 6;
+    case "fix":
+      return 7;
+    case "complete":
+      return 8;
+    default:
+      return 0;
+  }
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function asErrorCode(value: unknown): GenerationErrorCode | null {
   if (
     value === "STAGE_TIMEOUT" ||
@@ -73,17 +102,38 @@ export default function GenerationEventCoordinator() {
       jobId,
       {
         onEvent: (evt) => {
+          const payload = evt.payload as Record<string, unknown>;
+          const engineId =
+            typeof payload.engine_id === "string" && payload.engine_id.trim()
+              ? payload.engine_id.trim()
+              : null;
+
           updateJobState({ lastJobEventSeq: evt.seq });
+          if (evt.type === "job_started") {
+            const primaryEngine =
+              typeof payload.engine === "string" && payload.engine.trim()
+                ? payload.engine.trim()
+                : engineId;
+            updateJobState({ primaryEngineId: primaryEngine ?? null });
+          }
+
           if (evt.stage) {
-            updateJobState({
-              jobId,
-              jobStatus: "running",
-              currentStage: evt.stage,
-            });
+            const primary = useAppStore.getState().primaryEngineId;
+            const prevStage = useAppStore.getState().currentStage;
+            const shouldUpdateStage =
+              !(primary && engineId && engineId !== primary) &&
+              stageRank(evt.stage) >= stageRank(prevStage);
+
+            if (shouldUpdateStage) {
+              updateJobState({
+                jobId,
+                jobStatus: "running",
+                currentStage: evt.stage,
+              });
+            }
           }
 
           if (evt.type === "outline_ready") {
-            const payload = evt.payload as Record<string, unknown>;
             const rawItems = Array.isArray(payload.items) ? payload.items : [];
             const items = rawItems
               .map((item) => {
@@ -118,13 +168,29 @@ export default function GenerationEventCoordinator() {
           }
 
           if (evt.type === "slide_ready") {
-            const payload = evt.payload as Record<string, unknown>;
             const index = Number(payload.slide_index ?? -1);
             const slide = payload.slide as Slide | undefined;
             const currentSlides =
               useAppStore.getState().presentation?.slides.length ?? 0;
             if (index >= 0 && index < currentSlides && slide) {
-              updateSlideAtIndex(index, slide);
+              const tier =
+                typeof payload.layer === "string" && payload.layer.trim()
+                  ? payload.layer.trim()
+                  : "content";
+              const tierRank = asNumber(payload.layer_rank, 20);
+              const nextSlide: Slide = {
+                ...slide,
+                contentData: {
+                  ...(slide.contentData ?? {}),
+                  _generation: {
+                    seq: evt.seq,
+                    engine_id: engineId ?? undefined,
+                    tier,
+                    tier_rank: tierRank,
+                  },
+                },
+              };
+              updateSlideAtIndex(index, nextSlide);
             } else if (index >= 0) {
               console.warn(
                 "[generation] slide_ready index out of range",

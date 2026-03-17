@@ -56,6 +56,7 @@ interface AppState {
   jobStatus: string | null;
   currentStage: string | null;
   lastJobEventSeq: number;
+  primaryEngineId: string | null;
   issues: Array<Record<string, unknown>>;
   failedSlideIndices: number[];
   hardIssueSlideIds: string[];
@@ -98,6 +99,7 @@ interface AppState {
     jobStatus?: string | null;
     currentStage?: string | null;
     lastJobEventSeq?: number;
+    primaryEngineId?: string | null;
     issues?: Array<Record<string, unknown>>;
     failedSlideIndices?: number[];
     hardIssueSlideIds?: string[];
@@ -159,6 +161,7 @@ export const useAppStore = create<AppState>()(
       jobStatus: null,
       currentStage: null,
       lastJobEventSeq: 0,
+      primaryEngineId: null,
       issues: [],
       failedSlideIndices: [],
       hardIssueSlideIds: [],
@@ -278,6 +281,7 @@ export const useAppStore = create<AppState>()(
           jobStatus: patch.jobStatus ?? state.jobStatus,
           currentStage: patch.currentStage ?? state.currentStage,
           lastJobEventSeq: patch.lastJobEventSeq ?? state.lastJobEventSeq,
+          primaryEngineId: patch.primaryEngineId ?? state.primaryEngineId,
           issues: patch.issues ?? state.issues,
           failedSlideIndices: patch.failedSlideIndices ?? state.failedSlideIndices,
           hardIssueSlideIds: patch.hardIssueSlideIds ?? state.hardIssueSlideIds,
@@ -293,6 +297,7 @@ export const useAppStore = create<AppState>()(
           jobStatus: null,
           currentStage: null,
           lastJobEventSeq: 0,
+          primaryEngineId: null,
           issues: [],
           failedSlideIndices: [],
           hardIssueSlideIds: [],
