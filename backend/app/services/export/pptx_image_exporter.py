@@ -31,7 +31,9 @@ async def export_pptx_as_images(presentation: Presentation) -> bytes:
     prs.slide_width = SLIDE_WIDTH
     prs.slide_height = SLIDE_HEIGHT
 
-    blank = prs.slide_layouts[6]  # blank
+    blank = next((layout for layout in prs.slide_layouts if layout.name == "Blank"), None)
+    if blank is None:
+        blank = prs.slide_layouts[6]  # fallback to default index for blank layout
     for ss in screenshots:
         slide = prs.slides.add_slide(blank)
         slide.shapes.add_picture(
@@ -45,4 +47,3 @@ async def export_pptx_as_images(presentation: Presentation) -> bytes:
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
-
