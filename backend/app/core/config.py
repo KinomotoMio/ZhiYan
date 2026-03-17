@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # NOTE: This is distinct from HTTP request retries and from tool call retries.
     generation_slide_output_retries: int = 2
 
+    # Concurrency (stability vs. throughput). Slides generation can issue many LLM calls in parallel;
+    # too much concurrency easily trips upstream RPM limits and leads to massive fallback.
+    # Keep conservative defaults for local validation; tune per environment via env vars.
+    generation_slides_concurrency: int = 2
+
     # Guardrails (Phase 4): SLO / cost thresholds + automatic circuit breaker fallback.
     generation_guardrails_enabled: bool = False
     generation_guard_window_size: int = 50

@@ -710,12 +710,29 @@ async def stage_generate_slides(
     if progress:
         await progress("slides", 4, TOTAL_STEPS, "生成幻灯片...")
 
+    from app.core.config import settings
     from app.services.agents.slide_generator import generate_slide_content
 
     outline_items = state.outline.get("items", [])
     layout_map = {sel["slide_number"]: sel["layout_id"] for sel in state.layout_selections}
 
-    semaphore = asyncio.Semaphore(5)
+    try:
+        raw_concurrency = getattr(settings, "generation_slides_concurrency", 2)
+        concurrency = int(raw_concurrency)
+    except (TypeError, ValueError):
+        concurrency = 2
+    concurrency = max(1, min(concurrency, 20))
+    logger.info(
+        "slides_concurrency",
+        extra={
+            "event": "slides_concurrency",
+            "job_id": state.job_id,
+            "stage": "slides",
+            "concurrency": concurrency,
+        },
+    )
+
+    semaphore = asyncio.Semaphore(concurrency)
     results: list[dict[str, Any]] = [{}] * len(outline_items)
     failed: list[int] = []
 
