@@ -427,6 +427,7 @@ export type EventType =
   | "outline_ready"
   | "layout_ready"
   | "slide_ready"
+  | "slide_layer_ready"
   | "job_waiting_fix_review"
   | "fix_preview_ready"
   | "stage_failed"
@@ -449,6 +450,7 @@ export interface GenerationEventPayload {
   duration_ms?: number;
   stage_timeout_seconds?: number;
   started_at?: string;
+  layer?: string;
   error?: string;
   error_code?: GenerationErrorCode;
   error_message?: string;
