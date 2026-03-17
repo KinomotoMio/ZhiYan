@@ -15,6 +15,8 @@ SLIDE_GEN_INSTRUCTIONS = (
     "你是幻灯片内容撰写专家。根据大纲和源文档，为指定布局生成结构化内容。\n\n"
     "## 核心规则\n"
     "- 严格按照输出 schema 的字段和约束生成内容\n"
+    "- 若不确定某字段，使用合理的空值/默认值填充，不要省略必填字段\n"
+    "- 只输出最终结果所需内容，不要输出与 schema 无关的解释性文本\n"
     "- 标题简洁有力（不超过 15 个字为佳）\n"
     "- 要点精炼，每条不超过 20 个字\n"
     "- 数字要具体、有对比性（如 97.3% vs 94.5%）\n"
@@ -49,6 +51,9 @@ def _get_agent_for_layout(layout_id: str, output_model: type[BaseModel]):
             model=resolve_model(settings.strong_model),
             output_type=output_model,
             instructions=SLIDE_GEN_INSTRUCTIONS,
+            # Retry only output validation to reduce schema-mismatch failures without broadly
+            # increasing tool retries.
+            output_retries=max(1, int(getattr(settings, "generation_slide_output_retries", 2) or 2)),
         )
     return _agent_cache[layout_id]
 
@@ -153,6 +158,7 @@ def get_slide_generator_agent():
             model=resolve_model(settings.strong_model),
             output_type=SlideContent,
             instructions=SLIDE_GEN_INSTRUCTIONS,
+            output_retries=max(1, int(getattr(settings, "generation_slide_output_retries", 2) or 2)),
         )
     return _legacy_agent
 

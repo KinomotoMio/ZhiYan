@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     # 0.0 ~ 1.0; deterministic per job_id sampling to keep retries stable.
     generation_shadow_sample_rate: float = 0.0
 
+    # Output validation retries (stability). PydanticAI uses `output_retries` to control how many
+    # times it will ask the model to reformat/fix structured output when schema validation fails.
+    # NOTE: This is distinct from HTTP request retries and from tool call retries.
+    generation_slide_output_retries: int = 2
+
     # Guardrails (Phase 4): SLO / cost thresholds + automatic circuit breaker fallback.
     generation_guardrails_enabled: bool = False
     generation_guard_window_size: int = 50
