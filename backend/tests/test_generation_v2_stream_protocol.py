@@ -27,7 +27,7 @@ def _install_runtime(monkeypatch, tmp_path: Path) -> tuple[GenerationJobStore, G
 
 
 def _patch_fast_pipeline(monkeypatch):
-    from app.services.generation import runner as runner_mod
+    from app.services.pipeline import graph as runner_mod
 
     async def fake_parse(state, progress=None):
         if progress:
@@ -168,6 +168,8 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     body = snapshot.json()
     assert body["status"] == "completed"
     assert len(body["slides"]) == 2
+    engine_route = body.get("document_metadata", {}).get("engine_route", {})
+    assert engine_route.get("primary_engine") == "internal_v2"
 
 
 def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):

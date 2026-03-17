@@ -145,7 +145,7 @@ def test_outline_provider_timeout_classification(monkeypatch, tmp_path):
         job = _build_job("job-provider-timeout")
         await store.create_job(job)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def fail_outline(state, progress=None):  # noqa: ARG001
             raise httpx.TimeoutException("provider timeout")
@@ -173,7 +173,7 @@ def test_outline_provider_network_classification(monkeypatch, tmp_path):
         job = _build_job("job-provider-network")
         await store.create_job(job)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def fail_outline(state, progress=None):  # noqa: ARG001
             raise httpx.ConnectError("dns failed")
@@ -201,7 +201,7 @@ def test_no_fallback_on_outline_timeout(monkeypatch, tmp_path):
         job = _build_job("job-outline-timeout")
         await store.create_job(job)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def slow_outline(state, progress=None):  # noqa: ARG001
             await asyncio.sleep(0.05)
@@ -239,7 +239,7 @@ def test_verify_timeout_persists_partial_presentation_and_emits_payload(monkeypa
         await session_store.ensure_workspace("ws-runtime")
         session = await session_store.create_session("ws-runtime", "生成会话")
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
         import app.services.sessions as sessions_pkg
 
         async def fake_parse(state, progress=None):  # noqa: ARG001
@@ -361,7 +361,7 @@ def test_verify_soft_timeout_completes_job_with_warning(monkeypatch, tmp_path):
         session = await session_store.create_session("ws-runtime", "生成会话")
 
         from app.services.agents import layout_verifier
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
         from app.services.pipeline import graph as graph_mod
         import app.services.sessions as sessions_pkg
 
@@ -401,8 +401,10 @@ def test_verify_soft_timeout_completes_job_with_warning(monkeypatch, tmp_path):
                 )
             ]
 
+        original_verify = graph_mod.stage_verify_slides
+
         async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
-            await graph_mod.stage_verify_slides(
+            await original_verify(
                 state,
                 progress=progress,
                 enable_vision=enable_vision,
@@ -572,7 +574,7 @@ def test_cancel_semantics_sets_terminal_status(tmp_path):
         bus = GenerationEventBus()
         runner = GenerationRunner(store, bus)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def slow_parse(state, progress=None):  # noqa: ARG001
             await asyncio.sleep(0.2)
@@ -658,7 +660,7 @@ def test_verify_hard_issues_enters_waiting_fix_review(monkeypatch, tmp_path):
         bus = GenerationEventBus()
         runner = GenerationRunner(store, bus)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def fake_parse(state, progress=None):  # noqa: ARG001
             state.document_metadata = {"char_count": len(state.raw_content)}
@@ -776,7 +778,7 @@ def test_preview_fix_generates_candidates_without_overwriting_slides(monkeypatch
         bus = GenerationEventBus()
         runner = GenerationRunner(store, bus)
 
-        from app.services.generation import runner as runner_mod
+        from app.services.pipeline import graph as runner_mod
 
         async def fake_fix(state, per_slide_timeout, progress=None, on_slide=None, target_slide_ids=None):  # noqa: ARG001
             for idx, slide in enumerate(state.slides):
