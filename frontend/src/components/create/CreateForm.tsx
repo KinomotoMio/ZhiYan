@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -72,13 +72,12 @@ export default function CreateForm() {
     return numPages >= 8 || selectedReadySources.length >= 2 || topicLen >= 280;
   }, [numPages, selectedReadySources.length, topic]);
 
-  const [reviewOutline, setReviewOutline] = useState(false);
-  const [reviewOutlineTouched, setReviewOutlineTouched] = useState(false);
-
-  useEffect(() => {
-    if (reviewOutlineTouched) return;
-    setReviewOutline(shouldSuggestOutlineReview);
-  }, [reviewOutlineTouched, shouldSuggestOutlineReview]);
+  // Tri-state override: null means "auto" (follow suggestion), boolean means explicit user choice.
+  const [reviewOutlineOverride, setReviewOutlineOverride] = useState<boolean | null>(
+    null
+  );
+  const reviewOutline = reviewOutlineOverride ?? shouldSuggestOutlineReview;
+  const reviewOutlineTouched = reviewOutlineOverride !== null;
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
@@ -179,8 +178,7 @@ export default function CreateForm() {
                   type="checkbox"
                   checked={reviewOutline}
                   onChange={(e) => {
-                    setReviewOutlineTouched(true);
-                    setReviewOutline(e.target.checked);
+                    setReviewOutlineOverride(e.target.checked);
                   }}
                   className="h-4 w-4 accent-cyan-600"
                 />
