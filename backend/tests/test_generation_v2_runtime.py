@@ -107,6 +107,7 @@ def test_stage_timeout_emits_stage_failed_event(tmp_path):
                 state,
                 stage=StageStatus.OUTLINE,
                 timeout=0.01,
+                engine_id="internal_v2",
                 stage_coro=slow_stage(),
             )
         except TimeoutError:

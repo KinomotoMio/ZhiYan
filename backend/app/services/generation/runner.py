@@ -60,6 +60,12 @@ class GenerationRunner:
         self._shadow_tasks: dict[str, asyncio.Task[None]] = {}
         self._shadow_tasks_lock = asyncio.Lock()
 
+    @staticmethod
+    def _get_primary_engine(job: GenerationJob) -> str:
+        """Extract primary engine ID from job metadata with a stable fallback."""
+        engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
+        return engine.strip().lower() or "internal_v2"
+
     async def start_job(self, job_id: str, from_stage: StageStatus | None = None) -> bool:
         async with self._tasks_lock:
             current = self._tasks.get(job_id)
@@ -119,7 +125,13 @@ class GenerationRunner:
         if job.status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
             job.status = JobStatus.CANCELLED
             job.current_stage = None
-            await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
+            primary_engine = self._get_primary_engine(job)
+            await self._emit_event(
+                job,
+                EventType.JOB_CANCELLED,
+                message="任务已取消",
+                payload={"engine_id": primary_engine},
+            )
             await self._store.save_job(job)
 
     async def _run_job(self, job_id: str, from_stage: StageStatus | None = None) -> None:
@@ -146,8 +158,7 @@ class GenerationRunner:
         if not isinstance(route, dict) or not str(route.get("primary_engine") or "").strip():
             decision = decide_engine_route(job)
             job.document_metadata.setdefault("engine_route", decision.to_metadata())
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         # --- Shadow mode (Phase 2): determine whether to run a secondary engine in background ---
         shadow_route = None
@@ -188,6 +199,7 @@ class GenerationRunner:
                     "mode": job.mode.value,
                     "num_pages": job.request.num_pages,
                     "engine": primary_engine,
+                    "engine_id": primary_engine,
                 },
             )
 
@@ -203,17 +215,40 @@ class GenerationRunner:
                 payload={
                     "step": step,
                     "total_steps": total_steps,
+                    "engine_id": primary_engine,
                 },
             )
 
         async def slide_hook(payload: dict) -> None:
-            idx = payload.get("slide_index", 0)
+            if not isinstance(payload, dict):
+                return
+            idx = int(payload.get("slide_index", 0) or 0)
+            next_payload = dict(payload)
+            next_payload.setdefault("engine_id", primary_engine)
+            next_payload.setdefault("layer", "content")
+            next_payload.setdefault("layer_rank", 20)
+
+            slide_id = None
+            slide_dict = next_payload.get("slide")
+            if isinstance(slide_dict, dict):
+                slide_id = slide_dict.get("slideId") or slide_dict.get("slide_id")
+            if isinstance(slide_id, str) and slide_id.strip():
+                next_payload.setdefault("slide_id", slide_id.strip())
+                accepted = self._should_accept_slide_update(
+                    job,
+                    slide_id=slide_id.strip(),
+                    tier_rank=int(next_payload.get("layer_rank") or 0),
+                    engine_id=primary_engine,
+                    primary_engine=primary_engine,
+                )
+                if not accepted:
+                    return
             await self._emit_event(
                 job,
                 EventType.SLIDE_READY,
                 stage=StageStatus.SLIDES,
                 message=f"第 {idx + 1} 页已生成",
-                payload=payload,
+                payload=next_payload,
             )
             layer_payload = dict(payload)
             layer_payload["layer"] = "content"
@@ -248,6 +283,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.PARSE,
                         timeout=float(settings.job_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.parse(state, progress=progress_hook),
                     )
                 elif stage == StageStatus.OUTLINE:
@@ -256,6 +292,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.OUTLINE,
                         timeout=float(settings.outline_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.outline(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
@@ -265,6 +302,7 @@ class GenerationRunner:
                         stage=StageStatus.OUTLINE,
                         message="大纲生成完成",
                         payload={
+                            "engine_id": primary_engine,
                             "topic": job.request.title,
                             "items": [
                                 {
@@ -299,6 +337,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.LAYOUT,
                         timeout=float(settings.layout_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.layout(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
@@ -307,7 +346,7 @@ class GenerationRunner:
                         EventType.LAYOUT_READY,
                         stage=StageStatus.LAYOUT,
                         message="布局选择完成",
-                        payload={"layouts": state.layout_selections},
+                        payload={"layouts": state.layout_selections, "engine_id": primary_engine},
                     )
                 elif stage == StageStatus.SLIDES:
                     await self._run_stage(
@@ -315,6 +354,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.SLIDES,
                         timeout=float(settings.job_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.slides(
                             state,
                             per_slide_timeout=float(settings.per_slide_timeout_seconds),
@@ -329,6 +369,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.ASSETS,
                         timeout=float(settings.job_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.assets(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
@@ -351,6 +392,7 @@ class GenerationRunner:
                         state,
                         stage=StageStatus.VERIFY,
                         timeout=float(settings.verify_timeout_seconds),
+                        engine_id=primary_engine,
                         stage_coro=engine.verify(
                             state,
                             progress=progress_hook,
@@ -406,6 +448,7 @@ class GenerationRunner:
                         "hard_issue_slide_ids": hard_slide_ids,
                         "advisory_issue_count": advisory_count,
                         "failed_slide_indices": job.failed_slide_indices,
+                        "engine_id": primary_engine,
                     },
                 )
                 await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
@@ -437,6 +480,7 @@ class GenerationRunner:
                     "presentation": job.presentation,
                     "issues": job.issues,
                     "failed_slide_indices": job.failed_slide_indices,
+                    "engine_id": primary_engine,
                 },
             )
             await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
@@ -452,7 +496,12 @@ class GenerationRunner:
                     job.job_id,
                     JobStatus.CANCELLED.value,
                 )
-            await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
+            await self._emit_event(
+                job,
+                EventType.JOB_CANCELLED,
+                message="任务已取消",
+                payload={"engine_id": primary_engine},
+            )
             await self._sync_primary_metrics_to_shadow_record(job, primary_engine=primary_engine)
             return
         except Exception as e:
@@ -495,6 +544,7 @@ class GenerationRunner:
             payload["partial_saved"] = partial_saved
             if partial_presentation is not None:
                 payload["presentation"] = partial_presentation
+            payload["engine_id"] = primary_engine
             await self._emit_event(
                 job,
                 EventType.JOB_FAILED,
@@ -526,8 +576,7 @@ class GenerationRunner:
             return
 
         engine_id = str(shadow_route_raw.get("shadow_engine") or "internal_v2").strip().lower() or "internal_v2"
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         await self._ensure_shadow_record(job, primary_engine=primary_engine)
 
@@ -832,6 +881,8 @@ class GenerationRunner:
         state: PipelineState,
         stage: StageStatus,
         timeout: float,
+        *,
+        engine_id: str,
         stage_coro,
     ) -> None:
         await self._ensure_not_cancelled(job)
@@ -849,6 +900,7 @@ class GenerationRunner:
             stage=stage,
             message=f"{stage.value} 阶段开始",
             payload={
+                "engine_id": engine_id,
                 "stage_timeout_seconds": timeout,
                 "started_at": start_ts,
             },
@@ -881,11 +933,14 @@ class GenerationRunner:
                 EventType.STAGE_FAILED,
                 stage=stage,
                 message=f"{stage.value} 阶段超时",
-                payload=self._build_error_payload(
+                payload={
+                    **self._build_error_payload(
                     classified=classified,
                     stage=stage,
                     timeout_seconds=timeout,
-                ),
+                    ),
+                    "engine_id": engine_id,
+                },
             )
             logger.warning(
                 "generation stage failed",
@@ -923,11 +978,14 @@ class GenerationRunner:
                 EventType.STAGE_FAILED,
                 stage=stage,
                 message=f"{stage.value} 阶段失败",
-                payload=self._build_error_payload(
+                payload={
+                    **self._build_error_payload(
                     classified=classified,
                     stage=stage,
                     timeout_seconds=timeout,
-                ),
+                    ),
+                    "engine_id": engine_id,
+                },
             )
             logger.warning(
                 "generation stage failed",
@@ -959,7 +1017,7 @@ class GenerationRunner:
             EventType.STAGE_PROGRESS,
             stage=stage,
             message=f"{stage.value} 阶段完成",
-            payload={"duration_ms": duration_ms},
+            payload={"duration_ms": duration_ms, "engine_id": engine_id},
         )
 
     def _classify_generation_error(
@@ -1074,6 +1132,68 @@ class GenerationRunner:
 
         msg = str(error).lower()
         return "rate limit" in msg or "status code: 429" in msg or "http 429" in msg
+
+    @staticmethod
+    def _engine_tiebreak_key(engine_id: str, primary_engine: str) -> tuple[int, str]:
+        eid = (engine_id or "").strip().lower()
+        primary = (primary_engine or "").strip().lower()
+        return (1 if eid and eid == primary else 0, eid)
+
+    def _should_accept_slide_update(
+        self,
+        job: GenerationJob,
+        *,
+        slide_id: str,
+        tier_rank: int,
+        engine_id: str,
+        primary_engine: str,
+    ) -> bool:
+        """Decide whether this slide update can be emitted to clients.
+
+        Phase 3 goal: when multi-engine results arrive out of order, the UI should only see
+        monotonic upgrades. We persist the current best tier per slide into job metadata so
+        replays are deterministic.
+        """
+        if not isinstance(job.document_metadata, dict):
+            job.document_metadata = {}
+        merge_state = job.document_metadata.setdefault("slide_upgrade_state", {})
+        if not isinstance(merge_state, dict):
+            merge_state = {}
+            job.document_metadata["slide_upgrade_state"] = merge_state
+
+        sid = (slide_id or "").strip()
+        if not sid:
+            return True
+
+        current = merge_state.get(sid)
+        if not isinstance(current, dict):
+            current = {}
+
+        try:
+            current_rank = int(current.get("tier_rank") or 0)
+        except Exception:
+            current_rank = 0
+        current_engine = str(current.get("engine_id") or "").strip().lower()
+
+        next_engine = (engine_id or "").strip().lower()
+        next_rank = int(tier_rank or 0)
+
+        if next_rank < current_rank:
+            return False
+
+        if next_rank == current_rank and current_engine and current_engine != next_engine:
+            cur_key = self._engine_tiebreak_key(current_engine, primary_engine)
+            next_key = self._engine_tiebreak_key(next_engine, primary_engine)
+            # Deterministic tiebreak even if arrival order differs.
+            if next_key < cur_key:
+                return False
+
+        merge_state[sid] = {
+            "tier_rank": next_rank,
+            "engine_id": next_engine,
+            "updated_at": now_iso(),
+        }
+        return True
 
     async def _sync_state_to_job(self, job: GenerationJob, state: PipelineState) -> None:
         # Preserve router metadata stored on the job while syncing stage-produced metadata.
