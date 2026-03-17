@@ -29,6 +29,7 @@ from app.models.generation import (
     StageStatus,
     now_iso,
 )
+from app.models.generation_shadow import ShadowABRecord
 from app.services.generation import event_bus, generation_runner, job_store
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
@@ -106,6 +107,27 @@ async def get_generation_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.get("/jobs/{job_id}/shadow", response_model=ShadowABRecord)
+async def get_generation_shadow_record(job_id: str):
+    job = await job_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    record = await job_store.get_shadow_record(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Shadow record not found")
+
+    try:
+        return ShadowABRecord.model_validate(record)
+    except Exception as e:
+        logger.warning(
+            "shadow record parse failed",
+            extra={"job_id": job_id, "error_type": type(e).__name__},
+        )
+        # Return a minimal wrapper so clients can still see that the record exists.
+        return ShadowABRecord(job_id=job_id, notes={"parse_error": str(e)})
 
 
 @router.post("/jobs/{job_id}/outline/accept", response_model=JobActionResponse)

@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
@@ -61,6 +62,7 @@ async def generate_slide_content(
     source_content: str,
     job_id: str | None = None,
     stage: str = "slides",
+    usage_hook: Callable[[dict], None] | None = None,
 ) -> dict:
     """Generate structured content for a single slide."""
     from app.models.layout_registry import get_output_model
@@ -83,6 +85,13 @@ async def generate_slide_content(
     t0 = time.monotonic()
     result = await agent.run(prompt)
     usage = result.usage()
+    usage_payload = {
+        key: int(value)
+        for key in ("requests", "input_tokens", "output_tokens", "total_tokens")
+        if (value := getattr(usage, key, None)) is not None
+    }
+    if usage_hook and usage_payload:
+        usage_hook(usage_payload)
     if usage.requests > 1:
         logger.warning(
             "Slide %d (layout=%s) required %d LLM requests (retries occurred)",
