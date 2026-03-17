@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.models.generation import (
@@ -121,7 +122,7 @@ async def get_generation_shadow_record(job_id: str):
 
     try:
         return ShadowABRecord.model_validate(record)
-    except Exception as e:
+    except ValidationError as e:
         logger.warning(
             "shadow record parse failed",
             extra={"job_id": job_id, "error_type": type(e).__name__},
