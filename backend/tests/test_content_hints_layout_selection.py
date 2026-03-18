@@ -103,3 +103,25 @@ def test_content_hints_image_promotes_visual_explainer_for_narrative():
     )
     assert variant == "media-feature"
 
+
+def test_content_signal_primary_guides_sub_group_when_requested_is_invalid():
+    item = {
+        "slide_number": 6,
+        "title": "能力概览",
+        "content_brief": "本页默认没有明显关键词。",
+        "key_points": ["能力A", "能力B", "能力C"],
+    }
+
+    sub_group = _resolve_layout_sub_group(
+        item,
+        role="narrative",
+        requested_sub_group="default",
+        content_signal_primary={
+            "predicted_type": "image",
+            "confidence": 0.81,
+            "suggested_sub_group": "visual-explainer",
+            "strategy": "semantic",
+            "signal_source": "semantic",
+        },
+    )
+    assert sub_group == "visual-explainer"

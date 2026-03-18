@@ -840,6 +840,11 @@ def test_stage_select_layouts_logs_layout_decision_trace(monkeypatch, caplog):
         assert record.final_layout_id == "bullet-with-icons"
         assert record.diversity_adjusted is False
         assert record.used_safety_default is False
+        assert isinstance(record.content_signal_primary, dict)
+        assert "predicted_type" in record.content_signal_primary
+        assert hasattr(record, "content_signal_shadow")
+        assert isinstance(record.confidence, float)
+        assert record.signal_source in {"rules", "semantic", "fallback"}
 
     asyncio.run(_case())
 

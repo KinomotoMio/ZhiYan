@@ -1,0 +1,344 @@
+[
+  {
+    "id": "chart-01",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "季度增长趋势",
+    "content_brief": "用折线图展示近四个季度核心指标走势。",
+    "key_points": ["Q1 12%", "Q2 18%", "Q3 24%"]
+  },
+  {
+    "id": "chart-02",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "Revenue trend analysis",
+    "content_brief": "Compare monthly trend and benchmark lines.",
+    "key_points": ["trend", "benchmark", "metric"]
+  },
+  {
+    "id": "chart-03",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "投放效果对比",
+    "content_brief": "柱状图对比不同渠道转化率。",
+    "key_points": ["渠道A 3.2%", "渠道B 2.6%"]
+  },
+  {
+    "id": "chart-04",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "核心指标解读",
+    "content_brief": "图表分析本期与上期变化。",
+    "key_points": ["同比", "环比", "analysis"]
+  },
+  {
+    "id": "chart-05",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "线索来源分布",
+    "content_brief": "展示 graph 分布和关键洞察。",
+    "key_points": ["distribution graph", "takeaway"]
+  },
+  {
+    "id": "chart-06",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "A/B 实验曲线",
+    "content_brief": "实验组与对照组曲线走势。",
+    "key_points": ["实验组", "对照组", "曲线"]
+  },
+  {
+    "id": "chart-07",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "经营复盘",
+    "content_brief": "请输出 chart 结论，不做表格。",
+    "key_points": ["chart", "trend", "metric"],
+    "content_hints": ["chart"]
+  },
+  {
+    "id": "chart-08",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "需求波动",
+    "content_brief": "按周观察走势。",
+    "key_points": ["week 1", "week 2", "week 3"],
+    "structure_signals": {
+      "chart_keyword_hits": ["trend"],
+      "table_count": 0,
+      "image_count": 0
+    }
+  },
+  {
+    "id": "chart-09",
+    "role": "evidence",
+    "expected_type": "chart",
+    "title": "指标洞察页",
+    "content_brief": "强调 metric 和 trend 的关系。",
+    "key_points": ["metric", "trend", "analysis"]
+  },
+
+  {
+    "id": "table-01",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "参数规格汇总",
+    "content_brief": "使用表格呈现型号参数。",
+    "key_points": ["型号", "CPU", "内存", "价格"]
+  },
+  {
+    "id": "table-02",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "Feature matrix",
+    "content_brief": "Tabular comparison across plans.",
+    "key_points": ["field", "spec", "matrix"]
+  },
+  {
+    "id": "table-03",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "采购清单",
+    "content_brief": "按行列整理数量与单价。",
+    "key_points": ["清单", "行列", "总价"]
+  },
+  {
+    "id": "table-04",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "API 参数定义",
+    "content_brief": "按 table 呈现字段说明。",
+    "key_points": ["字段", "类型", "必填", "备注"]
+  },
+  {
+    "id": "table-05",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "SKU 对照",
+    "content_brief": "矩阵方式展示规格差异。",
+    "key_points": ["矩阵", "规格", "参数"]
+  },
+  {
+    "id": "table-06",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "版本能力对照",
+    "content_brief": "不做图表，只要 matrix。",
+    "key_points": ["matrix", "plan", "feature"],
+    "content_hints": ["table"]
+  },
+  {
+    "id": "table-07",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "合同条款摘要",
+    "content_brief": "按表格列出条款编号和说明。",
+    "key_points": ["条款编号", "说明", "责任人"]
+  },
+  {
+    "id": "table-08",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "字段清单",
+    "content_brief": "规范化 tabular 输出。",
+    "key_points": ["field", "type", "default"]
+  },
+  {
+    "id": "table-09",
+    "role": "evidence",
+    "expected_type": "table",
+    "title": "投标参数表",
+    "content_brief": "请按参数规格表进行对齐。",
+    "key_points": ["参数", "规格", "清单"],
+    "structure_signals": {
+      "table_count": 1,
+      "table_keyword_hits": ["table", "matrix"]
+    }
+  },
+
+  {
+    "id": "timeline-01",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "项目路线图",
+    "content_brief": "按里程碑展示全年推进节奏。",
+    "key_points": ["Q1 立项", "Q2 开发", "Q3 上线", "Q4 优化"]
+  },
+  {
+    "id": "timeline-02",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "Rollout timeline",
+    "content_brief": "Milestone schedule by month.",
+    "key_points": ["Jan pilot", "Mar GA", "Jun expansion"]
+  },
+  {
+    "id": "timeline-03",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "交付排期",
+    "content_brief": "按日期展示关键节点。",
+    "key_points": ["2026-04-10 方案评审", "2026-05-20 联调"]
+  },
+  {
+    "id": "timeline-04",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "上市节奏",
+    "content_brief": "roadmap 包含多个阶段。",
+    "key_points": ["阶段一", "阶段二", "阶段三"]
+  },
+  {
+    "id": "timeline-05",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "推进路径",
+    "content_brief": "milestone 与依赖关系说明。",
+    "key_points": ["milestone A", "milestone B", "milestone C"]
+  },
+  {
+    "id": "timeline-06",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "阶段规划",
+    "content_brief": "timeline 页面，不需要图表。",
+    "key_points": ["阶段定义", "时间节点"],
+    "content_hints": ["timeline"]
+  },
+  {
+    "id": "timeline-07",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "实施计划",
+    "content_brief": "2026Q1 到 2026Q4 的节奏安排。",
+    "key_points": ["Q1", "Q2", "Q3", "Q4"]
+  },
+  {
+    "id": "timeline-08",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "上线路线",
+    "content_brief": "结合日期和季度说明推进步骤。",
+    "key_points": ["2026年4月", "2026年7月", "第4季度"],
+    "structure_signals": {
+      "timeline_date_hits": ["2026-04", "2026-07"],
+      "timeline_quarter_hits": ["Q4"]
+    }
+  },
+  {
+    "id": "timeline-09",
+    "role": "process",
+    "expected_type": "timeline",
+    "title": "交付节奏图",
+    "content_brief": "分周追踪实施进度。",
+    "key_points": ["week 1", "week 2", "week 3", "week 4"]
+  },
+
+  {
+    "id": "image-01",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "产品界面示例",
+    "content_brief": "用截图讲解关键交互。",
+    "key_points": ["界面截图", "交互流程", "价值说明"]
+  },
+  {
+    "id": "image-02",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "Case study showcase",
+    "content_brief": "Use photo and visual annotation.",
+    "key_points": ["photo", "visual", "showcase"]
+  },
+  {
+    "id": "image-03",
+    "role": "evidence",
+    "expected_type": "image",
+    "title": "现场照片证据",
+    "content_brief": "通过图片佐证部署效果。",
+    "key_points": ["照片", "场景", "对比"]
+  },
+  {
+    "id": "image-04",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "品牌视觉风格",
+    "content_brief": "展示视觉素材与氛围图。",
+    "key_points": ["视觉", "配图", "案例"]
+  },
+  {
+    "id": "image-05",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "UI walkthrough",
+    "content_brief": "Explain with screenshot blocks.",
+    "key_points": ["screenshot", "mockup", "visual"]
+  },
+  {
+    "id": "image-06",
+    "role": "evidence",
+    "expected_type": "image",
+    "title": "门店改造前后",
+    "content_brief": "以场景图片说明改造效果。",
+    "key_points": ["before/after image", "现场", "照片"]
+  },
+  {
+    "id": "image-07",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "案例页",
+    "content_brief": "本页以 image 为主，少量文字。",
+    "key_points": ["image", "caption"],
+    "content_hints": ["image"]
+  },
+  {
+    "id": "image-08",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "页面预览",
+    "content_brief": "展示产品截图集合。",
+    "key_points": ["页面1", "页面2"],
+    "source_hints": {"images": 3, "total_sources": 4}
+  },
+  {
+    "id": "image-09",
+    "role": "narrative",
+    "expected_type": "image",
+    "title": "视觉说明",
+    "content_brief": "visual narrative with photo proof.",
+    "key_points": ["photo", "visual", "showcase"]
+  },
+
+  {
+    "id": "unknown-01",
+    "role": "narrative",
+    "expected_type": "unknown",
+    "title": "总结与下一步",
+    "content_brief": "提炼核心结论并说明行动建议。",
+    "key_points": ["结论", "建议", "下一步"]
+  },
+  {
+    "id": "unknown-02",
+    "role": "highlight",
+    "expected_type": "unknown",
+    "title": "Key message",
+    "content_brief": "A short quote slide with one statement.",
+    "key_points": ["一句核心观点"]
+  },
+  {
+    "id": "unknown-03",
+    "role": "comparison",
+    "expected_type": "unknown",
+    "title": "方案对比结论",
+    "content_brief": "对比选项并给出推荐。",
+    "key_points": ["方案A", "方案B", "推荐理由"]
+  },
+  {
+    "id": "unknown-04",
+    "role": "narrative",
+    "expected_type": "unknown",
+    "title": "组织协同机制",
+    "content_brief": "描述职责分工和协作方式。",
+    "key_points": ["角色", "职责", "协同节奏"]
+  }
+]

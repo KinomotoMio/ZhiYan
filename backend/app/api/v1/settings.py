@@ -26,6 +26,9 @@ _ALLOWED_FIELDS = {
     "tts_model",
     "tts_voice",
     "enable_vision_verification",
+    "content_type_primary_strategy",
+    "content_type_shadow_enabled",
+    "content_type_confidence_threshold",
 }
 
 # Settings validation is a user-triggered connectivity check. We allow HTTPS
@@ -57,6 +60,9 @@ class SettingsResponse(BaseModel):
     tts_model: str = ""
     tts_voice: str = ""
     enable_vision_verification: bool = True
+    content_type_primary_strategy: str = "rules"
+    content_type_shadow_enabled: bool = True
+    content_type_confidence_threshold: float = 0.55
     has_openai_key: bool = False
     has_anthropic_key: bool = False
     has_google_key: bool = False
@@ -82,6 +88,9 @@ class SettingsUpdate(BaseModel):
     tts_model: str | None = None
     tts_voice: str | None = None
     enable_vision_verification: bool | None = None
+    content_type_primary_strategy: str | None = None
+    content_type_shadow_enabled: bool | None = None
+    content_type_confidence_threshold: float | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -120,6 +129,9 @@ async def get_settings():
         tts_model=settings.tts_model,
         tts_voice=settings.tts_voice,
         enable_vision_verification=settings.enable_vision_verification,
+        content_type_primary_strategy=settings.content_type_primary_strategy,
+        content_type_shadow_enabled=settings.content_type_shadow_enabled,
+        content_type_confidence_threshold=settings.content_type_confidence_threshold,
         has_openai_key=bool(settings.openai_api_key),
         has_anthropic_key=bool(settings.anthropic_api_key),
         has_google_key=bool(settings.google_api_key),
