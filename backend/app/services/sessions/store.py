@@ -661,6 +661,15 @@ class SessionStore:
             self._get_combined_source_content_sync, workspace_id, source_ids
         )
 
+    async def get_workspace_sources_by_ids(
+        self, workspace_id: str, source_ids: list[str]
+    ) -> list[dict]:
+        """Fetch source metas for a list of ids in one query (missing ids are ignored)."""
+
+        return await asyncio.to_thread(
+            self._get_workspace_sources_by_ids_sync, workspace_id, source_ids
+        )
+
     def _get_combined_source_content_sync(
         self, workspace_id: str, source_ids: list[str]
     ) -> str:
@@ -680,6 +689,28 @@ class SessionStore:
         row_map = {row["id"]: (row["parsed_content"] or "") for row in rows}
         parts = [row_map[sid] for sid in source_ids if row_map.get(sid)]
         return "\n\n---\n\n".join(parts)
+
+    def _get_workspace_sources_by_ids_sync(
+        self, workspace_id: str, source_ids: list[str]
+    ) -> list[dict]:
+        if not source_ids:
+            return []
+        placeholders = ",".join("?" for _ in source_ids)
+        params: list[object] = [workspace_id, *source_ids]
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT ws.*
+                FROM workspace_sources ws
+                WHERE ws.workspace_id=? AND ws.id IN ({placeholders})
+                """,
+                tuple(params),
+            ).fetchall()
+        metas = [self._row_to_source_meta(row) for row in rows]
+        meta_by_id = {meta["id"]: meta for meta in metas if isinstance(meta, dict) and meta.get("id")}
+        # Preserve caller-provided ordering for deterministic counts/prompt text.
+        ordered = [meta_by_id[sid] for sid in source_ids if sid in meta_by_id]
+        return ordered
 
     # ---- Workspace-level source methods ----
 

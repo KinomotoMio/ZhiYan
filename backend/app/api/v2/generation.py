@@ -37,6 +37,45 @@ router = APIRouter(prefix="/generation", tags=["generation-v2"])
 logger = logging.getLogger(__name__)
 
 
+def _build_source_hints(
+    *,
+    source_ids: list[str],
+    source_metas: list[dict],
+) -> dict:
+    """Compute a coarse material inventory from source metas.
+
+    Keep this logic stable and explainable: it should never raise and should be
+    safe to omit (backward compatible).
+    """
+
+    by_category: dict[str, int] = {}
+    for meta in source_metas or []:
+        raw = meta.get("fileCategory")
+        category = str(raw).strip().lower() if raw else "unknown"
+        by_category[category] = by_category.get(category, 0) + 1
+
+    def count(*cats: str) -> int:
+        return sum(by_category.get(cat, 0) for cat in cats)
+
+    images = count("image")
+    slides = count("pptx")
+    documents = count("pdf", "docx", "markdown")
+    data = count("text")
+    unknown = len(source_ids or []) - (images + slides + documents + data)
+    if unknown < 0:
+        unknown = by_category.get("unknown", 0)
+
+    return {
+        "total_sources": int(len(source_ids or [])),
+        "images": int(images),
+        "documents": int(documents),
+        "slides": int(slides),
+        "data": int(data),
+        "unknown": int(unknown),
+        "by_file_category": by_category,
+    }
+
+
 @router.post("/jobs", response_model=CreateJobResponse)
 async def create_generation_job(req: CreateJobRequest, request: Request):
     workspace_id = get_workspace_id_from_request(request)
@@ -57,12 +96,16 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         raise HTTPException(status_code=409, detail="当前会话已有演示稿，请新建会话生成")
 
     if req.source_ids:
+        source_metas = await session_store.get_workspace_sources_by_ids(workspace_id, req.source_ids)
+        source_hints = _build_source_hints(source_ids=req.source_ids, source_metas=source_metas)
         source_content = await session_store.get_combined_source_content(
             workspace_id,
             session_id,
             req.source_ids,
         )
         combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
+    else:
+        source_hints = {}
 
     if not combined and not req.topic:
         raise HTTPException(status_code=422, detail="请提供来源文档或主题描述")
@@ -79,6 +122,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
             content=req.content,
             session_id=session_id,
             source_ids=req.source_ids,
+            source_hints=source_hints,
             template_id=req.template_id,
             num_pages=max(3, min(req.num_pages, settings.max_slide_pages)),
             title=title,

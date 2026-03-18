@@ -417,6 +417,15 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
                 ]
             },
         )
+        state.document_metadata["source_hints"] = {
+            "total_sources": 2,
+            "images": 1,
+            "documents": 1,
+            "slides": 0,
+            "data": 0,
+            "unknown": 0,
+            "by_file_category": {"image": 1, "pdf": 1},
+        }
 
         await stage_select_layouts(state)
 
@@ -424,6 +433,7 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
         prompt = agent.prompts[0]
         assert "可用布局列表:" in prompt
         assert "文档级 Usage 推断: 学术汇报" in prompt
+        assert "素材提示(source_hints): 总计 2，图片 1，数据/文本 0，文档 1，PPT 0，未知 0" in prompt
         assert "页内 Usage:" in prompt
         assert "角色: evidence" in prompt
         assert "角色匹配布局: `metrics-slide`, `metrics-slide-band`, `metrics-with-image`, `chart-with-bullets`, `table-info`" in prompt
