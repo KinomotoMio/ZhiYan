@@ -315,12 +315,15 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
     heading_count = sum(1 for line in content.split("\n") if line.startswith("#"))
     structure_signals = extract_structure_signals(content)
 
-    state.document_metadata = {
-        "char_count": len(content),
-        "estimated_tokens": token_count,
-        "heading_count": heading_count,
-        "structure_signals": structure_signals,
-    }
+    # Preserve upstream metadata (e.g., computed source_hints) while refreshing parse stats.
+    state.document_metadata.update(
+        {
+            "char_count": len(content),
+            "estimated_tokens": token_count,
+            "heading_count": heading_count,
+            "structure_signals": structure_signals,
+        }
+    )
 
     logger.info(
         "ParseDocument: %d chars, ~%d tokens, %d headings",
@@ -338,6 +341,34 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
                 "timeline_quarters": structure_signals.get("timeline_quarter_hits", []),
             },
         },
+    )
+
+
+def _format_source_hints_for_prompt(source_hints: Any) -> str:
+    if not isinstance(source_hints, dict):
+        return ""
+    total = source_hints.get("total_sources")
+    try:
+        total_int = int(total)
+    except Exception:
+        total_int = 0
+    if total_int <= 0:
+        return ""
+
+    def get_int(key: str) -> int:
+        try:
+            return int(source_hints.get(key) or 0)
+        except Exception:
+            return 0
+
+    images = get_int("images")
+    data = get_int("data")
+    documents = get_int("documents")
+    slides = get_int("slides")
+    unknown = get_int("unknown")
+    return (
+        "素材提示(source_hints): "
+        f"总计 {total_int}，图片 {images}，数据/文本 {data}，文档 {documents}，PPT {slides}，未知 {unknown}"
     )
 
 
@@ -417,6 +448,11 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     else:
         content_section = f"内容（前 12000 字符）:\n{content[:12000]}"
 
+    source_hints_section = _format_source_hints_for_prompt(
+        state.document_metadata.get("source_hints")
+    )
+    source_hints_text = f"{source_hints_section}\n\n" if source_hints_section else ""
+
     structure_section = _format_structure_signals_for_prompt(
         state.document_metadata.get("structure_signals")
     )
@@ -425,6 +461,7 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     prompt = (
         f"演示文稿主题：{state.topic or '综合演示'}\n"
         f"目标页数：{state.num_pages} 页\n\n"
+        f"{source_hints_text}"
         f"{structure_section_text}"
         f"{content_section}\n\n"
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
@@ -536,9 +573,14 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         for item in outline_items
     )
     document_usage_text = format_usage_tags(document_usage_tags)
+    source_hints_section = _format_source_hints_for_prompt(
+        state.document_metadata.get("source_hints")
+    )
+    source_hints_line = f"{source_hints_section}\n" if source_hints_section else ""
     prompt = (
         f"可用布局列表:\n{get_layout_taxonomy_catalog()}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
+        f"{source_hints_line}"
         "选择规则:\n"
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
         "- 先确定 group，再确定 sub_group，再输出 variant_id\n"

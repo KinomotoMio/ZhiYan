@@ -125,6 +125,14 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert create_ok.json()["session_id"] == session_id
     created_job_id = create_ok.json()["job_id"]
 
+    # Ensure source_hints is computed from source_ids and stored in the job request.
+    job_detail = client.get(f"/api/v2/generation/jobs/{created_job_id}", headers=h1)
+    assert job_detail.status_code == 200
+    source_hints = job_detail.json()["request"]["source_hints"]
+    assert source_hints["total_sources"] == 1
+    assert source_hints["data"] == 1
+    assert source_hints["images"] == 0
+
     detail = client.get(f"/api/v1/sessions/{session_id}", headers=h1)
     assert detail.status_code == 200
     latest_generation_job = detail.json().get("latest_generation_job")

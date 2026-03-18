@@ -63,10 +63,33 @@ TERMINAL_EVENTS = {
 
 
 class GenerationRequestData(BaseModel):
+    """Job request payload stored alongside the generation job.
+
+    Note: this model must remain backward compatible because older jobs are loaded
+    from disk without newer fields.
+    """
+
+    class SourceHints(BaseModel):
+        """A light-weight material inventory derived from source_ids.
+
+        This is intentionally coarse (counts only) and is safe to omit.
+        Downstream stages can use it to bias outline/layout decisions when users
+        upload images or data files.
+        """
+
+        total_sources: int = 0
+        images: int = 0
+        documents: int = 0
+        slides: int = 0
+        data: int = 0
+        unknown: int = 0
+        by_file_category: dict[str, int] = Field(default_factory=dict)
+
     topic: str = ""
     content: str = ""
     session_id: str | None = None
     source_ids: list[str] = Field(default_factory=list)
+    source_hints: SourceHints = Field(default_factory=SourceHints)
     template_id: str | None = None
     num_pages: int = 5
     title: str = "新演示文稿"

@@ -967,6 +967,16 @@ class GenerationRunner:
             job_id=job.job_id,
         )
         state.document_metadata = dict(job.document_metadata)
+        # Keep source hints in metadata so downstream stages can consume them even
+        # if parse stage overwrites other parse-only fields.
+        try:
+            source_hints = getattr(job.request, "source_hints", None)
+            if source_hints:
+                dump = source_hints.model_dump(mode="json") if hasattr(source_hints, "model_dump") else source_hints
+                state.document_metadata.setdefault("source_hints", dump)
+        except Exception:
+            # Any issues with hints should never break the job.
+            pass
         state.outline = dict(job.outline)
         state.layout_selections = list(job.layouts)
         state.verification_issues = list(job.issues)
