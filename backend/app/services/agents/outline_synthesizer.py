@@ -24,6 +24,10 @@ class OutlineItem(BaseModel):
         default_factory=list,
         description="引用的文档段落标识（source_id 或 chunk 引用）",
     )
+    content_hints: list[str] = Field(
+        default_factory=list,
+        description="可选结构提示（如 chart/image/table/timeline），用于帮助布局选择阶段更准确匹配信息结构。",
+    )
     suggested_slide_role: str = Field(
         default="narrative",
         validation_alias=AliasChoices("suggested_slide_role", "suggested_layout_category"),
@@ -68,6 +72,9 @@ def get_outline_synthesizer_agent():
                 "## 页面角色规划\n"
                 "为每页设置 suggested_slide_role，帮助后续先确定页面角色，再选择具体布局：\n"
                 f"{format_role_contract_for_prompt()}\n\n"
+                "## 可选结构提示字段\n"
+                "- 你可以为每页补充可选字段 `content_hints`（可为空数组），用于提示该页的信息结构偏好。\n"
+                "- 可选值示例：`chart` / `image` / `table` / `timeline`。\n\n"
                 "## 结构规则\n"
                 "- 第 1 页必须是 `cover`\n"
                 "- 最后一页必须是 `closing`\n"

@@ -613,6 +613,12 @@ def _format_outline_item_for_layout_prompt(
     slide_number = int(item.get("slide_number", 0))
     key_points = item.get("key_points", [])
     preview_points = ", ".join(str(point) for point in key_points[:3])
+    content_hints = item.get("content_hints", [])
+    hints_text = ""
+    if isinstance(content_hints, list):
+        cleaned = [str(hint).strip() for hint in content_hints if str(hint).strip()]
+        if cleaned:
+            hints_text = f", 结构提示(content_hints): {', '.join(cleaned[:6])}"
     role = get_outline_item_role(item)
     current_usage = slide_usage_tags.get(slide_number, ())
     effective_usage = current_usage or document_usage_tags
@@ -668,7 +674,7 @@ def _format_outline_item_for_layout_prompt(
         f"- 第{slide_number}页: {item['title']} "
         f"(角色: {role}, "
         f"候选子组: {sub_group_text}, "
-        f"要点: {preview_points}, "
+        f"要点: {preview_points}{hints_text}, "
         f"页内 Usage: {usage_text}, "
         f"角色匹配布局: {role_matched_text}, "
         f"优先候选变体: {preferred_text})"
