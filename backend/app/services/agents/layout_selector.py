@@ -60,6 +60,7 @@ def get_layout_selector_agent():
                 "- `evidence` 候选为 `stat-summary` / `visual-evidence` / `chart-analysis` / `table-matrix`\n"
                 "- `comparison` 候选为 `side-by-side` / `response-mapping`\n"
                 "- `process` 候选为 `step-flow` / `timeline-milestone`\n"
+                "- 若某页条目包含 `content_hints`（结构提示），优先按其指示选择 sub_group/variant：chart->evidence/chart-analysis，table->evidence/table-matrix，timeline->process/timeline-milestone，image->narrative/visual-explainer 或 evidence/visual-evidence（取决于该页 group）\n"
                 "- 其余 group 保持 `sub_group=default`\n"
                 "- 优先选择 usage 匹配且结构匹配的 variant\n"
                 "- 若 usage 不匹配但结构明显更合适，可越过 usage\n"
