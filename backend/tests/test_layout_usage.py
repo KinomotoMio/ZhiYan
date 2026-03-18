@@ -322,6 +322,74 @@ def test_normalize_outline_items_roles_preserves_valid_section_dividers_for_long
     ]
 
 
+def test_normalize_outline_items_roles_enforces_agenda_points_match_section_dividers():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "目录",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "现状", "方案", "总结"],
+            },
+            {"slide_number": 3, "title": "引入", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "内容 F", "suggested_slide_role": "narrative"},
+            {"slide_number": 10, "title": "内容 G", "suggested_slide_role": "narrative"},
+            {"slide_number": 11, "title": "内容 H", "suggested_slide_role": "narrative"},
+            {"slide_number": 12, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=12,
+    )
+
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert len(agenda["key_points"]) == 4
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 4
+    divider_positions = [idx for idx, role in enumerate(roles) if role == "section-divider"]
+    assert all(idx > 1 for idx in divider_positions)
+    assert all(idx < len(items) - 1 for idx in divider_positions)
+    assert all((idx + 1) not in divider_positions for idx in divider_positions)
+
+
+def test_normalize_outline_items_roles_truncates_agenda_points_when_budget_is_tight():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "目录",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "现状", "方案", "总结"],
+            },
+            {"slide_number": 3, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 F", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "内容 G", "suggested_slide_role": "narrative"},
+            {"slide_number": 10, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=10,
+    )
+
+    # With 10 slides, the max chapters that can fit after agenda before closing
+    # is 3 (each chapter needs section-divider + at least 1 content slide).
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert len(agenda["key_points"]) == 3
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 3
+
+
 def test_normalize_outline_items_roles_infers_content_roles_when_missing():
     items = normalize_outline_items_roles(
         [
