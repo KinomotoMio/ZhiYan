@@ -63,7 +63,10 @@ def test_parse_stage_writes_structure_signals_and_outline_prompt_includes_summar
         from app.services.agents import outline_synthesizer as outline_mod
 
         agent = _FakeOutlineAgent()
+        # Be robust to module-level __getattr__ lazy agent creation (which may require API keys).
+        monkeypatch.setattr(outline_mod, "get_outline_synthesizer_agent", lambda: agent, raising=True)
         monkeypatch.setattr(outline_mod, "outline_synthesizer_agent", agent, raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "")
 
         state = PipelineState(
             raw_content="![alt](a.png)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n2024-03-01",
