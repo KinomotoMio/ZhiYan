@@ -160,6 +160,125 @@ _RESPONSE_MAPPING_KEYWORDS = (
     "outcome",
 )
 
+# content_hints are produced by the outline stage as optional "structure intent" tags.
+# Treat them as high-signal hints to reduce mis-matching (e.g., a chart page ending up as bullets).
+_CONTENT_HINT_CHART_TOKENS = (
+    "chart",
+    "graph",
+    "plot",
+    "trend",
+    "图表",
+    "曲线",
+    "柱状",
+    "折线",
+    "趋势",
+    "走势",
+)
+_CONTENT_HINT_TABLE_TOKENS = ("table", "tabular", "matrix", "表格", "矩阵", "行列")
+_CONTENT_HINT_TIMELINE_TOKENS = (
+    "timeline",
+    "roadmap",
+    "milestone",
+    "时间线",
+    "里程碑",
+    "排期",
+    "日期",
+)
+_CONTENT_HINT_IMAGE_TOKENS = (
+    "image",
+    "visual",
+    "photo",
+    "screenshot",
+    "图片",
+    "配图",
+    "照片",
+    "截图",
+    "界面",
+)
+
+
+def _normalize_content_hints(item: dict[str, Any]) -> list[str]:
+    """Return canonicalized content hints (order-preserving, de-duplicated).
+
+    Canonical hints: chart/table/timeline/image
+    """
+
+    raw = item.get("content_hints", [])
+    if not isinstance(raw, list):
+        return []
+
+    canonical: list[str] = []
+    for hint in raw:
+        if not isinstance(hint, str):
+            continue
+        text = hint.strip().lower()
+        if not text:
+            continue
+
+        tag = ""
+        if any(token in text for token in _CONTENT_HINT_TIMELINE_TOKENS):
+            tag = "timeline"
+        elif any(token in text for token in _CONTENT_HINT_TABLE_TOKENS):
+            tag = "table"
+        elif any(token in text for token in _CONTENT_HINT_CHART_TOKENS):
+            tag = "chart"
+        elif any(token in text for token in _CONTENT_HINT_IMAGE_TOKENS):
+            tag = "image"
+
+        if tag and tag not in canonical:
+            canonical.append(tag)
+
+    return canonical
+
+
+def _hinted_sub_group(item: dict[str, Any], role: str) -> str:
+    """Map content_hints to a concrete sub_group for a given role.
+
+    Note: group(role) is fixed by suggested_slide_role; hints only steer sub_group/variant.
+    """
+
+    hints = _normalize_content_hints(item)
+    if not hints:
+        return ""
+
+    for hint in hints:
+        if role == "evidence":
+            if hint == "chart":
+                return "chart-analysis"
+            if hint == "table":
+                return "table-matrix"
+            if hint == "image":
+                return "visual-evidence"
+        if role == "process" and hint == "timeline":
+            return "timeline-milestone"
+        if role == "narrative" and hint == "image":
+            return "visual-explainer"
+
+    return ""
+
+
+def _hinted_variant(item: dict[str, Any], role: str, sub_group: str) -> str:
+    """Map content_hints to a preferred variant on a resolved track."""
+
+    hints = _normalize_content_hints(item)
+    if not hints:
+        return ""
+
+    # Only map when the role+sub_group track is explicit; otherwise let existing heuristics decide.
+    if role == "evidence":
+        if sub_group == "chart-analysis":
+            return "chart-takeaways"
+        if sub_group == "table-matrix":
+            return "data-matrix"
+        if sub_group == "visual-evidence":
+            return "context-metrics"
+    if role == "process" and sub_group == "timeline-milestone":
+        return "timeline-band"
+    if role == "narrative" and sub_group == "visual-explainer":
+        return "media-feature"
+
+    return ""
+
 ProgressHook = Callable[[str, int, int, str], Awaitable[None]]
 SlideHook = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -186,7 +305,7 @@ class PipelineState:
 
 
 async def stage_parse_document(state: PipelineState, progress: ProgressHook | None = None) -> None:
-    from app.services.document.parser import estimate_tokens
+    from app.services.document.parser import estimate_tokens, extract_structure_signals
 
     if progress:
         await progress("parse", 1, TOTAL_STEPS, "解析文档...")
@@ -194,6 +313,7 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
     content = state.raw_content or ""
     token_count = estimate_tokens(content)
     heading_count = sum(1 for line in content.split("\n") if line.startswith("#"))
+    structure_signals = extract_structure_signals(content)
 
     # Preserve upstream metadata (e.g., computed source_hints) while refreshing parse stats.
     state.document_metadata.update(
@@ -201,6 +321,7 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
             "char_count": len(content),
             "estimated_tokens": token_count,
             "heading_count": heading_count,
+            "structure_signals": structure_signals,
         }
     )
 
@@ -209,7 +330,17 @@ async def stage_parse_document(state: PipelineState, progress: ProgressHook | No
         len(content),
         token_count,
         heading_count,
-        extra={"job_id": state.job_id, "stage": "parse"},
+        extra={
+            "job_id": state.job_id,
+            "stage": "parse",
+            "structure_signals": {
+                "image_count": structure_signals.get("image_count", 0),
+                "table_count": structure_signals.get("table_count", 0),
+                "chart_keywords": structure_signals.get("chart_keyword_hits", []),
+                "timeline_dates": structure_signals.get("timeline_date_hits", []),
+                "timeline_quarters": structure_signals.get("timeline_quarter_hits", []),
+            },
+        },
     )
 
 
@@ -241,6 +372,64 @@ def _format_source_hints_for_prompt(source_hints: Any) -> str:
     )
 
 
+def _format_structure_signals_for_prompt(structure_signals: Any) -> str:
+    if not isinstance(structure_signals, dict):
+        return ""
+
+    def to_int(value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    image_count = to_int(structure_signals.get("image_count"))
+    table_count = to_int(structure_signals.get("table_count"))
+    image_samples = structure_signals.get("image_src_samples") or []
+    table_samples = structure_signals.get("table_header_samples") or []
+    chart_keywords = structure_signals.get("chart_keyword_hits") or []
+    table_keywords = structure_signals.get("table_keyword_hits") or []
+    timeline_keywords = structure_signals.get("timeline_keyword_hits") or []
+    timeline_dates = structure_signals.get("timeline_date_hits") or []
+    timeline_quarters = structure_signals.get("timeline_quarter_hits") or []
+
+    has_any = any(
+        [
+            image_count > 0,
+            table_count > 0,
+            bool(chart_keywords),
+            bool(timeline_keywords),
+            bool(timeline_dates),
+            bool(timeline_quarters),
+        ]
+    )
+    if not has_any:
+        return ""
+
+    def fmt_samples(values: Any, limit: int = 3) -> str:
+        if not isinstance(values, list):
+            return ""
+        cleaned = [str(v).strip() for v in values if str(v).strip()]
+        return "、".join(cleaned[:limit])
+
+    lines: list[str] = [
+        "结构信号摘要（来自解析阶段，仅供你生成 content_hints 时参考）：",
+        f"- 图片: {image_count}" + (f"（示例: {fmt_samples(image_samples)}）" if image_count else ""),
+        f"- 表格: {table_count}" + (f"（示例表头: {fmt_samples(table_samples)}）" if table_count else ""),
+    ]
+    if chart_keywords:
+        lines.append(f"- 图表关键词: {fmt_samples(chart_keywords, limit=6)}")
+    if table_keywords and not table_count:
+        lines.append(f"- 表格关键词: {fmt_samples(table_keywords, limit=6)}")
+    if timeline_keywords:
+        lines.append(f"- 时间线关键词: {fmt_samples(timeline_keywords, limit=6)}")
+    if timeline_dates:
+        lines.append(f"- 日期命中: {fmt_samples(timeline_dates, limit=6)}")
+    if timeline_quarters:
+        lines.append(f"- 季度命中: {fmt_samples(timeline_quarters, limit=6)}")
+
+    return "\n".join(lines)
+
+
 async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
     from app.core.config import settings
     from app.services.document.parser import estimate_tokens
@@ -264,10 +453,16 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     )
     source_hints_text = f"{source_hints_section}\n\n" if source_hints_section else ""
 
+    structure_section = _format_structure_signals_for_prompt(
+        state.document_metadata.get("structure_signals")
+    )
+    structure_section_text = f"{structure_section}\n\n" if structure_section else ""
+
     prompt = (
         f"演示文稿主题：{state.topic or '综合演示'}\n"
         f"目标页数：{state.num_pages} 页\n\n"
         f"{source_hints_text}"
+        f"{structure_section_text}"
         f"{content_section}\n\n"
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
     )
@@ -390,6 +585,8 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "- 必须先满足每页的 suggested_slide_role 页面角色，并把它作为 group 输出\n"
         "- 先确定 group，再确定 sub_group，再输出 variant_id\n"
         "- 对存在正式结构层的 group，必须显式选择对应的 sub_group\n"
+        "- 若某页包含 `结构提示(content_hints)`，把它当作强信号来选 sub_group/variant（优先级高于关键词猜测）\n"
+        "- content_hints 映射: chart->evidence/chart-analysis, table->evidence/table-matrix, timeline->process/timeline-milestone, image->narrative/visual-explainer 或 evidence/visual-evidence（取决于该页 group）\n"
         "- narrative 候选为 icon-points / visual-explainer / capability-grid\n"
         "- evidence 候选为 stat-summary / visual-evidence / chart-analysis / table-matrix\n"
         "- comparison 候选为 side-by-side / response-mapping\n"
@@ -1332,6 +1529,10 @@ def _resolve_layout_sub_group(
     allowed_sub_groups = set(get_sub_groups_for_group(role))
     if not is_variant_pilot_role(role) or not allowed_sub_groups:
         return "default"
+
+    hinted = _hinted_sub_group(item, role)
+    if hinted and hinted in allowed_sub_groups:
+        return hinted
     if requested_sub_group in allowed_sub_groups:
         return requested_sub_group
 
@@ -1351,6 +1552,9 @@ def _resolve_layout_variant(
     allowed_variants = tuple(get_variant_ids_for_sub_group(role, sub_group))
     if not allowed_variants:
         return _group_sub_group_to_default_variant(role, sub_group)
+    hinted = _hinted_variant(item, role, sub_group)
+    if hinted and hinted in allowed_variants:
+        return hinted
     if requested_variant_id in allowed_variants:
         return requested_variant_id
     return _suggest_variant_for_outline_item(item, role, sub_group, usage_tags, allowed_variants)
