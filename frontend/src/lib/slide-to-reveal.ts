@@ -5,6 +5,11 @@
  */
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import { getImagePlaceholderCopy } from "@/lib/image-source";
+import {
+  getBulletIconsOnlyLayoutTokens,
+  getBulletWithIconsCardsLayoutTokens,
+  getBulletWithIconsLayoutTokens,
+} from "@/lib/icon-card-layout-tokens";
 import { normalizeLayoutData } from "@/lib/layout-data-normalizer";
 import { normalizeSlideSceneBackground } from "@/lib/scene-background";
 import {
@@ -20,10 +25,6 @@ import {
   canonicalizeFallbackText,
   getBulletFallbackStatus,
 } from "@/lib/fallback-semantics";
-import {
-  getBulletWithIconsColumns,
-  isBulletIconsOnlyCompact,
-} from "@/lib/layout-rules";
 import type { Component, Presentation, Slide, Style } from "@/types/slide";
 
 function escapeHtml(str: string): string {
@@ -210,6 +211,10 @@ function primaryMix(percent: number): string {
 
 function backgroundTextMix(percent: number): string {
   return `color-mix(in srgb, var(--background-text,#111827) ${percent}%, transparent)`;
+}
+
+function formatEmPadding(top: number, horizontal: number, bottom: number): string {
+  return `${top}em ${horizontal}em ${bottom}em`;
 }
 
 function renderIconSvg(query: string, size = 24): string {
@@ -509,7 +514,62 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
           </div>
         </div>`;
     }
-    case "bullet-with-icons":
+    case "bullet-with-icons": {
+      const raw = Array.isArray(d.items) ? d.items : [];
+      const fallbackStatus = getBulletFallbackStatus();
+      const status =
+        d.status && typeof d.status === "object"
+          ? {
+              title: asText((d.status as Record<string, unknown>).title, STATUS_TITLE),
+              message: asText((d.status as Record<string, unknown>).message, STATUS_MESSAGE),
+            }
+          : raw.length === 0
+            ? fallbackStatus
+            : null;
+      if (status && raw.length === 0) {
+        return renderBulletStatusPanel(asText(d.title), status);
+      }
+
+      const tokens = getBulletWithIconsLayoutTokens(raw.length);
+      return `
+        <div style="display:flex;flex-direction:column;height:100%;padding:${tokens.outerPaddingY}px ${tokens.outerPaddingX}px;">
+          <h2 style="font-size:${tokens.titleFontSize}px;font-weight:700;line-height:${tokens.titleLineHeight};color:var(--background-text,#111827);margin:0 0 ${tokens.titleMarginBottom}px;">${escapeHtml(asText(d.title))}</h2>
+          <div style="display:grid;grid-template-columns:repeat(${tokens.columns},minmax(0,1fr));column-gap:${tokens.gridColumnGap}px;flex:1;min-height:0;">
+            ${raw.map((item, index) => {
+              const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+              const icon = row.icon && typeof row.icon === "object" ? row.icon as Record<string, unknown> : {};
+              const query = asText(icon.query, itemText(item) || "star");
+              return `
+                <div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:${tokens.itemPaddingLeft}px;">
+                  <div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:${tokens.dividerHeight};background-color:${backgroundTextMix(12)};"></div>
+                  <div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:${tokens.itemPaddingY}px 0;">
+                    <div style="display:flex;align-items:center;justify-content:center;width:${tokens.iconShellSize}px;height:${tokens.iconShellSize}px;border-radius:9999px;background:${primaryMix(12)};color:var(--primary-color,#3b82f6);margin-bottom:16px;flex-shrink:0;">
+                      ${renderIconSvg(query, tokens.iconGlyphSize)}
+                    </div>
+                    <h3 style="font-size:${tokens.titleItemFontSize}px;font-weight:700;line-height:${tokens.titleItemLineHeight};letter-spacing:${tokens.titleLetterSpacing};color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
+                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-top:${tokens.titleSafetyPaddingTop}px;padding-bottom:${tokens.titleSafetyPaddingBottom}px;">
+                          <span style="background:${primaryMix(7)};border-radius:3px;padding:${formatEmPadding(tokens.titleHighlightPaddingTopEm, tokens.titleHighlightPaddingXEm, tokens.titleHighlightPaddingBottomEm)};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
+                          ${escapeHtml(itemText(item))}
+                        </span>
+                      </span>
+                    </h3>
+                    ${itemDescription(item)
+                      ? `<p style="font-size:${tokens.descriptionFontSize}px;line-height:${tokens.descriptionLineHeight};color:${backgroundTextMix(72)};margin:0;max-width:240px;">
+                          <span style="display:-webkit-box;-webkit-line-clamp:${tokens.descriptionLineClamp};-webkit-box-orient:vertical;overflow:hidden;">
+                            ${escapeHtml(itemDescription(item))}
+                          </span>
+                        </p>`
+                      : ""}
+                    <div style="padding-top:${tokens.indexPaddingTop}px;font-size:${tokens.indexFontSize}px;font-weight:400;line-height:${tokens.indexLineHeight};letter-spacing:-0.06em;color:var(--background-text,#111827);">
+                      ${String(index + 1).padStart(2, "0")}
+                    </div>
+                  </div>
+                </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+    }
+
     case "bullet-with-icons-cards": {
       const raw = Array.isArray(d.items) ? d.items : [];
       const fallbackStatus = getBulletFallbackStatus();
@@ -526,42 +586,36 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
         return renderBulletStatusPanel(asText(d.title), status);
       }
 
-      const columns = getBulletWithIconsColumns(raw.length);
-      const compact = columns === 4;
+      const tokens = getBulletWithIconsCardsLayoutTokens();
       return `
-        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
-          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 40px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));column-gap:${compact ? 18 : 26}px;flex:1;min-height:0;">
+        <div style="display:flex;flex-direction:column;height:100%;padding:${tokens.outerPaddingY}px ${tokens.outerPaddingX}px;background:linear-gradient(180deg,var(--slide-bg-start,#ffffff) 0%,var(--slide-bg-end,#f8fafc) 100%);color:var(--background-text,#111827);">
+          <h2 style="font-size:${tokens.titleFontSize}px;font-weight:800;line-height:${tokens.titleLineHeight};letter-spacing:${tokens.titleLetterSpacing};margin:0 0 ${tokens.titleMarginBottom}px;max-width:${tokens.titleMaxWidth}px;">
+            ${escapeHtml(asText(d.title))}
+          </h2>
+          <div style="display:grid;grid-template-columns:repeat(${tokens.gridColumns},minmax(0,1fr));gap:${tokens.gridGap}px;flex:1;">
             ${raw.map((item, index) => {
               const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
               const icon = row.icon && typeof row.icon === "object" ? row.icon as Record<string, unknown> : {};
               const query = asText(icon.query, itemText(item) || "star");
               return `
-                <div style="position:relative;display:flex;flex-direction:column;height:100%;min-height:0;padding-left:16px;">
-                  <div style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:${compact ? "46%" : "50%"};background-color:${backgroundTextMix(12)};"></div>
-                  <div style="display:flex;flex-direction:column;justify-content:center;flex:1;min-height:0;padding:8px 0;">
-                    <div style="display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:9999px;background:${primaryMix(12)};color:var(--primary-color,#3b82f6);margin-bottom:16px;flex-shrink:0;">
-                      ${renderIconSvg(query, 20)}
+                <article style="display:flex;flex-direction:column;min-height:0;border:1px solid #e2e8f0;border-radius:${tokens.cardRadius}px;background:#ffffff;padding:${tokens.cardPadding}px;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:${tokens.cardHeaderMarginBottom}px;">
+                    <div style="display:flex;align-items:center;justify-content:center;width:${tokens.iconShellSize}px;height:${tokens.iconShellSize}px;border-radius:16px;background:${primaryMix(12)};color:var(--primary-color,#3b82f6);">
+                      ${renderIconSvg(query, tokens.iconGlyphSize)}
                     </div>
-                    <h3 style="font-size:${compact ? 19 : 21}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--primary-color,#3b82f6);margin:0 0 8px;min-width:0;">
-                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
-                          <span style="background:${primaryMix(7)};border-radius:3px;padding:${compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em"};box-decoration-break:clone;-webkit-box-decoration-break:clone;">
-                          ${escapeHtml(itemText(item))}
-                        </span>
-                      </span>
-                    </h3>
-                    ${itemDescription(item)
-                      ? `<p style="font-size:${compact ? 11.5 : 12.5}px;line-height:1.42;color:${backgroundTextMix(72)};margin:0;max-width:240px;">
-                          <span style="display:-webkit-box;-webkit-line-clamp:${compact ? 4 : 5};-webkit-box-orient:vertical;overflow:hidden;">
-                            ${escapeHtml(itemDescription(item))}
-                          </span>
-                        </p>`
-                      : ""}
-                    <div style="padding-top:16px;font-size:${compact ? 52 : 60}px;font-weight:400;line-height:0.92;letter-spacing:-0.06em;color:var(--background-text,#111827);">
+                    <div style="font-size:12px;font-weight:600;line-height:1;text-transform:uppercase;letter-spacing:${tokens.indexLetterSpacing};color:#94a3b8;">
                       ${String(index + 1).padStart(2, "0")}
                     </div>
                   </div>
-                </div>`;
+                  <h3 style="font-size:${tokens.cardTitleFontSize}px;font-weight:700;line-height:${tokens.cardTitleLineHeight};margin:0;max-width:360px;">
+                    <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-top:${tokens.cardTitleSafetyPaddingTop}px;padding-bottom:${tokens.cardTitleSafetyPaddingBottom}px;">
+                      ${escapeHtml(itemText(item))}
+                    </span>
+                  </h3>
+                  <p style="margin:${tokens.descriptionMarginTop}px 0 0;font-size:${tokens.descriptionFontSize}px;line-height:${tokens.descriptionLineHeight};color:#475569;">
+                    ${escapeHtml(itemDescription(item))}
+                  </p>
+                </article>`;
             }).join("")}
           </div>
         </div>`;
@@ -798,25 +852,25 @@ function contentDataToHTML(layoutId: string, data: Record<string, unknown>): str
     }
     case "bullet-icons-only": {
       const items = Array.isArray(d.items) ? d.items : Array.isArray(d.features) ? d.features : [];
-      const compact = isBulletIconsOnlyCompact(items.length);
+      const tokens = getBulletIconsOnlyLayoutTokens(items.length);
       return `
-        <div style="display:flex;flex-direction:column;height:100%;padding:56px 64px;">
-          <h2 style="font-size:36px;font-weight:700;line-height:1.3;color:var(--background-text,#111827);margin:0 0 32px;">${escapeHtml(asText(d.title))}</h2>
-          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:${compact ? 28 : 40}px;row-gap:${compact ? 18 : 22}px;align-content:center;flex:1;min-height:0;">
+        <div style="display:flex;flex-direction:column;height:100%;padding:${tokens.outerPaddingY}px ${tokens.outerPaddingX}px;">
+          <h2 style="font-size:${tokens.titleFontSize}px;font-weight:700;line-height:${tokens.titleLineHeight};color:var(--background-text,#111827);margin:0 0 ${tokens.titleMarginBottom}px;">${escapeHtml(asText(d.title))}</h2>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:${tokens.gridColumnGap}px;row-gap:${tokens.gridRowGap}px;align-content:center;flex:1;min-height:0;">
             ${items.map((item, index) => {
               const record = item as Record<string, unknown>;
               const icon = record.icon && typeof record.icon === "object" ? (record.icon as Record<string, unknown>) : null;
               const query = asText(icon?.query, itemText(item) || "star");
               const label = asText(record.label) || itemText(item);
               return `
-                <div style="position:relative;display:flex;align-items:center;min-height:92px;overflow:hidden;border-radius:28px;background:color-mix(in srgb, var(--background-text,#111827) 3%, white);padding:20px 24px;">
-                  <div style="position:absolute;left:28px;top:50%;width:96px;height:48px;border-radius:16px;background:${primaryMix(16)};transform:translateY(-50%) skewX(-22deg);"></div>
-                  <div style="position:relative;z-index:1;width:72px;height:72px;border-radius:22px;border:1px solid ${primaryMix(14)};background:#fff;box-shadow:0 12px 32px rgba(15,23,42,0.08);display:flex;align-items:center;justify-content:center;color:var(--primary-color,#3b82f6);flex-shrink:0;">
-                    ${renderIconSvg(query, 40)}
+                <div style="position:relative;display:flex;align-items:center;min-height:${tokens.cardMinHeight}px;overflow:hidden;border-radius:28px;background:color-mix(in srgb, var(--background-text,#111827) 3%, white);padding:${tokens.cardPaddingY}px ${tokens.cardPaddingX}px;">
+                  <div style="position:absolute;left:${tokens.accentLeft}px;top:50%;width:${tokens.accentWidth}px;height:${tokens.accentHeight}px;border-radius:16px;background:${primaryMix(16)};transform:translateY(-50%) skewX(-22deg);"></div>
+                  <div style="position:relative;z-index:1;width:${tokens.iconAnchorSize}px;height:${tokens.iconAnchorSize}px;border-radius:${tokens.iconAnchorRadius}px;border:1px solid ${primaryMix(14)};background:#fff;box-shadow:0 12px 32px rgba(15,23,42,0.08);display:flex;align-items:center;justify-content:center;color:var(--primary-color,#3b82f6);flex-shrink:0;">
+                    ${renderIconSvg(query, tokens.iconGlyphSize)}
                   </div>
                   <div style="position:relative;z-index:1;min-width:0;margin-left:24px;">
                     <div style="font-size:12px;font-weight:700;letter-spacing:0.24em;line-height:1;color:${backgroundTextMix(42)};margin-bottom:8px;">${String(index + 1).padStart(2, "0")}</div>
-                    <div style="font-size:${compact ? 21 : 24}px;font-weight:700;line-height:1.08;letter-spacing:-0.04em;color:var(--background-text,#111827);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+                    <div style="font-size:${tokens.labelFontSize}px;font-weight:700;line-height:${tokens.labelLineHeight};letter-spacing:-0.04em;color:var(--background-text,#111827);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-top:${tokens.labelSafetyPaddingTop}px;padding-bottom:${tokens.labelSafetyPaddingBottom}px;">
                       ${escapeHtml(label)}
                     </div>
                   </div>
@@ -979,6 +1033,12 @@ export function presentationToRevealHTML(pres: Presentation): string {
       z-index: 1;
       width: 100%;
       height: 100%;
+    }
+    .reveal .slides section .slide-content,
+    .reveal .slides section .slide-content *,
+    .reveal .slides section .slide-content *::before,
+    .reveal .slides section .slide-content *::after {
+      box-sizing: border-box;
     }
     .reveal h1, .reveal h2, .reveal h3, .reveal p, .reveal blockquote {
       margin: 0;

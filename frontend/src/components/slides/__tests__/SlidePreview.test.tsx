@@ -176,20 +176,49 @@ test("bullet-with-icons uses editorial columns with bottom indices", () => {
   const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
   assert.match(html, /核心能力/);
   assert.match(html, /font-size:36px;font-weight:700;line-height:1\.3/);
-  assert.match(html, /mb-10 text-\[var\(--background-text,#111827\)\]/);
   assert.match(html, /自动化协同[\s\S]*减少重复动作并提升稳定性[\s\S]*01/);
   assert.match(html, /01/);
   assert.match(html, /02/);
   assert.match(html, /03/);
-  assert.match(html, /自动化协同/);
   assert.match(html, /absolute left-0 top-1\/2/);
   assert.match(html, /height:50%/);
-  assert.match(html, /mb-4 flex h-10 w-10 items-center justify-center rounded-full/);
-  assert.match(html, /h-5 w-5 text-\[var\(--primary-color,#3b82f6\)\]/);
-  assert.match(html, /background-color:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, white\)/);
+  assert.match(html, /mb-4 flex items-center justify-center rounded-full/);
+  assert.match(html, /width:40px;height:40px;background-color:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 12%, white\)/);
+  assert.match(html, /width:20px;height:20px/);
+  assert.match(html, /line-height:1\.14/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
+  assert.match(html, /padding:0\.07em 0\.24em 0\.16em/);
   assert.match(html, /box-decoration-break:clone/);
   assert.match(html, /font-weight:700/);
   assert.match(html, /text-\[var\(--primary-color,#3b82f6\)\]/);
+});
+
+test("bullet-with-icons-cards preview keeps a dedicated card layout contract", () => {
+  const slide: Slide = {
+    slideId: "slide-4-cards",
+    layoutType: "bullet-with-icons-cards",
+    layoutId: "bullet-with-icons-cards",
+    contentData: {
+      title: "Solution Modules",
+      items: [
+        { icon: { query: "shield" }, title: "Layered Defense", description: "Protect endpoints and identities." },
+        { icon: { query: "lock" }, title: "Identity Verification", description: "Require stronger sign-in checks." },
+        { icon: { query: "database" }, title: "Data Protection", description: "Reduce exposure across systems." },
+        { icon: { query: "triangle-alert" }, title: "Incident Response", description: "Recover quickly from attacks." },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
+  assert.match(html, /Solution Modules/);
+  assert.match(html, /grid-template-columns:repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(html, /gap:24px/);
+  assert.match(html, /border-radius:28px;padding:28px/);
+  assert.match(html, /width:48px;height:48px/);
+  assert.match(html, /width:24px;height:24px/);
+  assert.match(html, /line-height:1\.24/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
 });
 
 test("bullet-with-icons placeholder cards collapse into an explicit status panel", () => {
@@ -243,11 +272,44 @@ test("bullet-icons-only uses a denser two-column matrix with larger icon anchors
   assert.match(html, /grid-template-columns:repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(html, /column-gap:40px/);
   assert.match(html, /row-gap:22px/);
-  assert.match(html, /min-h-\[92px\]/);
-  assert.match(html, /h-\[72px\] w-\[72px\]/);
-  assert.match(html, /h-10 w-10 text-\[var\(--primary-color,#3b82f6\)\]/);
+  assert.match(html, /min-height:92px/);
+  assert.match(html, /width:72px;height:72px/);
+  assert.match(html, /width:40px;height:40px/);
+  assert.match(html, /line-height:1\.12/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
   assert.match(html, />01<\/div>/);
   assert.match(html, /智能助手编排/);
+});
+
+test("bullet-icons-only compact mode trims vertical rhythm for 8 items", () => {
+  const slide: Slide = {
+    slideId: "slide-5-compact",
+    layoutType: "bullet-icons-only",
+    layoutId: "bullet-icons-only",
+    contentData: {
+      title: "Security Framework",
+      items: [
+        { icon: { query: "shield" }, label: "Layered Defense" },
+        { icon: { query: "lock" }, label: "Identity Verification" },
+        { icon: { query: "database" }, label: "Data Protection" },
+        { icon: { query: "globe" }, label: "Network Security" },
+        { icon: { query: "star" }, label: "Endpoint Safety" },
+        { icon: { query: "triangle-alert" }, label: "Incident Response" },
+        { icon: { query: "graduation-cap" }, label: "Training Awareness" },
+        { icon: { query: "badge-check" }, label: "Compliance Management" },
+      ],
+    },
+    components: [],
+  };
+
+  const html = renderToStaticMarkup(<SlidePreview slide={slide} />);
+  assert.match(html, /Security Framework/);
+  assert.match(html, /margin-bottom:24px/);
+  assert.match(html, /column-gap:28px/);
+  assert.match(html, /row-gap:16px/);
+  assert.match(html, /min-height:84px/);
+  assert.match(html, /width:68px;height:68px/);
+  assert.match(html, /width:36px;height:36px/);
 });
 
 test("metrics-slide preview renders executive summary and keeps legacy slides readable", () => {
