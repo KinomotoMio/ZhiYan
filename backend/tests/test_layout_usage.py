@@ -358,6 +358,36 @@ def test_normalize_outline_items_roles_enforces_agenda_points_match_section_divi
     assert all((idx + 1) not in divider_positions for idx in divider_positions)
 
 
+def test_normalize_outline_items_roles_enforces_contract_for_non_directory_agenda_titles():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "项目总览",
+                "content_brief": "本页介绍接下来的章节安排。",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "挑战", "方案"],
+            },
+            {"slide_number": 3, "title": "引入", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=9,
+    )
+
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert agenda["key_points"] == ["背景", "挑战", "方案"]
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 3
+
+
 def test_normalize_outline_items_roles_truncates_agenda_points_when_budget_is_tight():
     items = normalize_outline_items_roles(
         [

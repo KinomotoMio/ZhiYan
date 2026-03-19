@@ -196,8 +196,12 @@ def normalize_outline_items_roles(
         legacy_role = next_item.get("suggested_layout_category")
         if isinstance(raw_role, str) and raw_role.strip():
             next_item["suggested_slide_role"] = get_outline_item_role(next_item)
+            if next_item["suggested_slide_role"] == "agenda":
+                next_item["_agenda_contract_candidate"] = True
         elif isinstance(legacy_role, str) and legacy_role.strip():
             next_item["suggested_slide_role"] = get_outline_item_role(next_item)
+            if next_item["suggested_slide_role"] == "agenda":
+                next_item["_agenda_contract_candidate"] = True
         else:
             next_item["suggested_slide_role"] = _infer_body_role_from_content(next_item)
         next_item.pop("suggested_layout_category", None)
@@ -222,6 +226,8 @@ def normalize_outline_items_roles(
         )
         if not agenda_found:
             normalized[1]["suggested_slide_role"] = "agenda"
+            if _looks_like_agenda_content(normalized[1]):
+                normalized[1]["_agenda_contract_candidate"] = True
 
     for idx in range(1, len(normalized) - 1):
         role = normalize_slide_role(str(normalized[idx].get("suggested_slide_role")))
@@ -263,6 +269,9 @@ def normalize_outline_items_roles(
                 normalized[idx]["suggested_slide_role"] = _fallback_body_role(normalized[idx])
 
     _enforce_agenda_chapter_contract(normalized)
+
+    for item in normalized:
+        item.pop("_agenda_contract_candidate", None)
 
     return normalized
 
@@ -320,6 +329,28 @@ def _looks_like_highlight(title: str, content_brief: str, key_points: list[str])
     return len(key_points) <= 2
 
 
+def _looks_like_agenda_content(item: dict[str, Any]) -> bool:
+    title = str(item.get("title") or "").strip().lower()
+    content_brief = str(item.get("content_brief") or "").strip().lower()
+    key_points = [
+        str(point).strip().lower()
+        for point in item.get("key_points", [])
+        if isinstance(point, str) and point.strip()
+    ]
+    combined = "\n".join([title, content_brief, "\n".join(key_points)])
+    agenda_keywords = (
+        "目录",
+        "agenda",
+        "outline",
+        "overview",
+        "概览",
+        "总览",
+        "章节",
+        "安排",
+    )
+    return any(keyword in combined for keyword in agenda_keywords)
+
+
 def _enforce_agenda_chapter_contract(items: list[dict[str, Any]]) -> None:
     """Enforce: agenda key_points count == section-divider count.
 
@@ -348,17 +379,7 @@ def _enforce_agenda_chapter_contract(items: list[dict[str, Any]]) -> None:
         return
 
     agenda = items[agenda_idx]
-    agenda_title = str(agenda.get("title") or "").strip().lower()
-    agenda_brief = str(agenda.get("content_brief") or "").strip().lower()
-    is_agenda_like = (
-        "目录" in agenda_title
-        or "agenda" in agenda_title
-        or "outline" in agenda_title
-        or "目录" in agenda_brief
-        or "agenda" in agenda_brief
-        or "outline" in agenda_brief
-    )
-    if not is_agenda_like:
+    if not agenda.get("_agenda_contract_candidate"):
         return
 
     raw_points = agenda.get("key_points") or []
