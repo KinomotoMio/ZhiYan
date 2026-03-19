@@ -67,7 +67,6 @@ def decide_engine_route(job: GenerationJob) -> EngineRouteDecision:
     )
     return decision
 
-
 async def decide_engine_route_with_guard(job: GenerationJob) -> EngineRouteDecision:
     """Primary engine decision with guardrails applied.
 
@@ -93,8 +92,6 @@ async def decide_engine_route_with_guard(job: GenerationJob) -> EngineRouteDecis
         reason=f"guard_open({desired}): {decision.reason}",
         decided_at=now_iso(),
     )
-
-
 @dataclass(frozen=True)
 class ShadowRouteDecision:
     enabled: bool
@@ -126,7 +123,7 @@ def decide_shadow_route(job: GenerationJob) -> ShadowRouteDecision:
     shadow_engine = (getattr(settings, "generation_shadow_engine", "") or "").strip().lower() or "internal_v2"
     try:
         sample_rate = float(getattr(settings, "generation_shadow_sample_rate", 0.0) or 0.0)
-    except Exception:
+    except (ValueError, TypeError):
         sample_rate = 0.0
     sample_rate = max(0.0, min(sample_rate, 1.0))
 

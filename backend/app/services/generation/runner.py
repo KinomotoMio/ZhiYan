@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
@@ -59,6 +60,12 @@ class GenerationRunner:
         # Shadow tasks are best-effort background evaluations; they must not block the primary job.
         self._shadow_tasks: dict[str, asyncio.Task[None]] = {}
         self._shadow_tasks_lock = asyncio.Lock()
+
+    @staticmethod
+    def _get_primary_engine(job: GenerationJob) -> str:
+        """Extract primary engine ID from job metadata with a stable fallback."""
+        engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
+        return engine.strip().lower() or "internal_v2"
 
     async def start_job(self, job_id: str, from_stage: StageStatus | None = None) -> bool:
         async with self._tasks_lock:
@@ -119,8 +126,7 @@ class GenerationRunner:
         if job.status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
             job.status = JobStatus.CANCELLED
             job.current_stage = None
-            primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-            primary_engine = primary_engine.strip().lower() or "internal_v2"
+            primary_engine = self._get_primary_engine(job)
             await self._emit_event(
                 job,
                 EventType.JOB_CANCELLED,
@@ -153,8 +159,7 @@ class GenerationRunner:
         if not isinstance(route, dict) or not str(route.get("primary_engine") or "").strip():
             decision = await decide_engine_route_with_guard(job)
             job.document_metadata.setdefault("engine_route", decision.to_metadata())
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         # --- Shadow mode (Phase 2): determine whether to run a secondary engine in background ---
         shadow_route = None
@@ -164,7 +169,6 @@ class GenerationRunner:
             shadow_decision = await decide_shadow_route_with_guard(job)
             job.document_metadata.setdefault("shadow_route", shadow_decision.to_metadata())
             shadow_route = job.document_metadata.get("shadow_route")
-
         # Phase 4 guardrails: always keep a stable baseline. If an engine is configured/routed
         # but not yet implemented in this codebase, fall back to internal_v2 and record it.
         requested_engine = primary_engine
@@ -263,6 +267,15 @@ class GenerationRunner:
                 stage=StageStatus.SLIDES,
                 message=f"第 {idx + 1} 页已生成",
                 payload=next_payload,
+            )
+            layer_payload = dict(payload)
+            layer_payload["layer"] = "content"
+            await self._emit_event(
+                job,
+                EventType.SLIDE_LAYER_READY,
+                stage=StageStatus.SLIDES,
+                message=f"第 {idx + 1} 页内容已就绪",
+                payload=layer_payload,
             )
 
         job_started_monotonic = time.monotonic()
@@ -379,6 +392,19 @@ class GenerationRunner:
                         stage_coro=engine.assets(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
+                    for idx, slide in enumerate(state.slides):
+                        payload = {
+                            "slide_index": idx,
+                            "slide": slide.model_dump(mode="json", by_alias=True),
+                            "layer": "assets",
+                        }
+                        await self._emit_event(
+                            job,
+                            EventType.SLIDE_LAYER_READY,
+                            stage=StageStatus.ASSETS,
+                            message=f"第 {idx + 1} 页资源已就绪",
+                            payload=payload,
+                        )
                 elif stage == StageStatus.VERIFY:
                     await self._run_stage(
                         job,
@@ -393,6 +419,27 @@ class GenerationRunner:
                         ),
                     )
                     await self._sync_state_to_job(job, state)
+                    issues_by_slide_id: dict[str, list[dict]] = {}
+                    for issue in state.verification_issues:
+                        sid = str(issue.get("slide_id") or "").strip()
+                        if not sid:
+                            continue
+                        issues_by_slide_id.setdefault(sid, []).append(issue)
+                    for idx, slide in enumerate(state.slides):
+                        slide_payload = slide.model_dump(mode="json", by_alias=True)
+                        payload = {
+                            "slide_index": idx,
+                            "slide": slide_payload,
+                            "layer": "verify",
+                            "issues": issues_by_slide_id.get(slide.slide_id, []),
+                        }
+                        await self._emit_event(
+                            job,
+                            EventType.SLIDE_LAYER_READY,
+                            stage=StageStatus.VERIFY,
+                            message=f"第 {idx + 1} 页验证已就绪",
+                            payload=payload,
+                        )
 
             hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
             if hard_slide_ids:
@@ -552,8 +599,7 @@ class GenerationRunner:
             return
 
         engine_id = str(shadow_route_raw.get("shadow_engine") or "internal_v2").strip().lower() or "internal_v2"
-        primary_engine = str(job.document_metadata.get("engine_route", {}).get("primary_engine") or "internal_v2")
-        primary_engine = primary_engine.strip().lower() or "internal_v2"
+        primary_engine = self._get_primary_engine(job)
 
         await self._ensure_shadow_record(job, primary_engine=primary_engine)
 
@@ -1331,7 +1377,7 @@ class GenerationRunner:
             return None
         try:
             return ShadowABRecord.model_validate(raw)
-        except Exception:
+        except ValidationError:
             return None
 
     @staticmethod
@@ -1364,7 +1410,7 @@ class GenerationRunner:
         record.primary_engine = primary_engine
         try:
             record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
-        except Exception:
+        except ValidationError:
             record.shadow_route = ShadowRoute()
         record.updated_at = now_iso()
         await self._store.save_shadow_record(job.job_id, record.model_dump(mode="json"))
@@ -1389,7 +1435,7 @@ class GenerationRunner:
         record.primary_engine = primary_engine
         try:
             record.shadow_route = ShadowRoute.model_validate(shadow_route_raw)
-        except Exception:
+        except ValidationError:
             record.shadow_route = ShadowRoute()
 
         events = await self._store.list_events(job.job_id)

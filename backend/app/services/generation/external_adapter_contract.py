@@ -39,7 +39,7 @@ class ExternalEngineError(Exception):
     message: str
     retriable: bool = False
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> dict[str, Any]:
         return {
             "error_code": self.code,
             "error_message": self.message,
@@ -59,4 +59,3 @@ class ExternalEngineAdapter(Protocol):
         *,
         timeout_seconds: float,
     ) -> ExternalEngineResult: ...
-
