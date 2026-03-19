@@ -445,13 +445,12 @@ def _enforce_agenda_chapter_contract(items: list[dict[str, Any]]) -> None:
 
         title = point
         lowered = point.lower()
-        if not (
-            lowered.startswith("part")
-            or lowered.startswith("chapter")
+        is_already_chapter_title = (
+            lowered.startswith(("part", "chapter"))
             or point.startswith("第")
-            or "章节" in point
-            or "部分" in point
-        ):
+            or any(token in point for token in ("章节", "部分"))
+        )
+        if not is_already_chapter_title:
             title = f"{part_label} {point}"
 
         items[idx]["suggested_slide_role"] = "section-divider"
