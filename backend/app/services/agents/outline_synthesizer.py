@@ -80,7 +80,7 @@ def get_outline_synthesizer_agent():
                 "- 最后一页必须是 `closing`\n"
                 "- 当总页数 >= 5 时，前 3 页内应包含 1 页 `agenda`，默认优先第 2 页\n"
                 "- `section-divider` 只能出现在 `agenda` 之后、`closing` 之前，且不能连续出现\n"
-                "- 当总页数 >= 7 时，可使用 1-2 页 `section-divider` 划分大章节\n\n"
+                "- 若生成了 `agenda` 目录页，`section-divider` 数量应与目录 key_points 数量一致，用于作为每章起始页\n\n"
                 "## 内容简述要求\n"
                 "content_brief 应具体说明这一页要展示什么内容（100-200字），\n"
                 "包括要用到的具体数据、案例或论点。这将作为后续内容生成的指导。\n\n"
