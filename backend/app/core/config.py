@@ -74,6 +74,22 @@ class Settings(BaseSettings):
     # 0.0 ~ 1.0; deterministic per job_id sampling to keep retries stable.
     generation_shadow_sample_rate: float = 0.0
 
+    # Guardrails (Phase 4): SLO / cost thresholds + automatic circuit breaker fallback.
+    generation_guardrails_enabled: bool = False
+    generation_guard_window_size: int = 50
+    # Minimum samples required before evaluating a breaker open condition.
+    generation_guard_min_samples: int = 10
+    # If failure rate exceeds threshold in window => open breaker.
+    generation_guard_fail_rate_threshold: float = 0.2
+    # P95 thresholds (ms / tokens). 0 disables the check.
+    generation_guard_p95_ttfs_ms_threshold: int = 0
+    generation_guard_p95_duration_ms_threshold: int = 0
+    generation_guard_p95_total_tokens_threshold: int = 0
+    # Fallback rate = (#fallback slides / requested pages). 0 disables the check.
+    generation_guard_fallback_rate_threshold: float = 0.0
+    # Breaker cooldown; after this duration, breaker auto closes (allow traffic again).
+    generation_guard_open_seconds: int = 600
+
     # TTS
     tts_model: str = "tts-1"
     tts_voice: str = "alloy"

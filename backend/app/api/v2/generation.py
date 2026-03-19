@@ -32,6 +32,7 @@ from app.models.generation import (
 )
 from app.models.generation_shadow import ShadowABRecord
 from app.services.generation import event_bus, generation_runner, job_store
+from app.services.generation.engine_guard import guard as engine_guard
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
 
@@ -129,6 +130,12 @@ async def get_generation_shadow_record(job_id: str):
         )
         # Return a minimal wrapper so clients can still see that the record exists.
         return ShadowABRecord(job_id=job_id, notes={"parse_error": str(e)})
+
+
+@router.get("/guard")
+async def get_generation_guard_state():
+    """Return current circuit breaker state for generation engines."""
+    return await engine_guard.dump_state()
 
 
 @router.post("/jobs/{job_id}/outline/accept", response_model=JobActionResponse)
