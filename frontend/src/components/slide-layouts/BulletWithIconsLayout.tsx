@@ -2,7 +2,7 @@
 
 import { AlertCircle } from "lucide-react";
 
-import { getBulletWithIconsColumns } from "@/lib/layout-rules";
+import { getBulletWithIconsLayoutTokens } from "@/lib/icon-card-layout-tokens";
 import type { BulletWithIconsData } from "@/types/layout-data";
 
 import { LayoutIcon } from "./_shared";
@@ -12,12 +12,22 @@ export const layoutName = "图标要点";
 export const layoutDescription = "带图标的 3-4 个要点，适合功能介绍、优势列举";
 
 export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsData }) {
+  const tokens = getBulletWithIconsLayoutTokens(data.items.length);
+
   if (data.status && data.items.length === 0) {
     return (
-      <div className="flex h-full flex-col px-16 py-14">
+      <div
+        className="flex h-full flex-col"
+        style={{ padding: `${tokens.outerPaddingY}px ${tokens.outerPaddingX}px` }}
+      >
         <h2
-          style={{ fontSize: 36, fontWeight: 700, lineHeight: 1.3 }}
-          className="mb-10 text-[var(--background-text,#111827)]"
+          style={{
+            fontSize: tokens.titleFontSize,
+            fontWeight: 700,
+            lineHeight: tokens.titleLineHeight,
+            marginBottom: tokens.titleMarginBottom,
+          }}
+          className="text-[var(--background-text,#111827)]"
         >
           {data.title}
         </h2>
@@ -44,43 +54,68 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
     );
   }
 
-  const columns = getBulletWithIconsColumns(data.items.length);
-  const compact = columns === 4;
-
   return (
-    <div className="flex h-full flex-col px-16 py-14">
+    <div
+      className="flex h-full flex-col"
+      style={{ padding: `${tokens.outerPaddingY}px ${tokens.outerPaddingX}px` }}
+    >
       <h2
-        style={{ fontSize: 36, fontWeight: 700, lineHeight: 1.3 }}
-        className="mb-10 text-[var(--background-text,#111827)]"
+        style={{
+          fontSize: tokens.titleFontSize,
+          fontWeight: 700,
+          lineHeight: tokens.titleLineHeight,
+          marginBottom: tokens.titleMarginBottom,
+        }}
+        className="text-[var(--background-text,#111827)]"
       >
         {data.title}
       </h2>
       <div
         className="grid flex-1 min-h-0"
         style={{
-          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-          columnGap: compact ? 18 : 26,
+          gridTemplateColumns: `repeat(${tokens.columns}, minmax(0, 1fr))`,
+          columnGap: tokens.gridColumnGap,
         }}
       >
         {data.items.map((item, i) => (
-          <div key={i} className="relative flex h-full min-h-0 flex-col pl-4">
+          <div
+            key={i}
+            className="relative flex h-full min-h-0 flex-col"
+            style={{ paddingLeft: tokens.itemPaddingLeft }}
+          >
             <div
               className="absolute left-0 top-1/2 -translate-y-1/2"
               style={{
                 width: 1,
-                height: compact ? "46%" : "50%",
+                height: tokens.dividerHeight,
                 backgroundColor: "color-mix(in srgb, var(--background-text,#111827) 12%, transparent)",
               }}
             />
-            <div className="flex min-h-0 flex-1 flex-col justify-center py-2">
+            <div
+              className="flex min-h-0 flex-1 flex-col justify-center"
+              style={{ paddingTop: tokens.itemPaddingY, paddingBottom: tokens.itemPaddingY }}
+            >
               <div
-                className="mb-4 flex h-10 w-10 items-center justify-center rounded-full"
-                style={{ backgroundColor: "color-mix(in srgb, var(--primary-color,#3b82f6) 12%, white)" }}
+                className="mb-4 flex items-center justify-center rounded-full"
+                style={{
+                  width: tokens.iconShellSize,
+                  height: tokens.iconShellSize,
+                  backgroundColor: "color-mix(in srgb, var(--primary-color,#3b82f6) 12%, white)",
+                }}
               >
-                <LayoutIcon query={item.icon.query} className="h-5 w-5 text-[var(--primary-color,#3b82f6)]" />
+                <LayoutIcon
+                  query={item.icon.query}
+                  className="text-[var(--primary-color,#3b82f6)]"
+                  style={{ width: tokens.iconGlyphSize, height: tokens.iconGlyphSize }}
+                />
               </div>
               <h3
-                style={{ fontSize: compact ? 19 : 21, fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.04em" }}
+                style={{
+                  fontSize: tokens.titleItemFontSize,
+                  fontWeight: 700,
+                  lineHeight: tokens.titleItemLineHeight,
+                  letterSpacing: tokens.titleLetterSpacing,
+                }}
                 className="mb-2 min-w-0 text-[var(--primary-color,#3b82f6)]"
               >
                 <span
@@ -89,13 +124,15 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
                     WebkitLineClamp: 2,
                     WebkitBoxOrient: "vertical",
                     overflow: "hidden",
+                    paddingTop: tokens.titleSafetyPaddingTop,
+                    paddingBottom: tokens.titleSafetyPaddingBottom,
                   }}
                 >
                   <span
                     style={{
                       backgroundColor: "color-mix(in srgb, var(--primary-color,#3b82f6) 7%, white)",
                       borderRadius: 3,
-                      padding: compact ? "0.04em 0.2em 0.1em" : "0.05em 0.22em 0.12em",
+                      padding: `${tokens.titleHighlightPaddingTopEm}em ${tokens.titleHighlightPaddingXEm}em ${tokens.titleHighlightPaddingBottomEm}em`,
                       WebkitBoxDecorationBreak: "clone",
                       boxDecorationBreak: "clone",
                     }}
@@ -107,8 +144,8 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
               {!!item.description && (
                 <p
                   style={{
-                    fontSize: compact ? 11.5 : 12.5,
-                    lineHeight: 1.42,
+                    fontSize: tokens.descriptionFontSize,
+                    lineHeight: tokens.descriptionLineHeight,
                     color: "color-mix(in srgb, var(--background-text,#111827) 72%, transparent)",
                   }}
                   className="max-w-[240px]"
@@ -116,7 +153,7 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
                   <span
                     style={{
                       display: "-webkit-box",
-                      WebkitLineClamp: compact ? 4 : 5,
+                      WebkitLineClamp: tokens.descriptionLineClamp,
                       WebkitBoxOrient: "vertical",
                       overflow: "hidden",
                     }}
@@ -127,8 +164,14 @@ export default function BulletWithIconsLayout({ data }: { data: BulletWithIconsD
               )}
 
               <div
-                style={{ fontSize: compact ? 52 : 60, fontWeight: 400, lineHeight: 0.92, letterSpacing: "-0.06em" }}
-                className="pt-4 text-[var(--background-text,#111827)]"
+                style={{
+                  paddingTop: tokens.indexPaddingTop,
+                  fontSize: tokens.indexFontSize,
+                  fontWeight: 400,
+                  lineHeight: tokens.indexLineHeight,
+                  letterSpacing: "-0.06em",
+                }}
+                className="text-[var(--background-text,#111827)]"
               >
                 {String(i + 1).padStart(2, "0")}
               </div>
