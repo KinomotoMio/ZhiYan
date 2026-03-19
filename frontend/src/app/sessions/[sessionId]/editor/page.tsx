@@ -114,6 +114,7 @@ export default function SessionEditorPage() {
         const shouldHydrateJob =
           Boolean(latestJob?.job_id) &&
           (resolvedJobStatus === "running" ||
+            resolvedJobStatus === "waiting_outline_review" ||
             resolvedJobStatus === "waiting_fix_review" ||
             resolvedJobStatus === "completed");
 
@@ -156,7 +157,10 @@ export default function SessionEditorPage() {
               } as Presentation;
             }
           } catch {
-            if (!presentation && resolvedJobStatus === "running") {
+            if (
+              !presentation &&
+              (resolvedJobStatus === "running" || resolvedJobStatus === "waiting_outline_review")
+            ) {
               presentation = {
                 presentationId: "pres-skeleton",
                 title: "生成中...",

@@ -3,8 +3,6 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {
-  acceptOutline,
-  runJob,
   subscribeJobEvents,
   type GenerationErrorCode,
   type GenerationEvent,
@@ -104,15 +102,13 @@ export default function GenerationEventCoordinator() {
             }
 
             if (payload.requires_accept === true) {
-              void (async () => {
-                try {
-                  await acceptOutline(jobId);
-                  await runJob(jobId);
-                  updateJobState({ jobStatus: "running" });
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "确认大纲失败");
-                }
-              })();
+              updateJobState({
+                jobId,
+                jobStatus: "waiting_outline_review",
+                currentStage: "outline",
+              });
+              setIsGenerating(false);
+              toast.info("大纲已生成，请确认后继续生成");
             }
             return;
           }
