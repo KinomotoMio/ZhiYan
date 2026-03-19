@@ -10,7 +10,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +22,7 @@ from app.services.fallback_semantics import (
     is_placeholder_text,
 )
 from app.services.image_semantics import normalize_image_content_data
+from app.services.pipeline.content_type_signals import infer_content_signals
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +536,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         get_layout,
         get_layout_taxonomy_catalog,
     )
+    from app.core.config import settings
     from app.services.pipeline.layout_roles import (
         get_outline_item_role,
         normalize_outline_items_roles,
@@ -560,6 +562,23 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         "document_tags": list(document_usage_tags),
         "slide_tags": {str(k): list(v) for k, v in slide_usage_tags.items()},
     }
+    source_hints = state.document_metadata.get("source_hints")
+    structure_signals = state.document_metadata.get("structure_signals")
+    content_signals_by_slide: dict[int, dict[str, Any]] = {}
+    for item in outline_items:
+        slide_number = int(item.get("slide_number") or 0)
+        if slide_number <= 0:
+            continue
+        role = get_outline_item_role(item)
+        content_signals_by_slide[slide_number] = infer_content_signals(
+            item,
+            role=role,
+            primary_strategy=settings.content_type_primary_strategy,
+            shadow_enabled=settings.content_type_shadow_enabled,
+            confidence_threshold=settings.content_type_confidence_threshold,
+            source_hints=source_hints if isinstance(source_hints, Mapping) else None,
+            structure_signals=structure_signals if isinstance(structure_signals, Mapping) else None,
+        )
 
     items_text = "\n".join(
         _format_outline_item_for_layout_prompt(
@@ -601,7 +620,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
 
     try:
-        from app.core.config import settings
         from app.services.agents.layout_selector import layout_selector_agent
 
         model = settings.fast_model or settings.default_model
@@ -628,12 +646,20 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             role = get_outline_item_role(item or {})
             slide_number = int(sel.get("slide_number") or 0)
             effective_usage = slide_usage_tags.get(slide_number, ()) or document_usage_tags
+            signal_bundle = content_signals_by_slide.get(slide_number, {})
+            primary_signal = signal_bundle.get("primary")
+            shadow_signal = signal_bundle.get("shadow")
+            if not isinstance(primary_signal, Mapping):
+                primary_signal = {}
+            if not isinstance(shadow_signal, Mapping):
+                shadow_signal = None
             requested_group = str(sel.get("group") or "")
             requested_sub_group = str(sel.get("sub_group") or "default")
             resolved_sub_group = _resolve_layout_sub_group(
                 item or {},
                 role=role,
                 requested_sub_group=requested_sub_group,
+                content_signal_primary=primary_signal,
             )
             requested_layout_id = str(sel.get("layout_id") or "")
             requested_layout = get_layout(requested_layout_id) if requested_layout_id else None
@@ -708,6 +734,10 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                     "resolved_variant_id": resolved_variant_id,
                     "pre_diversity_layout_id": final_layout_id,
                     "effective_usage_tags": list(effective_usage),
+                    "content_signal_primary": dict(primary_signal),
+                    "content_signal_shadow": dict(shadow_signal) if shadow_signal else None,
+                    "confidence": float(primary_signal.get("confidence") or 0.0),
+                    "signal_source": str(primary_signal.get("signal_source") or "fallback"),
                     "used_safety_default": used_safety_default,
                 }
 
@@ -734,10 +764,19 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         state.layout_selections = []
         for item in outline_items:
             role = get_outline_item_role(item)
+            slide_number = int(item.get("slide_number") or 0)
+            signal_bundle = content_signals_by_slide.get(slide_number, {})
+            primary_signal = signal_bundle.get("primary")
+            shadow_signal = signal_bundle.get("shadow")
+            if not isinstance(primary_signal, Mapping):
+                primary_signal = {}
+            if not isinstance(shadow_signal, Mapping):
+                shadow_signal = None
             resolved_sub_group = _resolve_layout_sub_group(
                 item,
                 role=role,
                 requested_sub_group="default",
+                content_signal_primary=primary_signal,
             )
             variant_id = _group_sub_group_to_default_variant(
                 role,
@@ -748,7 +787,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 resolved_sub_group,
                 variant_id,
             )
-            slide_number = int(item.get("slide_number") or 0)
             state.layout_selections.append(
                 {
                     "slide_number": item["slide_number"],
@@ -773,6 +811,10 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                     "effective_usage_tags": list(
                         slide_usage_tags.get(slide_number, ()) or document_usage_tags
                     ),
+                    "content_signal_primary": dict(primary_signal),
+                    "content_signal_shadow": dict(shadow_signal) if shadow_signal else None,
+                    "confidence": float(primary_signal.get("confidence") or 0.0),
+                    "signal_source": str(primary_signal.get("signal_source") or "fallback"),
                     "used_safety_default": False,
                 }
     state.layout_selections = _finalize_layout_selections(
@@ -1375,6 +1417,10 @@ def _log_layout_selection_diagnostics(
                 "diversity_adjusted": pre_diversity_layout_id != final_layout_id,
                 "effective_usage_tags": list(effective_usage),
                 "reason": str(selection.get("reason") or ""),
+                "content_signal_primary": trace.get("content_signal_primary") or {},
+                "content_signal_shadow": trace.get("content_signal_shadow"),
+                "confidence": float(trace.get("confidence") or 0.0),
+                "signal_source": str(trace.get("signal_source") or "fallback"),
                 "used_safety_default": bool(trace.get("used_safety_default") or False),
             },
         )
@@ -1562,6 +1608,7 @@ def _resolve_layout_sub_group(
     *,
     role: str,
     requested_sub_group: str,
+    content_signal_primary: Mapping[str, Any] | None = None,
 ) -> str:
     from app.services.pipeline.layout_roles import is_variant_pilot_role
     from app.services.pipeline.layout_taxonomy import get_sub_groups_for_group
@@ -1575,6 +1622,10 @@ def _resolve_layout_sub_group(
         return hinted
     if requested_sub_group in allowed_sub_groups:
         return requested_sub_group
+    if isinstance(content_signal_primary, Mapping):
+        signal_sub_group = str(content_signal_primary.get("suggested_sub_group") or "")
+        if signal_sub_group in allowed_sub_groups:
+            return signal_sub_group
 
     return _suggest_sub_group_for_outline_item(item, role)
 

@@ -16,6 +16,9 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
                 "vision_model": "openrouter:moonshotai/kimi-k2.5",
                 "openrouter_api_key": "sk-or-test",
                 "enable_vision_verification": False,
+                "content_type_primary_strategy": "semantic",
+                "content_type_shadow_enabled": False,
+                "content_type_confidence_threshold": 0.62,
             }
         ),
         encoding="utf-8",
@@ -32,10 +35,19 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
     assert config.settings.default_model == "openrouter:moonshotai/kimi-k2.5"
     assert executor.settings.default_model == "openrouter:moonshotai/kimi-k2.5"
     assert config.settings.enable_vision_verification is False
+    assert config.settings.content_type_primary_strategy == "semantic"
+    assert config.settings.content_type_shadow_enabled is False
+    assert config.settings.content_type_confidence_threshold == 0.62
 
 
 def test_build_model_status_for_known_and_unknown_providers():
-    test_settings = config.Settings()
+    test_settings = config.Settings(
+        openai_api_key="",
+        anthropic_api_key="",
+        google_api_key="",
+        deepseek_api_key="",
+        openrouter_api_key="",
+    )
 
     missing_key_status = build_model_status("openai:gpt-4o-mini", test_settings)
     assert missing_key_status.provider == "openai"

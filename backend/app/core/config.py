@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     verify_timeout_seconds: int = 90
     max_fix_passes: int = 1
     enable_vision_verification: bool = True
+    content_type_primary_strategy: str = "rules"
+    content_type_shadow_enabled: bool = True
+    content_type_confidence_threshold: float = 0.55
     sse_heartbeat_seconds: float = 10.0
 
     # 日志
