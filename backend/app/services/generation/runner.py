@@ -305,9 +305,30 @@ class GenerationRunner:
                 )
                 return
 
+            elapsed_ms = int((time.monotonic() - job_started_monotonic) * 1000)
+            stage_durations_ms = {
+                sr.stage.value: sr.duration_ms for sr in job.stage_results if sr.duration_ms is not None
+            }
+            slowest_stage = None
+            slowest_stage_ms = None
+            for stage_name, duration in stage_durations_ms.items():
+                if slowest_stage_ms is None or duration > slowest_stage_ms:
+                    slowest_stage = stage_name
+                    slowest_stage_ms = duration
+
             job.presentation = self._build_presentation_payload(job, state.slides)
             job.status = JobStatus.COMPLETED
             job.current_stage = StageStatus.COMPLETE
+            # Keep this data on the job for easy offline inspection / support diagnostics.
+            job.document_metadata.setdefault("timings", {})
+            job.document_metadata["timings"].update(
+                {
+                    "job_elapsed_ms": elapsed_ms,
+                    "stage_durations_ms": stage_durations_ms,
+                    "slowest_stage": slowest_stage,
+                    "slowest_stage_ms": slowest_stage_ms,
+                }
+            )
             job.updated_at = now_iso()
             await self._store.save_job(job)
             if job.request.session_id:
@@ -331,6 +352,10 @@ class GenerationRunner:
                     "presentation": job.presentation,
                     "issues": job.issues,
                     "failed_slide_indices": job.failed_slide_indices,
+                    "elapsed_ms": elapsed_ms,
+                    "stage_durations_ms": stage_durations_ms,
+                    "slowest_stage": slowest_stage,
+                    "slowest_stage_ms": slowest_stage_ms,
                 },
             )
 
@@ -604,6 +629,8 @@ class GenerationRunner:
         job.updated_at = now_iso()
         await self._store.save_job(job)
 
+        provider_model = self._model_for_stage(stage)
+        provider = self._provider_for_stage(stage)
         await self._emit_event(
             job,
             EventType.STAGE_STARTED,
@@ -612,6 +639,19 @@ class GenerationRunner:
             payload={
                 "stage_timeout_seconds": timeout,
                 "started_at": start_ts,
+                "provider_model": provider_model,
+                "provider": provider,
+            },
+        )
+        logger.info(
+            "generation_stage_start",
+            extra={
+                "event": "generation_stage_start",
+                "job_id": job.job_id,
+                "stage": stage.value,
+                "timeout_seconds": timeout,
+                "provider_model": provider_model,
+                "provider": provider,
             },
         )
 
@@ -663,12 +703,13 @@ class GenerationRunner:
         except Exception as e:
             classified = self._classify_generation_error(e, stage=stage, timeout_seconds=timeout)
             duration_ms = int((time.monotonic() - t0) * 1000)
+            ended_at = now_iso()
             job.stage_results.append(
                 StageResult(
                     stage=stage,
                     status="failed",
                     started_at=start_ts,
-                    ended_at=now_iso(),
+                    ended_at=ended_at,
                     duration_ms=duration_ms,
                     error=classified.error_message,
                     error_code=classified.error_code,
@@ -704,13 +745,17 @@ class GenerationRunner:
             raise
 
         duration_ms = int((time.monotonic() - t0) * 1000)
+        ended_at = now_iso()
         job.stage_results.append(
             StageResult(
                 stage=stage,
                 status="completed",
                 started_at=start_ts,
-                ended_at=now_iso(),
+                ended_at=ended_at,
                 duration_ms=duration_ms,
+                timeout_seconds=timeout,
+                provider_model=provider_model,
+                provider=provider,
             )
         )
         await self._store.save_job(job)
@@ -720,7 +765,27 @@ class GenerationRunner:
             EventType.STAGE_PROGRESS,
             stage=stage,
             message=f"{stage.value} 阶段完成",
-            payload={"duration_ms": duration_ms},
+            payload={
+                "duration_ms": duration_ms,
+                "started_at": start_ts,
+                "ended_at": ended_at,
+                "provider_model": provider_model,
+                "provider": provider,
+            },
+        )
+        logger.info(
+            "generation_stage_done",
+            extra={
+                "event": "generation_stage_done",
+                "job_id": job.job_id,
+                "stage": stage.value,
+                "duration_ms": duration_ms,
+                "started_at": start_ts,
+                "ended_at": ended_at,
+                "timeout_seconds": timeout,
+                "provider_model": provider_model,
+                "provider": provider,
+            },
         )
 
     def _classify_generation_error(
