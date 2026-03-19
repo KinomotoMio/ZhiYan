@@ -4,6 +4,13 @@ import test from "node:test";
 import { buildShellSlides, mergeGeneratedSlide, mergeOutlineTitles } from "./presentation-shell";
 import type { Slide } from "@/types/slide";
 
+type SlideGenerationMeta = {
+  title?: string;
+  _generation?: {
+    tier_rank?: number;
+  };
+};
+
 function withMeta(
   slide: Slide,
   meta: { tier_rank: number; seq: number; tier?: string; engine_id?: string },
@@ -25,7 +32,7 @@ function withMeta(
 test("mergeOutlineTitles upgrades shell tier to outline tier", () => {
   const slides = buildShellSlides(2, "T");
   const merged = mergeOutlineTitles(slides, [{ slide_number: 1, title: "S1" }]);
-  const meta = (merged[0]?.contentData as any)?._generation;
+  const meta = (merged[0]?.contentData as SlideGenerationMeta | undefined)?._generation;
   assert.equal(meta.tier_rank, 5);
 });
 
@@ -40,7 +47,7 @@ test("mergeGeneratedSlide rejects lower tier_rank even with higher seq", () => {
     { tier_rank: 5, seq: 11 },
   );
   const next = mergeGeneratedSlide([prev], 0, incoming)[0];
-  assert.equal((next.contentData as any).title, "A");
+  assert.equal((next.contentData as SlideGenerationMeta).title, "A");
 });
 
 test("mergeGeneratedSlide is idempotent for same tier_rank when seq is not increasing", () => {
@@ -54,7 +61,7 @@ test("mergeGeneratedSlide is idempotent for same tier_rank when seq is not incre
     { tier_rank: 20, seq: 10 },
   );
   const next = mergeGeneratedSlide([prev], 0, incoming)[0];
-  assert.equal((next.contentData as any).title, "A");
+  assert.equal((next.contentData as SlideGenerationMeta).title, "A");
 });
 
 test("mergeGeneratedSlide accepts same tier_rank when seq increases", () => {
@@ -68,7 +75,7 @@ test("mergeGeneratedSlide accepts same tier_rank when seq increases", () => {
     { tier_rank: 20, seq: 11 },
   );
   const next = mergeGeneratedSlide([prev], 0, incoming)[0];
-  assert.equal((next.contentData as any).title, "B");
+  assert.equal((next.contentData as SlideGenerationMeta).title, "B");
 });
 
 test("mergeGeneratedSlide never lets a loading slide override a materialized slide", () => {
@@ -84,6 +91,5 @@ test("mergeGeneratedSlide never lets a loading slide override a materialized sli
     contentData: { title: "Loading", _loading: true, _generation: { tier: "shell", tier_rank: 0, seq: 99 } },
   };
   const next = mergeGeneratedSlide([prev], 0, incoming)[0];
-  assert.equal((next.contentData as any).title, "A");
+  assert.equal((next.contentData as SlideGenerationMeta).title, "A");
 });
-
