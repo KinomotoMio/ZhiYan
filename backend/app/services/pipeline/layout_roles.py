@@ -432,12 +432,10 @@ def _enforce_agenda_chapter_contract(items: list[dict[str, Any]]) -> None:
         rel = (chapter_idx * between) // target
         idx = agenda_idx + 1 + rel
         # Leave at least one slide after header (before closing).
-        if idx >= closing_idx - 1:
-            idx = closing_idx - 2
+        idx = min(idx, closing_idx - 2)
         if header_indices and idx <= header_indices[-1] + 1:
             idx = header_indices[-1] + 2
-        if idx >= closing_idx - 1:
-            idx = closing_idx - 2
+        idx = min(idx, closing_idx - 2)
         header_indices.append(idx)
 
     # Apply chapter headers in agenda order.
