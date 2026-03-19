@@ -6,9 +6,9 @@ import type { BulletWithIconsData } from "@/types/layout-data";
 import { LayoutIcon } from "./_shared";
 
 export const layoutId = "bullet-with-icons-cards";
-export const layoutName = "鍥炬爣瑕佺偣锛堝崱鐗囷級";
+export const layoutName = "图标要点（卡片）";
 export const layoutDescription =
-  "甯﹀浘鏍囩殑 3-4 涓兘鍔涘崱鐗囷紝閫傚悎灞曠ず妯″潡鍖栧姛鑳姐€佸崠鐐瑰拰瑙ｅ喅鏂规銆?";
+  "带图标的 3-4 个能力卡片，适合展示模块化功能、卖点和解决方案。";
 
 export default function BulletWithIconsCardsLayout({ data }: { data: BulletWithIconsData }) {
   const tokens = getBulletWithIconsCardsLayoutTokens();
