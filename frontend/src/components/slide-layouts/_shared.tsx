@@ -1,13 +1,22 @@
 "use client";
 
 import Image from "next/image";
+import type { CSSProperties } from "react";
 import { createElement } from "react";
 import { Eye } from "lucide-react";
 import { getImagePlaceholderCopy } from "@/lib/image-source";
 import { getLayoutIconNode } from "@/lib/layout-icons";
 import type { ImageRef } from "@/types/layout-data";
 
-export function LayoutIcon({ query, className }: { query: string; className?: string }) {
+export function LayoutIcon({
+  query,
+  className,
+  style,
+}: {
+  query: string;
+  className?: string;
+  style?: CSSProperties;
+}) {
   const iconNode = getLayoutIconNode(query);
 
   return (
@@ -20,6 +29,7 @@ export function LayoutIcon({ query, className }: { query: string; className?: st
       strokeLinejoin="round"
       aria-hidden="true"
       className={className}
+      style={style}
     >
       {iconNode.map(([tag, attrs], index) =>
         createElement(tag, {

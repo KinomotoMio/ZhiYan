@@ -132,6 +132,14 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert hints["image_count"] == 0
     assert hints["data_file_count"] == 0
 
+    # Ensure source_hints is computed from source_ids and stored in the job request.
+    job_detail = client.get(f"/api/v2/generation/jobs/{created_job_id}", headers=h1)
+    assert job_detail.status_code == 200
+    source_hints = job_detail.json()["request"]["source_hints"]
+    assert source_hints["total_sources"] == 1
+    assert source_hints["data"] == 1
+    assert source_hints["images"] == 0
+
     detail = client.get(f"/api/v1/sessions/{session_id}", headers=h1)
     assert detail.status_code == 200
     latest_generation_job = detail.json().get("latest_generation_job")
@@ -474,6 +482,30 @@ def test_workspace_sources_link_count_and_bulk_delete_cascade(monkeypatch, tmp_p
     session_sources = client.get(f"/api/v1/sessions/{session_id}/sources", headers=headers)
     assert session_sources.status_code == 200
     assert session_sources.json() == []
+
+
+def test_workspace_upload_rejects_dangerous_filename(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-upload-security"}
+
+    traversal = client.post(
+        "/api/v1/workspace/sources/upload",
+        headers=headers,
+        files={"file": ("../../evil.txt", b"evil", "text/plain")},
+    )
+    assert traversal.status_code == 400
+
+    absolute = client.post(
+        "/api/v1/workspace/sources/upload",
+        headers=headers,
+        files={"file": ("C:/Users/Public/evil.txt", b"evil", "text/plain")},
+    )
+    assert absolute.status_code == 400
+
+    listed = client.get("/api/v1/workspace/sources", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json() == []
 
 
 def test_workspaces_current_and_owner_unique_index(monkeypatch, tmp_path):

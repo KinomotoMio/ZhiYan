@@ -25,7 +25,6 @@ from app.models.generation import (
     GenerationJob,
     GenerationMode,
     GenerationRequestData,
-    SourceHints,
     JobActionResponse,
     JobStatus,
     StageStatus,
@@ -37,30 +36,59 @@ from app.services.sessions.workspace import get_workspace_id_from_request
 
 router = APIRouter(prefix="/generation", tags=["generation-v2"])
 logger = logging.getLogger(__name__)
-_DATA_FILE_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx", ".json"}
-_DOCUMENT_CATEGORIES = {"pdf", "docx", "markdown", "pptx"}
 
 
-def _build_source_hints(source_metas: list[dict]) -> SourceHints:
-    hints = SourceHints(total_count=len(source_metas))
+def _build_source_hints(
+    source_metas: list[dict] | None = None,
+    *,
+    source_ids: list[str] | None = None,
+) -> GenerationRequestData.SourceHints:
+    """Compute a coarse material inventory from source metas.
+
+    Keep this logic stable and explainable: it should never raise and should be
+    safe to omit (backward compatible).
+    """
+
+    source_metas = source_metas or []
+    source_ids = source_ids or []
+
+    by_category: dict[str, int] = {}
+    data_file_count = 0
     for meta in source_metas:
-        category = str(meta.get("fileCategory") or "").strip().lower()
-        name = str(meta.get("name") or "")
-        suffix = Path(name).suffix.lower()
+        raw = meta.get("fileCategory")
+        category = str(raw).strip().lower() if raw else "unknown"
+        by_category[category] = by_category.get(category, 0) + 1
+        if Path(str(meta.get("name") or "")).suffix.lower() in {".csv", ".tsv", ".xls", ".xlsx", ".json"}:
+            data_file_count += 1
 
-        if category == "image":
-            hints.image_count += 1
-        elif category in _DOCUMENT_CATEGORIES:
-            hints.document_count += 1
-        elif category == "text":
-            hints.text_count += 1
-        else:
-            hints.other_count += 1
+    def count(*cats: str) -> int:
+        return sum(by_category.get(cat, 0) for cat in cats)
 
-        if suffix in _DATA_FILE_SUFFIXES:
-            hints.data_file_count += 1
+    images = count("image")
+    slides = count("pptx")
+    documents = count("pdf", "docx", "markdown")
+    text_count = count("text")
+    data = text_count
+    total_sources = int(len(source_ids) or len(source_metas))
+    unknown = total_sources - (images + slides + documents + data)
+    if unknown < 0:
+        unknown = by_category.get("unknown", 0)
 
-    return hints
+    return GenerationRequestData.SourceHints(
+        total_count=total_sources,
+        image_count=int(images),
+        data_file_count=int(data_file_count),
+        document_count=int(documents),
+        text_count=int(text_count),
+        other_count=int(unknown),
+        total_sources=total_sources,
+        images=int(images),
+        documents=int(documents),
+        slides=int(slides),
+        data=int(data),
+        unknown=int(unknown),
+        by_file_category=by_category,
+    )
 
 
 @router.post("/jobs", response_model=CreateJobResponse)
@@ -70,7 +98,6 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
 
     combined = req.content
     session_id = req.session_id
-    source_hints = SourceHints()
     if not session_id:
         title_seed = req.topic[:30] if req.topic else "未命名会话"
         created_session = await session_store.create_session(workspace_id, title_seed)
@@ -84,20 +111,16 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         raise HTTPException(status_code=409, detail="当前会话已有演示稿，请新建会话生成")
 
     if req.source_ids:
-        source_metas: list[dict] = []
-        for source_id in dict.fromkeys(req.source_ids):
-            with suppress(ValueError):
-                source_metas.append(
-                    await session_store.get_workspace_source(workspace_id, source_id)
-                )
-        source_hints = _build_source_hints(source_metas)
-
+        source_metas = await session_store.get_workspace_sources_by_ids(workspace_id, req.source_ids)
+        source_hints = _build_source_hints(source_ids=req.source_ids, source_metas=source_metas)
         source_content = await session_store.get_combined_source_content(
             workspace_id,
             session_id,
             req.source_ids,
         )
         combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
+    else:
+        source_hints = {}
 
     if not combined and not req.topic:
         raise HTTPException(status_code=422, detail="请提供来源文档或主题描述")

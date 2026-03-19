@@ -14,7 +14,12 @@ from pydantic import BaseModel
 from app.models.source import SourceMeta
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
-from app.utils.security import get_safe_httpx_client
+from app.utils.security import (
+    INVALID_UPLOAD_FILENAME_ERROR,
+    build_safe_upload_path,
+    get_safe_httpx_client,
+    sanitize_upload_filename,
+)
 
 router = APIRouter(prefix="/workspace/sources", tags=["workspace-sources"])
 
@@ -51,9 +56,10 @@ def _sync_parse_file(path: Path) -> str:
 
 
 async def _save_and_parse_file(source_id: str, filename: str, file_bytes: bytes) -> tuple[str, str]:
+    safe_filename = sanitize_upload_filename(filename)
     file_dir = session_store.uploads_dir / source_id
     file_dir.mkdir(parents=True, exist_ok=True)
-    file_path = file_dir / filename
+    file_path = build_safe_upload_path(file_dir, safe_filename)
     await asyncio.to_thread(file_path.write_bytes, file_bytes)
     content = await asyncio.to_thread(_sync_parse_file, file_path)
     return str(file_path), content
@@ -97,6 +103,11 @@ async def list_workspace_sources(
 async def upload_workspace_source(request: Request, file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="缺少文件名")
+    try:
+        safe_filename = sanitize_upload_filename(file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=INVALID_UPLOAD_FILENAME_ERROR) from e
+
     workspace_id = get_workspace_id_from_request(request)
     await session_store.ensure_workspace(workspace_id)
     source_id = f"src-{uuid4().hex[:16]}"
@@ -110,7 +121,7 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
 
     try:
         storage_path, parsed_content = await _save_and_parse_file(
-            source_id=source_id, filename=file.filename, file_bytes=file_bytes,
+            source_id=source_id, filename=safe_filename, file_bytes=file_bytes,
         )
         from app.models.source import detect_file_category
         from app.services.document.parser import estimate_tokens
@@ -118,8 +129,8 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
         meta = await session_store.create_workspace_source(
             workspace_id=workspace_id,
             source_type="file",
-            name=file.filename,
-            file_category=detect_file_category(file.filename).value,
+            name=safe_filename,
+            file_category=detect_file_category(safe_filename).value,
             size=len(file_bytes),
             status="ready",
             content_hash=content_hash,
@@ -133,7 +144,7 @@ async def upload_workspace_source(request: Request, file: UploadFile = File(...)
         meta = await session_store.create_workspace_source(
             workspace_id=workspace_id,
             source_type="file",
-            name=file.filename,
+            name=safe_filename,
             file_category=None,
             size=len(file_bytes),
             status="error",

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from app.models.layout_registry import (
@@ -144,7 +145,7 @@ def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups()
     assert outline_layout.design_traits.style == "card-based"
     assert outline_layout.design_traits.density == "medium"
     assert outline_layout.description.startswith("用于交代整份演示的章节骨架")
-    assert outline_layout.notes.use_when.startswith("当目录需要让 4-6 个章节被并列扫读")
+    assert outline_layout.notes.use_when.startswith("当目录需要让 4-10 个章节被并列扫读")
 
 
 def test_sibling_layout_notes_stay_distinct_after_runtime_sync():
@@ -321,6 +322,147 @@ def test_normalize_outline_items_roles_preserves_valid_section_dividers_for_long
     ]
 
 
+def test_normalize_outline_items_roles_enforces_agenda_points_match_section_dividers():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "目录",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "现状", "方案", "总结"],
+            },
+            {"slide_number": 3, "title": "引入", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "内容 F", "suggested_slide_role": "narrative"},
+            {"slide_number": 10, "title": "内容 G", "suggested_slide_role": "narrative"},
+            {"slide_number": 11, "title": "内容 H", "suggested_slide_role": "narrative"},
+            {"slide_number": 12, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=12,
+    )
+
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert len(agenda["key_points"]) == 4
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 4
+    divider_positions = [idx for idx, role in enumerate(roles) if role == "section-divider"]
+    assert all(idx > 1 for idx in divider_positions)
+    assert all(idx < len(items) - 1 for idx in divider_positions)
+    assert all((idx + 1) not in divider_positions for idx in divider_positions)
+
+
+def test_normalize_outline_items_roles_enforces_contract_for_non_directory_agenda_titles():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "项目总览",
+                "content_brief": "本页介绍接下来的章节安排。",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "挑战", "方案"],
+            },
+            {"slide_number": 3, "title": "引入", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=9,
+    )
+
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert agenda["key_points"] == ["背景", "挑战", "方案"]
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 3
+
+
+def test_normalize_outline_items_roles_truncates_agenda_points_when_budget_is_tight():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+            {
+                "slide_number": 2,
+                "title": "目录",
+                "suggested_slide_role": "agenda",
+                "key_points": ["背景", "现状", "方案", "总结"],
+            },
+            {"slide_number": 3, "title": "内容 A", "suggested_slide_role": "narrative"},
+            {"slide_number": 4, "title": "内容 B", "suggested_slide_role": "narrative"},
+            {"slide_number": 5, "title": "内容 C", "suggested_slide_role": "narrative"},
+            {"slide_number": 6, "title": "内容 D", "suggested_slide_role": "narrative"},
+            {"slide_number": 7, "title": "内容 E", "suggested_slide_role": "narrative"},
+            {"slide_number": 8, "title": "内容 F", "suggested_slide_role": "narrative"},
+            {"slide_number": 9, "title": "内容 G", "suggested_slide_role": "narrative"},
+            {"slide_number": 10, "title": "致谢", "suggested_slide_role": "closing"},
+        ],
+        num_pages=10,
+    )
+
+    # With 10 slides, the max chapters that can fit after agenda before closing
+    # is 3 (each chapter needs section-divider + at least 1 content slide).
+    agenda = items[1]
+    assert agenda["suggested_slide_role"] == "agenda"
+    assert len(agenda["key_points"]) == 3
+
+    roles = [item["suggested_slide_role"] for item in items]
+    assert roles.count("section-divider") == 3
+
+
+def test_normalize_outline_items_roles_infers_content_roles_when_missing():
+    items = normalize_outline_items_roles(
+        [
+            {"slide_number": 1, "title": "AI 时代的人才策略"},
+            {
+                "slide_number": 2,
+                "title": "市场规模与增长数据",
+                "content_brief": "展示 adoption、ROI 与增长趋势。",
+                "key_points": ["渗透率 63%", "ROI 提升 28%"],
+            },
+            {
+                "slide_number": 3,
+                "title": "手工流程 vs AI 流程",
+                "content_brief": "对照传统方式与自动化方式的差异。",
+                "key_points": ["现状", "目标"],
+            },
+            {
+                "slide_number": 4,
+                "title": "落地实施路径",
+                "content_brief": "分阶段说明 rollout 计划。",
+                "key_points": ["试点", "推广", "复盘"],
+            },
+            {
+                "slide_number": 5,
+                "title": "核心结论",
+                "content_brief": "一句话总结最关键判断。",
+                "key_points": ["AI 将重塑岗位分工"],
+            },
+            {"slide_number": 6, "title": "谢谢"},
+        ],
+        num_pages=6,
+    )
+
+    assert [item["suggested_slide_role"] for item in items] == [
+        "cover",
+        "agenda",
+        "comparison",
+        "process",
+        "highlight",
+        "closing",
+    ]
+
+
 def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
     async def _case():
         from app.services.agents import layout_selector as layout_selector_mod
@@ -373,6 +515,15 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
                 ]
             },
         )
+        state.document_metadata["source_hints"] = {
+            "total_sources": 2,
+            "images": 1,
+            "documents": 1,
+            "slides": 0,
+            "data": 0,
+            "unknown": 0,
+            "by_file_category": {"image": 1, "pdf": 1},
+        }
 
         await stage_select_layouts(state)
 
@@ -380,6 +531,7 @@ def test_stage_select_layouts_prompt_contains_usage_guidance(monkeypatch):
         prompt = agent.prompts[0]
         assert "可用布局列表:" in prompt
         assert "文档级 Usage 推断: 学术汇报" in prompt
+        assert "素材提示(source_hints): 总计 2，图片 1，数据/文本 0，文档 1，PPT 0，未知 0" in prompt
         assert "页内 Usage:" in prompt
         assert "角色: evidence" in prompt
         assert "角色匹配布局: `metrics-slide`, `metrics-slide-band`, `metrics-with-image`, `chart-with-bullets`, `table-info`" in prompt
@@ -764,6 +916,128 @@ def test_stage_select_layouts_rejects_layouts_from_the_wrong_role(monkeypatch):
         assert state.layout_selections[1]["design_traits"]["style"] == "card-based"
         assert state.layout_selections[1]["layout_id"] == "bullet-with-icons-cards"
         assert state.layout_selections[2]["layout_id"] == "thank-you"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_logs_layout_decision_trace(monkeypatch, caplog):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "variant_id": "title-centered",
+                    "reason": "封面",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "narrative",
+                    "sub_group": "default",
+                    "variant_id": "unknown-variant",
+                    "reason": "普通正文说明",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "variant_id": "closing-center",
+                    "reason": "结束页",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="这是一页常规介绍页，没有截图或时间线。",
+            topic="产品概览",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "主要结论",
+                        "content_brief": "介绍三个核心结论和价值点。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["结论一", "结论二", "结论三"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        caplog.set_level(logging.INFO, logger="app.services.pipeline.graph")
+        await stage_select_layouts(state)
+
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Layout decision resolved"
+            and getattr(record, "slide_number", None) == 2
+        ]
+        assert len(records) == 1
+        record = records[0]
+        assert record.selection_source == "model"
+        assert record.outline_role == "narrative"
+        assert record.requested_sub_group == "default"
+        assert record.resolved_sub_group == "icon-points"
+        assert record.requested_variant_id == "unknown-variant"
+        assert record.resolved_variant_id == "icon-pillars"
+        assert record.final_layout_id == "bullet-with-icons"
+        assert record.diversity_adjusted is False
+        assert record.used_safety_default is False
+        assert isinstance(record.content_signal_primary, dict)
+        assert "predicted_type" in record.content_signal_primary
+        assert hasattr(record, "content_signal_shadow")
+        assert isinstance(record.confidence, float)
+        assert record.signal_source in {"rules", "semantic", "fallback"}
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_fallback_uses_capability_grid_for_four_capabilities(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        class _ExplodingLayoutSelectorAgent:
+            async def run(self, prompt: str):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            layout_selector_mod,
+            "layout_selector_agent",
+            _ExplodingLayoutSelectorAgent(),
+            raising=False,
+        )
+
+        state = PipelineState(
+            raw_content="这一页要总览四个核心能力模块。",
+            topic="产品能力总览",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "核心能力矩阵",
+                        "content_brief": "总览四个能力模块与适用场景。",
+                        "suggested_slide_role": "narrative",
+                        "key_points": ["能力一", "能力二", "能力三", "能力四"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "capability-grid"
+        assert state.layout_selections[1]["layout_id"] == "bullet-icons-only"
+        assert state.layout_selections[1]["reason"] == "fallback"
 
     asyncio.run(_case())
 

@@ -33,6 +33,7 @@ OUTLINE_FALLBACK_TITLES = (
     "\u5b9e\u65bd",
     "\u603b\u7ed3",
 )
+MAX_OUTLINE_SECTIONS = 10
 
 
 def normalize_outline_slide_data(
@@ -40,6 +41,7 @@ def normalize_outline_slide_data(
     *,
     title_default: str = "\u76ee\u5f55",
     fallback_titles: tuple[str, ...] = OUTLINE_FALLBACK_TITLES,
+    min_sections: int = 4,
 ) -> dict[str, Any]:
     title = _as_text(data.get("title"), title_default)
     subtitle = _as_text(data.get("subtitle"), "")
@@ -52,8 +54,8 @@ def normalize_outline_slide_data(
         if normalized is not None:
             sections.append(normalized)
 
-    sections = sections[:6]
-    while len(sections) < 4:
+    sections = sections[:MAX_OUTLINE_SECTIONS]
+    while len(sections) < min_sections:
         sections.append({"title": fallback_titles[len(sections)]})
 
     normalized: dict[str, Any] = {"title": title, "sections": sections}
@@ -169,8 +171,10 @@ def _normalize_layout_content(
         return _normalize_quote_slide(data_with_image_source)
     if layout_id in {"thank-you", "thank-you-contact"}:
         return _normalize_thank_you(data_with_image_source)
-    if layout_id in {"outline-slide", "outline-slide-rail"}:
-        return _normalize_outline_slide(data_with_image_source)
+    if layout_id == "outline-slide":
+        return _normalize_outline_slide(data_with_image_source, min_sections=4)
+    if layout_id == "outline-slide-rail":
+        return _normalize_outline_slide(data_with_image_source, min_sections=1)
     if layout_id == "two-column-compare":
         return _normalize_two_column_compare(data_with_image_source)
     if layout_id == "table-info":
@@ -233,8 +237,12 @@ def _normalize_thank_you(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bo
     return normalized, changed, True, "thank-you-shape" if changed else ""
 
 
-def _normalize_outline_slide(data: dict[str, Any]) -> tuple[dict[str, Any], bool, bool, str]:
-    normalized = normalize_outline_slide_data(data)
+def _normalize_outline_slide(
+    data: dict[str, Any],
+    *,
+    min_sections: int = 4,
+) -> tuple[dict[str, Any], bool, bool, str]:
+    normalized = normalize_outline_slide_data(data, min_sections=min_sections)
     changed = normalized != data
     return normalized, changed, True, "outline-slide-shape" if changed else ""
 
@@ -463,7 +471,8 @@ def _normalize_outline_section(
     if not title and not description:
         return None
 
-    normalized = {"title": title or fallback_titles[index]}
+    fallback_title = fallback_titles[index] if index < len(fallback_titles) else f"\u7ae0\u8282 {index + 1}"
+    normalized = {"title": title or fallback_title}
     if description:
         normalized["description"] = description
     return normalized

@@ -25,7 +25,7 @@ test("normalizeLayoutData repairs outline-slide items alias and pads to four sec
   ]);
 });
 
-test("normalizeLayoutData trims outline-slide sections to six entries", () => {
+test("normalizeLayoutData trims outline-slide sections to ten entries", () => {
   const result = normalizeLayoutData("outline-slide", {
     title: "Agenda",
     sections: [
@@ -36,11 +36,15 @@ test("normalizeLayoutData trims outline-slide sections to six entries", () => {
       { title: "Five" },
       { title: "Six" },
       { title: "Seven" },
+      { title: "Eight" },
+      { title: "Nine" },
+      { title: "Ten" },
+      { title: "Eleven" },
     ],
   });
 
   assert.equal(result.recoverable, true);
-  assert.equal((result.data.sections as unknown[]).length, 6);
+  assert.equal((result.data.sections as unknown[]).length, 10);
   assert.deepEqual(result.data.sections, [
     { title: "One" },
     { title: "Two" },
@@ -48,8 +52,25 @@ test("normalizeLayoutData trims outline-slide sections to six entries", () => {
     { title: "Four" },
     { title: "Five" },
     { title: "Six" },
+    { title: "Seven" },
+    { title: "Eight" },
+    { title: "Nine" },
+    { title: "Ten" },
   ]);
 });
+
+test("normalizeLayoutData keeps outline-slide-rail with three sections in a single column payload", () => {
+  const result = normalizeLayoutData("outline-slide-rail", {
+    title: "Delivery Roadmap",
+    sections: [{ title: "Context" }, { title: "Model" }, { title: "Runtime" }],
+  });
+
+  assert.equal(result.recoverable, true);
+  assert.equal(result.changed, false);
+  assert.equal((result.data.sections as unknown[]).length, 3);
+  assert.deepEqual(result.data.sections, [{ title: "Context" }, { title: "Model" }, { title: "Runtime" }]);
+});
+
 test("normalizeLayoutData repairs executive-summary metrics-slide items without losing the new fields", () => {
   const result = normalizeLayoutData("metrics-slide", {
     title: "Quarterly Snapshot",

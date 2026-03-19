@@ -14,6 +14,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _converter: "MarkItDown | None" = None
 
+_CHART_KEYWORDS = (
+    "图表",
+    "趋势",
+    "折线",
+    "柱状",
+    "饼图",
+    "雷达",
+    "chart",
+    "graph",
+    "plot",
+    "trend",
+)
+_TABLE_KEYWORDS = ("表格", "矩阵", "参数", "table", "matrix", "tabular")
+_TIMELINE_KEYWORDS = (
+    "时间线",
+    "里程碑",
+    "排期",
+    "路线图",
+    "roadmap",
+    "timeline",
+    "milestone",
+)
+
 
 def _ensure_path_env() -> None:
     if "PATH" in os.environ:
@@ -97,6 +120,90 @@ def estimate_tokens(text: str) -> int:
     chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
     other_chars = len(text) - chinese_chars
     return int(chinese_chars / 1.5 + other_chars / 4)
+
+
+def extract_structure_signals(markdown: str) -> dict:
+    """从 Markdown 文本中提取轻量结构信号摘要（用于下游 prompt / hint 推断）。
+
+    目标：稳定、快速、向后兼容。即便输入不是严格 Markdown，也不应报错。
+
+    Schema:
+    - image_count: int
+    - image_src_samples: list[str] (<= 3)
+    - table_count: int
+    - table_header_samples: list[str] (<= 3)
+    - chart_keyword_hits: list[str] (<= 6)
+    - timeline_date_hits: list[str] (<= 6)
+    - timeline_quarter_hits: list[str] (<= 6)
+    """
+
+    text = markdown or ""
+    lowered = text.lower()
+
+    # Images: markdown image syntax + <img src="...">
+    image_srcs: list[str] = []
+    for match in re.finditer(r"!\[[^\]]*\]\(([^)\s]+)[^)]*\)", text):
+        src = match.group(1).strip()
+        if src and src not in image_srcs:
+            image_srcs.append(src)
+    for match in re.finditer(r"<img[^>]*\ssrc=['\"]([^'\"]+)['\"][^>]*>", text, flags=re.IGNORECASE):
+        src = match.group(1).strip()
+        if src and src not in image_srcs:
+            image_srcs.append(src)
+
+    # Tables: detect markdown table header + separator row.
+    table_headers: list[str] = []
+    table_count = 0
+    table_pattern = re.compile(
+        r"(?m)^\s*\|?.*\|.*$\n^\s*\|?\s*:?-{3,}.*\|.*$"
+    )
+    for match in table_pattern.finditer(text):
+        table_count += 1
+        header_line = match.group(0).splitlines()[0].strip()
+        if header_line and header_line not in table_headers:
+            table_headers.append(header_line)
+
+    # Chart keywords: keep distinct hits.
+    chart_hits = [kw for kw in _CHART_KEYWORDS if kw.lower() in lowered]
+    table_hits = [kw for kw in _TABLE_KEYWORDS if kw.lower() in lowered]
+    timeline_hits = [kw for kw in _TIMELINE_KEYWORDS if kw.lower() in lowered]
+
+    # Timeline: extract date-like and quarter-like tokens as structured samples.
+    date_hits: list[str] = []
+    for match in re.finditer(r"\b(19|20)\d{2}[-/.](0?[1-9]|1[0-2])([-/\.](0?[1-9]|[12]\d|3[01]))?\b", text):
+        value = match.group(0)
+        if value and value not in date_hits:
+            date_hits.append(value)
+    for match in re.finditer(r"\b(19|20)\d{2}年(0?[1-9]|1[0-2])月(0?[1-9]|[12]\d|3[01])日?\b", text):
+        value = match.group(0)
+        if value and value not in date_hits:
+            date_hits.append(value)
+
+    quarter_hits: list[str] = []
+    for match in re.finditer(r"\b(19|20)\d{2}\s*Q[1-4]\b", text, flags=re.IGNORECASE):
+        value = match.group(0).replace(" ", "")
+        if value and value not in quarter_hits:
+            quarter_hits.append(value)
+    for match in re.finditer(r"\bQ[1-4]\b", text, flags=re.IGNORECASE):
+        value = match.group(0).upper()
+        if value and value not in quarter_hits:
+            quarter_hits.append(value)
+    for match in re.finditer(r"\b(19|20)\d{2}年第[一二三四1234]季度\b", text):
+        value = match.group(0)
+        if value and value not in quarter_hits:
+            quarter_hits.append(value)
+
+    return {
+        "image_count": len(image_srcs),
+        "image_src_samples": image_srcs[:3],
+        "table_count": table_count,
+        "table_header_samples": table_headers[:3],
+        "chart_keyword_hits": chart_hits[:6],
+        "table_keyword_hits": table_hits[:6],
+        "timeline_keyword_hits": timeline_hits[:6],
+        "timeline_date_hits": date_hits[:6],
+        "timeline_quarter_hits": quarter_hits[:6],
+    }
 
 
 def split_by_headings(markdown: str) -> list[dict]:

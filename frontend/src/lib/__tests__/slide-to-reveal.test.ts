@@ -41,6 +41,8 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.ok(html.includes("margin: 0,"));
   assert.ok(html.includes("center: false,"));
   assert.ok(html.includes("padding: 0 !important;"));
+  assert.ok(html.includes(".reveal .slides section .slide-content *"));
+  assert.ok(html.includes("box-sizing: border-box;"));
   assert.ok(html.includes("<div class=\"reveal\" tabindex=\"-1\">"));
   assert.ok(html.includes("const revealElement = document.querySelector('.reveal');"));
   assert.ok(html.includes("reveal-preview-slidechange"));
@@ -117,6 +119,34 @@ test("presentationToRevealHTML renders outline-slide as a two-column agenda layo
   assert.match(html, /Background/);
   assert.match(html, /Results/);
 });
+
+test("presentationToRevealHTML splits outline-slide-rail into two columns after three sections", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-outline-rail-double",
+        layoutType: "outline-slide-rail",
+        layoutId: "outline-slide-rail",
+        contentData: {
+          title: "Delivery Roadmap",
+          sections: [
+            { title: "Context" },
+            { title: "Model" },
+            { title: "Runtime" },
+            { title: "Templates" },
+            { title: "QA" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(html, /grid-template-rows:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.match(html, /05/);
+});
 test("presentationToRevealHTML keeps bullet-with-icons columns aligned with the preview layout", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,
@@ -148,9 +178,42 @@ test("presentationToRevealHTML keeps bullet-with-icons columns aligned with the 
   assert.match(html, /height:50%/);
   assert.match(html, /width:40px;height:40px;border-radius:9999px;background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 12%, transparent\)/);
   assert.match(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="20" height="20"/);
-  assert.match(html, /font-size:21px;font-weight:700;line-height:1\.08;letter-spacing:-0\.04em;color:var\(--primary-color,#3b82f6\)/);
-  assert.match(html, /background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, transparent\);border-radius:3px;padding:0\.05em 0\.22em 0\.12em;box-decoration-break:clone/);
+  assert.match(html, /font-size:21px;font-weight:700;line-height:1\.14;letter-spacing:-0\.04em;color:var\(--primary-color,#3b82f6\)/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
+  assert.match(html, /background:color-mix\(in srgb, var\(--primary-color,#3b82f6\) 7%, transparent\);border-radius:3px;padding:0\.07em 0\.24em 0\.16em;box-decoration-break:clone/);
   assert.doesNotMatch(html, /width:56px;height:56px/);
+});
+
+test("presentationToRevealHTML keeps bullet-with-icons-cards on its dedicated card template", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-icons-cards",
+        layoutType: "bullet-with-icons-cards",
+        layoutId: "bullet-with-icons-cards",
+        contentData: {
+          title: "Solution Modules",
+          items: [
+            { icon: { query: "shield" }, title: "Layered Defense", description: "Protect endpoints and identities." },
+            { icon: { query: "lock" }, title: "Identity Verification", description: "Require stronger sign-in checks." },
+            { icon: { query: "database" }, title: "Data Protection", description: "Reduce exposure across systems." },
+            { icon: { query: "triangle-alert" }, title: "Incident Response", description: "Recover quickly from attacks." },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Solution Modules/);
+  assert.match(html, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:24px/);
+  assert.match(html, /border-radius:28px;background:#ffffff;padding:28px/);
+  assert.match(html, /width:48px;height:48px/);
+  assert.match(html, /width="24" height="24"/);
+  assert.match(html, /line-height:1\.24/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
+  assert.doesNotMatch(html, /grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 });
 
 test("presentationToRevealHTML preserves icon-bearing compare columns and section decorations", () => {
@@ -225,10 +288,46 @@ test("presentationToRevealHTML renders bullet-icons-only as a denser matrix with
   assert.match(html, /min-height:92px/);
   assert.match(html, /width:72px;height:72px/);
   assert.match(html, /width="40" height="40"/);
+  assert.match(html, /line-height:1\.12/);
+  assert.match(html, /padding-top:2px;padding-bottom:4px/);
   assert.match(html, /letter-spacing:0.24em/);
   assert.match(html, /Unified Data Layer/);
   assert.match(html, /Agent Orchestration/);
   assert.match(html, />01<\/div>/);
+});
+
+test("presentationToRevealHTML trims bullet-icons-only compact mode for 8 items", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-icons-only-compact",
+        layoutType: "bullet-icons-only",
+        layoutId: "bullet-icons-only",
+        contentData: {
+          title: "Security Framework",
+          items: [
+            { icon: { query: "shield" }, label: "Layered Defense" },
+            { icon: { query: "lock" }, label: "Identity Verification" },
+            { icon: { query: "database" }, label: "Data Protection" },
+            { icon: { query: "globe" }, label: "Network Security" },
+            { icon: { query: "star" }, label: "Endpoint Safety" },
+            { icon: { query: "triangle-alert" }, label: "Incident Response" },
+            { icon: { query: "graduation-cap" }, label: "Training Awareness" },
+            { icon: { query: "badge-check" }, label: "Compliance Management" },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Security Framework/);
+  assert.match(html, /padding:48px 64px/);
+  assert.match(html, /column-gap:28px;row-gap:16px/);
+  assert.match(html, /min-height:84px/);
+  assert.match(html, /width:68px;height:68px/);
+  assert.match(html, /width="36" height="36"/);
 });
 
 test("presentationToRevealHTML normalizes malformed compare layout data", () => {

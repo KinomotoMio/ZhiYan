@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from app.utils import security
 
 
@@ -78,3 +79,36 @@ def test_https_domain_only_rejects_embedded_credentials():
             url_policy="https_domain_only",
         )
     )
+
+
+def test_sanitize_upload_filename_allows_plain_filename():
+    assert security.sanitize_upload_filename("deck-v1.pptx") == "deck-v1.pptx"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "../../evil.txt",
+        "..\\..\\evil.txt",
+        "/tmp/evil.txt",
+        "C:/Users/Public/evil.txt",
+        "C:\\Users\\Public\\evil.txt",
+        "..",
+        ".",
+        "",
+    ],
+)
+def test_sanitize_upload_filename_rejects_path_traversal(filename: str):
+    with pytest.raises(ValueError):
+        security.sanitize_upload_filename(filename)
+
+
+def test_build_safe_upload_path_stays_inside_upload_root(tmp_path):
+    file_dir = tmp_path / "uploads" / "src-1"
+    file_dir.mkdir(parents=True)
+
+    safe_path = security.build_safe_upload_path(file_dir, "report.pdf")
+
+    assert safe_path.parent == file_dir.resolve()
+    assert safe_path.name == "report.pdf"
+    assert file_dir.resolve() in safe_path.parents

@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from pydantic import BaseModel, Field
 
@@ -186,6 +187,7 @@ async def run_aesthetic_verification(
 ) -> VerificationResult | None:
     """LLM 审美评估 — 优先使用截图多模态，回退到文本摘要"""
     vision_timed_out = False
+    t0 = time.monotonic()
     try:
         agent = _get_aesthetic_verifier_agent()
 
@@ -198,6 +200,16 @@ async def run_aesthetic_verification(
                     )
                 else:
                     raw_text = await _run_vision_verification(agent, slides, presentation_dict)
+                logger.info(
+                    "aesthetic_verification_call_done",
+                    extra={
+                        "event": "aesthetic_verification_call_done",
+                        "job_id": presentation_dict.get("job_id") if isinstance(presentation_dict, dict) else None,
+                        "stage": "verify",
+                        "mode": "vision",
+                        "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    },
+                )
                 return _parse_aesthetic_text(raw_text, slides)
             except asyncio.TimeoutError:
                 vision_timed_out = True
@@ -216,6 +228,23 @@ async def run_aesthetic_verification(
         )
         result = await agent.run(
             f"请评估以下演示文稿的设计质量：\n{slides_summary}"
+        )
+        usage = None
+        try:
+            usage = result.usage()
+        except Exception:
+            usage = None
+        logger.info(
+            "aesthetic_verification_call_done",
+            extra={
+                "event": "aesthetic_verification_call_done",
+                "job_id": presentation_dict.get("job_id") if isinstance(presentation_dict, dict) else None,
+                "stage": "verify",
+                "mode": "text",
+                "attempt": getattr(usage, "requests", None) if usage is not None else None,
+                "token_usage": str(usage) if usage is not None else None,
+                "elapsed_ms": int((time.monotonic() - t0) * 1000),
+            },
         )
         output = _parse_aesthetic_text(str(result.output), slides)
         if vision_timed_out and slides:
@@ -244,11 +273,22 @@ async def _run_vision_verification(
 
     from app.services.export.slide_screenshot import capture_slide_screenshots
 
-    screenshots = await capture_slide_screenshots(presentation_dict)
+    job_id = str(presentation_dict.get("job_id") or "").strip() or None
+    screenshots_t0 = time.monotonic()
+    screenshots = await capture_slide_screenshots(presentation_dict, job_id=job_id)
     if not screenshots:
         raise ValueError("No screenshots captured")
 
-    logger.info("Captured %d slide screenshots for vision verification", len(screenshots))
+    logger.info(
+        "vision_screenshot_capture_done",
+        extra={
+            "event": "vision_screenshot_capture_done",
+            "job_id": job_id,
+            "stage": "verify",
+            "slide_count": len(screenshots),
+            "elapsed_ms": int((time.monotonic() - screenshots_t0) * 1000),
+        },
+    )
 
     user_prompt: list[str | BinaryContent] = [
         f"请评估以下演示文稿（共 {len(screenshots)} 页）的视觉设计质量。"
@@ -258,7 +298,24 @@ async def _run_vision_verification(
         user_prompt.append(f"第 {i + 1} 页 (ID: {ss.slide_id}):")
         user_prompt.append(BinaryContent(data=ss.png_bytes, media_type="image/png"))
 
+    call_t0 = time.monotonic()
     result = await agent.run(user_prompt)
+    usage = None
+    try:
+        usage = result.usage()
+    except Exception:
+        usage = None
+    logger.info(
+        "aesthetic_verification_vision_call_done",
+        extra={
+            "event": "aesthetic_verification_vision_call_done",
+            "job_id": job_id,
+            "stage": "verify",
+            "attempt": getattr(usage, "requests", None) if usage is not None else None,
+            "token_usage": str(usage) if usage is not None else None,
+            "elapsed_ms": int((time.monotonic() - call_t0) * 1000),
+        },
+    )
     return str(result.output)
 
 

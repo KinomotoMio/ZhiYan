@@ -29,6 +29,9 @@ def test_settings_api_persists_enable_vision_verification(tmp_path, monkeypatch)
     from app.core.config import settings
 
     original_value = settings.enable_vision_verification
+    original_primary_strategy = settings.content_type_primary_strategy
+    original_shadow_enabled = settings.content_type_shadow_enabled
+    original_confidence_threshold = settings.content_type_confidence_threshold
     settings_path = tmp_path / "settings.json"
     monkeypatch.setattr(settings_store, "_SETTINGS_FILE", settings_path)
 
@@ -37,20 +40,37 @@ def test_settings_api_persists_enable_vision_verification(tmp_path, monkeypatch)
     try:
         resp = client.put(
             "/api/v1/settings",
-            json={"enable_vision_verification": False},
+            json={
+                "enable_vision_verification": False,
+                "content_type_primary_strategy": "semantic",
+                "content_type_shadow_enabled": False,
+                "content_type_confidence_threshold": 0.73,
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["enable_vision_verification"] is False
+        assert resp.json()["content_type_primary_strategy"] == "semantic"
+        assert resp.json()["content_type_shadow_enabled"] is False
+        assert resp.json()["content_type_confidence_threshold"] == 0.73
 
         assert settings_path.exists()
         persisted = json.loads(settings_path.read_text(encoding="utf-8"))
         assert persisted["enable_vision_verification"] is False
+        assert persisted["content_type_primary_strategy"] == "semantic"
+        assert persisted["content_type_shadow_enabled"] is False
+        assert persisted["content_type_confidence_threshold"] == 0.73
 
         get_resp = client.get("/api/v1/settings")
         assert get_resp.status_code == 200
         assert get_resp.json()["enable_vision_verification"] is False
+        assert get_resp.json()["content_type_primary_strategy"] == "semantic"
+        assert get_resp.json()["content_type_shadow_enabled"] is False
+        assert get_resp.json()["content_type_confidence_threshold"] == 0.73
     finally:
         settings.enable_vision_verification = original_value
+        settings.content_type_primary_strategy = original_primary_strategy
+        settings.content_type_shadow_enabled = original_shadow_enabled
+        settings.content_type_confidence_threshold = original_confidence_threshold
 
 
 def test_export_pdf_returns_503_with_manual_install_hint(monkeypatch):
