@@ -606,6 +606,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
     source_hints_line = f"{source_hints_section}\n" if source_hints_section else ""
     taxonomy_catalog = get_layout_taxonomy_catalog_for_groups(active_groups)
+    selector_timeout = _layout_selector_timeout_seconds(settings.layout_timeout_seconds)
+    base_degradation_metadata = {
+        "selector_timeout_seconds": selector_timeout,
+        "prompt_chars": 0,
+        "outline_items": len(outline_items),
+        "active_groups": sorted(active_groups),
+    }
     prompt = (
         f"可用布局列表:\n{taxonomy_catalog}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
@@ -628,13 +635,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         f"大纲:\n{items_text}\n\n"
         "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。"
     )
+    base_degradation_metadata["prompt_chars"] = len(prompt)
 
     try:
         from app.services.agents.layout_selector import layout_selector_agent
 
         model = settings.fast_model or settings.default_model
         provider = model.split(":", 1)[0] if ":" in model else None
-        selector_timeout = _layout_selector_timeout_seconds(settings.layout_timeout_seconds)
         logger.info(
             "layout_selection_call_start",
             extra={
@@ -758,13 +765,10 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
 
         state.layout_selections = selections
         state.document_metadata["layout_degradation"] = {
+            **base_degradation_metadata,
             "applied": False,
             "reason": "",
             "selection_source": "model",
-            "selector_timeout_seconds": selector_timeout,
-            "prompt_chars": len(prompt),
-            "outline_items": len(outline_items),
-            "active_groups": sorted(active_groups),
         }
         logger.info(
             "Layout selection call done",
@@ -787,15 +791,10 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         decision_traces = {}
         state.layout_selections = []
         state.document_metadata["layout_degradation"] = {
+            **base_degradation_metadata,
             "applied": True,
             "reason": type(e).__name__,
             "selection_source": "fallback",
-            "selector_timeout_seconds": _layout_selector_timeout_seconds(
-                settings.layout_timeout_seconds
-            ),
-            "prompt_chars": len(prompt),
-            "outline_items": len(outline_items),
-            "active_groups": sorted(active_groups),
         }
         for item in outline_items:
             role = get_outline_item_role(item)
