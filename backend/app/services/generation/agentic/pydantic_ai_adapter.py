@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 from typing import Any
 
 from pydantic_ai.messages import (
@@ -21,6 +22,8 @@ from pydantic_ai.tools import ToolDefinition
 from app.core.config import settings
 from app.core.model_resolver import resolve_model
 from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, UserMessage
+
+logger = logging.getLogger(__name__)
 
 
 def build_pydantic_ai_model(model_name: Model | str | None = None) -> Model:
@@ -41,14 +44,18 @@ class PydanticAIModelClient(AgenticModelClient):
         messages: Sequence[AgenticMessage],
         tools: Sequence[dict[str, Any]],
     ) -> AssistantMessage:
-        response = await self._model.request(
-            self._to_model_messages(messages),
-            None,
-            ModelRequestParameters(
-                function_tools=[self._to_tool_definition(tool) for tool in tools],
-                allow_text_output=True,
-            ),
-        )
+        try:
+            response = await self._model.request(
+                self._to_model_messages(messages),
+                None,
+                ModelRequestParameters(
+                    function_tools=[self._to_tool_definition(tool) for tool in tools],
+                    allow_text_output=True,
+                ),
+            )
+        except Exception:
+            logger.exception("agentic model request failed")
+            raise
         return self._from_model_response(response)
 
     def _to_model_messages(self, messages: Sequence[AgenticMessage]) -> list[ModelMessage]:
