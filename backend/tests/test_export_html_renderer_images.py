@@ -85,3 +85,28 @@ def test_html_renderer_rejects_svg_data_urls() -> None:
 
     assert "<img" not in html
     assert "待绑定现有素材" in html
+
+
+def test_html_renderer_uses_slide_title_as_alt_fallback() -> None:
+    html = render_presentation_html(
+        {
+            "title": "Demo",
+            "slides": [
+                {
+                    "layoutId": "image-and-description",
+                    "layoutType": "image-and-description",
+                    "contentData": {
+                        "title": "Customer Story",
+                        "description": "Long form description used for placeholder test content.",
+                        "image": {
+                            "source": "existing",
+                            "url": "https://example.com/customer-story.png",
+                            "alt": "",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+
+    assert 'alt="Customer Story"' in html

@@ -507,7 +507,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         image = d.get("image")
         image = image if isinstance(image, dict) else {}
         url = _sanitize_image_src(image.get("url"))
-        alt = _as_text(image.get("alt")) or _as_text(image.get("prompt")) or "Image"
+        alt = _image_alt_text(image, _as_text(d.get("title")) or "Presentation image")
         if url:
             image_html = _render_image_fill(url, alt)
         else:
@@ -590,7 +590,7 @@ def _render_content_data(layout_id: str, data: dict[str, Any]) -> str:
         image = d.get("image")
         image = image if isinstance(image, dict) else {}
         url = _sanitize_image_src(image.get("url"))
-        alt = _as_text(image.get("alt")) or _as_text(image.get("prompt")) or "Image"
+        alt = _image_alt_text(image, _as_text(d.get("title")) or "Presentation image")
         if url:
             image_html = _render_image_fill(url, alt)
         else:
@@ -756,6 +756,17 @@ def _get_image_placeholder_copy(image: Any) -> tuple[str, str]:
     if source == "user":
         return ("待用户补图/上传", prompt)
     return ("待绑定现有素材", prompt)
+
+
+def _image_alt_text(image: Any, fallback: str) -> str:
+    if not isinstance(image, dict):
+        return fallback
+
+    return (
+        _as_text(image.get("alt"))
+        or _as_text(image.get("prompt"))
+        or fallback
+    )
 
 
 def _render_image_placeholder(title: str, detail: str = "") -> str:
