@@ -58,3 +58,30 @@ def test_html_renderer_renders_image_and_description_placeholder_when_missing_ur
     assert "<img" not in html
     assert "待用户补图/上传" in html
     assert "请上传产品截图" in html
+
+
+def test_html_renderer_rejects_svg_data_urls() -> None:
+    html = render_presentation_html(
+        {
+            "title": "Demo",
+            "slides": [
+                {
+                    "layoutId": "metrics-with-image",
+                    "layoutType": "metrics-with-image",
+                    "contentData": {
+                        "title": "Unsafe Inline Asset",
+                        "metrics": [],
+                        "image": {
+                            "source": "existing",
+                            "prompt": "hero image",
+                            "url": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+                            "alt": "",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+
+    assert "<img" not in html
+    assert "待绑定现有素材" in html

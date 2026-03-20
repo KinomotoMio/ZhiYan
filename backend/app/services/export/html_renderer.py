@@ -728,14 +728,18 @@ def _as_text(value: Any, default: str = "") -> str:
     return default
 
 
-_IMAGE_SRC_ALLOWED_RE = re.compile(r"^(https?://|data:image/)", re.IGNORECASE)
+_IMAGE_SRC_ALLOWED_RE = re.compile(r"^https?://", re.IGNORECASE)
+_IMAGE_DATA_URL_ALLOWED_RE = re.compile(
+    r"^data:image/(png|jpeg|jpg|webp|gif);base64,",
+    re.IGNORECASE,
+)
 
 
 def _sanitize_image_src(value: Any) -> str:
     url = _as_text(value)
     if not url:
         return ""
-    if _IMAGE_SRC_ALLOWED_RE.match(url):
+    if _IMAGE_SRC_ALLOWED_RE.match(url) or _IMAGE_DATA_URL_ALLOWED_RE.match(url):
         return url
     return ""
 
