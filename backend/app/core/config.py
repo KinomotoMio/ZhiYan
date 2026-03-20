@@ -58,9 +58,13 @@ class Settings(BaseSettings):
     verify_timeout_seconds: int = 90
     max_fix_passes: int = 1
     enable_vision_verification: bool = True
+    # Enable the agentic generation path; runtime falls back to the legacy pipeline when credentials are unavailable.
     enable_agentic_loop: bool = True
+    # Hard cap for one agentic run, including subagent executions that explicitly forward this limit.
     agentic_max_turns: int = 24
+    # Number of most recent agentic messages to preserve verbatim before deterministic compaction kicks in.
     agentic_compaction_message_limit: int = 24
+    # Approximate character budget used to trigger deterministic context compaction.
     agentic_compaction_char_limit: int = 12_000
     content_type_primary_strategy: str = "rules"
     content_type_shadow_enabled: bool = True
