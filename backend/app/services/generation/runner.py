@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -15,6 +17,19 @@ import httpx
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
+from app.services.generation.agentic.context import compact_context, summarize_state
+from app.services.generation.agentic.loop import agentic_loop
+from app.services.generation.agentic.prompt import build_system_prompt
+from app.services.generation.agentic.skills import (
+    build_load_skill_tool_definition,
+    build_run_skill_tool_definition,
+    build_skill_summaries,
+    execute_skill_script,
+    load_skill_markdown,
+)
+from app.services.generation.agentic.subagent import run_subagent
+from app.services.generation.agentic.todo import TodoManager, build_todo_nag, build_update_todo_tool_definition, update_todo
+from app.services.generation.agentic.tools import ToolDef, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.pipeline.graph import (
@@ -158,151 +173,23 @@ class GenerationRunner:
         job_started_monotonic = time.monotonic()
         try:
             await self._ensure_not_cancelled(job)
-
-            sequence = [
-                StageStatus.PARSE,
-                StageStatus.OUTLINE,
-                StageStatus.LAYOUT,
-                StageStatus.SLIDES,
-                StageStatus.ASSETS,
-                StageStatus.VERIFY,
-            ]
-            start_index = sequence.index(start_stage)
-
-            for stage in sequence[start_index:]:
-                await self._ensure_not_cancelled(job)
-
-                if stage == StageStatus.PARSE:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.PARSE,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_parse_document(state, progress=progress_hook),
-                    )
-                elif stage == StageStatus.OUTLINE:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.OUTLINE,
-                        timeout=float(settings.outline_timeout_seconds),
-                        stage_coro=stage_generate_outline(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                    await self._emit_event(
-                        job,
-                        EventType.OUTLINE_READY,
-                        stage=StageStatus.OUTLINE,
-                        message="大纲生成完成",
-                        payload={
-                            "topic": job.request.title,
-                            "items": [
-                                {
-                                    "slide_number": item.get("slide_number"),
-                                    "title": item.get("title"),
-                                    "suggested_slide_role": item.get(
-                                        "suggested_slide_role", "narrative"
-                                    ),
-                                }
-                                for item in state.outline.get("items", [])
-                            ],
-                            "requires_accept": job.mode.value == "review_outline" and not job.outline_accepted,
-                        },
-                    )
-                    if job.mode.value == "review_outline" and not job.outline_accepted:
-                        job.status = JobStatus.WAITING_OUTLINE_REVIEW
-                        job.current_stage = StageStatus.OUTLINE
-                        job.updated_at = now_iso()
-                        await self._store.save_job(job)
-                        if job.request.session_id:
-                            from app.services.sessions import session_store
-
-                            await session_store.update_generation_job_status(
-                                job.job_id,
-                                JobStatus.WAITING_OUTLINE_REVIEW.value,
-                            )
-                        return
-                elif stage == StageStatus.LAYOUT:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.LAYOUT,
-                        timeout=float(settings.layout_timeout_seconds),
-                        stage_coro=stage_select_layouts(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                    await self._emit_event(
-                        job,
-                        EventType.LAYOUT_READY,
-                        stage=StageStatus.LAYOUT,
-                        message="布局选择完成",
-                        payload={"layouts": state.layout_selections},
-                    )
-                elif stage == StageStatus.SLIDES:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.SLIDES,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_generate_slides(
-                            state,
-                            per_slide_timeout=float(settings.per_slide_timeout_seconds),
-                            progress=progress_hook,
-                            on_slide=slide_hook,
-                        ),
-                    )
-                    await self._sync_state_to_job(job, state)
-                elif stage == StageStatus.ASSETS:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.ASSETS,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_resolve_assets(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                elif stage == StageStatus.VERIFY:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.VERIFY,
-                        timeout=float(settings.verify_timeout_seconds),
-                        stage_coro=stage_verify_slides(
-                            state,
-                            progress=progress_hook,
-                            enable_vision=settings.enable_vision_verification,
-                        ),
-                    )
-                    await self._sync_state_to_job(job, state)
-
-            hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
-            if hard_slide_ids:
-                job.status = JobStatus.WAITING_FIX_REVIEW
-                job.current_stage = StageStatus.VERIFY
-                job.hard_issue_slide_ids = hard_slide_ids
-                job.advisory_issue_count = advisory_count
-                job.fix_preview_slides = []
-                job.fix_preview_source_ids = []
-                job.updated_at = now_iso()
-                await self._store.save_job(job)
-                if job.request.session_id:
-                    from app.services.sessions import session_store
-                    await session_store.update_generation_job_status(
-                        job.job_id,
-                        JobStatus.WAITING_FIX_REVIEW.value,
-                    )
-                await self._emit_event(
+            if self._should_use_agentic_loop():
+                completed = await self._run_agentic_job(
                     job,
-                    EventType.JOB_WAITING_FIX_REVIEW,
-                    stage=StageStatus.VERIFY,
-                    message="发现硬错误，等待用户决策修复",
-                    payload={
-                        "issues": job.issues,
-                        "hard_issue_slide_ids": hard_slide_ids,
-                        "advisory_issue_count": advisory_count,
-                        "failed_slide_indices": job.failed_slide_indices,
-                    },
+                    state,
+                    start_stage=start_stage,
+                    progress_hook=progress_hook,
+                    slide_hook=slide_hook,
                 )
+            else:
+                completed = await self._run_pipeline_job(
+                    job,
+                    state,
+                    start_stage=start_stage,
+                    progress_hook=progress_hook,
+                    slide_hook=slide_hook,
+                )
+            if not completed:
                 return
 
             elapsed_ms = int((time.monotonic() - job_started_monotonic) * 1000)
@@ -429,6 +316,589 @@ class GenerationRunner:
                     "elapsed_ms": elapsed_ms,
                 },
             )
+
+    async def _run_pipeline_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook: Callable[[str, int, int, str], asyncio.Future | None],
+        slide_hook: Callable[[dict], asyncio.Future | None],
+    ) -> bool:
+        sequence = [
+            StageStatus.PARSE,
+            StageStatus.OUTLINE,
+            StageStatus.LAYOUT,
+            StageStatus.SLIDES,
+            StageStatus.ASSETS,
+            StageStatus.VERIFY,
+        ]
+        start_index = sequence.index(start_stage)
+
+        for stage in sequence[start_index:]:
+            await self._ensure_not_cancelled(job)
+
+            if stage == StageStatus.PARSE:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.PARSE,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_parse_document(state, progress=progress_hook),
+                )
+            elif stage == StageStatus.OUTLINE:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.OUTLINE,
+                    timeout=float(settings.outline_timeout_seconds),
+                    stage_coro=stage_generate_outline(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+                await self._emit_outline_ready(job, state)
+                if job.mode.value == "review_outline" and not job.outline_accepted:
+                    await self._enter_waiting_outline_review(job)
+                    return False
+            elif stage == StageStatus.LAYOUT:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.LAYOUT,
+                    timeout=float(settings.layout_timeout_seconds),
+                    stage_coro=stage_select_layouts(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+                await self._emit_event(
+                    job,
+                    EventType.LAYOUT_READY,
+                    stage=StageStatus.LAYOUT,
+                    message="布局选择完成",
+                    payload={"layouts": state.layout_selections},
+                )
+            elif stage == StageStatus.SLIDES:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.SLIDES,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_generate_slides(
+                        state,
+                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                        progress=progress_hook,
+                        on_slide=slide_hook,
+                    ),
+                )
+                await self._sync_state_to_job(job, state)
+            elif stage == StageStatus.ASSETS:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.ASSETS,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_resolve_assets(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+            elif stage == StageStatus.VERIFY:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.VERIFY,
+                    timeout=float(settings.verify_timeout_seconds),
+                    stage_coro=stage_verify_slides(
+                        state,
+                        progress=progress_hook,
+                        enable_vision=settings.enable_vision_verification,
+                    ),
+                )
+                await self._sync_state_to_job(job, state)
+
+        if await self._maybe_enter_waiting_fix_review(job):
+            return False
+        return True
+
+    async def _run_agentic_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook: Callable[[str, int, int, str], asyncio.Future | None],
+        slide_hook: Callable[[dict], asyncio.Future | None],
+    ) -> bool:
+        todo_manager = TodoManager()
+        registry = self._build_agentic_registry(
+            job,
+            state,
+            todo_manager=todo_manager,
+            progress_hook=progress_hook,
+            slide_hook=slide_hook,
+        )
+
+        def instructions() -> str:
+            sections = [
+                build_system_prompt(skills_summary=build_skill_summaries()),
+                "## Job Context\n"
+                f"- 标题: {job.request.title or '新演示文稿'}\n"
+                f"- 目标页数: {job.request.num_pages}\n"
+                f"- 恢复起点: {start_stage.value}",
+                "## Current State\n" + summarize_state(state),
+            ]
+            if job.mode.value == "review_outline" and not job.outline_accepted:
+                sections.append(
+                    "## Review Mode\n"
+                    "- 这是 outline review 模式。\n"
+                    "- 生成完大纲后立刻停止，等待用户确认。"
+                )
+            nag = build_todo_nag(todo_manager)
+            if nag:
+                sections.append("## Plan Reminder\n" + nag)
+            return "\n\n".join(section for section in sections if section)
+
+        result = await agentic_loop(
+            self._build_agentic_user_prompt(job, start_stage=start_stage),
+            instructions=instructions,
+            tool_definitions=registry.to_model_tools(),
+            dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+            max_turns=settings.agentic_max_turns,
+            message_transform=lambda messages: compact_context(
+                messages,
+                max_tokens=max(1, settings.agentic_compaction_char_limit // 4),
+                keep_recent=settings.agentic_compaction_message_limit,
+                state_summary=summarize_state(state),
+            ),
+        )
+
+        await self._sync_state_to_job(job, state)
+        if result.stop_reason == "outline-review":
+            return False
+        if result.stop_reason == "waiting-fix-review":
+            return False
+        if job.mode.value == "review_outline" and not job.outline_accepted and state.outline and not state.layout_selections:
+            await self._enter_waiting_outline_review(job)
+            return False
+        if await self._maybe_enter_waiting_fix_review(job):
+            return False
+        if not state.slides and not state.slide_contents:
+            raise RuntimeError("agentic loop completed without generating slides")
+        if result.max_turns_reached:
+            raise RuntimeError("agentic loop hit max_turns before completion")
+        return True
+
+    def _should_use_agentic_loop(self) -> bool:
+        if not settings.enable_agentic_loop:
+            return False
+        if self._has_agentic_model_credentials():
+            return True
+        logger.info("agentic loop disabled at runtime because model credentials are unavailable")
+        return False
+
+    @staticmethod
+    def _has_agentic_model_credentials() -> bool:
+        model_name = settings.strong_model or settings.default_model
+        provider, sep, _ = model_name.partition(":")
+        if not sep:
+            provider = "openai"
+
+        if provider == "openai":
+            return bool(settings.openai_api_key or os.getenv("OPENAI_API_KEY"))
+        if provider == "anthropic":
+            return bool(settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY"))
+        if provider in {"google", "gemini", "google-gla", "google-vertex"}:
+            return bool(settings.google_api_key or os.getenv("GOOGLE_API_KEY"))
+        if provider == "deepseek":
+            return bool(settings.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY"))
+        if provider == "openrouter":
+            return bool(settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY"))
+        return False
+
+    def _build_agentic_user_prompt(self, job: GenerationJob, *, start_stage: StageStatus) -> str:
+        lines = [
+            "请根据当前任务状态生成演示文稿。",
+            f"标题：{job.request.title or '新演示文稿'}",
+            f"目标页数：{job.request.num_pages}",
+            f"恢复起点：{start_stage.value}",
+            "优先复用当前状态中的已有产物，除非你明确判断需要重做某一步。",
+        ]
+        if job.request.topic:
+            lines.append(f"主题：{job.request.topic}")
+        if job.request.source_ids:
+            lines.append(f"来源数量：{len(job.request.source_ids)}")
+        return "\n".join(lines)
+
+    async def _emit_outline_ready(self, job: GenerationJob, state: PipelineState) -> None:
+        await self._emit_event(
+            job,
+            EventType.OUTLINE_READY,
+            stage=StageStatus.OUTLINE,
+            message="大纲生成完成",
+            payload={
+                "topic": job.request.title,
+                "items": [
+                    {
+                        "slide_number": item.get("slide_number"),
+                        "title": item.get("title"),
+                        "suggested_slide_role": item.get("suggested_slide_role", "narrative"),
+                    }
+                    for item in state.outline.get("items", [])
+                ],
+                "requires_accept": job.mode.value == "review_outline" and not job.outline_accepted,
+            },
+        )
+
+    async def _enter_waiting_outline_review(self, job: GenerationJob) -> None:
+        job.status = JobStatus.WAITING_OUTLINE_REVIEW
+        job.current_stage = StageStatus.OUTLINE
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.WAITING_OUTLINE_REVIEW.value,
+            )
+
+    async def _maybe_enter_waiting_fix_review(self, job: GenerationJob) -> bool:
+        if job.status == JobStatus.WAITING_FIX_REVIEW:
+            return True
+
+        hard_slide_ids, advisory_count = self._collect_fix_issue_summary(job.issues)
+        if not hard_slide_ids:
+            return False
+
+        job.status = JobStatus.WAITING_FIX_REVIEW
+        job.current_stage = StageStatus.VERIFY
+        job.hard_issue_slide_ids = hard_slide_ids
+        job.advisory_issue_count = advisory_count
+        job.fix_preview_slides = []
+        job.fix_preview_source_ids = []
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.WAITING_FIX_REVIEW.value,
+            )
+        await self._emit_event(
+            job,
+            EventType.JOB_WAITING_FIX_REVIEW,
+            stage=StageStatus.VERIFY,
+            message="发现硬错误，等待用户决策修复",
+            payload={
+                "issues": job.issues,
+                "hard_issue_slide_ids": hard_slide_ids,
+                "advisory_issue_count": advisory_count,
+                "failed_slide_indices": job.failed_slide_indices,
+            },
+        )
+        return True
+
+    def _build_agentic_registry(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        todo_manager: TodoManager,
+        progress_hook: Callable[[str, int, int, str], asyncio.Future | None],
+        slide_hook: Callable[[dict], asyncio.Future | None],
+    ) -> ToolRegistry:
+        registry = ToolRegistry()
+
+        async def handle_update_todo_tool(input_data: dict) -> str:
+            return update_todo(input_data.get("items") or [], todo_manager)
+
+        async def handle_parse_document(_input_data: dict) -> dict:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.PARSE,
+                timeout=float(settings.job_timeout_seconds),
+                stage_coro=stage_parse_document(state, progress=progress_hook),
+            )
+            await self._sync_state_to_job(job, state)
+            return {
+                "stage": StageStatus.PARSE.value,
+                "document_metadata": state.document_metadata,
+            }
+
+        async def handle_generate_outline(_input_data: dict) -> dict | ToolExecutionResult:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.OUTLINE,
+                timeout=float(settings.outline_timeout_seconds),
+                stage_coro=stage_generate_outline(state, progress=progress_hook),
+            )
+            await self._sync_state_to_job(job, state)
+            await self._emit_outline_ready(job, state)
+            payload = {
+                "stage": StageStatus.OUTLINE.value,
+                "outline": state.outline,
+                "requires_accept": job.mode.value == "review_outline" and not job.outline_accepted,
+            }
+            if job.mode.value == "review_outline" and not job.outline_accepted:
+                await self._enter_waiting_outline_review(job)
+                return ToolExecutionResult(
+                    content=payload,
+                    stop_loop=True,
+                    metadata={"stop_reason": "outline-review"},
+                )
+            return payload
+
+        async def handle_select_layouts(_input_data: dict) -> dict:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.LAYOUT,
+                timeout=float(settings.layout_timeout_seconds),
+                stage_coro=stage_select_layouts(state, progress=progress_hook),
+            )
+            await self._sync_state_to_job(job, state)
+            await self._emit_event(
+                job,
+                EventType.LAYOUT_READY,
+                stage=StageStatus.LAYOUT,
+                message="布局选择完成",
+                payload={"layouts": state.layout_selections},
+            )
+            return {
+                "stage": StageStatus.LAYOUT.value,
+                "layouts": state.layout_selections,
+            }
+
+        async def handle_generate_slides(_input_data: dict) -> dict:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.SLIDES,
+                timeout=float(settings.job_timeout_seconds),
+                stage_coro=stage_generate_slides(
+                    state,
+                    per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                    progress=progress_hook,
+                    on_slide=slide_hook,
+                ),
+            )
+            await self._sync_state_to_job(job, state)
+            return {
+                "stage": StageStatus.SLIDES.value,
+                "slides": len(state.slides or state.slide_contents),
+            }
+
+        async def handle_resolve_assets(_input_data: dict) -> dict:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.ASSETS,
+                timeout=float(settings.job_timeout_seconds),
+                stage_coro=stage_resolve_assets(state, progress=progress_hook),
+            )
+            await self._sync_state_to_job(job, state)
+            return {
+                "stage": StageStatus.ASSETS.value,
+                "slides": len(state.slides),
+            }
+
+        async def handle_verify_slides(_input_data: dict) -> dict | ToolExecutionResult:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.VERIFY,
+                timeout=float(settings.verify_timeout_seconds),
+                stage_coro=stage_verify_slides(
+                    state,
+                    progress=progress_hook,
+                    enable_vision=settings.enable_vision_verification,
+                ),
+            )
+            await self._sync_state_to_job(job, state)
+            payload = {
+                "stage": StageStatus.VERIFY.value,
+                "issues": job.issues,
+                "failed_slide_indices": job.failed_slide_indices,
+            }
+            if await self._maybe_enter_waiting_fix_review(job):
+                return ToolExecutionResult(
+                    content=payload,
+                    stop_loop=True,
+                    metadata={"stop_reason": "waiting-fix-review"},
+                )
+            return payload
+
+        async def handle_fix_slides_once(input_data: dict) -> dict:
+            slide_ids = {
+                str(slide_id).strip()
+                for slide_id in (input_data.get("slide_ids") or [])
+                if str(slide_id).strip()
+            }
+            await stage_fix_slides_once(
+                state,
+                per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                target_slide_ids=slide_ids or None,
+            )
+            await self._sync_state_to_job(job, state)
+            return {
+                "stage": StageStatus.FIX.value,
+                "slide_ids": sorted(slide_ids),
+            }
+
+        async def handle_load_skill(input_data: dict) -> str:
+            name = str(input_data.get("name") or "").strip()
+            markdown = load_skill_markdown(name)
+            if markdown is None:
+                raise ValueError(f"unsupported skill: {name}")
+            return markdown
+
+        async def handle_run_skill(input_data: dict) -> dict:
+            return await execute_skill_script(
+                str(input_data.get("skill_name") or ""),
+                str(input_data.get("script_name") or ""),
+                input_data.get("args") or {},
+            )
+
+        async def handle_dispatch_subagent(input_data: dict) -> dict:
+            task = str(input_data.get("task") or "").strip()
+            if not task:
+                raise ValueError("subagent task must not be empty")
+            allowed = [
+                str(name).strip()
+                for name in (input_data.get("tools") or [])
+                if str(name).strip() and str(name).strip() != "dispatch_subagent"
+            ]
+            result = await run_subagent(
+                task,
+                registry=registry,
+                allowed_tool_names=allowed or None,
+                max_turns=max(1, min(int(input_data.get("max_turns") or 8), settings.agentic_max_turns)),
+                system_prompt="你是一个专注于局部任务的子 Agent。只返回对主任务有用的精简结果。",
+                message_transform=lambda messages: compact_context(
+                    messages,
+                    max_tokens=max(1, settings.agentic_compaction_char_limit // 4),
+                    keep_recent=settings.agentic_compaction_message_limit,
+                    state_summary=summarize_state(state),
+                ),
+            )
+            return {
+                "output": result.output_text,
+                "stop_reason": result.stop_reason,
+                "max_turns_reached": result.max_turns_reached,
+            }
+
+        registry.register(
+            ToolDef(
+                name="update_todo",
+                description=build_update_todo_tool_definition()["description"],
+                input_schema=build_update_todo_tool_definition()["input_schema"],
+                handler=handle_update_todo_tool,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="parse_document",
+                description="解析输入文档并提取结构信号。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_parse_document,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="generate_outline",
+                description="根据当前解析结果生成大纲。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_generate_outline,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="select_layouts",
+                description="根据大纲为每页选择布局。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_select_layouts,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="generate_slides",
+                description="为已选布局生成幻灯片内容。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_generate_slides,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="resolve_assets",
+                description="补齐图片等素材。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_resolve_assets,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="verify_slides",
+                description="校验当前幻灯片结果，发现硬错误时进入等待修复状态。",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                handler=handle_verify_slides,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="fix_slides_once",
+                description="对指定页面执行一次修复生成。",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "slide_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+                handler=handle_fix_slides_once,
+            )
+        )
+        load_skill_tool = build_load_skill_tool_definition()
+        run_skill_tool = build_run_skill_tool_definition()
+        registry.register(
+            ToolDef(
+                name=load_skill_tool["name"],
+                description=load_skill_tool["description"],
+                input_schema=load_skill_tool["input_schema"],
+                handler=handle_load_skill,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name=run_skill_tool["name"],
+                description=run_skill_tool["description"],
+                input_schema=run_skill_tool["input_schema"],
+                handler=handle_run_skill,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="dispatch_subagent",
+                description="创建一个隔离上下文的子 Agent 来处理局部任务。",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "max_turns": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["task"],
+                    "additionalProperties": False,
+                },
+                handler=handle_dispatch_subagent,
+            )
+        )
+        return registry
 
     async def preview_fix(
         self,
