@@ -44,10 +44,14 @@ def test_run_aesthetic_verification_falls_back_to_text(monkeypatch):
     )
 
     assert result is not None
-    assert result.score == 88
+    assert result.mode == "text"
+    assert result.degraded_reason == "vision_error_fallback"
+    assert result.result is not None
+    assert result.result.score == 88
     assert len(fake_agent.prompts) == 1
     assert isinstance(fake_agent.prompts[0], str)
     assert "请评估以下演示文稿的设计质量" in fake_agent.prompts[0]
+    assert any(issue.source == "vision_error_fallback" for issue in result.result.issues)
 
 
 def test_run_aesthetic_verification_timeout_adds_warning_issue(monkeypatch):
@@ -81,5 +85,9 @@ def test_run_aesthetic_verification_timeout_adds_warning_issue(monkeypatch):
     )
 
     assert result is not None
-    assert result.score == 82
-    assert any("视觉截图评估超时" in issue.message for issue in result.issues)
+    assert result.mode == "text"
+    assert result.degraded_reason == "vision_timeout_fallback"
+    assert result.result is not None
+    assert result.result.score == 82
+    assert any("视觉截图评估超时" in issue.message for issue in result.result.issues)
+    assert any(issue.source == "vision_timeout_fallback" for issue in result.result.issues)

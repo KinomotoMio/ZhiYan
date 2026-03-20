@@ -444,6 +444,9 @@ def test_verify_soft_timeout_completes_job_with_warning(monkeypatch, tmp_path):
         assert loaded.status == JobStatus.COMPLETED
         assert loaded.presentation is not None
         assert any(issue["source"] == "aesthetic_timeout_fallback" for issue in loaded.issues)
+        assert loaded.document_metadata["verify"]["aesthetic_mode"] == "skipped"
+        assert loaded.document_metadata["verify"]["aesthetic_degraded_reason"] == "aesthetic_timeout_fallback"
+        assert loaded.document_metadata["verify"]["vision_requested"] is True
 
         events = await store.list_events(job.job_id)
         job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
