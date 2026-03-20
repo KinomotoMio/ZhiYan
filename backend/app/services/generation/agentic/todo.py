@@ -112,7 +112,7 @@ def _normalize_item(raw: Mapping[str, Any]) -> TodoItem:
 
     status = str(raw["status"]).strip()
     if status not in TODO_STATUSES:
-        raise ValueError(f"invalid todo status: {status}")
+        raise ValueError(f"invalid todo status: {status}; expected one of {TODO_STATUSES}")
 
     return TodoItem(id=item_id, task=task, status=status)
 
