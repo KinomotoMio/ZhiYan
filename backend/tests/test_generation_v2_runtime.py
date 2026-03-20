@@ -15,7 +15,7 @@ from app.models.slide import Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
-from app.services.pipeline.graph import PipelineState, stage_generate_slides
+from app.services.pipeline.graph import OutlineSchemaError, PipelineState, stage_generate_slides
 from app.services.sessions.store import SessionStore
 
 
@@ -189,6 +189,40 @@ def test_outline_provider_network_classification(monkeypatch, tmp_path):
         job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
         assert job_failed
         assert job_failed[-1].payload["error_code"] == "PROVIDER_NETWORK"
+
+    asyncio.run(_case())
+
+
+def test_outline_schema_classification(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-outline-schema")
+        await store.create_job(job)
+
+        from app.services.generation import runner as runner_mod
+
+        async def fail_outline(state, progress=None):  # noqa: ARG001
+            raise OutlineSchemaError(
+                "outline schema validation failed: missing key_points",
+                schema_error_type="ValidationError",
+            )
+
+        monkeypatch.setattr(runner_mod, "stage_generate_outline", fail_outline)
+        await runner._run_job(job.job_id, from_stage=StageStatus.OUTLINE)  # noqa: SLF001
+
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.status == JobStatus.FAILED
+        assert loaded.stage_results[-1].error_code == "OUTLINE_SCHEMA"
+        assert loaded.stage_results[-1].retriable is False
+
+        events = await store.list_events(job.job_id)
+        job_failed = [evt for evt in events if evt.type == EventType.JOB_FAILED]
+        assert job_failed
+        assert job_failed[-1].payload["error_code"] == "OUTLINE_SCHEMA"
+        assert "missing key_points" in job_failed[-1].payload["error_message"]
 
     asyncio.run(_case())
 
