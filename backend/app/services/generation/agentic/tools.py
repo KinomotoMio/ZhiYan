@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
 from app.services.generation.agentic.types import ToolCall, ToolResult
+
+logger = logging.getLogger(__name__)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 ToolResponsePart = ToolResult
@@ -89,6 +92,7 @@ async def dispatch_tool_calls(
         try:
             output = await tool.handler(call.args)
         except Exception as exc:
+            logger.exception("agentic tool execution failed", extra={"tool_name": call.tool_name})
             result.parts.append(
                 ToolResult(
                     tool_name=call.tool_name,
