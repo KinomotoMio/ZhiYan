@@ -119,7 +119,6 @@ def test_outline_stage_uses_layer12_summaries_for_large_source_backed_documents(
         )
         monkeypatch.setattr(outline_mod, "get_outline_synthesizer_agent", lambda: agent, raising=True)
         monkeypatch.setattr(outline_mod, "outline_synthesizer_agent", agent, raising=False)
-        monkeypatch.setattr(parser_mod, "estimate_tokens", lambda content: 12001)
         monkeypatch.setattr(
             source_store,
             "get_layer12_summaries",
@@ -127,7 +126,7 @@ def test_outline_stage_uses_layer12_summaries_for_large_source_backed_documents(
         )
 
         state = PipelineState(
-            raw_content="A" * 20000,
+            raw_content="长内容" * 7000,
             source_ids=["src-1", "src-2"],
             topic="测试主题",
             num_pages=1,
@@ -166,11 +165,10 @@ def test_outline_stage_truncates_large_documents_without_summaries(monkeypatch):
         )
         monkeypatch.setattr(outline_mod, "get_outline_synthesizer_agent", lambda: agent, raising=True)
         monkeypatch.setattr(outline_mod, "outline_synthesizer_agent", agent, raising=False)
-        monkeypatch.setattr(parser_mod, "estimate_tokens", lambda content: 12001)
         monkeypatch.setattr(source_store, "get_layer12_summaries", lambda source_ids: "")
 
         state = PipelineState(
-            raw_content="B" * 20000,
+            raw_content="长内容" * 7000,
             source_ids=["src-1"],
             topic="测试主题",
             num_pages=1,
