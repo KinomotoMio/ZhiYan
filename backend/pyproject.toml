@@ -15,6 +15,16 @@ dependencies = [
     "playwright>=1.52.0",
 ]
 
+[project.scripts]
+zhiyan-cli = "app.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
