@@ -395,6 +395,96 @@ def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):
     assert "right" in persisted_content
 
 
+def test_session_detail_tolerates_invalid_chat_model_meta(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-chat-meta"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "坏消息元数据"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    asyncio.run(
+        store.add_chat_message(
+            workspace_id="ws-chat-meta",
+            session_id=session_id,
+            role="assistant",
+            content="历史消息",
+            model_meta={"model": "gpt-test"},
+        )
+    )
+
+    with sqlite3.connect(store._db_path) as conn:  # noqa: SLF001
+        conn.execute(
+            """
+            UPDATE session_chat_messages
+            SET model_meta_json=?
+            WHERE session_id=?
+            """,
+            ("{bad-json", session_id),
+        )
+        conn.commit()
+
+    detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["chat_messages"][0]["content"] == "历史消息"
+    assert payload["chat_messages"][0]["model_meta"] == {}
+
+
+def test_session_detail_falls_back_when_latest_presentation_payload_is_corrupt(
+    monkeypatch, tmp_path
+):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-corrupt-presentation"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "坏演示稿"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    valid_presentation = {
+        "presentationId": "pres-valid",
+        "title": "可恢复演示稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "intro-slide",
+                "layoutId": "intro-slide",
+                "contentData": {"title": "恢复成功"},
+                "components": [],
+            }
+        ],
+    }
+    asyncio.run(store.save_presentation(session_id=session_id, payload=valid_presentation))
+
+    with sqlite3.connect(store._db_path) as conn:  # noqa: SLF001
+        conn.execute(
+            """
+            INSERT INTO session_presentations(
+                id, session_id, version_no, is_snapshot, snapshot_label, payload_json, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "sp-corrupt",
+                session_id,
+                2,
+                0,
+                None,
+                "{bad-json",
+                "2026-03-20T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
+    assert detail.status_code == 200
+    latest = detail.json()["latest_presentation"]
+    assert latest is not None
+    assert latest["id"] != "sp-corrupt"
+    assert latest["presentation"]["presentationId"] == "pres-valid"
+
+
 def test_workspace_source_dedup_and_cross_workspace_isolation(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
     client = TestClient(app)

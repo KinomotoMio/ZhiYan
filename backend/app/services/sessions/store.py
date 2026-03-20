@@ -1203,16 +1203,24 @@ class SessionStore:
                 """,
                 (session_id, limit),
             ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "role": row["role"],
-                "content": row["content"],
-                "created_at": row["created_at"],
-                "model_meta": json.loads(row["model_meta_json"] or "{}"),
-            }
-            for row in rows
-        ]
+        records: list[dict] = []
+        for row in rows:
+            records.append(
+                {
+                    "id": row["id"],
+                    "role": row["role"],
+                    "content": row["content"],
+                    "created_at": row["created_at"],
+                    "model_meta": self._load_json_dict(
+                        row["model_meta_json"],
+                        fallback={},
+                        context="session_chat_model_meta",
+                        session_id=session_id,
+                        record_id=row["id"],
+                    ),
+                }
+            )
+        return records
 
     async def save_presentation(
         self,
@@ -1314,54 +1322,130 @@ class SessionStore:
             ).fetchone()
             if not exists:
                 return None
-            row = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT id, version_no, is_snapshot, snapshot_label, payload_json, created_at
                 FROM session_presentations
                 WHERE session_id=?
                 ORDER BY version_no DESC
-                LIMIT 1
                 """,
                 (session_id,),
-            ).fetchone()
-            if not row:
-                return None
+            ).fetchall()
 
-            payload = json.loads(row["payload_json"])
-            normalized_payload, changed, repair_report = normalize_presentation_payload(payload)
-            if changed:
-                normalized_json = json.dumps(normalized_payload, ensure_ascii=False)
-                self._update_presentation_payload_sync(conn, row["id"], normalized_json)
-                logger.info(
-                    "presentation_payload_repaired",
-                    extra={
-                        "session_id": session_id,
-                        "presentation_id": row["id"],
-                        "repair_applied": True,
-                        "repaired_slide_count": repair_report["repaired_slide_count"],
-                        "repair_types": ",".join(repair_report["repair_types"]),
-                        "invalid_slide_count": repair_report["invalid_slide_count"],
-                    },
+            for row in rows:
+                payload = self._load_json_dict(
+                    row["payload_json"],
+                    fallback=None,
+                    context="session_presentation_payload",
+                    session_id=session_id,
+                    record_id=row["id"],
+                    warn_on_empty=True,
                 )
-            elif repair_report["invalid_slide_count"] > 0:
+                if payload is None:
+                    continue
+
+                try:
+                    normalized_payload, changed, repair_report = (
+                        normalize_presentation_payload(payload)
+                    )
+                except Exception:
+                    logger.warning(
+                        "session_presentation_payload_normalize_failed",
+                        extra={
+                            "session_id": session_id,
+                            "presentation_id": row["id"],
+                        },
+                        exc_info=True,
+                    )
+                    continue
+
+                if changed:
+                    normalized_json = json.dumps(normalized_payload, ensure_ascii=False)
+                    self._update_presentation_payload_sync(conn, row["id"], normalized_json)
+                    logger.info(
+                        "presentation_payload_repaired",
+                        extra={
+                            "session_id": session_id,
+                            "presentation_id": row["id"],
+                            "repair_applied": True,
+                            "repaired_slide_count": repair_report["repaired_slide_count"],
+                            "repair_types": ",".join(repair_report["repair_types"]),
+                            "invalid_slide_count": repair_report["invalid_slide_count"],
+                        },
+                    )
+                elif repair_report["invalid_slide_count"] > 0:
+                    logger.warning(
+                        "presentation_payload_contains_unrecoverable_slides",
+                        extra={
+                            "session_id": session_id,
+                            "presentation_id": row["id"],
+                            "repair_applied": False,
+                            "invalid_slide_count": repair_report["invalid_slide_count"],
+                        },
+                    )
+
+                return {
+                    "id": row["id"],
+                    "version_no": row["version_no"],
+                    "is_snapshot": bool(row["is_snapshot"]),
+                    "snapshot_label": row["snapshot_label"],
+                    "created_at": row["created_at"],
+                    "presentation": normalized_payload,
+                }
+        return None
+
+    @staticmethod
+    def _load_json_dict(
+        raw_json: str | None,
+        *,
+        fallback: dict | None,
+        context: str,
+        session_id: str,
+        record_id: str,
+        warn_on_empty: bool = False,
+    ) -> dict | None:
+        if raw_json is None:
+            return dict(fallback) if isinstance(fallback, dict) else fallback
+
+        raw_json = raw_json.strip()
+        if not raw_json:
+            if warn_on_empty:
                 logger.warning(
-                    "presentation_payload_contains_unrecoverable_slides",
+                    "session_store_empty_json",
                     extra={
+                        "context": context,
                         "session_id": session_id,
-                        "presentation_id": row["id"],
-                        "repair_applied": False,
-                        "invalid_slide_count": repair_report["invalid_slide_count"],
+                        "record_id": record_id,
                     },
                 )
+            return dict(fallback) if isinstance(fallback, dict) else fallback
 
-            return {
-                "id": row["id"],
-                "version_no": row["version_no"],
-                "is_snapshot": bool(row["is_snapshot"]),
-                "snapshot_label": row["snapshot_label"],
-                "created_at": row["created_at"],
-                "presentation": normalized_payload,
-            }
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            logger.warning(
+                "session_store_invalid_json",
+                extra={
+                    "context": context,
+                    "session_id": session_id,
+                    "record_id": record_id,
+                },
+            )
+            return dict(fallback) if isinstance(fallback, dict) else fallback
+
+        if not isinstance(payload, dict):
+            logger.warning(
+                "session_store_invalid_json_shape",
+                extra={
+                    "context": context,
+                    "session_id": session_id,
+                    "record_id": record_id,
+                    "payload_type": type(payload).__name__,
+                },
+            )
+            return dict(fallback) if isinstance(fallback, dict) else fallback
+
+        return payload
 
     @staticmethod
     def _update_presentation_payload_sync(
