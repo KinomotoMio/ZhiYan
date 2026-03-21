@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 _agent_cache: dict[str, object] = {}
 
+_MAX_REFS_IN_PROMPT = 20
 
 SLIDE_GEN_INSTRUCTIONS = (
     "你是幻灯片内容撰写专家。根据大纲和源文档，为指定布局生成结构化内容。\n\n"
@@ -71,7 +72,7 @@ async def generate_slide_content(
 
     points_text = "\n".join(f"- {p}" for p in key_points) if key_points else "无"
     refs = [str(ref).strip() for ref in (source_references or []) if str(ref).strip()]
-    refs = refs[:20]
+    refs = refs[:_MAX_REFS_IN_PROMPT]
     refs_text = "\n".join(f"- {ref}" for ref in refs) if refs else "无"
     prompt = (
         f"幻灯片 #{slide_number}\n"
