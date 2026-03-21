@@ -28,6 +28,10 @@ test("buildLoadingTitle falls back to source names or a generic loading label", 
     "年度复盘-最终版-v6"
   );
   assert.equal(
+    buildLoadingTitle({ topic: "", sourceNames: ["quarterly-review.deckbackup"] }),
+    "quarterly-review"
+  );
+  assert.equal(
     buildLoadingTitle({ topic: "", sourceNames: ["a.pdf", "b.pdf"] }),
     "基于2个来源生成"
   );

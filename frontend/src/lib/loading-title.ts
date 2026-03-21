@@ -4,7 +4,7 @@ const MAX_LOADING_TITLE_CHARS = 18;
 function stripSourceExtension(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return "";
-  return trimmed.replace(/\.[a-z0-9]{1,8}$/i, "").trim();
+  return trimmed.replace(/\.[^/.]+$/, "").trim();
 }
 
 function stripPromptBoilerplate(text: string): string {
