@@ -4,6 +4,7 @@ import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type { SessionSummary, WorkspaceId } from "@/lib/api";
 import type { LayoutRole } from "@/lib/layout-role";
+import { compactLoadingTitle, DEFAULT_LOADING_TITLE } from "@/lib/loading-title";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
 import {
   buildShellSlides,
@@ -370,9 +371,19 @@ export const useAppStore = create<AppState>()(
       // Progressive generation actions
       initGenerationShell: (title, pageCount) =>
         set((state) => {
-          const safeTitle = title.trim() || "生成中...";
+          const safeTitle = compactLoadingTitle(title, DEFAULT_LOADING_TITLE);
           const currentPresentationId =
             state.presentation?.presentationId || "pres-skeleton";
+          const currentSession = state.sessions.find(
+            (session) => session.id === state.currentSessionId
+          );
+          const sessions = shouldSyncGeneratedSessionTitle(currentSession)
+            ? state.sessions.map((session) =>
+                session.id === state.currentSessionId
+                  ? { ...session, title: safeTitle }
+                  : session
+              )
+            : state.sessions;
           return {
             presentation: {
               presentationId: currentPresentationId,
@@ -381,6 +392,7 @@ export const useAppStore = create<AppState>()(
             },
             currentSlideIndex: 0,
             isGenerating: true,
+            sessions,
           };
         }),
       setPresentationTitle: (title) =>

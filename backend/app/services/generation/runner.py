@@ -1026,7 +1026,7 @@ class GenerationRunner:
         state = PipelineState(
             raw_content=job.request.resolved_content or job.request.topic,
             source_ids=list(job.request.source_ids),
-            topic=job.request.title,
+            topic=job.request.topic or job.request.title,
             template_id=job.request.template_id,
             num_pages=max(3, min(job.request.num_pages, 50)),
             job_id=job.job_id,

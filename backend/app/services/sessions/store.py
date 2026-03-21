@@ -1430,6 +1430,43 @@ class SessionStore:
                 self._update_generation_job_status_sync, job_id, status, now
             )
 
+    async def set_generated_title_if_unedited(
+        self,
+        workspace_id: str,
+        session_id: str,
+        title: str,
+    ) -> None:
+        normalized = str(title or "").strip()
+        if not normalized:
+            return
+        now = _now_iso()
+        async with self._write_lock:
+            await asyncio.to_thread(
+                self._set_generated_title_if_unedited_sync,
+                workspace_id,
+                session_id,
+                normalized,
+                now,
+            )
+
+    def _set_generated_title_if_unedited_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+        title: str,
+        now: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET title=?, updated_at=?
+                WHERE id=? AND workspace_id=? AND title_edited_by_user=0
+                """,
+                (title, now, session_id, workspace_id),
+            )
+            conn.commit()
+
     def _update_generation_job_status_sync(self, job_id: str, status: str, now: str) -> None:
         with self._connect() as conn:
             conn.execute(

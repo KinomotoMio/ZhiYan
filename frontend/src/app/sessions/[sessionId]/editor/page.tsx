@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import { getJob, getSessionDetail, updateSession } from "@/lib/api";
+import { DEFAULT_LOADING_TITLE, resolveGenerationRequestTitle } from "@/lib/loading-title";
 import {
   buildShellSlides,
   mergeGeneratedSlide,
@@ -16,7 +17,7 @@ type LoadState = "loading" | "ready" | "empty" | "error";
 
 type HydratedGenerationJob = {
   slides?: Slide[];
-  request?: { num_pages?: number; title?: string };
+  request?: { num_pages?: number; title?: string; topic?: string };
   presentation?: Presentation | null;
   issues?: Array<Record<string, unknown>>;
   failed_slide_indices?: number[];
@@ -128,13 +129,9 @@ export default function SessionEditorPage() {
                   ? job.request.num_pages
                   : 5;
               const pageCount = Math.max(1, Math.trunc(rawNumPages));
-              const jobTitle =
-                typeof job.request?.title === "string" &&
-                job.request.title.trim()
-                  ? job.request.title
-                  : "生成中...";
+              const jobTitle = resolveGenerationRequestTitle(job.request);
 
-              let mergedSlides = buildShellSlides(pageCount, "生成中...");
+              let mergedSlides = buildShellSlides(pageCount, jobTitle);
               if (Array.isArray(job.slides) && job.slides.length > 0) {
                 for (let idx = 0; idx < Math.min(job.slides.length, mergedSlides.length); idx += 1) {
                   const slide = job.slides[idx] as Slide | undefined;
@@ -163,8 +160,8 @@ export default function SessionEditorPage() {
             ) {
               presentation = {
                 presentationId: "pres-skeleton",
-                title: "生成中...",
-                slides: buildShellSlides(5, "生成中..."),
+                title: DEFAULT_LOADING_TITLE,
+                slides: buildShellSlides(5, DEFAULT_LOADING_TITLE),
               };
             }
           }

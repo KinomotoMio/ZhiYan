@@ -157,13 +157,66 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
         "/api/v2/generation/jobs",
         headers=h1,
         json={
-            "topic": "自动创建会话",
+            "topic": "请基于以下内容生成一个关于人工智能对未来工作影响的10页PPT，需要适合管理层汇报。",
             "num_pages": 3,
             "mode": "auto",
         },
     )
     assert create_auto.status_code == 200
-    assert create_auto.json()["session_id"]
+    auto_session_id = create_auto.json()["session_id"]
+    assert auto_session_id
+    auto_session_detail = client.get(f"/api/v1/sessions/{auto_session_id}", headers=h1)
+    assert auto_session_detail.status_code == 200
+    assert auto_session_detail.json()["session"]["title"] == "人工智能对未来工作影响"
+
+    auto_job_detail = client.get(
+        f"/api/v2/generation/jobs/{create_auto.json()['job_id']}",
+        headers=h1,
+    )
+    assert auto_job_detail.status_code == 200
+    assert auto_job_detail.json()["request"]["title"] == "人工智能对未来工作影响"
+    assert auto_job_detail.json()["request"]["topic"].startswith("请基于以下内容生成一个关于人工智能")
+
+    existing_session = client.post("/api/v1/sessions", headers=h1, json={"title": "旧草稿"})
+    assert existing_session.status_code == 200
+    existing_session_id = existing_session.json()["id"]
+
+    create_existing = client.post(
+        "/api/v2/generation/jobs",
+        headers=h1,
+        json={
+            "topic": "准备一个关于供应链优化的演示文稿，突出冷链、仓配协同和损耗控制。",
+            "session_id": existing_session_id,
+            "num_pages": 4,
+            "mode": "auto",
+        },
+    )
+    assert create_existing.status_code == 200
+    existing_detail = client.get(f"/api/v1/sessions/{existing_session_id}", headers=h1)
+    assert existing_detail.status_code == 200
+    assert existing_detail.json()["session"]["title"] == "供应链优化"
+
+    renamed = client.patch(
+        f"/api/v1/sessions/{existing_session_id}",
+        headers=h1,
+        json={"title": "用户手动命名"},
+    )
+    assert renamed.status_code == 200
+
+    create_preserved = client.post(
+        "/api/v2/generation/jobs",
+        headers=h1,
+        json={
+            "topic": "准备一个关于出海策略的演示文稿，强调渠道和品牌。",
+            "session_id": existing_session_id,
+            "num_pages": 4,
+            "mode": "auto",
+        },
+    )
+    assert create_preserved.status_code == 200
+    preserved_detail = client.get(f"/api/v1/sessions/{existing_session_id}", headers=h1)
+    assert preserved_detail.status_code == 200
+    assert preserved_detail.json()["session"]["title"] == "用户手动命名"
 
     presentation = {
         "presentationId": "pres-ready",

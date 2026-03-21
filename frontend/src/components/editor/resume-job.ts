@@ -1,4 +1,5 @@
 import { getJob, runJob } from "@/lib/api";
+import { resolveGenerationRequestTitle } from "@/lib/loading-title";
 
 export interface ResumeGenerationJobResult {
   eventsSeq: number;
@@ -31,8 +32,6 @@ export async function resumeGenerationJob(
         ? Math.max(1, Math.trunc(latest.request.num_pages))
         : 5,
     requestTitle:
-      typeof latest.request?.title === "string" && latest.request.title.trim()
-        ? latest.request.title
-        : "生成中...",
+      resolveGenerationRequestTitle(latest.request),
   };
 }
