@@ -14,6 +14,9 @@ test("resumeGenerationJob calls getJob before runJob and returns normalized payl
         status: "failed",
         current_stage: "verify",
         events_seq: 42,
+        request: {
+          topic: "请基于以下内容生成一个关于人工智能对未来工作影响的10页PPT，需要适合管理层汇报。",
+        },
         outline: {},
         layouts: [],
         slides: [],
@@ -38,7 +41,7 @@ test("resumeGenerationJob calls getJob before runJob and returns normalized payl
   assert.equal(result.resumedStage, "verify");
   assert.equal(result.resumedJobId, "job-1");
   assert.equal(result.requestNumPages, 5);
-  assert.equal(result.requestTitle, "生成中...");
+  assert.equal(result.requestTitle, "人工智能对未来工作影响");
 });
 
 test("resumeGenerationJob keeps running flow when shell already exists (events_seq fallback)", async () => {
@@ -47,7 +50,11 @@ test("resumeGenerationJob keeps running flow when shell already exists (events_s
       job_id: "job-2",
       status: "failed",
       current_stage: "verify",
-      request: { num_pages: 7, title: "恢复任务" },
+      request: {
+        num_pages: 7,
+        topic: "准备一个关于供应链优化的演示文稿，突出冷链、仓配协同和损耗控制。",
+        title: "准备一个关于供应链优化的演示文稿，突出冷链、仓配协同和损耗控制。",
+      },
       outline: {},
       layouts: [],
       slides: [],
@@ -65,5 +72,5 @@ test("resumeGenerationJob keeps running flow when shell already exists (events_s
   assert.equal(result.eventsSeq, 0);
   assert.equal(result.resumedStatus, "running");
   assert.equal(result.requestNumPages, 7);
-  assert.equal(result.requestTitle, "恢复任务");
+  assert.equal(result.requestTitle, "供应链优化");
 });

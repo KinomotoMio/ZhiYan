@@ -492,6 +492,7 @@ export interface GenerationIssue {
 export interface GenerationRequestDataLite {
   num_pages?: number;
   title?: string;
+  topic?: string;
 }
 
 export interface GenerationJob {

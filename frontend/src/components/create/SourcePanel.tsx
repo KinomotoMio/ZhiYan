@@ -19,6 +19,7 @@ import {
   unlinkSourceFromSession,
   uploadWorkspaceSource,
 } from "@/lib/api";
+import { resolveGenerationRequestTitle } from "@/lib/loading-title";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
@@ -74,7 +75,7 @@ type SourceFilterMode = "all" | "selected" | "unselected";
 
 type HydratedGenerationJob = {
   slides?: Slide[];
-  request?: { title?: string };
+  request?: { title?: string; topic?: string };
   issues?: Array<Record<string, unknown>>;
   failed_slide_indices?: number[];
   hard_issue_slide_ids?: string[];
@@ -217,9 +218,7 @@ export default function SourcePanel() {
                 job.presentation.presentationId.trim()
                   ? job.presentation.presentationId
                   : "pres-skeleton"),
-              title:
-                (typeof job.request?.title === "string" && job.request.title.trim()) ||
-                "生成中...",
+              title: resolveGenerationRequestTitle(job.request),
               slides: job.slides,
             };
           }

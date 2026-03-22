@@ -30,6 +30,7 @@ from app.models.generation import (
     now_iso,
 )
 from app.services.generation import event_bus, generation_runner, job_store
+from app.services.generation.loading_title import DEFAULT_LOADING_TITLE, build_loading_title
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
 
@@ -84,8 +85,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
     combined = req.content
     session_id = req.session_id
     if not session_id:
-        title_seed = req.topic[:30] if req.topic else "未命名会话"
-        created_session = await session_store.create_session(workspace_id, title_seed)
+        created_session = await session_store.create_session(workspace_id, "未命名会话")
         session_id = created_session["id"]
 
     try:
@@ -106,11 +106,22 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
     else:
         source_hints = {}
+        source_metas = []
 
     if not combined and not req.topic:
         raise HTTPException(status_code=422, detail="请提供来源文档或主题描述")
 
-    title = req.topic[:50] if req.topic else (combined[:50] if combined else "新演示文稿")
+    loading_title = build_loading_title(
+        topic=req.topic or req.content,
+        source_names=[meta.get("name", "") for meta in source_metas],
+        fallback=DEFAULT_LOADING_TITLE,
+    )
+    await session_store.set_generated_title_if_unedited(
+        workspace_id,
+        session_id,
+        loading_title,
+    )
+
     job_id = f"job-{uuid4().hex[:12]}"
 
     job = GenerationJob(
@@ -125,7 +136,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
             source_hints=source_hints,
             template_id=req.template_id,
             num_pages=max(3, min(req.num_pages, settings.max_slide_pages)),
-            title=title,
+            title=loading_title,
             resolved_content=combined or req.topic,
         ),
         outline_accepted=req.mode == GenerationMode.AUTO,
