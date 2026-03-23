@@ -11,31 +11,6 @@ import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
 import type { Presentation, Slide } from "@/types/slide";
 
-const LAYER_ORDER: Record<string, number> = {
-  content: 1,
-  assets: 2,
-  verify: 3,
-};
-
-function getSlideReadyLayer(slide: Slide | null | undefined): string | null {
-  if (!slide) return null;
-  const data = (slide.contentData ?? {}) as Record<string, unknown>;
-  const layer = typeof data._readyLayer === "string" ? data._readyLayer : "";
-  return layer.trim() ? layer : null;
-}
-
-function withReadyLayer(slide: Slide, layer: string, seq: number): Slide {
-  const data = (slide.contentData ?? {}) as Record<string, unknown>;
-  return {
-    ...slide,
-    contentData: {
-      ...data,
-      _readyLayer: layer,
-      _readyLayerSeq: seq,
-    },
-  };
-}
-
 function asErrorCode(value: unknown): GenerationErrorCode | null {
   if (
     value === "STAGE_TIMEOUT" ||
@@ -145,42 +120,11 @@ export default function GenerationEventCoordinator() {
             const currentSlides =
               useAppStore.getState().presentation?.slides.length ?? 0;
             if (index >= 0 && index < currentSlides && slide) {
-              updateSlideAtIndex(index, withReadyLayer(slide, "content", evt.seq));
+              updateSlideAtIndex(index, slide);
             } else if (index >= 0) {
               console.warn(
                 "[generation] slide_ready index out of range",
                 { index, currentSlides, jobId }
-              );
-            }
-            return;
-          }
-
-          if (evt.type === "slide_layer_ready") {
-            const payload = evt.payload as Record<string, unknown>;
-            const index = Number(payload.slide_index ?? -1);
-            const slide = payload.slide as Slide | undefined;
-            const layer =
-              typeof payload.layer === "string" && payload.layer.trim()
-                ? payload.layer
-                : "content";
-            const currentPresentation = useAppStore.getState().presentation;
-            const currentSlides = currentPresentation?.slides.length ?? 0;
-            const currentSlide =
-              index >= 0 && index < currentSlides
-                ? (currentPresentation?.slides[index] as Slide | undefined)
-                : undefined;
-
-            if (index >= 0 && index < currentSlides && slide) {
-              const nextOrder = LAYER_ORDER[layer] ?? 0;
-              const currentLayer = getSlideReadyLayer(currentSlide);
-              const currentOrder = currentLayer ? (LAYER_ORDER[currentLayer] ?? 0) : 0;
-              if (nextOrder >= currentOrder) {
-                updateSlideAtIndex(index, withReadyLayer(slide, layer, evt.seq));
-              }
-            } else if (index >= 0) {
-              console.warn(
-                "[generation] slide_layer_ready index out of range",
-                { index, currentSlides, jobId, layer }
               );
             }
             return;

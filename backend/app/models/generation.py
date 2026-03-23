@@ -46,7 +46,6 @@ class EventType(str, Enum):
     OUTLINE_READY = "outline_ready"
     LAYOUT_READY = "layout_ready"
     SLIDE_READY = "slide_ready"
-    SLIDE_LAYER_READY = "slide_layer_ready"
     JOB_WAITING_FIX_REVIEW = "job_waiting_fix_review"
     FIX_PREVIEW_READY = "fix_preview_ready"
     STAGE_FAILED = "stage_failed"
