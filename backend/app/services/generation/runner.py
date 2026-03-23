@@ -18,6 +18,7 @@ from app.models.slide import Presentation, Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.pipeline.graph import (
+    OutlineSchemaError,
     PipelineState,
     stage_fix_slides_once,
     stage_generate_outline,
@@ -34,6 +35,7 @@ ERROR_STAGE_TIMEOUT = "STAGE_TIMEOUT"
 ERROR_PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
 ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
+ERROR_OUTLINE_SCHEMA = "OUTLINE_SCHEMA"
 ERROR_CANCELLED = "CANCELLED"
 ERROR_UNKNOWN = "UNKNOWN"
 
@@ -373,7 +375,10 @@ class GenerationRunner:
                     EventType.LAYOUT_READY,
                     stage=StageStatus.LAYOUT,
                     message="布局选择完成",
-                    payload={"layouts": state.layout_selections},
+                    payload={
+                        "layouts": state.layout_selections,
+                        "degradation": state.document_metadata.get("layout_degradation"),
+                    },
                 )
             elif stage == StageStatus.SLIDES:
                 await self._run_stage(
@@ -908,6 +913,13 @@ class GenerationRunner:
                 retriable=True,
             )
 
+        if isinstance(error, OutlineSchemaError):
+            return ClassifiedError(
+                error_code=ERROR_OUTLINE_SCHEMA,
+                error_message=str(error),
+                retriable=False,
+            )
+
         error_name = type(error).__name__.lower()
         error_text = str(error).lower()
         if "timeout" in error_name or "timed out" in error_text:
@@ -988,13 +1000,7 @@ class GenerationRunner:
             job.slides = [slide.model_dump(mode="json", by_alias=True) for slide in state.slides]
         elif state.slide_contents:
             job.slides = [
-                {
-                    "slideId": f"slide-{item['slide_number']}",
-                    "layoutType": item.get("layout_id", "bullet-with-icons"),
-                    "layoutId": item.get("layout_id", "bullet-with-icons"),
-                    "contentData": item.get("content_data", {}),
-                    "components": [],
-                }
+                _serialize_slide_content_item(item)
                 for item in state.slide_contents
             ]
         job.issues = list(state.verification_issues)
@@ -1145,3 +1151,17 @@ def _parse_stage(raw: str) -> StageStatus | None:
     with suppress(ValueError):
         return StageStatus(raw)
     return None
+
+
+def _serialize_slide_content_item(item: dict[str, object]) -> dict[str, object]:
+    slide_payload: dict[str, object] = {
+        "slideId": f"slide-{item['slide_number']}",
+        "layoutType": item.get("layout_id", "bullet-with-icons"),
+        "layoutId": item.get("layout_id", "bullet-with-icons"),
+        "contentData": item.get("content_data", {}),
+        "components": [],
+    }
+    background = item.get("background")
+    if background is not None:
+        slide_payload["background"] = background
+    return slide_payload

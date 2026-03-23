@@ -9,12 +9,13 @@ import { useAppStore } from "@/lib/store";
 import {
   acceptOutline,
   cancelJob,
-  exportPptx,
   exportPdf,
+  exportPptx,
   fixApply,
   fixPreview,
   fixSkip,
 } from "@/lib/api";
+import { getExportSuccessMessage } from "@/lib/export-feedback";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
   DropdownMenu,
@@ -370,10 +371,11 @@ export default function EditorWorkspace({
     setExporting(true);
 
     try {
-      const blob =
+      const exportResult =
         format === "pptx"
           ? await exportPptx(presentation)
-          : await exportPdf(presentation);
+          : { blob: await exportPdf(presentation), mode: "structured" as const };
+      const { blob, mode } = exportResult;
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -383,7 +385,7 @@ export default function EditorWorkspace({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success(`${format.toUpperCase()} 导出成功`);
+      toast.success(getExportSuccessMessage(format, mode));
     } catch (err) {
       console.error("导出失败:", err);
       toast.error(`导出失败: ${err instanceof Error ? err.message : "未知错误"}`);
