@@ -107,7 +107,9 @@ def build_dispatch_subagent_tool(
         try:
             max_turns = int(raw_max_turns)
         except (TypeError, ValueError) as exc:
-            raise ValueError("dispatch_subagent 'max_turns' must be an integer") from exc
+            raise ValueError(
+                f"dispatch_subagent 'max_turns' must be an integer; got {raw_max_turns!r}"
+            ) from exc
 
         system_prompt = str(args.get("system_prompt") or "").strip() or None
         result = await run_subagent(
