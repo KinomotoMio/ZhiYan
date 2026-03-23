@@ -137,6 +137,7 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
             state=state,
             dispatch_tools=_dispatch,
             skill_summaries="## Available Skills\n\n- ppt-health-check: Review slides",
+            harness_config={"quality_level": "strict"},
             max_turns=3,
             compact_every_turns=1,
             compact_max_tokens=1,
@@ -149,6 +150,9 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
         assert isinstance(summary_message, UserMessage)
         assert "Condensed earlier context:" in summary_message.parts[0]
         assert "大纲已生成：1 页 - 问题定义" in summary_message.parts[0]
+        assert result.messages[1].instructions is not None
+        assert "## Available Skills" in result.messages[1].instructions
+        assert "质量级别：strict" in result.messages[1].instructions
         tool_message = result.messages[1]
         assert isinstance(tool_message, UserMessage)
         tool_result = tool_message.parts[0]
@@ -199,8 +203,11 @@ def test_agentic_loop_injects_todo_nag_until_all_items_done():
 
         first_request = seen_messages[0]
         assert isinstance(first_request[-1], UserMessage)
-        assert "## Available Skills" in first_request[-1].parts[0]
         assert "还没有创建任务计划" in first_request[-1].parts[0]
+        root_request = first_request[0]
+        assert isinstance(root_request, UserMessage)
+        assert root_request.instructions is not None
+        assert "## Available Skills" in root_request.instructions
         second_request = seen_messages[1]
         assert all(
             not (
@@ -226,21 +233,16 @@ def test_agentic_loop_injects_skill_summary_without_persisting_it():
             "generate",
             model=model,
             skill_summaries="## Available Skills\n\n- slidev-syntax: Slidev markdown reference",
+            harness_config={"outline_style": "structural"},
             max_turns=1,
         )
 
-        assert any(
-            isinstance(message, UserMessage)
-            and any(isinstance(part, str) and "slidev-syntax" in part for part in message.parts)
-            for message in seen_messages[0]
-        )
-        assert all(
-            not (
-                isinstance(message, UserMessage)
-                and any(isinstance(part, str) and "slidev-syntax" in part for part in message.parts)
-            )
-            for message in result.messages
-        )
+        root_request = seen_messages[0][0]
+        assert isinstance(root_request, UserMessage)
+        assert root_request.instructions is not None
+        assert "slidev-syntax" in root_request.instructions
+        assert "大纲风格偏好：structural" in root_request.instructions
+        assert all("slidev-syntax" not in str(part) for message in result.messages for part in message.parts)
         assert result.output_text == "done"
 
     asyncio.run(_case())
