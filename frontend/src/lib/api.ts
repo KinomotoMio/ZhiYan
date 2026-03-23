@@ -716,14 +716,31 @@ export async function subscribeJobEvents(
 
 // ---------- Export ----------
 
-export async function exportPptx(presentation: Presentation): Promise<Blob> {
+export type PptxExportMode = "structured" | "fallback-image";
+
+export interface PptxExportResult {
+  blob: Blob;
+  mode: PptxExportMode;
+}
+
+export function parsePptxExportMode(value: string | null): PptxExportMode {
+  return value === "fallback-image" ? "fallback-image" : "structured";
+}
+
+export async function exportPptx(presentation: Presentation): Promise<PptxExportResult> {
   const res = await fetch(`${API_BASE}/api/v1/export/pptx`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ presentation }),
   });
-  if (!res.ok) throw new Error(`PPTX 导出失败: ${res.statusText}`);
-  return res.blob();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `PPTX 导出失败: ${res.statusText}`);
+  }
+  return {
+    blob: await res.blob(),
+    mode: parsePptxExportMode(res.headers.get("X-Zhiyan-Export-Mode")),
+  };
 }
 
 export async function exportPdf(presentation: Presentation): Promise<Blob> {
