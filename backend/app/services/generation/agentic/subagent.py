@@ -90,9 +90,10 @@ def build_dispatch_subagent_tool(
     """Create a tool that launches an isolated child agent."""
 
     async def _handler(args: dict[str, Any]) -> dict[str, Any]:
-        task = str(args.get("task") or "").strip()
+        raw_task = args.get("task")
+        task = str(raw_task or "").strip()
         if not task:
-            raise ValueError("dispatch_subagent requires a non-empty 'task'")
+            raise ValueError(f"dispatch_subagent requires a non-empty 'task'; got {raw_task!r}")
 
         raw_tools = args.get("tools")
         if raw_tools is None:

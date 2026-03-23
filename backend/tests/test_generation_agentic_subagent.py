@@ -153,3 +153,25 @@ def test_dispatch_subagent_tool_runs_child_and_returns_compact_result():
         assert model.seen_messages[0][0].parts == ["inspect this deck"]
 
     asyncio.run(_case())
+
+
+def test_dispatch_subagent_tool_reports_raw_task_in_validation_error():
+    async def _case():
+        registry = ToolRegistry()
+        registry.register(build_dispatch_subagent_tool(registry, model=StubModel(responses=[], seen_messages=[], seen_tools=[])))
+
+        result = await dispatch_tool_calls(
+            [
+                ToolCall(
+                    tool_name="dispatch_subagent",
+                    args={"task": "   "},
+                    tool_call_id="call-1",
+                )
+            ],
+            registry,
+        )
+
+        assert result.parts[0].is_error is True
+        assert "got '   '" in str(result.parts[0].content)
+
+    asyncio.run(_case())
