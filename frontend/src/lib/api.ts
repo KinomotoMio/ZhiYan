@@ -427,7 +427,6 @@ export type EventType =
   | "outline_ready"
   | "layout_ready"
   | "slide_ready"
-  | "slide_layer_ready"
   | "job_waiting_fix_review"
   | "fix_preview_ready"
   | "stage_failed"
@@ -450,7 +449,6 @@ export interface GenerationEventPayload {
   duration_ms?: number;
   stage_timeout_seconds?: number;
   started_at?: string;
-  layer?: string;
   error?: string;
   error_code?: GenerationErrorCode;
   error_message?: string;
@@ -718,31 +716,14 @@ export async function subscribeJobEvents(
 
 // ---------- Export ----------
 
-export type PptxExportMode = "structured" | "fallback-image";
-
-export interface PptxExportResult {
-  blob: Blob;
-  mode: PptxExportMode;
-}
-
-export function parsePptxExportMode(value: string | null): PptxExportMode {
-  return value === "fallback-image" ? "fallback-image" : "structured";
-}
-
-export async function exportPptx(presentation: Presentation): Promise<PptxExportResult> {
+export async function exportPptx(presentation: Presentation): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/v1/export/pptx`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ presentation }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `PPTX 导出失败: ${res.statusText}`);
-  }
-  return {
-    blob: await res.blob(),
-    mode: parsePptxExportMode(res.headers.get("X-Zhiyan-Export-Mode")),
-  };
+  if (!res.ok) throw new Error(`PPTX 导出失败: ${res.statusText}`);
+  return res.blob();
 }
 
 export async function exportPdf(presentation: Presentation): Promise<Blob> {

@@ -18,7 +18,6 @@ from app.models.slide import Presentation, Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.pipeline.graph import (
-    OutlineSchemaError,
     PipelineState,
     stage_fix_slides_once,
     stage_generate_outline,
@@ -35,7 +34,6 @@ ERROR_STAGE_TIMEOUT = "STAGE_TIMEOUT"
 ERROR_PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
 ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
-ERROR_OUTLINE_SCHEMA = "OUTLINE_SCHEMA"
 ERROR_CANCELLED = "CANCELLED"
 ERROR_UNKNOWN = "UNKNOWN"
 
@@ -156,15 +154,6 @@ class GenerationRunner:
                 message=f"第 {idx + 1} 页已生成",
                 payload=payload,
             )
-            layer_payload = dict(payload)
-            layer_payload["layer"] = "content"
-            await self._emit_event(
-                job,
-                EventType.SLIDE_LAYER_READY,
-                stage=StageStatus.SLIDES,
-                message=f"第 {idx + 1} 页内容已就绪",
-                payload=layer_payload,
-            )
 
         job_started_monotonic = time.monotonic()
         try:
@@ -247,10 +236,7 @@ class GenerationRunner:
                         EventType.LAYOUT_READY,
                         stage=StageStatus.LAYOUT,
                         message="布局选择完成",
-                        payload={
-                            "layouts": state.layout_selections,
-                            "degradation": state.document_metadata.get("layout_degradation"),
-                        },
+                        payload={"layouts": state.layout_selections},
                     )
                 elif stage == StageStatus.SLIDES:
                     await self._run_stage(
@@ -275,19 +261,6 @@ class GenerationRunner:
                         stage_coro=stage_resolve_assets(state, progress=progress_hook),
                     )
                     await self._sync_state_to_job(job, state)
-                    for idx, slide in enumerate(state.slides):
-                        payload = {
-                            "slide_index": idx,
-                            "slide": slide.model_dump(mode="json", by_alias=True),
-                            "layer": "assets",
-                        }
-                        await self._emit_event(
-                            job,
-                            EventType.SLIDE_LAYER_READY,
-                            stage=StageStatus.ASSETS,
-                            message=f"第 {idx + 1} 页资源已就绪",
-                            payload=payload,
-                        )
                 elif stage == StageStatus.VERIFY:
                     await self._run_stage(
                         job,
@@ -301,27 +274,6 @@ class GenerationRunner:
                         ),
                     )
                     await self._sync_state_to_job(job, state)
-                    issues_by_slide_id: dict[str, list[dict]] = {}
-                    for issue in state.verification_issues:
-                        sid = str(issue.get("slide_id") or "").strip()
-                        if not sid:
-                            continue
-                        issues_by_slide_id.setdefault(sid, []).append(issue)
-                    for idx, slide in enumerate(state.slides):
-                        slide_payload = slide.model_dump(mode="json", by_alias=True)
-                        payload = {
-                            "slide_index": idx,
-                            "slide": slide_payload,
-                            "layer": "verify",
-                            "issues": issues_by_slide_id.get(slide.slide_id, []),
-                        }
-                        await self._emit_event(
-                            job,
-                            EventType.SLIDE_LAYER_READY,
-                            stage=StageStatus.VERIFY,
-                            message=f"第 {idx + 1} 页验证已就绪",
-                            payload=payload,
-                        )
 
             hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
             if hard_slide_ids:
@@ -877,13 +829,6 @@ class GenerationRunner:
                 retriable=True,
             )
 
-        if isinstance(error, OutlineSchemaError):
-            return ClassifiedError(
-                error_code=ERROR_OUTLINE_SCHEMA,
-                error_message=str(error),
-                retriable=False,
-            )
-
         error_name = type(error).__name__.lower()
         error_text = str(error).lower()
         if "timeout" in error_name or "timed out" in error_text:
@@ -964,7 +909,13 @@ class GenerationRunner:
             job.slides = [slide.model_dump(mode="json", by_alias=True) for slide in state.slides]
         elif state.slide_contents:
             job.slides = [
-                _serialize_slide_content_item(item)
+                {
+                    "slideId": f"slide-{item['slide_number']}",
+                    "layoutType": item.get("layout_id", "bullet-with-icons"),
+                    "layoutId": item.get("layout_id", "bullet-with-icons"),
+                    "contentData": item.get("content_data", {}),
+                    "components": [],
+                }
                 for item in state.slide_contents
             ]
         job.issues = list(state.verification_issues)
@@ -1115,17 +1066,3 @@ def _parse_stage(raw: str) -> StageStatus | None:
     with suppress(ValueError):
         return StageStatus(raw)
     return None
-
-
-def _serialize_slide_content_item(item: dict[str, object]) -> dict[str, object]:
-    slide_payload: dict[str, object] = {
-        "slideId": f"slide-{item['slide_number']}",
-        "layoutType": item.get("layout_id", "bullet-with-icons"),
-        "layoutId": item.get("layout_id", "bullet-with-icons"),
-        "contentData": item.get("content_data", {}),
-        "components": [],
-    }
-    background = item.get("background")
-    if background is not None:
-        slide_payload["background"] = background
-    return slide_payload

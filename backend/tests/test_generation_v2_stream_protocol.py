@@ -158,7 +158,6 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     assert EventType.OUTLINE_READY.value in types
     assert EventType.LAYOUT_READY.value in types
     assert EventType.SLIDE_READY.value in types
-    assert EventType.SLIDE_LAYER_READY.value in types
     terminal = [t for t in types if t in {et.value for et in TERMINAL_EVENTS}]
     assert len(terminal) == 1
     assert terminal[0] == EventType.JOB_COMPLETED.value

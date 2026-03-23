@@ -254,10 +254,10 @@ def get_layout_catalog() -> str:
     return "\n".join(lines)
 
 
-def _render_layout_taxonomy_catalog(entries: list[LayoutEntry]) -> str:
-    """Render taxonomy text for the provided entries only."""
+def get_layout_taxonomy_catalog() -> str:
+    """生成以 group / sub_group / variant_id / layout_id 为主的 selector 候选文本。"""
     lines: list[str] = []
-    for entry in entries:
+    for entry in _LAYOUTS:
         lines.append(
             f"- `{entry.id}` ({entry.name}, group: {entry.group}, sub_group: {entry.sub_group}, variant_id: {entry.variant_id}, "
             f"usage: {format_usage_tags(entry.usage_tags)}): "
@@ -269,19 +269,6 @@ def _render_layout_taxonomy_catalog(entries: list[LayoutEntry]) -> str:
             f"usage_bias: {entry.notes.usage_bias}"
         )
     return "\n".join(lines)
-
-
-def get_layout_taxonomy_catalog() -> str:
-    """生成以 group / sub_group / variant_id / layout_id 为主的 selector 候选文本。"""
-    return _render_layout_taxonomy_catalog(_LAYOUTS)
-
-
-def get_layout_taxonomy_catalog_for_groups(groups: set[str]) -> str:
-    """Render a smaller selector catalog scoped to the roles used by this deck."""
-    if not groups:
-        return get_layout_taxonomy_catalog()
-    filtered = [entry for entry in _LAYOUTS if str(entry.group) in groups]
-    return _render_layout_taxonomy_catalog(filtered or _LAYOUTS)
 
 
 def get_layout_variant_catalog() -> str:
