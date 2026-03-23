@@ -72,6 +72,7 @@ async def agentic_loop(
     message_history: Sequence[AgenticMessage] | None = None,
     state: PipelineState | None = None,
     todo_manager: TodoManager | None = None,
+    skill_summaries: str | None = None,
     tool_definitions: Sequence[dict] | None = None,
     dispatch_tools: ToolDispatcher | None = None,
     max_turns: int | None = None,
@@ -93,7 +94,12 @@ async def agentic_loop(
 
     for turn in range(turn_limit):
         last_response = await client.complete(
-            _messages_for_model(messages, instructions=instructions, todo_manager=todo_manager),
+            _messages_for_model(
+                messages,
+                instructions=instructions,
+                todo_manager=todo_manager,
+                skill_summaries=skill_summaries,
+            ),
             list(tool_definitions or []),
         )
         messages.append(last_response)
@@ -148,7 +154,12 @@ async def agentic_loop(
         )
     )
     last_response = await client.complete(
-        _messages_for_model(messages, instructions=instructions, todo_manager=todo_manager),
+        _messages_for_model(
+            messages,
+            instructions=instructions,
+            todo_manager=todo_manager,
+            skill_summaries=skill_summaries,
+        ),
         list(tool_definitions or []),
     )
     messages.append(last_response)
@@ -204,14 +215,21 @@ def _messages_for_model(
     *,
     instructions: InstructionsProvider | None,
     todo_manager: TodoManager | None,
+    skill_summaries: str | None = None,
 ) -> list[AgenticMessage]:
     prepared = list(messages)
-    if todo_manager is None:
+    reminders: list[str] = []
+
+    if skill_summaries:
+        reminders.append(skill_summaries)
+
+    if todo_manager is not None:
+        nag = build_todo_nag(todo_manager)
+        if nag:
+            reminders.append(nag)
+
+    if not reminders:
         return prepared
 
-    nag = build_todo_nag(todo_manager)
-    if not nag:
-        return prepared
-
-    prepared.append(UserMessage(parts=[nag], instructions=_instructions(instructions)))
+    prepared.append(UserMessage(parts=["\n\n".join(reminders)], instructions=_instructions(instructions)))
     return prepared

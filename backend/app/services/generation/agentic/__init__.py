@@ -7,6 +7,7 @@ from app.services.generation.agentic.context import (
     summarize_state,
 )
 from app.services.generation.agentic.loop import AgenticLoopResult, agentic_loop
+from app.services.generation.agentic.skills import build_load_skill_tool, build_run_skill_tool, build_skill_summaries
 from app.services.generation.agentic.todo import TodoItem, TodoManager, build_todo_nag, build_update_todo_tool
 from app.services.generation.agentic.tools import ToolDef, ToolDispatchResult, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
 from app.services.generation.agentic.types import (
@@ -37,5 +38,8 @@ __all__ = [
     "agentic_loop",
     "build_todo_nag",
     "build_update_todo_tool",
+    "build_load_skill_tool",
+    "build_run_skill_tool",
+    "build_skill_summaries",
     "dispatch_tool_calls",
 ]

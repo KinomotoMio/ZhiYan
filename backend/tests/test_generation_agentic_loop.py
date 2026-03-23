@@ -136,6 +136,7 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
             model=model,
             state=state,
             dispatch_tools=_dispatch,
+            skill_summaries="## Available Skills\n\n- ppt-health-check: Review slides",
             max_turns=3,
             compact_every_turns=1,
             compact_max_tokens=1,
@@ -192,11 +193,13 @@ def test_agentic_loop_injects_todo_nag_until_all_items_done():
             model=model,
             todo_manager=todo_manager,
             dispatch_tools=_dispatch,
+            skill_summaries="## Available Skills\n\n- data-to-chart: Build charts",
             max_turns=3,
         )
 
         first_request = seen_messages[0]
         assert isinstance(first_request[-1], UserMessage)
+        assert "## Available Skills" in first_request[-1].parts[0]
         assert "还没有创建任务计划" in first_request[-1].parts[0]
         second_request = seen_messages[1]
         assert all(
@@ -205,6 +208,38 @@ def test_agentic_loop_injects_todo_nag_until_all_items_done():
                 and any(isinstance(part, str) and "当前计划状态" in part for part in message.parts)
             )
             for message in second_request
+        )
+        assert result.output_text == "done"
+
+    asyncio.run(_case())
+
+
+def test_agentic_loop_injects_skill_summary_without_persisting_it():
+    async def _case():
+        seen_messages: list[list[AgenticMessage]] = []
+        model = StubModel(
+            responses=[_text_response("done")],
+            seen_messages=seen_messages,
+        )
+
+        result = await agentic_loop(
+            "generate",
+            model=model,
+            skill_summaries="## Available Skills\n\n- slidev-syntax: Slidev markdown reference",
+            max_turns=1,
+        )
+
+        assert any(
+            isinstance(message, UserMessage)
+            and any(isinstance(part, str) and "slidev-syntax" in part for part in message.parts)
+            for message in seen_messages[0]
+        )
+        assert all(
+            not (
+                isinstance(message, UserMessage)
+                and any(isinstance(part, str) and "slidev-syntax" in part for part in message.parts)
+            )
+            for message in result.messages
         )
         assert result.output_text == "done"
 
