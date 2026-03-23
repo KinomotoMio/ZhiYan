@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from app.services.generation.agentic.loop import agentic_loop
 from app.services.generation.agentic.tools import ToolDispatchResult
 from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
+from app.services.pipeline.graph import PipelineState
 
 
 @dataclass
@@ -102,5 +103,52 @@ def test_agentic_loop_stops_after_max_turns():
         assert result.max_turns_reached is True
         assert result.stop_reason == "max-turns"
         assert result.output_text == "summary"
+
+    asyncio.run(_case())
+
+
+def test_agentic_loop_attaches_state_summary_and_compacts_history():
+    async def _case():
+        async def _dispatch(parts):
+            return ToolDispatchResult(
+                parts=[
+                    ToolResult(
+                        tool_name=parts[0].tool_name,
+                        content={"status": "ok"},
+                        tool_call_id=parts[0].tool_call_id,
+                    )
+                ]
+            )
+
+        state = PipelineState(outline={"items": [{"slide_number": 1, "title": "问题定义"}]})
+        model = StubModel(
+            responses=[
+                AssistantMessage(parts=[ToolCall(tool_name="generate_outline", args={}, tool_call_id="call-1")]),
+                _text_response("done"),
+            ]
+        )
+        result = await agentic_loop(
+            "generate",
+            model=model,
+            state=state,
+            dispatch_tools=_dispatch,
+            max_turns=3,
+            compact_every_turns=1,
+            compact_max_tokens=1,
+            compact_keep_recent=1,
+        )
+
+        assert result.output_text == "done"
+        assert len(result.messages) == 3
+        summary_message = result.messages[0]
+        assert isinstance(summary_message, UserMessage)
+        assert "Condensed earlier context:" in summary_message.parts[0]
+        assert "大纲已生成：1 页 - 问题定义" in summary_message.parts[0]
+        tool_message = result.messages[1]
+        assert isinstance(tool_message, UserMessage)
+        tool_result = tool_message.parts[0]
+        assert isinstance(tool_result, ToolResult)
+        assert tool_result.content["state_summary"] == "大纲已生成：1 页 - 问题定义"
+        assert tool_result.metadata["state_summary"] == "大纲已生成：1 页 - 问题定义"
 
     asyncio.run(_case())

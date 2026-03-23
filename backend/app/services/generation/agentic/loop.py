@@ -6,6 +6,13 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from app.core.config import settings
+from app.services.generation.agentic.context import (
+    DEFAULT_CONTEXT_MAX_TOKENS,
+    DEFAULT_KEEP_RECENT,
+    attach_state_summary,
+    compact_context,
+    summarize_state,
+)
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
 from app.services.generation.agentic.tools import ToolDispatchResult
 from app.services.generation.agentic.types import (
@@ -13,8 +20,10 @@ from app.services.generation.agentic.types import (
     AgenticModelClient,
     AssistantMessage,
     ToolCall,
+    ToolResult,
     UserMessage,
 )
+from app.services.pipeline.graph import PipelineState
 
 InstructionsProvider = str | Callable[[], str]
 ToolDispatcher = Callable[[Sequence[ToolCall]], Awaitable[ToolDispatchResult]]
@@ -60,9 +69,13 @@ async def agentic_loop(
     model: AgenticModelClient | None = None,
     instructions: InstructionsProvider | None = None,
     message_history: Sequence[AgenticMessage] | None = None,
+    state: PipelineState | None = None,
     tool_definitions: Sequence[dict] | None = None,
     dispatch_tools: ToolDispatcher | None = None,
     max_turns: int | None = None,
+    compact_every_turns: int = 5,
+    compact_max_tokens: int = DEFAULT_CONTEXT_MAX_TOKENS,
+    compact_keep_recent: int = DEFAULT_KEEP_RECENT,
 ) -> AgenticLoopResult:
     """Run a simple `tool-call -> tool-result -> next turn` loop."""
 
@@ -82,6 +95,14 @@ async def agentic_loop(
 
         tool_calls = [part for part in last_response.parts if isinstance(part, ToolCall)]
         if not tool_calls or dispatch_tools is None:
+            messages = _maybe_compact_messages(
+                messages,
+                completed_turns=turn + 1,
+                compact_every_turns=compact_every_turns,
+                compact_max_tokens=compact_max_tokens,
+                compact_keep_recent=compact_keep_recent,
+                state=state,
+            )
             return AgenticLoopResult(
                 output_text=extract_text(last_response),
                 messages=messages,
@@ -94,10 +115,18 @@ async def agentic_loop(
         if dispatch_result.parts:
             messages.append(
                 UserMessage(
-                    parts=list(dispatch_result.parts),
+                    parts=_attach_state_to_results(dispatch_result.parts, state),
                     instructions=_instructions(instructions),
                 )
             )
+        messages = _maybe_compact_messages(
+            messages,
+            completed_turns=turn + 1,
+            compact_every_turns=compact_every_turns,
+            compact_max_tokens=compact_max_tokens,
+            compact_keep_recent=compact_keep_recent,
+            state=state,
+        )
         if dispatch_result.stop_loop:
             return AgenticLoopResult(
                 output_text=extract_text(last_response),
@@ -115,6 +144,14 @@ async def agentic_loop(
     )
     last_response = await client.complete(messages, list(tool_definitions or []))
     messages.append(last_response)
+    messages = _maybe_compact_messages(
+        messages,
+        completed_turns=turn_limit,
+        compact_every_turns=compact_every_turns,
+        compact_max_tokens=compact_max_tokens,
+        compact_keep_recent=compact_keep_recent,
+        state=state,
+    )
     return AgenticLoopResult(
         output_text=extract_text(last_response),
         messages=messages,
@@ -122,4 +159,33 @@ async def agentic_loop(
         max_turns_reached=True,
         stop_reason="max-turns",
         last_response=last_response,
+    )
+
+
+def _attach_state_to_results(
+    parts: Sequence[ToolResult],
+    state: PipelineState | None,
+) -> list[str | ToolResult]:
+    if state is None:
+        return list(parts)
+    return [attach_state_summary(part, state) for part in parts]
+
+
+def _maybe_compact_messages(
+    messages: list[AgenticMessage],
+    *,
+    completed_turns: int,
+    compact_every_turns: int,
+    compact_max_tokens: int,
+    compact_keep_recent: int,
+    state: PipelineState | None,
+) -> list[AgenticMessage]:
+    if compact_every_turns <= 0 or completed_turns % compact_every_turns != 0:
+        return messages
+
+    return compact_context(
+        messages,
+        max_tokens=compact_max_tokens,
+        keep_recent=compact_keep_recent,
+        state_summary=summarize_state(state) if state is not None else None,
     )
