@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     verify_timeout_seconds: int = 90
     max_fix_passes: int = 1
     enable_vision_verification: bool = True
+    # Runtime switch for the future agentic generation entrypoint.
+    enable_agentic_loop: bool = False
+    # Hard turn limit for one agentic loop execution.
+    agentic_max_turns: int = 24
     content_type_primary_strategy: str = "rules"
     content_type_shadow_enabled: bool = True
     content_type_confidence_threshold: float = 0.55

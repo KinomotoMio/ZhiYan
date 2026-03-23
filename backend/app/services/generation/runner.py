@@ -158,151 +158,14 @@ class GenerationRunner:
         job_started_monotonic = time.monotonic()
         try:
             await self._ensure_not_cancelled(job)
-
-            sequence = [
-                StageStatus.PARSE,
-                StageStatus.OUTLINE,
-                StageStatus.LAYOUT,
-                StageStatus.SLIDES,
-                StageStatus.ASSETS,
-                StageStatus.VERIFY,
-            ]
-            start_index = sequence.index(start_stage)
-
-            for stage in sequence[start_index:]:
-                await self._ensure_not_cancelled(job)
-
-                if stage == StageStatus.PARSE:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.PARSE,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_parse_document(state, progress=progress_hook),
-                    )
-                elif stage == StageStatus.OUTLINE:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.OUTLINE,
-                        timeout=float(settings.outline_timeout_seconds),
-                        stage_coro=stage_generate_outline(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                    await self._emit_event(
-                        job,
-                        EventType.OUTLINE_READY,
-                        stage=StageStatus.OUTLINE,
-                        message="大纲生成完成",
-                        payload={
-                            "topic": job.request.title,
-                            "items": [
-                                {
-                                    "slide_number": item.get("slide_number"),
-                                    "title": item.get("title"),
-                                    "suggested_slide_role": item.get(
-                                        "suggested_slide_role", "narrative"
-                                    ),
-                                }
-                                for item in state.outline.get("items", [])
-                            ],
-                            "requires_accept": job.mode.value == "review_outline" and not job.outline_accepted,
-                        },
-                    )
-                    if job.mode.value == "review_outline" and not job.outline_accepted:
-                        job.status = JobStatus.WAITING_OUTLINE_REVIEW
-                        job.current_stage = StageStatus.OUTLINE
-                        job.updated_at = now_iso()
-                        await self._store.save_job(job)
-                        if job.request.session_id:
-                            from app.services.sessions import session_store
-
-                            await session_store.update_generation_job_status(
-                                job.job_id,
-                                JobStatus.WAITING_OUTLINE_REVIEW.value,
-                            )
-                        return
-                elif stage == StageStatus.LAYOUT:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.LAYOUT,
-                        timeout=float(settings.layout_timeout_seconds),
-                        stage_coro=stage_select_layouts(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                    await self._emit_event(
-                        job,
-                        EventType.LAYOUT_READY,
-                        stage=StageStatus.LAYOUT,
-                        message="布局选择完成",
-                        payload={"layouts": state.layout_selections},
-                    )
-                elif stage == StageStatus.SLIDES:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.SLIDES,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_generate_slides(
-                            state,
-                            per_slide_timeout=float(settings.per_slide_timeout_seconds),
-                            progress=progress_hook,
-                            on_slide=slide_hook,
-                        ),
-                    )
-                    await self._sync_state_to_job(job, state)
-                elif stage == StageStatus.ASSETS:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.ASSETS,
-                        timeout=float(settings.job_timeout_seconds),
-                        stage_coro=stage_resolve_assets(state, progress=progress_hook),
-                    )
-                    await self._sync_state_to_job(job, state)
-                elif stage == StageStatus.VERIFY:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=StageStatus.VERIFY,
-                        timeout=float(settings.verify_timeout_seconds),
-                        stage_coro=stage_verify_slides(
-                            state,
-                            progress=progress_hook,
-                            enable_vision=settings.enable_vision_verification,
-                        ),
-                    )
-                    await self._sync_state_to_job(job, state)
-
-            hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
-            if hard_slide_ids:
-                job.status = JobStatus.WAITING_FIX_REVIEW
-                job.current_stage = StageStatus.VERIFY
-                job.hard_issue_slide_ids = hard_slide_ids
-                job.advisory_issue_count = advisory_count
-                job.fix_preview_slides = []
-                job.fix_preview_source_ids = []
-                job.updated_at = now_iso()
-                await self._store.save_job(job)
-                if job.request.session_id:
-                    from app.services.sessions import session_store
-                    await session_store.update_generation_job_status(
-                        job.job_id,
-                        JobStatus.WAITING_FIX_REVIEW.value,
-                    )
-                await self._emit_event(
-                    job,
-                    EventType.JOB_WAITING_FIX_REVIEW,
-                    stage=StageStatus.VERIFY,
-                    message="发现硬错误，等待用户决策修复",
-                    payload={
-                        "issues": job.issues,
-                        "hard_issue_slide_ids": hard_slide_ids,
-                        "advisory_issue_count": advisory_count,
-                        "failed_slide_indices": job.failed_slide_indices,
-                    },
-                )
+            completed = await self._run_selected_runtime(
+                job,
+                state,
+                start_stage=start_stage,
+                progress_hook=progress_hook,
+                slide_hook=slide_hook,
+            )
+            if not completed:
                 return
 
             elapsed_ms = int((time.monotonic() - job_started_monotonic) * 1000)
@@ -429,6 +292,222 @@ class GenerationRunner:
                     "elapsed_ms": elapsed_ms,
                 },
             )
+
+    async def _run_selected_runtime(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook,
+        slide_hook,
+    ) -> bool:
+        if self._should_use_agentic_loop():
+            logger.info(
+                "agentic loop enabled but runtime stage integration is not wired yet; falling back to pipeline",
+                extra={"job_id": job.job_id, "start_stage": start_stage.value},
+            )
+
+        return await self._run_pipeline_job(
+            job,
+            state,
+            start_stage=start_stage,
+            progress_hook=progress_hook,
+            slide_hook=slide_hook,
+        )
+
+    async def _run_pipeline_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook,
+        slide_hook,
+    ) -> bool:
+        sequence = [
+            StageStatus.PARSE,
+            StageStatus.OUTLINE,
+            StageStatus.LAYOUT,
+            StageStatus.SLIDES,
+            StageStatus.ASSETS,
+            StageStatus.VERIFY,
+        ]
+        start_index = sequence.index(start_stage)
+
+        for stage in sequence[start_index:]:
+            await self._ensure_not_cancelled(job)
+
+            if stage == StageStatus.PARSE:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.PARSE,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_parse_document(state, progress=progress_hook),
+                )
+            elif stage == StageStatus.OUTLINE:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.OUTLINE,
+                    timeout=float(settings.outline_timeout_seconds),
+                    stage_coro=stage_generate_outline(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+                await self._emit_outline_ready(job, state)
+                if job.mode.value == "review_outline" and not job.outline_accepted:
+                    await self._enter_waiting_outline_review(job)
+                    return False
+            elif stage == StageStatus.LAYOUT:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.LAYOUT,
+                    timeout=float(settings.layout_timeout_seconds),
+                    stage_coro=stage_select_layouts(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+                await self._emit_event(
+                    job,
+                    EventType.LAYOUT_READY,
+                    stage=StageStatus.LAYOUT,
+                    message="布局选择完成",
+                    payload={"layouts": state.layout_selections},
+                )
+            elif stage == StageStatus.SLIDES:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.SLIDES,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_generate_slides(
+                        state,
+                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
+                        progress=progress_hook,
+                        on_slide=slide_hook,
+                    ),
+                )
+                await self._sync_state_to_job(job, state)
+            elif stage == StageStatus.ASSETS:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.ASSETS,
+                    timeout=float(settings.job_timeout_seconds),
+                    stage_coro=stage_resolve_assets(state, progress=progress_hook),
+                )
+                await self._sync_state_to_job(job, state)
+            elif stage == StageStatus.VERIFY:
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=StageStatus.VERIFY,
+                    timeout=float(settings.verify_timeout_seconds),
+                    stage_coro=stage_verify_slides(
+                        state,
+                        progress=progress_hook,
+                        enable_vision=settings.enable_vision_verification,
+                    ),
+                )
+                await self._sync_state_to_job(job, state)
+
+        if await self._maybe_enter_waiting_fix_review(job):
+            return False
+        return True
+
+    async def _emit_outline_ready(self, job: GenerationJob, state: PipelineState) -> None:
+        await self._emit_event(
+            job,
+            EventType.OUTLINE_READY,
+            stage=StageStatus.OUTLINE,
+            message="大纲生成完成",
+            payload={
+                "topic": job.request.title,
+                "items": [
+                    {
+                        "slide_number": item.get("slide_number"),
+                        "title": item.get("title"),
+                        "suggested_slide_role": item.get(
+                            "suggested_slide_role", "narrative"
+                        ),
+                    }
+                    for item in state.outline.get("items", [])
+                ],
+                "requires_accept": job.mode.value == "review_outline" and not job.outline_accepted,
+            },
+        )
+
+    async def _enter_waiting_outline_review(self, job: GenerationJob) -> None:
+        job.status = JobStatus.WAITING_OUTLINE_REVIEW
+        job.current_stage = StageStatus.OUTLINE
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.WAITING_OUTLINE_REVIEW.value,
+            )
+
+    async def _maybe_enter_waiting_fix_review(self, job: GenerationJob) -> bool:
+        hard_slide_ids, advisory_count = self._collect_fix_issue_summary(job.issues)
+        if not hard_slide_ids:
+            return False
+
+        job.status = JobStatus.WAITING_FIX_REVIEW
+        job.current_stage = StageStatus.VERIFY
+        job.hard_issue_slide_ids = hard_slide_ids
+        job.advisory_issue_count = advisory_count
+        job.fix_preview_slides = []
+        job.fix_preview_source_ids = []
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.WAITING_FIX_REVIEW.value,
+            )
+        await self._emit_event(
+            job,
+            EventType.JOB_WAITING_FIX_REVIEW,
+            stage=StageStatus.VERIFY,
+            message="发现硬错误，等待用户决策修复",
+            payload={
+                "issues": job.issues,
+                "hard_issue_slide_ids": hard_slide_ids,
+                "advisory_issue_count": advisory_count,
+                "failed_slide_indices": job.failed_slide_indices,
+            },
+        )
+        return True
+
+    @staticmethod
+    def _should_use_agentic_loop() -> bool:
+        if not settings.enable_agentic_loop:
+            return False
+        return GenerationRunner._has_agentic_model_credentials()
+
+    @staticmethod
+    def _has_agentic_model_credentials() -> bool:
+        model_name = settings.strong_model or settings.default_model
+        provider, sep, _ = model_name.partition(":")
+        if not sep:
+            provider = "openai"
+
+        if provider == "openai":
+            return bool(settings.openai_api_key)
+        if provider == "anthropic":
+            return bool(settings.anthropic_api_key)
+        if provider == "google":
+            return bool(settings.google_api_key)
+        if provider == "deepseek":
+            return bool(settings.deepseek_api_key)
+        if provider == "openrouter":
+            return bool(settings.openrouter_api_key)
+        return False
 
     async def preview_fix(
         self,
