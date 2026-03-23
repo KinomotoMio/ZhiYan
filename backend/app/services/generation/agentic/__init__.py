@@ -17,6 +17,13 @@ from app.services.generation.agentic.prompt import (
     load_harness_config,
 )
 from app.services.generation.agentic.skills import build_load_skill_tool, build_run_skill_tool, build_skill_summaries
+from app.services.generation.agentic.subagent import (
+    SubagentSpec,
+    build_dispatch_subagent_tool,
+    filter_registry,
+    run_parallel_subagents,
+    run_subagent,
+)
 from app.services.generation.agentic.todo import TodoItem, TodoManager, build_todo_nag, build_update_todo_tool
 from app.services.generation.agentic.tools import ToolDef, ToolDispatchResult, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
 from app.services.generation.agentic.types import (
@@ -31,6 +38,7 @@ __all__ = [
     "AgenticLoopResult",
     "AgenticMessage",
     "AssistantMessage",
+    "SubagentSpec",
     "ToolCall",
     "ToolDef",
     "attach_state_summary",
@@ -45,6 +53,7 @@ __all__ = [
     "ToolResult",
     "UserMessage",
     "agentic_loop",
+    "build_dispatch_subagent_tool",
     "build_todo_nag",
     "build_update_todo_tool",
     "build_load_skill_tool",
@@ -57,5 +66,8 @@ __all__ = [
     "build_task_section",
     "build_tool_rules_section",
     "dispatch_tool_calls",
+    "filter_registry",
     "load_harness_config",
+    "run_parallel_subagents",
+    "run_subagent",
 ]
