@@ -228,6 +228,55 @@ def test_no_fallback_on_outline_timeout(monkeypatch, tmp_path):
     asyncio.run(_case())
 
 
+def test_should_use_agentic_loop_requires_flag_and_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "enable_agentic_loop", False)
+    monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+    assert GenerationRunner._should_use_agentic_loop() is False  # noqa: SLF001
+
+    monkeypatch.setattr(settings, "enable_agentic_loop", True)
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    assert GenerationRunner._should_use_agentic_loop() is False  # noqa: SLF001
+
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+    assert GenerationRunner._should_use_agentic_loop() is True  # noqa: SLF001
+
+
+def test_selected_runtime_falls_back_to_pipeline_until_agentic_runtime_is_wired(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-agentic-flag")
+        state = PipelineState(raw_content="x", topic="t", num_pages=3, job_id=job.job_id)
+
+        seen: dict[str, str | None] = {"stage": None}
+
+        async def fake_pipeline(job_arg, state_arg, *, start_stage, progress_hook, slide_hook):  # noqa: ARG001
+            assert job_arg is job
+            assert state_arg is state
+            seen["stage"] = start_stage.value
+            return True
+
+        monkeypatch.setattr(settings, "enable_agentic_loop", True)
+        monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+        monkeypatch.setattr(settings, "openai_api_key", "token")
+        monkeypatch.setattr(runner, "_run_pipeline_job", fake_pipeline)
+
+        completed = await runner._run_selected_runtime(  # noqa: SLF001
+            job,
+            state,
+            start_stage=StageStatus.LAYOUT,
+            progress_hook=lambda *args, **kwargs: None,
+            slide_hook=lambda *args, **kwargs: None,
+        )
+
+        assert completed is True
+        assert seen["stage"] == "layout"
+
+    asyncio.run(_case())
+
+
 def test_verify_timeout_persists_partial_presentation_and_emits_payload(monkeypatch, tmp_path):
     async def _case():
         store = GenerationJobStore(tmp_path / "jobs")
