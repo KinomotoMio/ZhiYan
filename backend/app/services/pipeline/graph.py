@@ -1337,6 +1337,21 @@ async def stage_verify_slides(
             "elapsed_ms": int((time.monotonic() - prog_t0) * 1000),
         },
     )
+    verify_metadata = {
+        "slide_count": len(state.slides),
+        "programmatic_elapsed_ms": int((time.monotonic() - prog_t0) * 1000),
+        "programmatic_issue_count": len(issues),
+        "vision_requested": bool(enable_vision and state.slides),
+        "vision_timeout_seconds": vision_timeout_seconds,
+        "aesthetic_timeout_seconds": aesthetic_timeout_seconds,
+        "aesthetic_mode": "disabled" if not enable_vision else "skipped" if not state.slides else "pending",
+        "aesthetic_degraded_reason": "vision_disabled" if not enable_vision else "no_slides" if not state.slides else None,
+        "aesthetic_elapsed_ms": 0,
+        "aesthetic_issue_count": 0,
+        "total_issue_count": 0,
+        "hard_issue_count": 0,
+        "advisory_issue_count": 0,
+    }
 
     if enable_vision and state.slides:
         if vision_timeout_seconds is None or aesthetic_timeout_seconds is None:
@@ -1353,6 +1368,20 @@ async def stage_verify_slides(
                     max(5.0, vision_timeout_seconds * 1.25),
                     max(1.0, verify_timeout - 1.0),
                 )
+        verify_metadata["vision_timeout_seconds"] = vision_timeout_seconds
+        verify_metadata["aesthetic_timeout_seconds"] = aesthetic_timeout_seconds
+        logger.info(
+            "verify_budget_resolved",
+            extra={
+                "event": "verify_budget_resolved",
+                "job_id": state.job_id,
+                "stage": "verify",
+                "slide_count": len(state.slides),
+                "vision_requested": True,
+                "vision_timeout_seconds": vision_timeout_seconds,
+                "aesthetic_timeout_seconds": aesthetic_timeout_seconds,
+            },
+        )
         presentation_dict = {
             "presentationId": "verification-temp",
             "title": state.topic or "演示文稿",
@@ -1376,6 +1405,12 @@ async def stage_verify_slides(
                     presentation_dict=presentation_dict,
                     vision_timeout_seconds=vision_timeout_seconds,
                 )
+            aesthetic_result = aesthetic.result
+            aesthetic_issue_count = len(aesthetic_result.issues) if aesthetic_result else 0
+            verify_metadata["aesthetic_mode"] = aesthetic.mode
+            verify_metadata["aesthetic_degraded_reason"] = aesthetic.degraded_reason
+            verify_metadata["aesthetic_elapsed_ms"] = aesthetic.elapsed_ms
+            verify_metadata["aesthetic_issue_count"] = aesthetic_issue_count
             logger.info(
                 "verify_aesthetic_done",
                 extra={
@@ -1383,12 +1418,15 @@ async def stage_verify_slides(
                     "job_id": state.job_id,
                     "stage": "verify",
                     "slide_count": len(state.slides),
-                    "has_result": bool(aesthetic),
-                    "issue_count": len(aesthetic.issues) if aesthetic else 0,
+                    "has_result": bool(aesthetic_result),
+                    "mode": aesthetic.mode,
+                    "degraded_reason": aesthetic.degraded_reason,
+                    "issue_count": aesthetic_issue_count,
                     "elapsed_ms": int((time.monotonic() - aesthetic_t0) * 1000),
                 },
             )
         except asyncio.TimeoutError:
+            aesthetic_elapsed_ms = int((time.monotonic() - aesthetic_t0) * 1000)
             logger.warning(
                 "Aesthetic verification exceeded %.1fs and was skipped to keep verify stage healthy",
                 aesthetic_timeout_seconds or 0.0,
@@ -1404,19 +1442,74 @@ async def stage_verify_slides(
                     "tier": "advisory",
                 }
             )
-            aesthetic = None
-        if aesthetic:
-            for issue in aesthetic.issues:
+            verify_metadata["aesthetic_mode"] = "skipped"
+            verify_metadata["aesthetic_degraded_reason"] = "aesthetic_timeout_fallback"
+            verify_metadata["aesthetic_elapsed_ms"] = aesthetic_elapsed_ms
+            verify_metadata["aesthetic_issue_count"] = 1
+            logger.info(
+                "verify_aesthetic_done",
+                extra={
+                    "event": "verify_aesthetic_done",
+                    "job_id": state.job_id,
+                    "stage": "verify",
+                    "slide_count": len(state.slides),
+                    "has_result": False,
+                    "mode": "skipped",
+                    "degraded_reason": "aesthetic_timeout_fallback",
+                    "issue_count": 1,
+                    "elapsed_ms": aesthetic_elapsed_ms,
+                },
+            )
+            aesthetic_result = None
+        if aesthetic_result:
+            for issue in aesthetic_result.issues:
                 issue_dict = issue.model_dump(mode="json")
                 severity = str(issue_dict.get("severity") or "warning").lower()
                 # 视觉问题统一降级为 advisory，避免误触发自动修复链路
                 if severity == "error":
                     issue_dict["severity"] = "warning"
-                issue_dict["source"] = issue_dict.get("source") or "vision"
+                issue_dict["source"] = issue_dict.get("source") or str(verify_metadata["aesthetic_mode"])
                 issue_dict["tier"] = "advisory"
                 issues.append(issue_dict)
+    elif not enable_vision:
+        logger.info(
+            "verify_aesthetic_skipped",
+            extra={
+                "event": "verify_aesthetic_skipped",
+                "job_id": state.job_id,
+                "stage": "verify",
+                "slide_count": len(state.slides),
+                "mode": "disabled",
+                "degraded_reason": "vision_disabled",
+            },
+        )
+    else:
+        logger.info(
+            "verify_aesthetic_skipped",
+            extra={
+                "event": "verify_aesthetic_skipped",
+                "job_id": state.job_id,
+                "stage": "verify",
+                "slide_count": 0,
+                "mode": "skipped",
+                "degraded_reason": "no_slides",
+            },
+        )
 
     state.verification_issues = issues
+    verify_metadata["total_issue_count"] = len(issues)
+    verify_metadata["hard_issue_count"] = sum(1 for issue in issues if issue.get("tier") == "hard")
+    verify_metadata["advisory_issue_count"] = sum(1 for issue in issues if issue.get("tier") == "advisory")
+    state.document_metadata["verify"] = verify_metadata
+    logger.info(
+        "verify_summary",
+        extra={
+            "event": "verify_summary",
+            "job_id": state.job_id,
+            "stage": "verify",
+            **verify_metadata,
+        },
+    )
 
 
 async def stage_fix_slides_once(

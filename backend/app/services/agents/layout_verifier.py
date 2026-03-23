@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,14 @@ class VerificationResult(BaseModel):
     passed: bool
     issues: list[VerificationIssue]
     score: int = Field(ge=0, le=100, description="总体质量评分")
+
+
+@dataclass
+class AestheticVerificationOutcome:
+    result: VerificationResult | None
+    mode: str
+    degraded_reason: str | None = None
+    elapsed_ms: int = 0
 
 
 def _compute_overlap(
@@ -184,9 +193,10 @@ async def run_aesthetic_verification(
     slides: list[Slide],
     presentation_dict: dict | None = None,
     vision_timeout_seconds: float | None = None,
-) -> VerificationResult | None:
+) -> AestheticVerificationOutcome:
     """LLM 审美评估 — 优先使用截图多模态，回退到文本摘要"""
     vision_timed_out = False
+    vision_failed = False
     t0 = time.monotonic()
     try:
         agent = _get_aesthetic_verifier_agent()
@@ -207,10 +217,15 @@ async def run_aesthetic_verification(
                         "job_id": presentation_dict.get("job_id") if isinstance(presentation_dict, dict) else None,
                         "stage": "verify",
                         "mode": "vision",
+                        "degraded_reason": None,
                         "elapsed_ms": int((time.monotonic() - t0) * 1000),
                     },
                 )
-                return _parse_aesthetic_text(raw_text, slides)
+                return AestheticVerificationOutcome(
+                    result=_parse_aesthetic_text(raw_text, slides),
+                    mode="vision",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                )
             except asyncio.TimeoutError:
                 vision_timed_out = True
                 logger.warning(
@@ -218,6 +233,7 @@ async def run_aesthetic_verification(
                     vision_timeout_seconds or 0.0,
                 )
             except Exception as e:
+                vision_failed = True
                 logger.warning("Vision verification failed, falling back to text: %s", e)
 
         slides_summary = "\n".join(
@@ -241,6 +257,11 @@ async def run_aesthetic_verification(
                 "job_id": presentation_dict.get("job_id") if isinstance(presentation_dict, dict) else None,
                 "stage": "verify",
                 "mode": "text",
+                "degraded_reason": (
+                    "vision_timeout_fallback"
+                    if vision_timed_out
+                    else "vision_error_fallback" if vision_failed else None
+                ),
                 "attempt": getattr(usage, "requests", None) if usage is not None else None,
                 "token_usage": str(usage) if usage is not None else None,
                 "elapsed_ms": int((time.monotonic() - t0) * 1000),
@@ -259,10 +280,37 @@ async def run_aesthetic_verification(
                     tier="advisory",
                 )
             )
-        return output
+        if vision_failed and slides:
+            output.issues.append(
+                VerificationIssue(
+                    slide_id=slides[0].slide_id,
+                    severity="warning",
+                    category="aesthetic",
+                    message="视觉截图评估失败，已降级为文本审美评估",
+                    suggestion="检查截图链路或继续比较关闭视觉验证时的结果差异",
+                    source="vision_error_fallback",
+                    tier="advisory",
+                )
+            )
+        degraded_reason = (
+            "vision_timeout_fallback"
+            if vision_timed_out
+            else "vision_error_fallback" if vision_failed else None
+        )
+        return AestheticVerificationOutcome(
+            result=output,
+            mode="text",
+            degraded_reason=degraded_reason,
+            elapsed_ms=int((time.monotonic() - t0) * 1000),
+        )
     except Exception as e:
         logger.warning("Aesthetic verification skipped: %s", e)
-        return None
+        return AestheticVerificationOutcome(
+            result=None,
+            mode="skipped",
+            degraded_reason="aesthetic_error_fallback",
+            elapsed_ms=int((time.monotonic() - t0) * 1000),
+        )
 
 
 async def _run_vision_verification(
