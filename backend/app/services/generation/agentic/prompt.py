@@ -52,7 +52,7 @@ def build_system_prompt(
 
     merged = load_harness_config(harness_path)
     if config:
-        merged.update(dict(config))
+        merged.update(config)
 
     sections = [
         build_identity_section(merged),
