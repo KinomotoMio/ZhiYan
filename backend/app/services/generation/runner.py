@@ -18,7 +18,6 @@ from app.models.slide import Presentation, Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.pipeline.graph import (
-    OutlineSchemaError,
     PipelineState,
     stage_fix_slides_once,
     stage_generate_outline,
@@ -35,7 +34,6 @@ ERROR_STAGE_TIMEOUT = "STAGE_TIMEOUT"
 ERROR_PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
 ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
-ERROR_OUTLINE_SCHEMA = "OUTLINE_SCHEMA"
 ERROR_CANCELLED = "CANCELLED"
 ERROR_UNKNOWN = "UNKNOWN"
 
@@ -832,13 +830,6 @@ class GenerationRunner:
                 error_code=ERROR_PROVIDER_NETWORK,
                 error_message="provider network connection failed",
                 retriable=True,
-            )
-
-        if isinstance(error, OutlineSchemaError):
-            return ClassifiedError(
-                error_code=ERROR_OUTLINE_SCHEMA,
-                error_message=str(error),
-                retriable=False,
             )
 
         error_name = type(error).__name__.lower()
