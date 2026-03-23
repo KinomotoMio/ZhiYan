@@ -4,14 +4,8 @@ import asyncio
 from dataclasses import dataclass
 
 from app.services.generation.agentic.loop import agentic_loop
-from app.services.generation.agentic.types import (
-    AgenticMessage,
-    AgenticModelClient,
-    AssistantMessage,
-    ToolCall,
-    ToolResult,
-    UserMessage,
-)
+from app.services.generation.agentic.tools import ToolDispatchResult
+from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
 
 
 @dataclass
@@ -51,13 +45,15 @@ def test_agentic_loop_dispatches_tool_calls_and_accumulates_messages():
 
         async def _dispatch(parts):
             calls.extend(part.tool_name for part in parts)
-            return [
-                ToolResult(
-                    tool_name="parse_document",
-                    content={"status": "ok"},
-                    tool_call_id=parts[0].tool_call_id,
-                )
-            ]
+            return ToolDispatchResult(
+                parts=[
+                    ToolResult(
+                        tool_name="parse_document",
+                        content={"status": "ok"},
+                        tool_call_id=parts[0].tool_call_id,
+                    )
+                ]
+            )
 
         model = StubModel(
             responses=[
@@ -81,13 +77,15 @@ def test_agentic_loop_dispatches_tool_calls_and_accumulates_messages():
 def test_agentic_loop_stops_after_max_turns():
     async def _case():
         async def _dispatch(parts):
-            return [
-                ToolResult(
-                    tool_name=parts[0].tool_name,
-                    content="ok",
-                    tool_call_id=parts[0].tool_call_id,
-                )
-            ]
+            return ToolDispatchResult(
+                parts=[
+                    ToolResult(
+                        tool_name=parts[0].tool_name,
+                        content="ok",
+                        tool_call_id=parts[0].tool_call_id,
+                    )
+                ]
+            )
 
         model = StubModel(
             responses=[

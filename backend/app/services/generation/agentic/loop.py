@@ -7,17 +7,16 @@ from dataclasses import dataclass, field
 
 from app.core.config import settings
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
+from app.services.generation.agentic.tools import ToolDispatchResult
 from app.services.generation.agentic.types import (
     AgenticMessage,
     AgenticModelClient,
     AssistantMessage,
     ToolCall,
-    ToolResult,
     UserMessage,
 )
 
 InstructionsProvider = str | Callable[[], str]
-ToolDispatchResult = list[ToolResult]
 ToolDispatcher = Callable[[Sequence[ToolCall]], Awaitable[ToolDispatchResult]]
 
 
@@ -91,9 +90,22 @@ async def agentic_loop(
                 last_response=last_response,
             )
 
-        tool_results = await dispatch_tools(tool_calls)
-        if tool_results:
-            messages.append(UserMessage(parts=list(tool_results), instructions=_instructions(instructions)))
+        dispatch_result = await dispatch_tools(tool_calls)
+        if dispatch_result.parts:
+            messages.append(
+                UserMessage(
+                    parts=list(dispatch_result.parts),
+                    instructions=_instructions(instructions),
+                )
+            )
+        if dispatch_result.stop_loop:
+            return AgenticLoopResult(
+                output_text=extract_text(last_response),
+                messages=messages,
+                turns=turn + 1,
+                stop_reason=dispatch_result.stop_reason or "tool-dispatch-stop",
+                last_response=last_response,
+            )
 
     messages.append(
         UserMessage(
