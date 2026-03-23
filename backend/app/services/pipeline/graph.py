@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.models.slide import Slide
 from app.services.fallback_semantics import (
     CONTENT_GENERATING,
@@ -200,6 +202,18 @@ _CONTENT_HINT_IMAGE_TOKENS = (
     "截图",
     "界面",
 )
+
+_OUTLINE_FULL_TEXT_TOKEN_LIMIT = 8000
+_OUTLINE_TRUNCATED_RAW_MAX_CHARS = 12000
+_OUTLINE_RAW_EXCERPT_MAX_CHARS = 3000
+
+
+class OutlineSchemaError(RuntimeError):
+    """Raised when outline output cannot be coerced into the expected schema."""
+
+    def __init__(self, message: str, *, schema_error_type: str | None = None):
+        self.schema_error_type = schema_error_type or "unknown"
+        super().__init__(message)
 
 
 def _normalize_content_hints(item: dict[str, Any]) -> list[str]:
@@ -435,23 +449,55 @@ def _format_structure_signals_for_prompt(structure_signals: Any) -> str:
     return "\n".join(lines)
 
 
-async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
-    from app.core.config import settings
-    from app.services.document.parser import estimate_tokens
-    from app.services.agents.outline_synthesizer import outline_synthesizer_agent
-    from app.services.pipeline.layout_roles import normalize_outline_items_roles
+def _truncate_outline_raw_content(
+    content: str,
+    max_chars: int = _OUTLINE_TRUNCATED_RAW_MAX_CHARS,
+) -> str:
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars]
 
-    if progress:
-        await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
 
-    t0 = time.monotonic()
+def _build_outline_content_section(state: PipelineState, token_count: int) -> tuple[str, str, int]:
     content = state.raw_content
-    token_count = estimate_tokens(content)
+    if token_count <= _OUTLINE_FULL_TEXT_TOKEN_LIMIT:
+        return f"内容:\n{content}", "full", 0
 
-    if token_count <= 8000:
-        content_section = f"内容:\n{content}"
-    else:
-        content_section = f"内容（前 12000 字符）:\n{content[:12000]}"
+    layer12_summaries = ""
+    summary_source_count = 0
+    try:
+        from app.services.document.source_store import get_layer12_summaries
+
+        layer12_summaries = get_layer12_summaries(state.source_ids)
+        summary_source_count = len([sid for sid in state.source_ids if str(sid).strip()])
+    except Exception:
+        layer12_summaries = ""
+
+    if layer12_summaries.strip():
+        raw_excerpt = _truncate_outline_raw_content(
+            content,
+            max_chars=_OUTLINE_RAW_EXCERPT_MAX_CHARS,
+        )
+        sections = [f"来源摘要（Layer 1/2）:\n{layer12_summaries.strip()}"]
+        if raw_excerpt.strip():
+            sections.append(
+                f"用户补充上下文（前 {_OUTLINE_RAW_EXCERPT_MAX_CHARS} 字符）:\n{raw_excerpt}"
+            )
+        return "\n\n".join(sections), "layer12_summary", summary_source_count
+
+    truncated_raw = _truncate_outline_raw_content(content)
+    return (
+        f"内容（前 {_OUTLINE_TRUNCATED_RAW_MAX_CHARS} 字符）:\n{truncated_raw}",
+        "truncated_raw",
+        0,
+    )
+
+
+def _build_outline_prompt(state: PipelineState, token_count: int) -> tuple[str, dict[str, int | str]]:
+    content_section, input_mode, summary_source_count = _build_outline_content_section(
+        state,
+        token_count,
+    )
 
     source_hints_section = _format_source_hints_for_prompt(
         state.document_metadata.get("source_hints")
@@ -471,6 +517,50 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
         f"{content_section}\n\n"
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
     )
+    return prompt, {
+        "input_mode": input_mode,
+        "summary_source_count": summary_source_count,
+        "prompt_chars": len(prompt),
+        "estimated_tokens": token_count,
+    }
+
+
+def _wrap_outline_schema_error(error: Exception) -> OutlineSchemaError | None:
+    try:
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+    except Exception:  # pragma: no cover
+        UnexpectedModelBehavior = tuple()  # type: ignore[assignment]
+
+    if isinstance(error, ValidationError):
+        return OutlineSchemaError(
+            f"outline schema validation failed: {error}",
+            schema_error_type=type(error).__name__,
+        )
+    if UnexpectedModelBehavior and isinstance(error, UnexpectedModelBehavior):
+        return OutlineSchemaError(
+            f"outline schema validation failed: {error}",
+            schema_error_type=type(error).__name__,
+        )
+    return None
+
+
+async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
+    from app.core.config import settings
+    from app.services.document.parser import estimate_tokens
+    from app.services.agents.outline_synthesizer import (
+        PresentationOutline,
+        outline_synthesizer_agent,
+    )
+    from app.services.pipeline.layout_roles import normalize_outline_items_roles
+
+    if progress:
+        await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
+
+    t0 = time.monotonic()
+    content = state.raw_content
+    token_count = estimate_tokens(content)
+    prompt, prompt_stats = _build_outline_prompt(state, token_count)
+    state.document_metadata["outline_input"] = dict(prompt_stats)
 
     model = settings.strong_model
     provider = model.split(":", 1)[0] if ":" in model else None
@@ -481,7 +571,10 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
             "stage": "outline",
             "model": model,
             "provider": provider,
-            "estimated_tokens": token_count,
+            "input_mode": prompt_stats["input_mode"],
+            "prompt_chars": prompt_stats["prompt_chars"],
+            "estimated_tokens": prompt_stats["estimated_tokens"],
+            "summary_source_count": prompt_stats["summary_source_count"],
             "timeout_seconds": settings.outline_timeout_seconds,
         },
     )
@@ -489,7 +582,12 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     try:
         result = await outline_synthesizer_agent.run(prompt)
         usage = result.usage()
-        outline = result.output.model_dump()
+        raw_outline = (
+            result.output.model_dump()
+            if hasattr(result.output, "model_dump")
+            else result.output
+        )
+        outline = PresentationOutline.model_validate(raw_outline).model_dump()
         raw_outline_items = list(outline.get("items", []))
         outline["items"] = normalize_outline_items_roles(
             raw_outline_items,
@@ -510,14 +608,43 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
                 "provider": settings.strong_model.split(":", 1)[0],
                 "attempt": usage.requests,
                 "token_usage": str(usage),
+                "input_mode": prompt_stats["input_mode"],
+                "prompt_chars": prompt_stats["prompt_chars"],
+                "estimated_tokens": prompt_stats["estimated_tokens"],
+                "summary_source_count": prompt_stats["summary_source_count"],
                 "elapsed_ms": int((time.monotonic() - t0) * 1000),
             },
         )
     except Exception as e:
+        schema_error = _wrap_outline_schema_error(e)
+        if schema_error is not None:
+            logger.warning(
+                "Outline schema validation failed: %s",
+                schema_error,
+                extra={
+                    "job_id": state.job_id,
+                    "stage": "outline",
+                    "error_type": type(e).__name__,
+                    "schema_error_type": schema_error.schema_error_type,
+                    "input_mode": prompt_stats["input_mode"],
+                    "prompt_chars": prompt_stats["prompt_chars"],
+                    "estimated_tokens": prompt_stats["estimated_tokens"],
+                    "summary_source_count": prompt_stats["summary_source_count"],
+                },
+            )
+            raise schema_error from e
         logger.warning(
             "Outline generation failed: %s",
             e,
-            extra={"job_id": state.job_id, "stage": "outline", "error_type": type(e).__name__},
+            extra={
+                "job_id": state.job_id,
+                "stage": "outline",
+                "error_type": type(e).__name__,
+                "input_mode": prompt_stats["input_mode"],
+                "prompt_chars": prompt_stats["prompt_chars"],
+                "estimated_tokens": prompt_stats["estimated_tokens"],
+                "summary_source_count": prompt_stats["summary_source_count"],
+            },
         )
         raise
 
