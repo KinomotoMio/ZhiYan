@@ -4,7 +4,7 @@ import logging
 import re
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -36,29 +36,12 @@ def _build_content_disposition(title: str, extension: str) -> str:
 async def export_pptx(req: ExportRequest):
     from app.services.export.pptx_exporter import export_pptx as do_export
 
-    mode = "structured"
-    try:
-        pptx_bytes = do_export(req.presentation)
-    except Exception:
-        logger.exception("Structured PPTX export failed; falling back to image PPTX")
-        from app.services.export.pptx_image_exporter import export_pptx_as_images
-
-        try:
-            pptx_bytes = await export_pptx_as_images(req.presentation)
-        except RuntimeError as e:
-            raise HTTPException(status_code=503, detail=str(e)) from e
-        except Exception as e:
-            logger.exception("Fallback image PPTX export failed")
-            raise HTTPException(status_code=500, detail="PPTX 导出失败") from e
-        mode = "fallback-image"
+    pptx_bytes = do_export(req.presentation)
 
     return Response(
         content=pptx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        headers={
-            "Content-Disposition": _build_content_disposition(req.presentation.title, "pptx"),
-            "X-Zhiyan-Export-Mode": mode,
-        },
+        headers={"Content-Disposition": _build_content_disposition(req.presentation.title, "pptx")},
     )
 
 
@@ -71,6 +54,8 @@ async def export_pdf(req: ExportRequest):
     try:
         pdf_bytes = await do_export(html)
     except RuntimeError as e:
+        from fastapi import HTTPException
+
         raise HTTPException(status_code=503, detail=str(e))
 
     return Response(

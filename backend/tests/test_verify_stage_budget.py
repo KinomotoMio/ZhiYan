@@ -34,7 +34,3 @@ def test_stage_verify_slides_skips_slow_aesthetic_verification(monkeypatch):
 
     assert any(issue["source"] == "aesthetic_timeout_fallback" for issue in state.verification_issues)
     assert all(issue["tier"] == "advisory" for issue in state.verification_issues)
-    assert state.document_metadata["verify"]["vision_requested"] is True
-    assert state.document_metadata["verify"]["aesthetic_mode"] == "skipped"
-    assert state.document_metadata["verify"]["aesthetic_degraded_reason"] == "aesthetic_timeout_fallback"
-    assert state.document_metadata["verify"]["aesthetic_issue_count"] == 1

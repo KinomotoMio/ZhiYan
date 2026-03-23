@@ -6,7 +6,6 @@ from app.models.layout_registry import (
     get_all_layouts,
     get_layout,
     get_layout_catalog,
-    get_layout_taxonomy_catalog_for_groups,
     get_layout_variant_catalog,
 )
 from app.services.pipeline.layout_roles import (
@@ -25,7 +24,6 @@ from app.services.pipeline.layout_variants import (
 from app.services.pipeline.graph import (
     PipelineState,
     _enforce_adjacent_layout_diversity,
-    _layout_selector_timeout_seconds,
     stage_select_layouts,
 )
 from app.services.pipeline.layout_usage import (
@@ -120,24 +118,8 @@ def test_get_layout_catalog_includes_usage_metadata():
 def test_get_layout_variant_catalog_describes_role_to_variant_tracks():
     catalog = get_layout_variant_catalog()
     assert "角色 `narrative` / 子组 `icon-points` / 变体 `icon-pillars`" in catalog
-
-
-def test_get_layout_taxonomy_catalog_for_groups_filters_irrelevant_roles():
-    catalog = get_layout_taxonomy_catalog_for_groups({"cover", "narrative", "closing"})
-
-    assert "group: cover" in catalog
-    assert "group: narrative" in catalog
-    assert "group: closing" in catalog
-    assert "group: process" not in catalog
-    assert "group: evidence" not in catalog
-    assert "`bullet-with-icons`" in catalog
-    assert "`thank-you`" in catalog
-
-
-def test_layout_selector_timeout_budget_stays_inside_stage_timeout():
-    assert _layout_selector_timeout_seconds(45) == 27
-    assert _layout_selector_timeout_seconds(4) == 3.2
-    assert _layout_selector_timeout_seconds(0.5) == 0.4
+    assert "`bullet-with-icons`(图标要点)" in catalog
+    assert "角色 `evidence` / 子组 `stat-summary` / 变体 `kpi-grid`" in catalog
 
 
 def test_layout_registry_exposes_variant_metadata_for_trial_and_default_groups():
@@ -605,54 +587,6 @@ def test_stage_select_layouts_prompt_falls_back_when_usage_missing(monkeypatch):
         prompt = agent.prompts[0]
         assert "文档级 Usage 推断: 未命中" in prompt
         assert "无明确 usage 候选，按结构和设计方向选择" in prompt
-
-    asyncio.run(_case())
-
-
-def test_stage_select_layouts_uses_fallback_before_stage_budget_exhaustion(monkeypatch):
-    async def _case():
-        from app.services.agents import layout_selector as layout_selector_mod
-        from app.services.pipeline import graph as graph_mod
-
-        class _SlowLayoutSelectorAgent:
-            async def run(self, prompt: str):  # noqa: ARG002
-                await asyncio.sleep(0.05)
-                return _FakeResult([])
-
-        monkeypatch.setattr(
-            layout_selector_mod,
-            "layout_selector_agent",
-            _SlowLayoutSelectorAgent(),
-            raising=False,
-        )
-        monkeypatch.setattr(graph_mod, "_layout_selector_timeout_seconds", lambda _timeout: 0.01)
-
-        state = PipelineState(
-            raw_content="This deck needs a quick fallback if layout selection stalls.",
-            topic="Fallback budget",
-            num_pages=3,
-            outline={
-                "items": [
-                    {"slide_number": 1, "title": "Cover", "suggested_slide_role": "cover"},
-                    {
-                        "slide_number": 2,
-                        "title": "Capabilities",
-                        "content_brief": "Explain two core capabilities.",
-                        "suggested_slide_role": "narrative",
-                        "key_points": ["capability one", "capability two"],
-                    },
-                    {"slide_number": 3, "title": "Closing", "suggested_slide_role": "closing"},
-                ]
-            },
-        )
-
-        await stage_select_layouts(state)
-
-        assert state.layout_selections[0]["layout_id"] == "intro-slide"
-        assert state.layout_selections[1]["layout_id"] in {"bullet-with-icons", "bullet-with-icons-cards"}
-        assert state.document_metadata["layout_degradation"]["applied"] is True
-        assert state.document_metadata["layout_degradation"]["selection_source"] == "fallback"
-        assert state.document_metadata["layout_degradation"]["reason"] == "TimeoutError"
 
     asyncio.run(_case())
 

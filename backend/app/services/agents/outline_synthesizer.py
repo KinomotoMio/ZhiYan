@@ -1,39 +1,31 @@
-"""Outline Synthesizer Agent — 文档摘要 → 叙事大纲."""
+"""Outline Synthesizer Agent — 文档摘要 → 叙事大纲
 
-from __future__ import annotations
+新版：合并原 PlanChunks + AnalyzeChunks + SynthesizeOutline 三步为一步。
+小文档（< 8000 tokens）全文直接喂给 Agent。
+大文档使用 Layer 2 摘要 + Layer 3 精选段落。
 
-from typing import Any
+输出包含 suggested_slide_role 用于后续 LayoutSelection。
+"""
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class OutlineItem(BaseModel):
     """大纲中的一项"""
 
-    model_config = ConfigDict(extra="ignore")
-
-    slide_number: int = Field(
-        validation_alias=AliasChoices("slide_number", "page", "page_number")
-    )
+    slide_number: int
     title: str = Field(description="幻灯片标题")
     content_brief: str = Field(
         default="",
-        validation_alias=AliasChoices("content_brief", "summary"),
         description="该页内容方向（100-200 字简述）",
     )
-    key_points: list[str] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("key_points", "bullets", "bullet_points"),
-        description="该页的核心要点（3-5 个）",
-    )
+    key_points: list[str] = Field(description="该页的核心要点（3-5 个）")
     source_references: list[str] = Field(
         default_factory=list,
-        validation_alias=AliasChoices("source_references", "references"),
         description="引用的文档段落标识（source_id 或 chunk 引用）",
     )
     content_hints: list[str] = Field(
         default_factory=list,
-        validation_alias=AliasChoices("content_hints", "structure_hints"),
         description="可选结构提示（如 chart/image/table/timeline），用于帮助布局选择阶段更准确匹配信息结构。",
     )
     suggested_slide_role: str = Field(
@@ -45,66 +37,12 @@ class OutlineItem(BaseModel):
         ),
     )
 
-    @field_validator("title", "content_brief", "suggested_slide_role", mode="before")
-    @classmethod
-    def _coerce_text(cls, value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value.strip()
-        return str(value).strip()
-
-    @field_validator("key_points", "source_references", "content_hints", mode="before")
-    @classmethod
-    def _coerce_list(cls, value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            text = value.strip()
-            return [text] if text else []
-        if isinstance(value, (tuple, set)):
-            value = list(value)
-        if isinstance(value, list):
-            items: list[str] = []
-            for item in value:
-                if item is None:
-                    continue
-                text = item.strip() if isinstance(item, str) else str(item).strip()
-                if text:
-                    items.append(text)
-            return items
-        text = str(value).strip()
-        return [text] if text else []
-
 
 class PresentationOutline(BaseModel):
     """演示文稿大纲"""
 
-    model_config = ConfigDict(extra="ignore")
-
     narrative_arc: str = Field(description="叙事主线描述（一句话）")
-    items: list[OutlineItem] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("items", "slides", "outline_items"),
-    )
-
-    @field_validator("narrative_arc", mode="before")
-    @classmethod
-    def _coerce_narrative_arc(cls, value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value.strip()
-        return str(value).strip()
-
-    @field_validator("items", mode="before")
-    @classmethod
-    def _coerce_items(cls, value: Any) -> list[Any]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return value
-        return [value]
+    items: list[OutlineItem]
 
 
 _agent = None
@@ -125,14 +63,6 @@ def get_outline_synthesizer_agent():
             output_type=PresentationOutline,
             instructions=(
                 "你是一个演示文稿策划专家。根据提供的文档内容，构建一个连贯的叙事大纲。\n\n"
-                "## 输出 Contract（必须严格遵守）\n"
-                "- 只输出一个 JSON 对象，不要输出解释、Markdown 或代码块\n"
-                "- 顶层字段只能包含 `narrative_arc` 和 `items`\n"
-                "- `items` 必须是长度等于目标页数的数组\n"
-                "- 每个 item 必须包含: `slide_number`, `title`, `content_brief`, `key_points`, `source_references`, `content_hints`, `suggested_slide_role`\n"
-                "- `slide_number` 从 1 开始递增且不能重复\n"
-                "- `key_points` / `source_references` / `content_hints` 必须是数组，没有内容时返回空数组\n"
-                "- 不要输出 schema 之外的新字段\n\n"
                 "## 叙事结构指南\n"
                 "采用「问题→分析→方案→结论」四段式叙事弧：\n"
                 "1. **开篇引入**（1-2页）：标题页 + 背景/问题引出\n"

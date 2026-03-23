@@ -9,13 +9,12 @@ import { useAppStore } from "@/lib/store";
 import {
   acceptOutline,
   cancelJob,
-  exportPdf,
   exportPptx,
+  exportPdf,
   fixApply,
   fixPreview,
   fixSkip,
 } from "@/lib/api";
-import { getExportSuccessMessage } from "@/lib/export-feedback";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
   DropdownMenu,
@@ -295,30 +294,11 @@ export default function EditorWorkspace({
 
   const slides = presentation?.slides ?? [];
   const currentSlide = slides[currentSlideIndex] ?? null;
-  const layerOrder: Record<string, number> = { content: 1, assets: 2, verify: 3 };
   const loadedCount = slides.filter(
     (s) => !(s.contentData as Record<string, unknown> | undefined)?._loading
   ).length;
   const totalCount = slides.length;
   const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
-  const contentReadyCount = slides.filter((slide) => {
-    const data = (slide.contentData ?? {}) as Record<string, unknown>;
-    if (data._loading) return false;
-    const layer = typeof data._readyLayer === "string" ? data._readyLayer : "content";
-    return (layerOrder[layer] ?? 1) >= 1;
-  }).length;
-  const assetsReadyCount = slides.filter((slide) => {
-    const data = (slide.contentData ?? {}) as Record<string, unknown>;
-    if (data._loading) return false;
-    const layer = typeof data._readyLayer === "string" ? data._readyLayer : "content";
-    return (layerOrder[layer] ?? 1) >= 2;
-  }).length;
-  const verifyReadyCount = slides.filter((slide) => {
-    const data = (slide.contentData ?? {}) as Record<string, unknown>;
-    if (data._loading) return false;
-    const layer = typeof data._readyLayer === "string" ? data._readyLayer : "content";
-    return (layerOrder[layer] ?? 1) >= 3;
-  }).length;
   const waitingFixReview = jobStatus === "waiting_fix_review";
   const groupedIssues = groupIssuesBySlide(issues);
   const issueSlideIds = Array.from(groupedIssues.keys());
@@ -390,11 +370,10 @@ export default function EditorWorkspace({
     setExporting(true);
 
     try {
-      const exportResult =
+      const blob =
         format === "pptx"
           ? await exportPptx(presentation)
-          : { blob: await exportPdf(presentation), mode: "structured" as const };
-      const { blob, mode } = exportResult;
+          : await exportPdf(presentation);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -404,7 +383,7 @@ export default function EditorWorkspace({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success(getExportSuccessMessage(format, mode));
+      toast.success(`${format.toUpperCase()} 导出成功`);
     } catch (err) {
       console.error("导出失败:", err);
       toast.error(`导出失败: ${err instanceof Error ? err.message : "未知错误"}`);
@@ -455,7 +434,7 @@ export default function EditorWorkspace({
           {isGenerating && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              生成中 · 内容 {contentReadyCount}/{totalCount} · 资源 {assetsReadyCount}/{totalCount} · 验证 {verifyReadyCount}/{totalCount}
+              生成中 ({loadedCount}/{totalCount})
             </span>
           )}
         </div>

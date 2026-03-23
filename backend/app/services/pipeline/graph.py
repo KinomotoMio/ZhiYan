@@ -14,8 +14,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import ValidationError
-
 from app.models.slide import Slide
 from app.services.fallback_semantics import (
     CONTENT_GENERATING,
@@ -25,16 +23,11 @@ from app.services.fallback_semantics import (
 )
 from app.services.image_semantics import normalize_image_content_data
 from app.services.pipeline.content_type_signals import infer_content_signals
-from app.utils.scene_background import build_generated_scene_background
 
 logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 6
 _SLIDE_CONTEXT_MAX_CHARS = 2000
-_LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS = 5.0
-_LAYOUT_SELECTOR_TIMEOUT_FRACTION = 0.6
-_LAYOUT_PROMPT_LAYOUT_LIMIT = 5
-_LAYOUT_PROMPT_VARIANT_LIMIT = 4
 _ADJACENT_LAYOUT_DIVERSITY_EXEMPT_GROUPS = {
     "cover",
     "agenda",
@@ -203,18 +196,6 @@ _CONTENT_HINT_IMAGE_TOKENS = (
     "截图",
     "界面",
 )
-
-_OUTLINE_FULL_TEXT_TOKEN_LIMIT = 8000
-_OUTLINE_TRUNCATED_RAW_MAX_CHARS = 12000
-_OUTLINE_RAW_EXCERPT_MAX_CHARS = 3000
-
-
-class OutlineSchemaError(RuntimeError):
-    """Raised when outline output cannot be coerced into the expected schema."""
-
-    def __init__(self, message: str, *, schema_error_type: str | None = None):
-        self.schema_error_type = schema_error_type or "unknown"
-        super().__init__(message)
 
 
 def _normalize_content_hints(item: dict[str, Any]) -> list[str]:
@@ -450,55 +431,23 @@ def _format_structure_signals_for_prompt(structure_signals: Any) -> str:
     return "\n".join(lines)
 
 
-def _truncate_outline_raw_content(
-    content: str,
-    max_chars: int = _OUTLINE_TRUNCATED_RAW_MAX_CHARS,
-) -> str:
-    if len(content) <= max_chars:
-        return content
-    return content[:max_chars]
+async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
+    from app.core.config import settings
+    from app.services.document.parser import estimate_tokens
+    from app.services.agents.outline_synthesizer import outline_synthesizer_agent
+    from app.services.pipeline.layout_roles import normalize_outline_items_roles
 
+    if progress:
+        await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
 
-def _build_outline_content_section(state: PipelineState, token_count: int) -> tuple[str, str, int]:
+    t0 = time.monotonic()
     content = state.raw_content
-    if token_count <= _OUTLINE_FULL_TEXT_TOKEN_LIMIT:
-        return f"内容:\n{content}", "full", 0
+    token_count = estimate_tokens(content)
 
-    layer12_summaries = ""
-    summary_source_count = 0
-    try:
-        from app.services.document.source_store import get_layer12_summaries
-
-        layer12_summaries = get_layer12_summaries(state.source_ids)
-        summary_source_count = len([sid for sid in state.source_ids if str(sid).strip()])
-    except Exception:
-        layer12_summaries = ""
-
-    if layer12_summaries.strip():
-        raw_excerpt = _truncate_outline_raw_content(
-            content,
-            max_chars=_OUTLINE_RAW_EXCERPT_MAX_CHARS,
-        )
-        sections = [f"来源摘要（Layer 1/2）:\n{layer12_summaries.strip()}"]
-        if raw_excerpt.strip():
-            sections.append(
-                f"用户补充上下文（前 {_OUTLINE_RAW_EXCERPT_MAX_CHARS} 字符）:\n{raw_excerpt}"
-            )
-        return "\n\n".join(sections), "layer12_summary", summary_source_count
-
-    truncated_raw = _truncate_outline_raw_content(content)
-    return (
-        f"内容（前 {_OUTLINE_TRUNCATED_RAW_MAX_CHARS} 字符）:\n{truncated_raw}",
-        "truncated_raw",
-        0,
-    )
-
-
-def _build_outline_prompt(state: PipelineState, token_count: int) -> tuple[str, dict[str, int | str]]:
-    content_section, input_mode, summary_source_count = _build_outline_content_section(
-        state,
-        token_count,
-    )
+    if token_count <= 8000:
+        content_section = f"内容:\n{content}"
+    else:
+        content_section = f"内容（前 12000 字符）:\n{content[:12000]}"
 
     source_hints_section = _format_source_hints_for_prompt(
         state.document_metadata.get("source_hints")
@@ -518,50 +467,6 @@ def _build_outline_prompt(state: PipelineState, token_count: int) -> tuple[str, 
         f"{content_section}\n\n"
         f"请生成一个 {state.num_pages} 页的演示文稿大纲。"
     )
-    return prompt, {
-        "input_mode": input_mode,
-        "summary_source_count": summary_source_count,
-        "prompt_chars": len(prompt),
-        "estimated_tokens": token_count,
-    }
-
-
-def _wrap_outline_schema_error(error: Exception) -> OutlineSchemaError | None:
-    try:
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
-    except Exception:  # pragma: no cover
-        UnexpectedModelBehavior = tuple()  # type: ignore[assignment]
-
-    if isinstance(error, ValidationError):
-        return OutlineSchemaError(
-            f"outline schema validation failed: {error}",
-            schema_error_type=type(error).__name__,
-        )
-    if UnexpectedModelBehavior and isinstance(error, UnexpectedModelBehavior):
-        return OutlineSchemaError(
-            f"outline schema validation failed: {error}",
-            schema_error_type=type(error).__name__,
-        )
-    return None
-
-
-async def stage_generate_outline(state: PipelineState, progress: ProgressHook | None = None) -> None:
-    from app.core.config import settings
-    from app.services.document.parser import estimate_tokens
-    from app.services.agents.outline_synthesizer import (
-        PresentationOutline,
-        outline_synthesizer_agent,
-    )
-    from app.services.pipeline.layout_roles import normalize_outline_items_roles
-
-    if progress:
-        await progress("outline", 2, TOTAL_STEPS, "生成大纲...")
-
-    t0 = time.monotonic()
-    content = state.raw_content
-    token_count = estimate_tokens(content)
-    prompt, prompt_stats = _build_outline_prompt(state, token_count)
-    state.document_metadata["outline_input"] = dict(prompt_stats)
 
     model = settings.strong_model
     provider = model.split(":", 1)[0] if ":" in model else None
@@ -572,10 +477,7 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
             "stage": "outline",
             "model": model,
             "provider": provider,
-            "input_mode": prompt_stats["input_mode"],
-            "prompt_chars": prompt_stats["prompt_chars"],
-            "estimated_tokens": prompt_stats["estimated_tokens"],
-            "summary_source_count": prompt_stats["summary_source_count"],
+            "estimated_tokens": token_count,
             "timeout_seconds": settings.outline_timeout_seconds,
         },
     )
@@ -583,12 +485,7 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
     try:
         result = await outline_synthesizer_agent.run(prompt)
         usage = result.usage()
-        raw_outline = (
-            result.output.model_dump()
-            if hasattr(result.output, "model_dump")
-            else result.output
-        )
-        outline = PresentationOutline.model_validate(raw_outline).model_dump()
+        outline = result.output.model_dump()
         raw_outline_items = list(outline.get("items", []))
         outline["items"] = normalize_outline_items_roles(
             raw_outline_items,
@@ -609,43 +506,14 @@ async def stage_generate_outline(state: PipelineState, progress: ProgressHook | 
                 "provider": settings.strong_model.split(":", 1)[0],
                 "attempt": usage.requests,
                 "token_usage": str(usage),
-                "input_mode": prompt_stats["input_mode"],
-                "prompt_chars": prompt_stats["prompt_chars"],
-                "estimated_tokens": prompt_stats["estimated_tokens"],
-                "summary_source_count": prompt_stats["summary_source_count"],
                 "elapsed_ms": int((time.monotonic() - t0) * 1000),
             },
         )
     except Exception as e:
-        schema_error = _wrap_outline_schema_error(e)
-        if schema_error is not None:
-            logger.warning(
-                "Outline schema validation failed: %s",
-                schema_error,
-                extra={
-                    "job_id": state.job_id,
-                    "stage": "outline",
-                    "error_type": type(e).__name__,
-                    "schema_error_type": schema_error.schema_error_type,
-                    "input_mode": prompt_stats["input_mode"],
-                    "prompt_chars": prompt_stats["prompt_chars"],
-                    "estimated_tokens": prompt_stats["estimated_tokens"],
-                    "summary_source_count": prompt_stats["summary_source_count"],
-                },
-            )
-            raise schema_error from e
         logger.warning(
             "Outline generation failed: %s",
             e,
-            extra={
-                "job_id": state.job_id,
-                "stage": "outline",
-                "error_type": type(e).__name__,
-                "input_mode": prompt_stats["input_mode"],
-                "prompt_chars": prompt_stats["prompt_chars"],
-                "estimated_tokens": prompt_stats["estimated_tokens"],
-                "summary_source_count": prompt_stats["summary_source_count"],
-            },
+            extra={"job_id": state.job_id, "stage": "outline", "error_type": type(e).__name__},
         )
         raise
 
@@ -666,7 +534,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     from app.models.layout_registry import (
         get_all_layouts,
         get_layout,
-        get_layout_taxonomy_catalog_for_groups,
+        get_layout_taxonomy_catalog,
     )
     from app.core.config import settings
     from app.services.pipeline.layout_roles import (
@@ -685,11 +553,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
     state.outline["items"] = outline_items
     layout_entries = get_all_layouts()
-    active_groups = {
-        get_outline_item_role(item)
-        for item in outline_items
-        if isinstance(item, dict)
-    }
     document_usage_tags, slide_usage_tags = infer_document_and_slide_usage(
         state.topic,
         state.raw_content,
@@ -733,16 +596,8 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         state.document_metadata.get("source_hints")
     )
     source_hints_line = f"{source_hints_section}\n" if source_hints_section else ""
-    taxonomy_catalog = get_layout_taxonomy_catalog_for_groups(active_groups)
-    selector_timeout = _layout_selector_timeout_seconds(settings.layout_timeout_seconds)
-    base_degradation_metadata = {
-        "selector_timeout_seconds": selector_timeout,
-        "prompt_chars": 0,
-        "outline_items": len(outline_items),
-        "active_groups": sorted(active_groups),
-    }
     prompt = (
-        f"可用布局列表:\n{taxonomy_catalog}\n\n"
+        f"可用布局列表:\n{get_layout_taxonomy_catalog()}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
         f"{source_hints_line}"
         "选择规则:\n"
@@ -763,7 +618,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         f"大纲:\n{items_text}\n\n"
         "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。"
     )
-    base_degradation_metadata["prompt_chars"] = len(prompt)
 
     try:
         from app.services.agents.layout_selector import layout_selector_agent
@@ -780,13 +634,9 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 "provider": provider,
                 "outline_items": len(outline_items),
                 "prompt_chars": len(prompt),
-                "selector_timeout_seconds": selector_timeout,
             },
         )
-        result = await asyncio.wait_for(
-            layout_selector_agent.run(prompt),
-            timeout=selector_timeout,
-        )
+        result = await layout_selector_agent.run(prompt)
         usage = result.usage()
         selections = result.output.model_dump()["slides"]
         decision_traces: dict[int, dict[str, Any]] = {}
@@ -892,12 +742,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 }
 
         state.layout_selections = selections
-        state.document_metadata["layout_degradation"] = {
-            **base_degradation_metadata,
-            "applied": False,
-            "reason": "",
-            "selection_source": "model",
-        }
         logger.info(
             "Layout selection call done",
             extra={
@@ -918,12 +762,6 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         )
         decision_traces = {}
         state.layout_selections = []
-        state.document_metadata["layout_degradation"] = {
-            **base_degradation_metadata,
-            "applied": True,
-            "reason": type(e).__name__,
-            "selection_source": "fallback",
-        }
         for item in outline_items:
             role = get_outline_item_role(item)
             slide_number = int(item.get("slide_number") or 0)
@@ -1049,21 +887,6 @@ def _group_sub_group_variant_to_default_layout(group: str, sub_group: str, varia
     )
 
 
-def _layout_selector_timeout_seconds(stage_timeout_seconds: float) -> float:
-    stage_timeout = max(0.05, float(stage_timeout_seconds))
-    if stage_timeout <= _LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS + 0.5:
-        return max(0.05, stage_timeout * 0.8)
-
-    bounded = stage_timeout * _LAYOUT_SELECTOR_TIMEOUT_FRACTION
-    return max(
-        0.05,
-        min(
-            bounded,
-            stage_timeout - _LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS,
-        ),
-    )
-
-
 def _format_outline_item_for_layout_prompt(
     item: dict[str, Any],
     *,
@@ -1122,12 +945,7 @@ def _format_outline_item_for_layout_prompt(
             f"`{sub_group}`({get_sub_group_label(role, sub_group)}: "
             f"{get_sub_group_description(role, sub_group)} 可用布局 {layouts_text})"
         )
-    role_matched_text = (
-        ", ".join(f"`{entry.id}`" for entry in role_matched[:_LAYOUT_PROMPT_LAYOUT_LIMIT])
-        or "无角色匹配布局"
-    )
-    if len(role_matched) > _LAYOUT_PROMPT_LAYOUT_LIMIT:
-        role_matched_text += f" 等 {len(role_matched)} 个"
+    role_matched_text = ", ".join(f"`{entry.id}`" for entry in role_matched) or "无角色匹配布局"
     sub_group_text = " / ".join(sub_group_candidates) if sub_group_candidates else "`default`"
     preferred_variants = (
         _rank_group_sub_group_variants(
@@ -1142,10 +960,8 @@ def _format_outline_item_for_layout_prompt(
     if preferred_variants:
         preferred_text = ", ".join(
             f"`{variant_id}`({label})"
-            for variant_id, label in preferred_variants[:_LAYOUT_PROMPT_VARIANT_LIMIT]
+            for variant_id, label in preferred_variants
         )
-        if len(preferred_variants) > _LAYOUT_PROMPT_VARIANT_LIMIT:
-            preferred_text += f" 等 {len(preferred_variants)} 个"
     else:
         preferred_text = "无明确 usage 候选，按结构和设计方向选择"
 
@@ -1188,7 +1004,6 @@ async def stage_generate_slides(
                 if isinstance(raw_refs, list)
                 else []
             )
-            background = _resolve_generated_slide_background(item, layout_id)
 
             source_content = _extract_slide_context(
                 raw_content=state.raw_content,
@@ -1216,7 +1031,6 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": content_data,
-                    "background": background,
                 }
             except asyncio.TimeoutError:
                 failed.append(idx)
@@ -1238,7 +1052,6 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": _fallback_content(item, layout_id),
-                    "background": background,
                 }
             except Exception as e:
                 failed.append(idx)
@@ -1261,7 +1074,6 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": _fallback_content(item, layout_id),
-                    "background": background,
                 }
 
             slide = Slide(
@@ -1269,7 +1081,6 @@ async def stage_generate_slides(
                 layoutType=results[idx].get("layout_id", "bullet-with-icons"),
                 layoutId=results[idx].get("layout_id", "bullet-with-icons"),
                 contentData=results[idx].get("content_data", {}),
-                background=results[idx].get("background"),
                 components=[],
             )
 
@@ -1307,7 +1118,6 @@ async def stage_resolve_assets(state: PipelineState, progress: ProgressHook | No
             layoutType=layout_id,
             layoutId=layout_id,
             contentData=content_data,
-            background=sc.get("background"),
             components=[],
         )
         slides.append(slide)
@@ -1344,21 +1154,6 @@ async def stage_verify_slides(
             "elapsed_ms": int((time.monotonic() - prog_t0) * 1000),
         },
     )
-    verify_metadata = {
-        "slide_count": len(state.slides),
-        "programmatic_elapsed_ms": int((time.monotonic() - prog_t0) * 1000),
-        "programmatic_issue_count": len(issues),
-        "vision_requested": bool(enable_vision and state.slides),
-        "vision_timeout_seconds": vision_timeout_seconds,
-        "aesthetic_timeout_seconds": aesthetic_timeout_seconds,
-        "aesthetic_mode": "disabled" if not enable_vision else "skipped" if not state.slides else "pending",
-        "aesthetic_degraded_reason": "vision_disabled" if not enable_vision else "no_slides" if not state.slides else None,
-        "aesthetic_elapsed_ms": 0,
-        "aesthetic_issue_count": 0,
-        "total_issue_count": 0,
-        "hard_issue_count": 0,
-        "advisory_issue_count": 0,
-    }
 
     if enable_vision and state.slides:
         if vision_timeout_seconds is None or aesthetic_timeout_seconds is None:
@@ -1375,20 +1170,6 @@ async def stage_verify_slides(
                     max(5.0, vision_timeout_seconds * 1.25),
                     max(1.0, verify_timeout - 1.0),
                 )
-        verify_metadata["vision_timeout_seconds"] = vision_timeout_seconds
-        verify_metadata["aesthetic_timeout_seconds"] = aesthetic_timeout_seconds
-        logger.info(
-            "verify_budget_resolved",
-            extra={
-                "event": "verify_budget_resolved",
-                "job_id": state.job_id,
-                "stage": "verify",
-                "slide_count": len(state.slides),
-                "vision_requested": True,
-                "vision_timeout_seconds": vision_timeout_seconds,
-                "aesthetic_timeout_seconds": aesthetic_timeout_seconds,
-            },
-        )
         presentation_dict = {
             "presentationId": "verification-temp",
             "title": state.topic or "演示文稿",
@@ -1412,12 +1193,6 @@ async def stage_verify_slides(
                     presentation_dict=presentation_dict,
                     vision_timeout_seconds=vision_timeout_seconds,
                 )
-            aesthetic_result = aesthetic.result
-            aesthetic_issue_count = len(aesthetic_result.issues) if aesthetic_result else 0
-            verify_metadata["aesthetic_mode"] = aesthetic.mode
-            verify_metadata["aesthetic_degraded_reason"] = aesthetic.degraded_reason
-            verify_metadata["aesthetic_elapsed_ms"] = aesthetic.elapsed_ms
-            verify_metadata["aesthetic_issue_count"] = aesthetic_issue_count
             logger.info(
                 "verify_aesthetic_done",
                 extra={
@@ -1425,15 +1200,12 @@ async def stage_verify_slides(
                     "job_id": state.job_id,
                     "stage": "verify",
                     "slide_count": len(state.slides),
-                    "has_result": bool(aesthetic_result),
-                    "mode": aesthetic.mode,
-                    "degraded_reason": aesthetic.degraded_reason,
-                    "issue_count": aesthetic_issue_count,
+                    "has_result": bool(aesthetic),
+                    "issue_count": len(aesthetic.issues) if aesthetic else 0,
                     "elapsed_ms": int((time.monotonic() - aesthetic_t0) * 1000),
                 },
             )
         except asyncio.TimeoutError:
-            aesthetic_elapsed_ms = int((time.monotonic() - aesthetic_t0) * 1000)
             logger.warning(
                 "Aesthetic verification exceeded %.1fs and was skipped to keep verify stage healthy",
                 aesthetic_timeout_seconds or 0.0,
@@ -1449,74 +1221,19 @@ async def stage_verify_slides(
                     "tier": "advisory",
                 }
             )
-            verify_metadata["aesthetic_mode"] = "skipped"
-            verify_metadata["aesthetic_degraded_reason"] = "aesthetic_timeout_fallback"
-            verify_metadata["aesthetic_elapsed_ms"] = aesthetic_elapsed_ms
-            verify_metadata["aesthetic_issue_count"] = 1
-            logger.info(
-                "verify_aesthetic_done",
-                extra={
-                    "event": "verify_aesthetic_done",
-                    "job_id": state.job_id,
-                    "stage": "verify",
-                    "slide_count": len(state.slides),
-                    "has_result": False,
-                    "mode": "skipped",
-                    "degraded_reason": "aesthetic_timeout_fallback",
-                    "issue_count": 1,
-                    "elapsed_ms": aesthetic_elapsed_ms,
-                },
-            )
-            aesthetic_result = None
-        if aesthetic_result:
-            for issue in aesthetic_result.issues:
+            aesthetic = None
+        if aesthetic:
+            for issue in aesthetic.issues:
                 issue_dict = issue.model_dump(mode="json")
                 severity = str(issue_dict.get("severity") or "warning").lower()
                 # 视觉问题统一降级为 advisory，避免误触发自动修复链路
                 if severity == "error":
                     issue_dict["severity"] = "warning"
-                issue_dict["source"] = issue_dict.get("source") or str(verify_metadata["aesthetic_mode"])
+                issue_dict["source"] = issue_dict.get("source") or "vision"
                 issue_dict["tier"] = "advisory"
                 issues.append(issue_dict)
-    elif not enable_vision:
-        logger.info(
-            "verify_aesthetic_skipped",
-            extra={
-                "event": "verify_aesthetic_skipped",
-                "job_id": state.job_id,
-                "stage": "verify",
-                "slide_count": len(state.slides),
-                "mode": "disabled",
-                "degraded_reason": "vision_disabled",
-            },
-        )
-    else:
-        logger.info(
-            "verify_aesthetic_skipped",
-            extra={
-                "event": "verify_aesthetic_skipped",
-                "job_id": state.job_id,
-                "stage": "verify",
-                "slide_count": 0,
-                "mode": "skipped",
-                "degraded_reason": "no_slides",
-            },
-        )
 
     state.verification_issues = issues
-    verify_metadata["total_issue_count"] = len(issues)
-    verify_metadata["hard_issue_count"] = sum(1 for issue in issues if issue.get("tier") == "hard")
-    verify_metadata["advisory_issue_count"] = sum(1 for issue in issues if issue.get("tier") == "advisory")
-    state.document_metadata["verify"] = verify_metadata
-    logger.info(
-        "verify_summary",
-        extra={
-            "event": "verify_summary",
-            "job_id": state.job_id,
-            "stage": "verify",
-            **verify_metadata,
-        },
-    )
 
 
 async def stage_fix_slides_once(
@@ -1555,7 +1272,6 @@ async def stage_fix_slides_once(
             continue
 
         layout_id = layout_map.get(slide_num, slide.layout_id or "bullet-with-icons")
-        background = _resolve_generated_slide_background(item, layout_id)
         source_content = _extract_slide_context(
             raw_content=state.raw_content,
             title=item.get("title", ""),
@@ -1598,7 +1314,6 @@ async def stage_fix_slides_once(
                 "slide_number": slide_num,
                 "layout_id": layout_id,
                 "content_data": content_data,
-                "background": background,
             }
 
         patched = Slide(
@@ -1606,7 +1321,6 @@ async def stage_fix_slides_once(
             layoutType=layout_id,
             layoutId=layout_id,
             contentData=content_data,
-            background=background,
             components=[],
         )
         state.slides[idx] = patched
@@ -1638,6 +1352,7 @@ def _rank_group_sub_group_variants(
         seen.add(entry.variant_id)
         ranked_variants.append((entry.variant_id, entry.variant_label))
     return ranked_variants
+
 
 def _log_outline_role_diagnostics(
     *,
@@ -1748,18 +1463,6 @@ def _finalize_layout_selections(
         slide_usage_tags=slide_usage_tags,
     )
     return finalized
-
-
-def _resolve_generated_slide_background(
-    item: dict[str, Any],
-    layout_id: str,
-) -> dict[str, str] | None:
-    from app.services.pipeline.layout_roles import get_outline_item_role
-
-    return build_generated_scene_background(
-        layout_id,
-        get_outline_item_role(item),
-    )
 
 
 def _rank_group_sub_group_variant_layouts(
