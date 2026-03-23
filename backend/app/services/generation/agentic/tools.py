@@ -109,7 +109,10 @@ async def dispatch_tool_calls(
             metadata = dict(output.metadata)
             if output.stop_loop:
                 result.stop_loop = True
-                result.stop_reason = str(output.metadata.get("stop_reason") or result.stop_reason or "")
+                if result.stop_reason is None:
+                    stop_reason = output.metadata.get("stop_reason")
+                    if stop_reason:
+                        result.stop_reason = str(stop_reason)
         elif isinstance(output, ToolResult):
             result.parts.append(output)
             continue

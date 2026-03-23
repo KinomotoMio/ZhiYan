@@ -109,3 +109,51 @@ def test_dispatch_tool_calls_preserves_tool_result_and_stop_signal():
         assert result.parts[0].metadata == {"stop_reason": "waiting-outline-review"}
 
     asyncio.run(_case())
+
+
+def test_dispatch_tool_calls_keeps_first_stop_reason():
+    async def _case():
+        async def _first_handler(_args):
+            return ToolExecutionResult(
+                content={"stage": "outline"},
+                stop_loop=True,
+                metadata={"stop_reason": "waiting-outline-review"},
+            )
+
+        async def _second_handler(_args):
+            return ToolExecutionResult(
+                content={"stage": "verify"},
+                stop_loop=True,
+                metadata={"stop_reason": "waiting-fix-review"},
+            )
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDef(
+                name="generate_outline",
+                description="Generate an outline",
+                input_schema={"type": "object", "properties": {}},
+                handler=_first_handler,
+            )
+        )
+        registry.register(
+            ToolDef(
+                name="verify_slides",
+                description="Verify slides",
+                input_schema={"type": "object", "properties": {}},
+                handler=_second_handler,
+            )
+        )
+
+        result = await dispatch_tool_calls(
+            [
+                ToolCall(tool_name="generate_outline", args={}, tool_call_id="call-1"),
+                ToolCall(tool_name="verify_slides", args={}, tool_call_id="call-2"),
+            ],
+            registry,
+        )
+
+        assert result.stop_loop is True
+        assert result.stop_reason == "waiting-outline-review"
+
+    asyncio.run(_case())
