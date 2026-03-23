@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 6
 _SLIDE_CONTEXT_MAX_CHARS = 2000
+_LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS = 5.0
+_LAYOUT_SELECTOR_TIMEOUT_FRACTION = 0.6
+_LAYOUT_PROMPT_LAYOUT_LIMIT = 5
+_LAYOUT_PROMPT_VARIANT_LIMIT = 4
 _ADJACENT_LAYOUT_DIVERSITY_EXEMPT_GROUPS = {
     "cover",
     "agenda",
@@ -534,7 +538,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     from app.models.layout_registry import (
         get_all_layouts,
         get_layout,
-        get_layout_taxonomy_catalog,
+        get_layout_taxonomy_catalog_for_groups,
     )
     from app.core.config import settings
     from app.services.pipeline.layout_roles import (
@@ -553,6 +557,11 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
     state.outline["items"] = outline_items
     layout_entries = get_all_layouts()
+    active_groups = {
+        get_outline_item_role(item)
+        for item in outline_items
+        if isinstance(item, dict)
+    }
     document_usage_tags, slide_usage_tags = infer_document_and_slide_usage(
         state.topic,
         state.raw_content,
@@ -596,8 +605,16 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         state.document_metadata.get("source_hints")
     )
     source_hints_line = f"{source_hints_section}\n" if source_hints_section else ""
+    taxonomy_catalog = get_layout_taxonomy_catalog_for_groups(active_groups)
+    selector_timeout = _layout_selector_timeout_seconds(settings.layout_timeout_seconds)
+    base_degradation_metadata = {
+        "selector_timeout_seconds": selector_timeout,
+        "prompt_chars": 0,
+        "outline_items": len(outline_items),
+        "active_groups": sorted(active_groups),
+    }
     prompt = (
-        f"可用布局列表:\n{get_layout_taxonomy_catalog()}\n\n"
+        f"可用布局列表:\n{taxonomy_catalog}\n\n"
         f"文档级 Usage 推断: {document_usage_text}\n"
         f"{source_hints_line}"
         "选择规则:\n"
@@ -618,6 +635,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         f"大纲:\n{items_text}\n\n"
         "请为每页输出 group、sub_group、variant_id 和 reason。不要输出 layout_id。"
     )
+    base_degradation_metadata["prompt_chars"] = len(prompt)
 
     try:
         from app.services.agents.layout_selector import layout_selector_agent
@@ -634,9 +652,13 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 "provider": provider,
                 "outline_items": len(outline_items),
                 "prompt_chars": len(prompt),
+                "selector_timeout_seconds": selector_timeout,
             },
         )
-        result = await layout_selector_agent.run(prompt)
+        result = await asyncio.wait_for(
+            layout_selector_agent.run(prompt),
+            timeout=selector_timeout,
+        )
         usage = result.usage()
         selections = result.output.model_dump()["slides"]
         decision_traces: dict[int, dict[str, Any]] = {}
@@ -742,6 +764,12 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 }
 
         state.layout_selections = selections
+        state.document_metadata["layout_degradation"] = {
+            **base_degradation_metadata,
+            "applied": False,
+            "reason": "",
+            "selection_source": "model",
+        }
         logger.info(
             "Layout selection call done",
             extra={
@@ -762,6 +790,12 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         )
         decision_traces = {}
         state.layout_selections = []
+        state.document_metadata["layout_degradation"] = {
+            **base_degradation_metadata,
+            "applied": True,
+            "reason": type(e).__name__,
+            "selection_source": "fallback",
+        }
         for item in outline_items:
             role = get_outline_item_role(item)
             slide_number = int(item.get("slide_number") or 0)
@@ -887,6 +921,21 @@ def _group_sub_group_variant_to_default_layout(group: str, sub_group: str, varia
     )
 
 
+def _layout_selector_timeout_seconds(stage_timeout_seconds: float) -> float:
+    stage_timeout = max(0.05, float(stage_timeout_seconds))
+    if stage_timeout <= _LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS + 0.5:
+        return max(0.05, stage_timeout * 0.8)
+
+    bounded = stage_timeout * _LAYOUT_SELECTOR_TIMEOUT_FRACTION
+    return max(
+        0.05,
+        min(
+            bounded,
+            stage_timeout - _LAYOUT_SELECTOR_TIMEOUT_RESERVE_SECONDS,
+        ),
+    )
+
+
 def _format_outline_item_for_layout_prompt(
     item: dict[str, Any],
     *,
@@ -945,7 +994,12 @@ def _format_outline_item_for_layout_prompt(
             f"`{sub_group}`({get_sub_group_label(role, sub_group)}: "
             f"{get_sub_group_description(role, sub_group)} 可用布局 {layouts_text})"
         )
-    role_matched_text = ", ".join(f"`{entry.id}`" for entry in role_matched) or "无角色匹配布局"
+    role_matched_text = (
+        ", ".join(f"`{entry.id}`" for entry in role_matched[:_LAYOUT_PROMPT_LAYOUT_LIMIT])
+        or "无角色匹配布局"
+    )
+    if len(role_matched) > _LAYOUT_PROMPT_LAYOUT_LIMIT:
+        role_matched_text += f" 等 {len(role_matched)} 个"
     sub_group_text = " / ".join(sub_group_candidates) if sub_group_candidates else "`default`"
     preferred_variants = (
         _rank_group_sub_group_variants(
@@ -960,8 +1014,10 @@ def _format_outline_item_for_layout_prompt(
     if preferred_variants:
         preferred_text = ", ".join(
             f"`{variant_id}`({label})"
-            for variant_id, label in preferred_variants
+            for variant_id, label in preferred_variants[:_LAYOUT_PROMPT_VARIANT_LIMIT]
         )
+        if len(preferred_variants) > _LAYOUT_PROMPT_VARIANT_LIMIT:
+            preferred_text += f" 等 {len(preferred_variants)} 个"
     else:
         preferred_text = "无明确 usage 候选，按结构和设计方向选择"
 
