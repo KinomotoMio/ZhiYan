@@ -25,6 +25,7 @@ from app.services.fallback_semantics import (
 )
 from app.services.image_semantics import normalize_image_content_data
 from app.services.pipeline.content_type_signals import infer_content_signals
+from app.utils.scene_background import build_generated_scene_background
 
 logger = logging.getLogger(__name__)
 
@@ -1187,6 +1188,7 @@ async def stage_generate_slides(
                 if isinstance(raw_refs, list)
                 else []
             )
+            background = _resolve_generated_slide_background(item, layout_id)
 
             source_content = _extract_slide_context(
                 raw_content=state.raw_content,
@@ -1214,6 +1216,7 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": content_data,
+                    "background": background,
                 }
             except asyncio.TimeoutError:
                 failed.append(idx)
@@ -1235,6 +1238,7 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": _fallback_content(item, layout_id),
+                    "background": background,
                 }
             except Exception as e:
                 failed.append(idx)
@@ -1257,6 +1261,7 @@ async def stage_generate_slides(
                     "slide_number": slide_num,
                     "layout_id": layout_id,
                     "content_data": _fallback_content(item, layout_id),
+                    "background": background,
                 }
 
             slide = Slide(
@@ -1264,6 +1269,7 @@ async def stage_generate_slides(
                 layoutType=results[idx].get("layout_id", "bullet-with-icons"),
                 layoutId=results[idx].get("layout_id", "bullet-with-icons"),
                 contentData=results[idx].get("content_data", {}),
+                background=results[idx].get("background"),
                 components=[],
             )
 
@@ -1301,6 +1307,7 @@ async def stage_resolve_assets(state: PipelineState, progress: ProgressHook | No
             layoutType=layout_id,
             layoutId=layout_id,
             contentData=content_data,
+            background=sc.get("background"),
             components=[],
         )
         slides.append(slide)
@@ -1548,6 +1555,7 @@ async def stage_fix_slides_once(
             continue
 
         layout_id = layout_map.get(slide_num, slide.layout_id or "bullet-with-icons")
+        background = _resolve_generated_slide_background(item, layout_id)
         source_content = _extract_slide_context(
             raw_content=state.raw_content,
             title=item.get("title", ""),
@@ -1590,6 +1598,7 @@ async def stage_fix_slides_once(
                 "slide_number": slide_num,
                 "layout_id": layout_id,
                 "content_data": content_data,
+                "background": background,
             }
 
         patched = Slide(
@@ -1597,6 +1606,7 @@ async def stage_fix_slides_once(
             layoutType=layout_id,
             layoutId=layout_id,
             contentData=content_data,
+            background=background,
             components=[],
         )
         state.slides[idx] = patched
@@ -1628,7 +1638,6 @@ def _rank_group_sub_group_variants(
         seen.add(entry.variant_id)
         ranked_variants.append((entry.variant_id, entry.variant_label))
     return ranked_variants
-
 
 def _log_outline_role_diagnostics(
     *,
@@ -1739,6 +1748,18 @@ def _finalize_layout_selections(
         slide_usage_tags=slide_usage_tags,
     )
     return finalized
+
+
+def _resolve_generated_slide_background(
+    item: dict[str, Any],
+    layout_id: str,
+) -> dict[str, str] | None:
+    from app.services.pipeline.layout_roles import get_outline_item_role
+
+    return build_generated_scene_background(
+        layout_id,
+        get_outline_item_role(item),
+    )
 
 
 def _rank_group_sub_group_variant_layouts(

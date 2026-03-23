@@ -15,7 +15,13 @@ from app.models.slide import Slide
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
-from app.services.pipeline.graph import OutlineSchemaError, PipelineState, stage_generate_slides
+from app.services.pipeline.graph import (
+    OutlineSchemaError,
+    PipelineState,
+    stage_fix_slides_once,
+    stage_generate_slides,
+    stage_resolve_assets,
+)
 from app.services.sessions.store import SessionStore
 
 
@@ -698,6 +704,206 @@ def test_stage_generate_slides_uses_per_slide_context(monkeypatch):
         assert "香蕉" in captured_source[1]
         assert captured_refs[0] == ["source:apple#1"]
         assert captured_refs[1] == ["source:banana#2", "chunk:banana#5"]
+
+    asyncio.run(_case())
+
+
+def test_stage_generate_slides_assigns_scene_backgrounds_and_streams_payload(monkeypatch):
+    async def _case():
+        from app.services.agents import slide_generator
+
+        streamed_slides: list[dict] = []
+
+        async def fake_generate(**kwargs):
+            return {"title": kwargs.get("title", ""), "items": []}
+
+        async def on_slide(payload: dict):
+            streamed_slides.append(payload["slide"])
+
+        monkeypatch.setattr(slide_generator, "generate_slide_content", fake_generate)
+
+        state = PipelineState(
+            raw_content="test content",
+            topic="test topic",
+            num_pages=6,
+            job_id="job-scene-backgrounds",
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "Cover", "suggested_slide_role": "cover"},
+                    {"slide_number": 2, "title": "Agenda", "suggested_slide_role": "agenda"},
+                    {"slide_number": 3, "title": "Section", "suggested_slide_role": "section-divider"},
+                    {"slide_number": 4, "title": "Quote", "suggested_slide_role": "highlight"},
+                    {"slide_number": 5, "title": "Closing", "suggested_slide_role": "closing"},
+                    {"slide_number": 6, "title": "Body", "suggested_slide_role": "narrative"},
+                ]
+            },
+            layout_selections=[
+                {"slide_number": 1, "layout_id": "intro-slide"},
+                {"slide_number": 2, "layout_id": "outline-slide"},
+                {"slide_number": 3, "layout_id": "section-header"},
+                {"slide_number": 4, "layout_id": "quote-slide"},
+                {"slide_number": 5, "layout_id": "thank-you"},
+                {"slide_number": 6, "layout_id": "bullet-with-icons"},
+            ],
+        )
+
+        await stage_generate_slides(state, per_slide_timeout=0.5, on_slide=on_slide)
+
+        expected_backgrounds = [
+            ("hero-glow", "immersive"),
+            ("outline-grid", "subtle"),
+            ("section-band", "immersive"),
+            ("quote-focus", "balanced"),
+            ("closing-wash", "immersive"),
+            None,
+        ]
+
+        assert len(state.slide_contents) == len(expected_backgrounds)
+        assert len(streamed_slides) == len(expected_backgrounds)
+        for index, expected in enumerate(expected_backgrounds):
+            background = state.slide_contents[index].get("background")
+            streamed_background = streamed_slides[index].get("background")
+            if expected is None:
+                assert background is None
+                assert streamed_background is None
+                continue
+            preset, emphasis = expected
+            assert background == {
+                "kind": "scene",
+                "preset": preset,
+                "emphasis": emphasis,
+                "colorToken": "primary",
+            }
+            assert streamed_background == background
+
+    asyncio.run(_case())
+
+
+def test_stage_resolve_assets_preserves_generated_scene_backgrounds():
+    async def _case():
+        state = PipelineState(
+            slide_contents=[
+                {
+                    "slide_number": 1,
+                    "layout_id": "intro-slide",
+                    "content_data": {"title": "Cover"},
+                    "background": {
+                        "kind": "scene",
+                        "preset": "hero-glow",
+                        "emphasis": "immersive",
+                        "colorToken": "primary",
+                    },
+                },
+                {
+                    "slide_number": 2,
+                    "layout_id": "bullet-with-icons",
+                    "content_data": {"title": "Body", "items": []},
+                },
+            ]
+        )
+
+        await stage_resolve_assets(state)
+
+        assert len(state.slides) == 2
+        assert state.slides[0].background is not None
+        assert state.slides[0].background.preset.value == "hero-glow"
+        assert state.slides[1].background is None
+
+    asyncio.run(_case())
+
+
+def test_stage_fix_slides_once_preserves_scene_background_on_regenerated_slide(monkeypatch):
+    async def _case():
+        from app.services.agents import slide_generator
+
+        async def fake_generate(**kwargs):
+            return {"title": kwargs.get("title", ""), "subtitle": "Updated"}
+
+        monkeypatch.setattr(slide_generator, "generate_slide_content", fake_generate)
+
+        state = PipelineState(
+            raw_content="test content",
+            topic="test topic",
+            num_pages=1,
+            job_id="job-fix-scene-background",
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "Cover", "suggested_slide_role": "cover"},
+                ]
+            },
+            layout_selections=[{"slide_number": 1, "layout_id": "intro-slide"}],
+            slide_contents=[
+                {
+                    "slide_number": 1,
+                    "layout_id": "intro-slide",
+                    "content_data": {"title": "Cover"},
+                }
+            ],
+            slides=[
+                Slide.model_validate(
+                    {
+                        "slideId": "slide-1",
+                        "layoutType": "intro-slide",
+                        "layoutId": "intro-slide",
+                        "contentData": {"title": "Cover"},
+                    }
+                )
+            ],
+        )
+
+        await stage_fix_slides_once(
+            state,
+            per_slide_timeout=0.5,
+            target_slide_ids={"slide-1"},
+        )
+
+        background = state.slide_contents[0].get("background")
+        assert background == {
+            "kind": "scene",
+            "preset": "hero-glow",
+            "emphasis": "immersive",
+            "colorToken": "primary",
+        }
+        assert state.slides[0].background is not None
+        assert state.slides[0].background.preset.value == "hero-glow"
+
+    asyncio.run(_case())
+
+
+def test_sync_state_to_job_serializes_generated_background_without_assets(tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-sync-scene-background")
+        await store.create_job(job)
+
+        state = PipelineState(
+            slide_contents=[
+                {
+                    "slide_number": 1,
+                    "layout_id": "section-header",
+                    "content_data": {"title": "Act I"},
+                    "background": {
+                        "kind": "scene",
+                        "preset": "section-band",
+                        "emphasis": "immersive",
+                        "colorToken": "primary",
+                    },
+                }
+            ]
+        )
+
+        await runner._sync_state_to_job(job, state)  # noqa: SLF001
+
+        loaded = await store.get_job(job.job_id)
+        assert loaded is not None
+        assert loaded.slides[0]["background"] == {
+            "kind": "scene",
+            "preset": "section-band",
+            "emphasis": "immersive",
+            "colorToken": "primary",
+        }
 
     asyncio.run(_case())
 
