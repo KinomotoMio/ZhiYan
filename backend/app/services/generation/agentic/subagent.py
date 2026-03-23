@@ -101,7 +101,7 @@ def build_dispatch_subagent_tool(
         elif isinstance(raw_tools, list):
             allowed_tool_names = [str(name).strip() for name in raw_tools if str(name).strip()]
         else:
-            raise ValueError("dispatch_subagent 'tools' must be an array of tool names")
+            raise ValueError(f"dispatch_subagent 'tools' must be an array of tool names; got {raw_tools!r}")
 
         raw_max_turns = args.get("max_turns", 24)
         try:
