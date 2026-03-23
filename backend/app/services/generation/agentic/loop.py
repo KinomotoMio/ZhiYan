@@ -14,6 +14,7 @@ from app.services.generation.agentic.context import (
     summarize_state,
 )
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
+from app.services.generation.agentic.todo import TodoManager, build_todo_nag
 from app.services.generation.agentic.tools import ToolDispatchResult
 from app.services.generation.agentic.types import (
     AgenticMessage,
@@ -70,6 +71,7 @@ async def agentic_loop(
     instructions: InstructionsProvider | None = None,
     message_history: Sequence[AgenticMessage] | None = None,
     state: PipelineState | None = None,
+    todo_manager: TodoManager | None = None,
     tool_definitions: Sequence[dict] | None = None,
     dispatch_tools: ToolDispatcher | None = None,
     max_turns: int | None = None,
@@ -90,7 +92,10 @@ async def agentic_loop(
     last_response: AssistantMessage | None = None
 
     for turn in range(turn_limit):
-        last_response = await client.complete(messages, list(tool_definitions or []))
+        last_response = await client.complete(
+            _messages_for_model(messages, instructions=instructions, todo_manager=todo_manager),
+            list(tool_definitions or []),
+        )
         messages.append(last_response)
 
         tool_calls = [part for part in last_response.parts if isinstance(part, ToolCall)]
@@ -142,7 +147,10 @@ async def agentic_loop(
             instructions=_instructions(instructions),
         )
     )
-    last_response = await client.complete(messages, list(tool_definitions or []))
+    last_response = await client.complete(
+        _messages_for_model(messages, instructions=instructions, todo_manager=todo_manager),
+        list(tool_definitions or []),
+    )
     messages.append(last_response)
     messages = _maybe_compact_messages(
         messages,
@@ -189,3 +197,21 @@ def _maybe_compact_messages(
         keep_recent=compact_keep_recent,
         state_summary=summarize_state(state) if state is not None else None,
     )
+
+
+def _messages_for_model(
+    messages: Sequence[AgenticMessage],
+    *,
+    instructions: InstructionsProvider | None,
+    todo_manager: TodoManager | None,
+) -> list[AgenticMessage]:
+    prepared = list(messages)
+    if todo_manager is None:
+        return prepared
+
+    nag = build_todo_nag(todo_manager)
+    if not nag:
+        return prepared
+
+    prepared.append(UserMessage(parts=[nag], instructions=_instructions(instructions)))
+    return prepared
