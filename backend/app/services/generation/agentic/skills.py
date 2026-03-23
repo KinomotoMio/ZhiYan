@@ -71,7 +71,12 @@ def build_run_skill_tool(registry: SkillRegistry | None = None) -> ToolDef:
         name = str(args.get("name") or "").strip()
         if not name:
             raise ValueError("run_skill requires a non-empty 'name'")
-        if skill_registry.load_skill(name) is None:
+        discovered_names = {
+            str(skill.get("name") or "").strip()
+            for skill in skill_registry.discover()
+            if str(skill.get("name") or "").strip()
+        }
+        if name not in discovered_names:
             return f"Skill '{name}' not found."
 
         script = str(args.get("script") or "").strip()

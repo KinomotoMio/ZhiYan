@@ -111,3 +111,48 @@ def test_run_skill_tool_validates_missing_skill(tmp_path):
         assert result.parts[0].content == "Skill 'missing' not found."
 
     asyncio.run(_case())
+
+
+def test_run_skill_tool_checks_registry_once_for_known_skill(tmp_path, monkeypatch):
+    skills_dir = tmp_path / "skills"
+    (skills_dir / "alpha" / "scripts").mkdir(parents=True)
+    (skills_dir / "alpha" / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: First helper\n---\n\n# Alpha\n",
+        encoding="utf-8",
+    )
+    (skills_dir / "alpha" / "scripts" / "echo.py").write_text(
+        "import json, sys\npayload = json.load(sys.stdin)\njson.dump({'status': 'ok'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+
+    class TrackingRegistry(SkillRegistry):
+        def __init__(self, skills_dir):
+            super().__init__(skills_dir)
+            self.load_calls = 0
+
+        def load_skill(self, skill_name: str) -> str | None:
+            self.load_calls += 1
+            return super().load_skill(skill_name)
+
+    monkeypatch.setattr(settings, "skills_dir", skills_dir)
+    tracking_registry = TrackingRegistry(skills_dir)
+    tool = build_run_skill_tool(tracking_registry)
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    async def _case():
+        result = await dispatch_tool_calls(
+            [
+                ToolCall(
+                    tool_name="run_skill",
+                    args={"name": "alpha", "script": "echo.py"},
+                    tool_call_id="call-1",
+                )
+            ],
+            registry,
+        )
+
+        assert result.parts[0].content == {"status": "ok"}
+        assert tracking_registry.load_calls == 0
+
+    asyncio.run(_case())
