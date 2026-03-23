@@ -106,7 +106,7 @@ def build_update_todo_tool(manager: TodoManager) -> ToolDef:
 def _normalize_item(raw: Mapping[str, Any]) -> TodoItem:
     try:
         item_id = int(raw["id"])
-    except Exception as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("todo item id must be an integer") from exc
 
     task = str(raw["task"]).strip()

@@ -36,6 +36,16 @@ def test_todo_manager_rejects_multiple_in_progress_items():
         )
 
 
+def test_todo_manager_rejects_missing_or_invalid_ids():
+    manager = TodoManager()
+
+    with pytest.raises(ValueError, match="todo item id must be an integer"):
+        manager.update([{"task": "解析文档", "status": "pending"}])
+
+    with pytest.raises(ValueError, match="todo item id must be an integer"):
+        manager.update([{"id": object(), "task": "解析文档", "status": "pending"}])
+
+
 def test_build_todo_nag_reflects_empty_pending_and_done_states():
     manager = TodoManager()
     assert "还没有创建任务计划" in str(build_todo_nag(manager))
