@@ -236,10 +236,7 @@ class GenerationRunner:
                         EventType.LAYOUT_READY,
                         stage=StageStatus.LAYOUT,
                         message="布局选择完成",
-                        payload={
-                            "layouts": state.layout_selections,
-                            "degradation": state.document_metadata.get("layout_degradation"),
-                        },
+                        payload={"layouts": state.layout_selections},
                     )
                 elif stage == StageStatus.SLIDES:
                     await self._run_stage(
