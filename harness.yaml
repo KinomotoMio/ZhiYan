@@ -1,0 +1,6 @@
+# harness.yaml — ZhiYan generation agent behavior configuration
+
+outline_style: narrative
+density_threshold: 5
+quality_level: standard
+max_slides: 30

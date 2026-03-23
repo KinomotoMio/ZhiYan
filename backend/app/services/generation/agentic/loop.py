@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.core.config import settings
 from app.services.generation.agentic.context import (
@@ -14,6 +16,7 @@ from app.services.generation.agentic.context import (
     summarize_state,
 )
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
+from app.services.generation.agentic.prompt import build_system_prompt
 from app.services.generation.agentic.todo import TodoManager, build_todo_nag
 from app.services.generation.agentic.tools import ToolDispatchResult
 from app.services.generation.agentic.types import (
@@ -73,6 +76,8 @@ async def agentic_loop(
     state: PipelineState | None = None,
     todo_manager: TodoManager | None = None,
     skill_summaries: str | None = None,
+    harness_config: Mapping[str, object] | None = None,
+    harness_path: Path | None = None,
     tool_definitions: Sequence[dict] | None = None,
     dispatch_tools: ToolDispatcher | None = None,
     max_turns: int | None = None,
@@ -82,9 +87,15 @@ async def agentic_loop(
 ) -> AgenticLoopResult:
     """Run a simple `tool-call -> tool-result -> next turn` loop."""
 
+    resolved_instructions = _resolve_instructions(
+        instructions,
+        harness_config=harness_config,
+        harness_path=harness_path,
+        skill_summaries=skill_summaries,
+    )
     messages = list(message_history or [])
     if user_prompt:
-        messages.append(UserMessage(parts=[user_prompt], instructions=_instructions(instructions)))
+        messages.append(UserMessage(parts=[user_prompt], instructions=resolved_instructions))
     elif not messages:
         raise ValueError("agentic_loop requires a user prompt or existing message history")
 
@@ -96,9 +107,8 @@ async def agentic_loop(
         last_response = await client.complete(
             _messages_for_model(
                 messages,
-                instructions=instructions,
+                instructions=resolved_instructions,
                 todo_manager=todo_manager,
-                skill_summaries=skill_summaries,
             ),
             list(tool_definitions or []),
         )
@@ -127,7 +137,7 @@ async def agentic_loop(
             messages.append(
                 UserMessage(
                     parts=_attach_state_to_results(dispatch_result.parts, state),
-                    instructions=_instructions(instructions),
+                    instructions=resolved_instructions,
                 )
             )
         messages = _maybe_compact_messages(
@@ -150,15 +160,14 @@ async def agentic_loop(
     messages.append(
         UserMessage(
             parts=["You have reached the maximum number of turns. Summarize the current progress briefly and stop."],
-            instructions=_instructions(instructions),
+            instructions=resolved_instructions,
         )
     )
     last_response = await client.complete(
         _messages_for_model(
             messages,
-            instructions=instructions,
+            instructions=resolved_instructions,
             todo_manager=todo_manager,
-            skill_summaries=skill_summaries,
         ),
         list(tool_definitions or []),
     )
@@ -213,15 +222,11 @@ def _maybe_compact_messages(
 def _messages_for_model(
     messages: Sequence[AgenticMessage],
     *,
-    instructions: InstructionsProvider | None,
+    instructions: str | None,
     todo_manager: TodoManager | None,
-    skill_summaries: str | None = None,
 ) -> list[AgenticMessage]:
     prepared = list(messages)
     reminders: list[str] = []
-
-    if skill_summaries:
-        reminders.append(skill_summaries)
 
     if todo_manager is not None:
         nag = build_todo_nag(todo_manager)
@@ -231,5 +236,24 @@ def _messages_for_model(
     if not reminders:
         return prepared
 
-    prepared.append(UserMessage(parts=["\n\n".join(reminders)], instructions=_instructions(instructions)))
+    prepared.append(UserMessage(parts=["\n\n".join(reminders)], instructions=instructions))
     return prepared
+
+
+def _resolve_instructions(
+    instructions: InstructionsProvider | None,
+    *,
+    harness_config: Mapping[str, object] | None,
+    harness_path: Path | None,
+    skill_summaries: str | None,
+) -> str | None:
+    base_instructions = _instructions(instructions)
+    if harness_config is None and harness_path is None and not skill_summaries:
+        return base_instructions
+
+    return build_system_prompt(
+        harness_config,
+        harness_path=harness_path,
+        skills_summary=skill_summaries,
+        extra_instructions=base_instructions,
+    )
