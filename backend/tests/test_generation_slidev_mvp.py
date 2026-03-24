@@ -123,6 +123,30 @@ title: Mini Deck
 """
 
 
+def _comparison_mismatch_markdown() -> str:
+    return """---
+theme: default
+title: Contract Drift
+---
+
+# Contract Drift
+
+---
+
+## Supposed Comparison
+
+- option A
+- option B
+- option C
+
+---
+
+## Next Step
+
+- decide
+"""
+
+
 def _quality_outline_items() -> list[dict[str, str | int]]:
     return [
         {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "建立主题定位"},
@@ -544,6 +568,82 @@ def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_
     assert isinstance(deck_review["warnings"], list)
 
 
+def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_outline.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "outline_items": [
+                        {
+                            "slide_number": 1,
+                            "title": "背景",
+                            "slide_role": "context",
+                            "content_shape": "problem-bullets",
+                            "goal": "说明问题",
+                        },
+                        {
+                            "slide_number": 2,
+                            "title": "建议",
+                            "slide_role": "recommendation",
+                            "content_shape": "decision",
+                            "goal": "提出动作",
+                        },
+                        {
+                            "slide_number": 3,
+                            "title": "结尾",
+                            "slide_role": "closing",
+                            "content_shape": "next-step",
+                            "goal": "收束",
+                        },
+                    ],
+                    "expected_pages": 5,
+                },
+            },
+        )
+    )
+
+    assert outline_review["ok"] is False
+    assert {issue["code"] for issue in outline_review["issues"]} >= {
+        "missing_cover",
+        "first_slide_not_cover",
+        "outline_page_budget_mismatch",
+    }
+    assert outline_review["contract_summary"]["expected_pages"] == 5
+    assert outline_review["contract_summary"]["actual_pages"] == 3
+    assert outline_review["contract_summary"]["first_role"] == "context"
+    assert outline_review["contract_summary"]["last_role"] == "closing"
+
+
+def test_slidev_deck_review_returns_slide_reports_and_blocks_contract_mismatches(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "方案对比", "slide_role": "comparison", "content_shape": "compare-grid", "goal": "对比路径"},
+        {"slide_number": 3, "title": "下一步", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": _comparison_mismatch_markdown(), "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is False
+    assert {issue["code"] for issue in deck_review["issues"]} >= {"comparison_role_mismatch"}
+    assert deck_review["contract_summary"]["expected_slide_count"] == 3
+    assert deck_review["contract_summary"]["actual_slide_count"] == 3
+    assert deck_review["slide_reports"][1]["role"] == "comparison"
+    assert deck_review["slide_reports"][1]["status"] == "failed"
+    assert {finding["code"] for finding in deck_review["slide_reports"][1]["findings"]} == {"comparison_role_mismatch"}
+
+
 def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
     from app.services.generation.agentic.todo import TodoManager
@@ -581,6 +681,58 @@ def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp
         assert exc.reason_code == "outline_review_missing"
     else:
         raise AssertionError("expected SlidevMvpValidationError")
+
+
+def test_slidev_mvp_service_allows_save_when_only_warnings_remain(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.generation.agentic.todo import TodoManager
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    markdown = _slidev_markdown()
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    state = PipelineState(topic="demo", raw_content="demo", num_pages=5)
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=5,
+    )
+    registry = service._build_registry(state=state, runtime=runtime, todo_manager=TodoManager())
+    asyncio.run(registry.get("set_slidev_outline").handler({"items": _quality_outline_items_five()}))
+    runtime.outline_review = {
+        "ok": True,
+        "issues": [],
+        "warnings": [{"code": "outline_role_run_repetition", "message": "warn"}],
+        "roles": [item["slide_role"] for item in _quality_outline_items_five()],
+        "contract_summary": {"hard_issue_count": 0, "warning_count": 1},
+    }
+    runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
+    runtime.deck_review = {
+        "ok": True,
+        "issues": [],
+        "warnings": [{"code": "framework_role_weakened", "message": "warn"}],
+        "signatures": [],
+        "slide_reports": [],
+        "contract_summary": {"hard_issue_count": 0, "warning_count": 1},
+    }
+    runtime.deck_review_hash = slidev_mvp_mod._text_hash(markdown)
+    runtime.validation = {"ok": True, "slide_count": 5, "issues": [], "warnings": [{"code": "weak_cover", "message": "warn"}]}
+    runtime.validation_hash = slidev_mvp_mod._text_hash(markdown)
+
+    result = asyncio.run(registry.get("save_slidev_artifact").handler({"title": "Warning Deck", "markdown": markdown}))
+
+    assert result.stop_loop is True
+    assert runtime.saved_artifact is not None
+    assert runtime.saved_artifact.quality["outline_review"]["ok"] is True
+    assert runtime.saved_artifact.quality["deck_review"]["ok"] is True
+    assert runtime.saved_artifact.quality["structure_warnings"]
 
 
 def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):

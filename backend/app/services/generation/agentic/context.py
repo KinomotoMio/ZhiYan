@@ -234,8 +234,10 @@ def _preview_text(value: str) -> str:
 
 
 def _review_label(prefix: str, review: dict[str, object]) -> str:
+    issues = review.get("issues")
     warnings = review.get("warnings")
+    issue_count = len(issues) if isinstance(issues, list) else 0
     warning_count = len(warnings) if isinstance(warnings, list) else 0
     ok = bool(review.get("ok"))
-    suffix = f"（warning {warning_count}）" if warning_count else ""
+    suffix = f"（{issue_count} hard / {warning_count} warnings）"
     return f"{prefix}：{'通过' if ok else '未通过'}{suffix}"

@@ -54,7 +54,7 @@ def test_summarize_state_includes_outline_layout_and_slide_progress():
 
     assert "文档已解析：主题 AI 增长策略，约 920 tokens，3 个标题" in summary
     assert "大纲已生成：3 页 - 问题定义(context)；市场趋势(framework)；执行路径(recommendation)" in summary
-    assert "大纲审查：通过（warning 1）；结构审查：通过" in summary
+    assert "大纲审查：通过（0 hard / 1 warnings）；结构审查：通过（0 hard / 0 warnings）" in summary
     assert "布局已选择：3 页 - intro-slide, metrics-slide, timeline" in summary
     assert "幻灯片已生成：1/4 页" in summary
     assert "校验问题：1 条（warning 1）" in summary
