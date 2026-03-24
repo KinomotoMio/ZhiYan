@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError, UnexpectedModelBehavior
 
 from app.core.config import settings
 from app.main import app
@@ -663,7 +663,7 @@ def test_slidev_mvp_service_classifies_malformed_provider_responses(monkeypatch,
     @dataclass
     class MalformedProviderModel(AgenticModelClient):
         async def complete(self, messages, tools) -> AssistantMessage:
-            raise UnexpectedModelBehavior("tool call truncated")
+            raise IncompleteToolCall("tool call truncated")
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
     monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
@@ -680,6 +680,34 @@ def test_slidev_mvp_service_classifies_malformed_provider_responses(monkeypatch,
     except SlidevMvpProviderError as exc:
         assert exc.reason_code == "provider_malformed_response"
         assert "tool call truncated" in str(exc)
+    else:
+        raise AssertionError("expected SlidevMvpProviderError")
+
+
+def test_slidev_mvp_service_classifies_non_malformed_unexpected_provider_behavior(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    @dataclass
+    class UnexpectedProviderModel(AgenticModelClient):
+        async def complete(self, messages, tools) -> AssistantMessage:
+            raise UnexpectedModelBehavior("unexpected provider behavior")
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=UnexpectedProviderModel(),
+    )
+
+    try:
+        asyncio.run(service.generate_deck(topic="AI Deck", content="offline slidev", num_pages=2))
+    except SlidevMvpProviderError as exc:
+        assert exc.reason_code == "provider_unexpected_behavior"
+        assert "unexpected provider behavior" in str(exc)
+        assert "provider_malformed_response" not in str(exc)
     else:
         raise AssertionError("expected SlidevMvpProviderError")
 

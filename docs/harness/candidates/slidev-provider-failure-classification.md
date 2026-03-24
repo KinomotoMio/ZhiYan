@@ -7,6 +7,7 @@ Issue `#212` addresses a stability gap in the Slidev MVP: upstream model calls c
 ## Candidate Rule
 
 - The provider adapter should retry a bounded number of times for malformed provider responses, just like it already does for transient retryable HTTP status codes.
+- Not every `UnexpectedModelBehavior` is a malformed response; malformed/truncated provider output should be classified separately from generic unexpected provider behavior.
 - Provider-malformed failures should be classified at the Slidev orchestration boundary, not leaked as raw provider exceptions.
 - Slidev request validation failures and upstream provider failures must stay separate:
   - validation failures -> `422`-style contract errors

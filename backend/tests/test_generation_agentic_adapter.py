@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, TextPart
 
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
@@ -66,7 +66,7 @@ def test_pydantic_ai_adapter_retries_malformed_provider_responses(monkeypatch):
         async def request(self, messages, deps, params):
             attempts["count"] += 1
             if attempts["count"] < 3:
-                raise UnexpectedModelBehavior("tool call truncated")
+                raise IncompleteToolCall("tool call truncated")
             return ModelResponse(parts=[TextPart("done")])
 
     async def fake_sleep(delay_seconds: float):
@@ -91,7 +91,7 @@ def test_pydantic_ai_adapter_stops_retrying_after_max_malformed_provider_respons
     class FakeModel:
         async def request(self, messages, deps, params):
             attempts["count"] += 1
-            raise UnexpectedModelBehavior("tool call truncated")
+            raise IncompleteToolCall("tool call truncated")
 
     async def _case():
         client = PydanticAIModelClient.__new__(PydanticAIModelClient)
@@ -105,3 +105,25 @@ def test_pydantic_ai_adapter_stops_retrying_after_max_malformed_provider_respons
 
     asyncio.run(_case())
     assert attempts["count"] == 3
+
+
+def test_pydantic_ai_adapter_does_not_retry_non_malformed_unexpected_model_behavior():
+    attempts = {"count": 0}
+
+    class FakeModel:
+        async def request(self, messages, deps, params):
+            attempts["count"] += 1
+            raise UnexpectedModelBehavior("unexpected provider behavior")
+
+    async def _case():
+        client = PydanticAIModelClient.__new__(PydanticAIModelClient)
+        client._model = FakeModel()
+        try:
+            await client.complete([UserMessage(parts=["hello"])], [])
+        except UnexpectedModelBehavior as exc:
+            assert "unexpected provider behavior" in str(exc)
+        else:
+            raise AssertionError("expected UnexpectedModelBehavior")
+
+    asyncio.run(_case())
+    assert attempts["count"] == 1

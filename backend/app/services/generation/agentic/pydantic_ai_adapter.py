@@ -23,6 +23,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from app.core.config import settings
 from app.core.model_resolver import resolve_model
+from app.services.generation.agentic.provider_failures import is_malformed_provider_response
 from app.services.generation.agentic.types import (
     AgenticMessage,
     AgenticModelClient,
@@ -96,6 +97,10 @@ class PydanticAIModelClient(AgenticModelClient):
                 )
                 await asyncio.sleep(delay_seconds)
             except UnexpectedModelBehavior as exc:
+                if not is_malformed_provider_response(exc):
+                    logger.exception("agentic model request failed with non-retryable unexpected model behavior")
+                    raise
+
                 attempt += 1
                 if attempt >= _MAX_REQUEST_RETRIES:
                     logger.exception("agentic model request failed after malformed provider responses")

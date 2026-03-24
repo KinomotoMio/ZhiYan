@@ -36,6 +36,7 @@ from app.services.generation.agentic import (
     dispatch_tool_calls,
     summarize_state,
 )
+from app.services.generation.agentic.provider_failures import is_malformed_provider_response
 from app.services.generation.agentic.todo import TodoManager
 from app.services.generation.agentic.types import AgenticModelClient
 from app.services.pipeline.graph import PipelineState
@@ -1476,13 +1477,20 @@ def _save_gate_error(*, reason_code: str, message: str, next_action: str) -> Sli
 
 def _provider_response_error(exc: UnexpectedModelBehavior) -> SlidevMvpProviderError:
     provider_message = str(exc).strip() or type(exc).__name__
-    message = "上游模型返回了不完整或异常的响应，Slidev deck 生成已中止。"
+    if is_malformed_provider_response(exc):
+        reason_code = "provider_malformed_response"
+        message = "上游模型返回了不完整或异常的响应，Slidev deck 生成已中止。"
+        next_action = "请重试生成；若持续失败，请切换模型或稍后重试。"
+    else:
+        reason_code = "provider_unexpected_behavior"
+        message = "上游模型返回了未分类的异常行为，Slidev deck 生成已中止。"
+        next_action = "请检查模型/provider 配置或更换模型后重试。"
     if provider_message:
         message = f"{message} provider={provider_message}"
     return SlidevMvpProviderError(
         message,
-        reason_code="provider_malformed_response",
-        next_action="请重试生成；若持续失败，请切换模型或稍后重试。",
+        reason_code=reason_code,
+        next_action=next_action,
     )
 
 
