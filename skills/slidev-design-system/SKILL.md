@@ -1,6 +1,6 @@
 ---
 name: slidev-design-system
-description: Slidev deck visual design system for styles, layouts, and block recipes. Use it to select stable references before writing deck markdown.
+description: Slidev deck visual design guidance for tech-launch style presentations. Use it to make slides feel like presentation pages instead of markdown documents.
 version: 0.1.0
 command: /slidev-design-system
 ---
@@ -9,45 +9,42 @@ command: /slidev-design-system
 
 ## Purpose
 
-Use this skill when you need deck-level visual direction and page-level recipe selection for Slidev.
-Treat styles, layouts, and blocks as a static references layer that constrains generation, instead of asking the model to improvise visual design from scratch.
+Use this skill to keep Slidev decks visually intentional.
+It does not replace `slide_role`; it teaches how each role should look when rendered as a Slidev deck.
 
-## Core Rule
+## Deck-level Direction
 
-- `slide_role` remains the control-plane intent.
-- Slidev layout/pattern remains the rendering plane.
-- This skill provides the references layer in between: `style` + `layout recipe` + `block recipe`.
+- Default baseline: official `seriph` theme
+- Desired feel: tech product launch / strategy presentation
+- Prefer stable page rhythm over ad-hoc decoration
+- Avoid raw markdown-report aesthetics
 
-## Reference Types
+## Visual Rules
 
-- **styles**
-  - deck-level visual direction
-  - palette, density, tone, typography tendency, emphasis rules, anti-patterns
-- **layouts**
-  - role-aware page skeletons
-  - when to use `cover`, `two-cols`, `end`, or plain structure with wrappers
-- **blocks**
-  - repeatable content modules
-  - hero title, compact bullets, quote/callout, framework explainer, compare split, takeaway-next-steps
-
-## Selection Rules
-
-- Choose exactly 1 deck-level style for the whole deck.
-- Choose 1 layout recipe per slide.
-- Choose 1-2 block recipes per slide.
-- Prefer stable references over creative drift.
-- If a page already claims a recipe, do not degrade it into a plain bullet dump.
-
-## Good Usage
-
-- cover -> select one style + `cover-hero` layout + `hero-title` block
-- framework -> keep the style, use `framework-visual` layout + `framework-explainer` block
-- comparison -> keep the style, use `comparison-split` layout + `compare-split` block
-- closing -> keep the style, use `closing-takeaway` layout + `takeaway-next-steps` block
+- Cover
+  - strong title, short subtitle, sparse density
+  - prefer `layout: cover` or `layout: center`
+  - use `deck-cover`
+- Context
+  - use one structural cue beyond bullets
+  - prefer compact bullets plus quote/callout
+  - use `deck-context`
+- Framework
+  - must feel modeled, not listed
+  - prefer Mermaid, table, or grid
+  - use `deck-framework`
+- Comparison
+  - must create left/right contrast
+  - prefer `layout: two-cols` or a strong compare table
+  - use `deck-comparison`
+- Closing
+  - must feel conclusive
+  - prefer `layout: end` or `layout: center`
+  - use `deck-closing`
 
 ## Anti-Patterns
 
-- Do not invent an ad-hoc visual system per slide.
-- Do not choose different deck-level styles inside one deck.
-- Do not use references only as labels; the final markdown should visibly reflect them.
-- Do not treat block names as decorative tags; they imply actual structure and density constraints.
+- Do not output pages that look like markdown article sections
+- Do not stack long bullet lists without one visual structure
+- Do not rely on ad-hoc inline `style=` for every page
+- Do not choose a recipe class and then fail to express it in the slide body
