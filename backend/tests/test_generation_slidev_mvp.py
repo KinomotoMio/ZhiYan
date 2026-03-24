@@ -213,15 +213,8 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-deck-quality",
-                            "script": "review_outline.py",
-                            "parameters": {
-                                "outline_items": _quality_outline_items_five(),
-                                "expected_pages": 5,
-                            },
-                        },
+                        tool_name="review_slidev_outline",
+                        args={},
                         tool_call_id="call-6",
                     )
                 ]
@@ -229,15 +222,8 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-deck-quality",
-                            "script": "review_deck.py",
-                            "parameters": {
-                                "markdown": markdown,
-                                "outline_items": _quality_outline_items_five(),
-                            },
-                        },
+                        tool_name="review_slidev_deck",
+                        args={"markdown": markdown},
                         tool_call_id="call-7",
                     )
                 ]
@@ -245,15 +231,8 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-syntax",
-                            "script": "validate_deck.py",
-                            "parameters": {
-                                "markdown": markdown,
-                                "expected_pages": 5,
-                            },
-                        },
+                        tool_name="validate_slidev_deck",
+                        args={"markdown": markdown},
                         tool_call_id="call-8",
                     )
                 ]
@@ -368,18 +347,8 @@ def test_slidev_mvp_service_combines_sources_and_runs_build(monkeypatch, tmp_pat
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-deck-quality",
-                            "script": "review_outline.py",
-                            "parameters": {
-                                "outline_items": [
-                                    {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
-                                    {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
-                                ],
-                                "expected_pages": 2,
-                            },
-                        },
+                        tool_name="review_slidev_outline",
+                        args={},
                         tool_call_id="call-5",
                     )
                 ]
@@ -387,18 +356,8 @@ def test_slidev_mvp_service_combines_sources_and_runs_build(monkeypatch, tmp_pat
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-deck-quality",
-                            "script": "review_deck.py",
-                            "parameters": {
-                                "markdown": markdown,
-                                "outline_items": [
-                                    {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
-                                    {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
-                                ],
-                            },
-                        },
+                        tool_name="review_slidev_deck",
+                        args={"markdown": markdown},
                         tool_call_id="call-6",
                     )
                 ]
@@ -406,12 +365,8 @@ def test_slidev_mvp_service_combines_sources_and_runs_build(monkeypatch, tmp_pat
             AssistantMessage(
                 parts=[
                     ToolCall(
-                        tool_name="run_skill",
-                        args={
-                            "name": "slidev-syntax",
-                            "script": "validate_deck.py",
-                            "parameters": {"markdown": markdown, "expected_pages": 2},
-                        },
+                        tool_name="validate_slidev_deck",
+                        args={"markdown": markdown},
                         tool_call_id="call-7",
                     )
                 ]
@@ -623,7 +578,99 @@ def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp
     try:
         asyncio.run(registry.get("save_slidev_artifact").handler({"title": "Mini Deck", "markdown": markdown}))
     except SlidevMvpValidationError as exc:
-        assert "review_outline.py" in str(exc)
+        assert exc.reason_code == "outline_review_missing"
+    else:
+        raise AssertionError("expected SlidevMvpValidationError")
+
+
+def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.generation.agentic.todo import TodoManager
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    state = PipelineState(topic="demo", raw_content="demo", num_pages=5)
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=5,
+    )
+    registry = service._build_registry(state=state, runtime=runtime, todo_manager=TodoManager())
+    asyncio.run(registry.get("set_slidev_outline").handler({"items": _quality_outline_items_five()}))
+    markdown = _slidev_markdown()
+
+    outline_review = asyncio.run(registry.get("review_slidev_outline").handler({}))
+    deck_review = asyncio.run(registry.get("review_slidev_deck").handler({"markdown": markdown}))
+    validation = asyncio.run(registry.get("validate_slidev_deck").handler({"markdown": markdown}))
+
+    assert outline_review["ok"] is True
+    assert deck_review["ok"] is True
+    assert validation["ok"] is True
+    assert runtime.outline_review == outline_review
+    assert runtime.deck_review == deck_review
+    assert runtime.validation == validation
+
+
+def test_slidev_mvp_service_reports_failed_outline_review_reason_after_max_turns(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    model = StubModel(
+        responses=[
+            AssistantMessage(
+                parts=[
+                    ToolCall(
+                        tool_name="update_todo",
+                        args={"items": [{"id": 1, "task": "规划 deck", "status": "in_progress"}]},
+                        tool_call_id="call-1",
+                    )
+                ]
+            ),
+            AssistantMessage(
+                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]
+            ),
+            AssistantMessage(
+                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
+            ),
+            AssistantMessage(
+                parts=[
+                    ToolCall(
+                        tool_name="set_slidev_outline",
+                        args={
+                            "items": [
+                                {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+                                {"slide_number": 2, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "解释结构"},
+                            ]
+                        },
+                        tool_call_id="call-4",
+                    )
+                ]
+            ),
+            AssistantMessage(parts=["done"]),
+        ]
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    try:
+        asyncio.run(service.generate_deck(topic="demo", content="demo", num_pages=2, build=False))
+    except SlidevMvpValidationError as exc:
+        assert exc.reason_code == "outline_review_missing"
+        assert "review_slidev_outline" in str(exc)
     else:
         raise AssertionError("expected SlidevMvpValidationError")
 
@@ -733,7 +780,11 @@ def test_slidev_mvp_api_maps_validation_errors(monkeypatch):
             self.workspace_id = workspace_id
 
         async def generate_deck(self, **kwargs):
-            raise SlidevMvpValidationError("请提供 topic、content 或 source_ids 之一。")
+            raise SlidevMvpValidationError(
+                "Deck 大纲结构审查未通过，不能保存 artifact。",
+                reason_code="outline_review_failed",
+                next_action="修正大纲后重新调用 review_slidev_outline()",
+            )
 
     monkeypatch.setattr(generation_api, "SlidevMvpService", FakeService)
     client = TestClient(app)
@@ -745,7 +796,9 @@ def test_slidev_mvp_api_maps_validation_errors(monkeypatch):
     )
 
     assert response.status_code == 422
-    assert "请提供 topic、content 或 source_ids" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "Deck 大纲结构审查未通过" in detail
+    assert "reason=outline_review_failed" in detail
 
 
 def test_slidev_mvp_api_maps_model_http_errors(monkeypatch):

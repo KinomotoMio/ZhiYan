@@ -53,7 +53,13 @@ SLIDEV_OUTLINE_ROLES = (
     "closing",
 )
 _SUBAGENT_DEFAULT_TOOLS = ("load_skill", "run_skill")
-_SUBAGENT_FORBIDDEN_TOOLS = {"dispatch_subagent", "save_slidev_artifact"}
+_SUBAGENT_FORBIDDEN_TOOLS = {
+    "dispatch_subagent",
+    "review_slidev_outline",
+    "review_slidev_deck",
+    "validate_slidev_deck",
+    "save_slidev_artifact",
+}
 
 ShellRunner = Callable[[Sequence[str], Path], Awaitable[subprocess.CompletedProcess[str]]]
 
@@ -68,6 +74,23 @@ class SlidevMvpNotFoundError(SlidevMvpError):
 
 class SlidevMvpValidationError(SlidevMvpError):
     """Raised when the request or generated deck is invalid."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str | None = None,
+        next_action: str | None = None,
+    ) -> None:
+        self.message = message
+        self.reason_code = reason_code
+        self.next_action = next_action
+        details = [message]
+        if reason_code:
+            details.append(f"reason={reason_code}")
+        if next_action:
+            details.append(f"next={next_action}")
+        super().__init__(" | ".join(details))
 
 
 class SlidevMvpBuildError(SlidevMvpError):
@@ -127,6 +150,7 @@ class _RuntimeContext:
     deck_review_hash: str | None = None
     validation: dict[str, Any] | None = None
     validation_hash: str | None = None
+    save_failure: SlidevMvpValidationError | None = None
     saved_artifact: SlidevMvpArtifacts | None = None
 
 
@@ -217,9 +241,7 @@ class SlidevMvpService:
         self.last_loop_result = loop_result
 
         if runtime.saved_artifact is None:
-            raise SlidevMvpValidationError(
-                "Agent did not persist a Slidev artifact. It must finish by calling save_slidev_artifact."
-            )
+            raise _missing_artifact_error(runtime)
 
         artifact = runtime.saved_artifact
         agentic_summary = {
@@ -319,12 +341,16 @@ class SlidevMvpService:
             "2. 再调用 load_skill，name 必须是 'slidev-syntax'。\n"
             "3. 再调用 load_skill，name 必须是 'slidev-deck-quality'。\n"
             "4. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal。\n"
-            "5. 调用 run_skill(name='slidev-deck-quality', script='review_outline.py') 审查大纲结构。\n"
+            "5. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
             "6. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
             "7. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并优先混合使用 layout/frontmatter/class/columns/grid/quote/mermaid 等 Slidev 原生结构，不要让大多数页面都退化成同构 bullet list。\n"
-            "8. 在保存前先调用 run_skill(name='slidev-deck-quality', script='review_deck.py') 做结构审查。\n"
-            "9. 再调用 run_skill(name='slidev-syntax', script='validate_deck.py') 做语法审查。\n"
+            "8. 在保存前调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}。\n"
+            "9. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
             "10. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
+            "额外约束：\n"
+            "- 不要直接调用 run_skill 来做 review_outline.py / review_deck.py / validate_deck.py。\n"
+            "- subagent 的文本意见不能替代正式审查结果。\n"
+            "- 只在 review_slidev_outline / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n\n"
             f"目标页数：约 {resolved.num_pages} 页\n"
             f"推荐页型集合：{', '.join(SLIDEV_OUTLINE_ROLES)}\n"
             f"主题：{resolved.topic}\n"
@@ -424,8 +450,122 @@ class SlidevMvpService:
         )
 
         registry.register(build_set_slidev_outline_tool(state))
+        registry.register(self._build_review_slidev_outline_tool(state=state, runtime=runtime, run_skill=_run_skill))
+        registry.register(self._build_review_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
+        registry.register(self._build_validate_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
         registry.register(self._build_save_slidev_artifact_tool(state=state, runtime=runtime))
         return registry
+
+    def _build_review_slidev_outline_tool(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        run_skill: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> ToolDef:
+        async def _handler(args: dict[str, Any]) -> Any:
+            del args
+            outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+            if not outline_items:
+                raise SlidevMvpValidationError(
+                    "还没有可审查的大纲，请先调用 set_slidev_outline。",
+                    reason_code="outline_missing",
+                    next_action="先调用 set_slidev_outline(items)",
+                )
+            return await run_skill(
+                {
+                    "name": "slidev-deck-quality",
+                    "script": "review_outline.py",
+                    "parameters": {
+                        "outline_items": outline_items,
+                        "expected_pages": int(state.num_pages or runtime.requested_pages or len(outline_items)),
+                    },
+                }
+            )
+
+        return ToolDef(
+            name="review_slidev_outline",
+            description="Review the current Slidev outline stored in state. The tool reads outline_items from state automatically.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            handler=_handler,
+        )
+
+    def _build_review_slidev_deck_tool(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        run_skill: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> ToolDef:
+        async def _handler(args: dict[str, Any]) -> Any:
+            markdown = str(args.get("markdown") or "")
+            if not markdown.strip():
+                raise SlidevMvpValidationError(
+                    "review_slidev_deck 需要完整 markdown。",
+                    reason_code="deck_markdown_missing",
+                    next_action="调用 review_slidev_deck({'markdown': '<完整 deck markdown>'})",
+                )
+            outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+            return await run_skill(
+                {
+                    "name": "slidev-deck-quality",
+                    "script": "review_deck.py",
+                    "parameters": {
+                        "markdown": markdown,
+                        "outline_items": outline_items,
+                    },
+                }
+            )
+
+        return ToolDef(
+            name="review_slidev_deck",
+            description="Review the final Slidev markdown with the current outline context. Pass only the final markdown string.",
+            input_schema={
+                "type": "object",
+                "properties": {"markdown": {"type": "string"}},
+                "required": ["markdown"],
+                "additionalProperties": False,
+            },
+            handler=_handler,
+        )
+
+    def _build_validate_slidev_deck_tool(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        run_skill: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> ToolDef:
+        async def _handler(args: dict[str, Any]) -> Any:
+            markdown = str(args.get("markdown") or "")
+            if not markdown.strip():
+                raise SlidevMvpValidationError(
+                    "validate_slidev_deck 需要完整 markdown。",
+                    reason_code="validation_markdown_missing",
+                    next_action="调用 validate_slidev_deck({'markdown': '<完整 deck markdown>'})",
+                )
+            return await run_skill(
+                {
+                    "name": "slidev-syntax",
+                    "script": "validate_deck.py",
+                    "parameters": {
+                        "markdown": markdown,
+                        "expected_pages": int(state.num_pages or runtime.requested_pages or 0),
+                    },
+                }
+            )
+
+        return ToolDef(
+            name="validate_slidev_deck",
+            description="Validate the final Slidev markdown syntax. Pass only the final markdown string.",
+            input_schema={
+                "type": "object",
+                "properties": {"markdown": {"type": "string"}},
+                "required": ["markdown"],
+                "additionalProperties": False,
+            },
+            handler=_handler,
+        )
 
     def _build_save_slidev_artifact_tool(
         self,
@@ -440,26 +580,14 @@ class SlidevMvpService:
                 raise ValueError("save_slidev_artifact requires a non-empty 'title'")
             if not markdown.strip():
                 raise ValueError("save_slidev_artifact requires non-empty markdown")
-            if runtime.outline_review is None:
-                raise SlidevMvpValidationError("先运行 slidev-deck-quality/review_outline.py，再保存 deck。")
-            if not bool(runtime.outline_review.get("ok")):
-                raise SlidevMvpValidationError("Deck 大纲结构审查未通过，不能保存 artifact。")
-            if runtime.outline_review_hash and runtime.outline_review_hash != _outline_hash(state.outline):
-                raise SlidevMvpValidationError("大纲在 outline review 后发生了变化，请重新运行 review_outline.py。")
-            if runtime.deck_review is None:
-                raise SlidevMvpValidationError("先运行 slidev-deck-quality/review_deck.py，再保存 deck。")
-            if not bool(runtime.deck_review.get("ok")):
-                raise SlidevMvpValidationError("Deck 结构审查未通过，不能保存 artifact。")
-            if runtime.deck_review_hash and runtime.deck_review_hash != _text_hash(markdown):
-                raise SlidevMvpValidationError("Markdown 在 deck review 后发生了变化，请重新运行 review_deck.py。")
-            if runtime.validation is None:
-                raise SlidevMvpValidationError("先运行 slidev-syntax/validate_deck.py，再保存 deck。")
-            if not bool(runtime.validation.get("ok")):
-                raise SlidevMvpValidationError("Deck 静态校验未通过，不能保存 artifact。")
-            if runtime.validation_hash and runtime.validation_hash != _text_hash(markdown):
-                raise SlidevMvpValidationError("Markdown 在校验后发生了变化，请重新运行 validate_deck.py。")
+            try:
+                _ensure_save_prerequisites(runtime=runtime, state=state, markdown=markdown)
+            except SlidevMvpValidationError as exc:
+                runtime.save_failure = exc
+                raise
 
             artifact = await self._persist_artifact(title=title, markdown=markdown, runtime=runtime, state=state)
+            runtime.save_failure = None
             runtime.saved_artifact = artifact
             return ToolExecutionResult(
                 content={
@@ -767,3 +895,115 @@ def _collect_structure_warnings(*reports: dict[str, Any] | None) -> list[dict[st
             seen.add(key)
             warnings.append({"code": code, "message": message})
     return warnings
+
+
+def _save_gate_error(*, reason_code: str, message: str, next_action: str) -> SlidevMvpValidationError:
+    return SlidevMvpValidationError(message, reason_code=reason_code, next_action=next_action)
+
+
+def _ensure_save_prerequisites(
+    *,
+    runtime: _RuntimeContext,
+    state: PipelineState,
+    markdown: str,
+) -> None:
+    if runtime.outline_review is None:
+        raise _save_gate_error(
+            reason_code="outline_review_missing",
+            message="还没有完成大纲正式审查，不能保存 artifact。",
+            next_action="调用 review_slidev_outline()",
+        )
+    if not bool(runtime.outline_review.get("ok")):
+        raise _save_gate_error(
+            reason_code="outline_review_failed",
+            message="Deck 大纲结构审查未通过，不能保存 artifact。",
+            next_action="修正大纲后重新调用 review_slidev_outline()",
+        )
+    if runtime.outline_review_hash and runtime.outline_review_hash != _outline_hash(state.outline):
+        raise _save_gate_error(
+            reason_code="outline_review_stale",
+            message="大纲在审查后发生了变化，不能直接保存 artifact。",
+            next_action="重新调用 review_slidev_outline()",
+        )
+    if runtime.deck_review is None:
+        raise _save_gate_error(
+            reason_code="deck_review_missing",
+            message="还没有完成 deck 结构审查，不能保存 artifact。",
+            next_action="调用 review_slidev_deck({'markdown': '<完整 deck markdown>'})",
+        )
+    if not bool(runtime.deck_review.get("ok")):
+        raise _save_gate_error(
+            reason_code="deck_review_failed",
+            message="Deck 结构审查未通过，不能保存 artifact。",
+            next_action="修正 markdown 后重新调用 review_slidev_deck(...)",
+        )
+    if runtime.deck_review_hash and runtime.deck_review_hash != _text_hash(markdown):
+        raise _save_gate_error(
+            reason_code="deck_review_stale",
+            message="Markdown 在结构审查后发生了变化，不能直接保存 artifact。",
+            next_action="重新调用 review_slidev_deck(...)",
+        )
+    if runtime.validation is None:
+        raise _save_gate_error(
+            reason_code="validation_missing",
+            message="还没有完成 Slidev 语法校验，不能保存 artifact。",
+            next_action="调用 validate_slidev_deck({'markdown': '<完整 deck markdown>'})",
+        )
+    if not bool(runtime.validation.get("ok")):
+        raise _save_gate_error(
+            reason_code="validation_failed",
+            message="Deck 静态校验未通过，不能保存 artifact。",
+            next_action="修正 markdown 后重新调用 validate_slidev_deck(...)",
+        )
+    if runtime.validation_hash and runtime.validation_hash != _text_hash(markdown):
+        raise _save_gate_error(
+            reason_code="validation_stale",
+            message="Markdown 在语法校验后发生了变化，不能直接保存 artifact。",
+            next_action="重新调用 validate_slidev_deck(...)",
+        )
+
+
+def _missing_artifact_error(runtime: _RuntimeContext) -> SlidevMvpValidationError:
+    if runtime.save_failure is not None:
+        return runtime.save_failure
+    if runtime.outline_review is None:
+        return _save_gate_error(
+            reason_code="outline_review_missing",
+            message="Agent 未完成大纲正式审查，因此没有保存 Slidev artifact。",
+            next_action="调用 review_slidev_outline()",
+        )
+    if not bool(runtime.outline_review.get("ok")):
+        return _save_gate_error(
+            reason_code="outline_review_failed",
+            message="Deck 大纲结构审查未通过，因此没有保存 Slidev artifact。",
+            next_action="修正大纲后重新调用 review_slidev_outline()",
+        )
+    if runtime.deck_review is None:
+        return _save_gate_error(
+            reason_code="deck_review_missing",
+            message="Agent 未完成 deck 结构审查，因此没有保存 Slidev artifact。",
+            next_action="调用 review_slidev_deck({'markdown': '<完整 deck markdown>'})",
+        )
+    if not bool(runtime.deck_review.get("ok")):
+        return _save_gate_error(
+            reason_code="deck_review_failed",
+            message="Deck 结构审查未通过，因此没有保存 Slidev artifact。",
+            next_action="修正 markdown 后重新调用 review_slidev_deck(...)",
+        )
+    if runtime.validation is None:
+        return _save_gate_error(
+            reason_code="validation_missing",
+            message="Agent 未完成 Slidev 语法校验，因此没有保存 Slidev artifact。",
+            next_action="调用 validate_slidev_deck({'markdown': '<完整 deck markdown>'})",
+        )
+    if not bool(runtime.validation.get("ok")):
+        return _save_gate_error(
+            reason_code="validation_failed",
+            message="Deck 静态校验未通过，因此没有保存 Slidev artifact。",
+            next_action="修正 markdown 后重新调用 validate_slidev_deck(...)",
+        )
+    return _save_gate_error(
+        reason_code="artifact_not_saved",
+        message="Agent 没有在 review/validate 通过后调用 save_slidev_artifact。",
+        next_action="调用 save_slidev_artifact({'title': '<deck title>', 'markdown': '<完整 deck markdown>'})",
+    )
