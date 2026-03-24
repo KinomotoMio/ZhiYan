@@ -67,12 +67,37 @@ class GenerationRunner:
 
             task = asyncio.create_task(self._run_job(job_id, from_stage))
             self._tasks[job_id] = task
-            task.add_done_callback(lambda _t, jid=job_id: asyncio.create_task(self._drop_task(jid)))
+            task.add_done_callback(
+                lambda _t, jid=job_id: asyncio.create_task(self._finalize_task(jid))
+            )
         return True
 
-    async def _drop_task(self, job_id: str) -> None:
+    async def _finalize_task(self, job_id: str) -> None:
         async with self._tasks_lock:
             self._tasks.pop(job_id, None)
+
+        # A task can be cancelled before _run_job reaches its own cancellation
+        # handler, leaving a persisted job stuck in RUNNING. Close that gap here.
+        job = await self._store.get_job(job_id)
+        if job is None:
+            return
+        if not job.cancel_requested:
+            return
+        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            return
+
+        job.status = JobStatus.CANCELLED
+        job.current_stage = None
+        job.updated_at = now_iso()
+        await self._store.save_job(job)
+        if job.request.session_id:
+            from app.services.sessions import session_store
+
+            await session_store.update_generation_job_status(
+                job.job_id,
+                JobStatus.CANCELLED.value,
+            )
+        await self._emit_event(job, EventType.JOB_CANCELLED, message="任务已取消")
 
     async def cancel_job(self, job_id: str) -> None:
         job = await self._store.get_job(job_id)
