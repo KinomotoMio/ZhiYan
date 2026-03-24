@@ -1,10 +1,26 @@
 {
   "name": "closing-takeaway",
-  "applies_to_roles": ["closing"],
+  "applies_to_roles": [
+    "closing"
+  ],
   "preferred_layout": "end",
-  "required_patterns": ["takeaway", "next-step", "closing-hero"],
-  "required_classes": ["deck-closing"],
-  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "required_patterns": [
+    "takeaway",
+    "next-step",
+    "closing-hero"
+  ],
+  "required_classes": [
+    "deck-closing"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "generic-thanks"
+  ],
   "description": "Conclusive ending slide with a clear takeaway or next step.",
-  "required_visual_signals": ["closing-line", "next-step-or-takeaway"]
+  "required_visual_signals": [
+    "closing-line",
+    "next-step-or-takeaway",
+    "verdict-line"
+  ]
 }

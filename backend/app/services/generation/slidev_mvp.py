@@ -1173,6 +1173,13 @@ class SlidevMvpService:
         selected_theme = _selected_theme_payload(runtime.reference_selection or {})
         style_name = str(selected_style.get("name") or "default")
         style_tone = str(selected_style.get("tone") or "")
+        deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "")
+        theme_config = selected_theme.get("theme_config") or {}
+        baseline_constraints = [
+            str(item).strip()
+            for item in (selected_style.get("baseline_constraints") or [])
+            if str(item).strip()
+        ]
         supported_layouts = ", ".join(SLIDEV_SUPPORTED_LAYOUTS)
         lines = [
             f"为长 Deck 生成 {spec.chunk_id} 的 Slidev markdown fragment。",
@@ -1182,6 +1189,8 @@ class SlidevMvpService:
             f"主题：{resolved.topic}",
             f"全局 style：{style_name} ({style_tone})",
             f"官方 theme 基底：{selected_theme.get('theme') or 'seriph'}",
+            f"deck scaffold class：{deck_scaffold_class or 'none'}",
+            f"themeConfig：{json.dumps(theme_config, ensure_ascii=False) if isinstance(theme_config, Mapping) and theme_config else 'none'}",
             "必须遵守全局 outline 与 references，不允许修改页顺序、slide_role、页数预算。",
             f"只能使用这些 Slidev 内置 layout：{supported_layouts}。",
             "不要发明 layout 名；如果推荐 layout 为空或不适配，请改用普通 markdown + class + table/div/mermaid 等结构。",
@@ -1212,13 +1221,21 @@ class SlidevMvpService:
         lines.extend(
             [
                 "",
+                "全局视觉基线：",
+                *(f"- {constraint}" for constraint in baseline_constraints),
+                "" if baseline_constraints else "",
                 "输出要求：",
                 f"- 本 chunk 必须严格覆盖且仅覆盖这些 slides；页数必须精确等于 {len(spec.outline_items)}。",
                 "- slide 之间用 `---` 分隔。",
                 "- 每一页都要以对应 slide title 的 markdown heading 开头，顺序必须与分配列表一致。",
                 "- 每一页都不要额外生成未分配的过渡页、总结页、封底页。",
                 "- 需要使用对应的 layout/class/frontmatter 时，写成完整 fenced block。",
+                "- 如果某页 selected layout 给出了 required_classes，就必须把这些 class 写进该页 frontmatter 的 `class:`。",
+                "- cover/context/framework/comparison/closing 不允许退化成普通章节页；每页至少兑现一个明确的 recipe cue。",
+                "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
+                "- context/framework 页优先带 section kicker，并控制 bullet 密度。",
                 "- comparison 页必须使用 two-cols、table 或 before/after 这种明确对照结构。",
+                "- comparison/closing 页必须出现一句明确 verdict / takeaway line。",
                 "- closing 页必须包含 takeaway、summary、next step 三者之一；不能只写“谢谢/讨论/Q&A”。",
                 "- comparison/framework/closing 不允许退化成普通 bullet dump。",
             ]
@@ -1359,7 +1376,12 @@ class SlidevMvpService:
         for execution in chunk_executions:
             all_slides.extend(_parse_fragment_slides(execution.fragment_markdown))
         deck_body = "\n\n---\n\n".join(slide.strip() for slide in all_slides if slide.strip())
-        return f"---\ntheme: {theme}\ntitle: {title}\n---\n\n{deck_body}".rstrip() + "\n"
+        markdown = f"---\ntheme: {theme}\ntitle: {title}\n---\n\n{deck_body}".rstrip() + "\n"
+        return _apply_style_frontmatter_baseline(
+            markdown=markdown,
+            title=title,
+            reference_selection=runtime.reference_selection or {},
+        )
 
     def _build_user_prompt(self, resolved: _ResolvedInputs) -> str:
         source_hint_text = _format_source_hints(resolved.source_hints)
@@ -1383,6 +1405,7 @@ class SlidevMvpService:
             "6. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
             "7. 调用 select_slidev_references()，先锁定 deck-level style/theme 与每页 layout/block references。\n"
             "7.1 把 tool 返回的 selected_style / selected_layouts / selected_blocks 当成执行协议：style 决定 deck 基底，layout 决定页 skeleton，blocks 决定页内信息密度与禁用项。\n"
+            "7.2 selected_style 里的 deck_scaffold_class / themeConfig / baseline_constraints 也属于执行协议：把 deck scaffold 写进全局 frontmatter，并让每页兑现相应的 presentation cue。\n"
             "8. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
             "9. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
             "10. 在交给 controller finalization 前，先调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
@@ -1392,8 +1415,10 @@ class SlidevMvpService:
             "- 不要直接调用 run_skill 来做 review_outline.py / review_deck.py / validate_deck.py。\n"
             "- subagent 的文本意见不能替代正式审查结果。\n"
             "- 默认采用官方 `seriph` theme 作为视觉基底，不要回退成 `theme: default`。\n"
+            "- 全局 frontmatter 默认应包含 selected style 对应的 deck scaffold class 与 themeConfig，除非 tool 明确没有给出这些字段。\n"
             "- 每页先满足 role contract，再兑现对应 visual recipe；不要生成“像 markdown 文档章节”的页面。\n"
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
+            "- 如果 selected layout/block 给出 required_classes / required_visual_signals，就把它们落实成页 frontmatter class、section kicker、verdict/takeaway line、compare labels 等可观察结构。\n"
             "- `cover / context / framework / comparison / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
             "- 只在 review_slidev_outline / select_slidev_references / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n"
             "- 如果你已经完成 markdown 与中间 review/validate，controller 会接手最终 final gate；不要因为记不清 save 顺序而中断 deck 生成。\n\n"
@@ -1404,17 +1429,19 @@ class SlidevMvpService:
             "  ---\n"
             "  theme: seriph\n"
             "  title: Deck Title\n"
+            "  class: theme-tech-launch deck-cover\n"
+            "  themeConfig: {\"palette\": \"tech-launch\", \"density\": \"presentation\", \"emphasis\": \"launch-contrast\"}\n"
             "  layout: cover\n"
-            "  class: deck-cover\n"
             "  ---\n"
+            "  Launch Brief\n"
             "  # 标题\n"
             "  一句副标题\n\n"
             "重点页型 visual recipe：\n"
-            "- cover: hero title + short subtitle + sparse density；不能像普通正文标题页。\n"
-            "- context: compact bullets + quote/callout 至少一种；不能只有平铺 bullet dump。\n"
-            "- framework: Mermaid / table / grid 优先，并补一句 takeaway；不能只列条目。\n"
-            "- comparison: `layout: two-cols` 或强 compare table，左右要有明确标签或结论。\n"
-            "- closing: `layout: end` / `center` + takeaway / next steps；不能只是“谢谢”。\n\n"
+            "- cover: short kicker + hero title + short subtitle + sparse density；不能像普通正文标题页。\n"
+            "- context: section kicker + compact bullets + quote/callout 至少一种；不能只有平铺 bullet dump。\n"
+            "- framework: section kicker + Mermaid / table / grid + takeaway；不能只列条目。\n"
+            "- comparison: `layout: two-cols` 或强 compare table，左右要有明确标签，并补一句 verdict。\n"
+            "- closing: `layout: end` / `center` + takeaway / next steps + closing line；不能只是“谢谢”。\n\n"
             "Slidev native pattern 优先级（按当前 slide_role 兑现，不要把它们当新的主 taxonomy）：\n"
             f"{native_mapping_guide}\n\n"
             f"目标页数：约 {resolved.num_pages} 页\n"
@@ -1586,6 +1613,7 @@ class SlidevMvpService:
             runtime.reference_selection_hash = _outline_hash(state.outline)
             state.document_metadata["slidev_selected_style"] = result.get("selected_style") or {}
             state.document_metadata["slidev_selected_theme"] = result.get("selected_theme") or {}
+            state.document_metadata["slidev_theme_reason"] = str((result.get("selected_theme") or {}).get("theme_reason") or "")
             state.document_metadata["slidev_selected_layouts"] = result.get("selected_layouts") or []
             state.document_metadata["slidev_selected_blocks"] = result.get("selected_blocks") or []
             state.document_metadata["slidev_reference_selection"] = result.get("selection_summary") or {}
@@ -1741,7 +1769,12 @@ class SlidevMvpService:
         runtime: _RuntimeContext,
         state: PipelineState,
     ) -> SlidevMvpArtifacts:
-        normalized_markdown, normalization = _normalize_slidev_composition(markdown)
+        baseline_markdown = _apply_style_frontmatter_baseline(
+            markdown=markdown,
+            title=title,
+            reference_selection=runtime.reference_selection or {},
+        )
+        normalized_markdown, normalization = _normalize_slidev_composition(baseline_markdown)
         runtime.artifact_dir.mkdir(parents=True, exist_ok=True)
         runtime.slides_path.write_text(normalized_markdown.rstrip() + "\n", encoding="utf-8")
         self._ensure_runtime_link(runtime.artifact_dir)
@@ -1790,6 +1823,7 @@ class SlidevMvpService:
                 "slidev_visual_hints": visual_hints,
                 "slidev_selected_style": selected_style,
                 "slidev_selected_theme": selected_theme,
+                "slidev_theme_reason": str(selected_theme.get("theme_reason") or ""),
                 "slidev_selected_layouts": selected_layouts,
                 "slidev_selected_blocks": selected_blocks,
                 "slidev_native_usage": (runtime.validation or {}).get("native_usage_summary", {}),
@@ -2684,12 +2718,84 @@ def _pattern_hint_preview(pattern_hint: Mapping[str, Any]) -> str:
     return f"layouts={layout_text}; patterns={pattern_text}"
 
 
+def _frontmatter_scalar_value(block: str, key: str) -> str:
+    match = re.search(rf"^\s*{re.escape(key)}:\s*(.+?)\s*$", block, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def _replace_or_append_frontmatter_scalar(block: str, key: str, value: str) -> str:
+    pattern = re.compile(rf"^\s*{re.escape(key)}:\s*.+?\s*$", re.MULTILINE)
+    line = f"{key}: {value}"
+    if pattern.search(block):
+        return pattern.sub(line, block, count=1)
+    return "\n".join([block.rstrip(), line]).strip()
+
+
+def _merge_class_tokens(*raw_values: str) -> str:
+    tokens: list[str] = []
+    for raw in raw_values:
+        for token in re.split(r"\s+", str(raw or "").strip()):
+            if token and token not in tokens:
+                tokens.append(token)
+    return " ".join(tokens)
+
+
+def _style_frontmatter_block(*, title: str, reference_selection: Mapping[str, Any] | None) -> str:
+    selected_theme = _selected_theme_payload(reference_selection)
+    selected_style = dict((reference_selection or {}).get("selected_style") or {})
+    lines = [
+        f"theme: {selected_theme.get('theme') or 'seriph'}",
+        f"title: {title}",
+    ]
+    deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "").strip()
+    if deck_scaffold_class:
+        lines.append(f"class: {deck_scaffold_class}")
+    theme_config = selected_theme.get("theme_config") or selected_style.get("theme_config") or {}
+    if isinstance(theme_config, Mapping) and theme_config:
+        lines.append(f"themeConfig: {json.dumps(theme_config, ensure_ascii=False)}")
+    return "\n".join(lines).strip()
+
+
+def _apply_style_frontmatter_baseline(
+    *,
+    markdown: str,
+    title: str,
+    reference_selection: Mapping[str, Any] | None,
+) -> str:
+    text = str(markdown or "").strip()
+    base_block = _style_frontmatter_block(title=title, reference_selection=reference_selection)
+    selected_style = dict((reference_selection or {}).get("selected_style") or {})
+    base_class = str(selected_style.get("deck_scaffold_class") or "").strip()
+
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
+    if match:
+        existing_block = match.group(1).strip()
+        body = match.group(2).strip()
+        existing_class = _frontmatter_scalar_value(existing_block, "class")
+        merged_block = _merge_frontmatter_blocks(existing_block, base_block)
+        if base_class:
+            merged_class = _merge_class_tokens(
+                base_class,
+                existing_class,
+                _frontmatter_scalar_value(merged_block, "class"),
+            )
+            merged_block = _replace_or_append_frontmatter_scalar(merged_block, "class", merged_class)
+    else:
+        merged_block = base_block
+        body = text
+
+    if not body:
+        return f"---\n{merged_block}\n---\n"
+    return f"---\n{merged_block}\n---\n\n{body.rstrip()}\n"
+
+
 def _selected_theme_payload(reference_selection: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(reference_selection, Mapping):
         return {
             "theme": "seriph",
             "theme_reason": "Use the official seriph theme as the default Slidev baseline.",
             "theme_mode": "official-theme-plus-light-overrides",
+            "theme_config": {},
         }
     payload = dict(reference_selection.get("selected_theme") or {})
     if not payload:
@@ -2701,12 +2807,14 @@ def _selected_theme_payload(reference_selection: Mapping[str, Any] | None) -> di
                 or "Use the official seriph theme as the default Slidev baseline."
             ),
             "theme_mode": str(style.get("theme_mode") or "official-theme-plus-light-overrides"),
+            "theme_config": dict(style.get("theme_config") or {}),
         }
     payload["theme"] = str(payload.get("theme") or "seriph")
     payload["theme_reason"] = str(
         payload.get("theme_reason") or "Use the official seriph theme as the default Slidev baseline."
     )
     payload["theme_mode"] = str(payload.get("theme_mode") or "official-theme-plus-light-overrides")
+    payload["theme_config"] = dict(payload.get("theme_config") or {})
     return payload
 
 
@@ -2761,6 +2869,12 @@ def _select_style_reference(*, styles: Sequence[Mapping[str, Any]], topic: str, 
         "theme_reason": "Use the official seriph theme as the default Slidev baseline.",
         "theme_mode": "official-theme-plus-light-overrides",
         "description": "Fallback style when no static references are available.",
+        "deck_scaffold_class": "theme-tech-launch",
+        "theme_config": {"palette": "tech-launch", "density": "presentation", "emphasis": "launch-contrast"},
+        "baseline_constraints": [
+            "cover should feel like a launch slide, not a report heading",
+            "comparison and closing slides need a visible verdict or takeaway line",
+        ],
     }
     haystack = f"{topic} {material_excerpt}".lower()
     matched_signals = [signal for signal in _reference_string_list(selected.get("selection_signals")) if signal.lower() in haystack]
@@ -2773,6 +2887,9 @@ def _select_style_reference(*, styles: Sequence[Mapping[str, Any]], topic: str, 
         selected.get("theme_reason") or "Use the official seriph theme as the default Slidev baseline."
     )
     selected["theme_mode"] = str(selected.get("theme_mode") or "official-theme-plus-light-overrides")
+    selected["deck_scaffold_class"] = str(selected.get("deck_scaffold_class") or "").strip()
+    selected["theme_config"] = dict(selected.get("theme_config") or {})
+    selected["baseline_constraints"] = _reference_string_list(selected.get("baseline_constraints"))
     selected["matched_signals"] = matched_signals
     selected["selection_reason"] = (
         f"Selected style `{selected.get('name')}` because it best matches topic/material signals "
@@ -2922,6 +3039,9 @@ def _select_slidev_references(
             "style_match_signals": list(selected_style.get("matched_signals") or []),
             "selected_theme": selected_theme["theme"],
             "theme_reason": selected_theme["theme_reason"],
+            "deck_scaffold_class": str(selected_style.get("deck_scaffold_class") or ""),
+            "theme_config": dict(selected_theme.get("theme_config") or {}),
+            "baseline_constraints": list(selected_style.get("baseline_constraints") or []),
             "selected_layout_names": [item.get("recipe_name") for item in selected_layouts],
             "selected_block_names": [
                 block.get("name")

@@ -1,8 +1,21 @@
 {
   "name": "quote-callout",
-  "applies_to_roles": ["context", "detail"],
-  "recommended_structure": "one quote or one callout paired with a short explanation",
-  "required_signals": ["quote-or-callout"],
-  "visual_constraints": ["single cue", "not a paragraph wall"],
-  "anti_patterns": ["unstyled-document-section"]
+  "applies_to_roles": [
+    "context",
+    "detail"
+  ],
+  "recommended_structure": "section kicker + one quote/callout paired with a short explanation",
+  "required_signals": [
+    "section-kicker",
+    "quote-or-callout"
+  ],
+  "visual_constraints": [
+    "single cue",
+    "not a paragraph wall",
+    "short support line"
+  ],
+  "anti_patterns": [
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
 }

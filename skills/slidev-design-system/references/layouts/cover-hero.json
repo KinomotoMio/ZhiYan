@@ -1,10 +1,25 @@
 {
   "name": "cover-hero",
-  "applies_to_roles": ["cover"],
+  "applies_to_roles": [
+    "cover"
+  ],
   "preferred_layout": "cover",
-  "required_patterns": ["hero-title", "short-positioning-line"],
-  "required_classes": ["deck-cover"],
-  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "required_patterns": [
+    "hero-title",
+    "short-positioning-line"
+  ],
+  "required_classes": [
+    "deck-cover"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-cover"
+  ],
   "description": "Hero title slide with a short subtitle and sparse density.",
-  "required_visual_signals": ["hero-title", "short-subtitle"]
+  "required_visual_signals": [
+    "hero-title",
+    "short-subtitle",
+    "launch-kicker"
+  ]
 }

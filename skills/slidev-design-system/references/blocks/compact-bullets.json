@@ -1,8 +1,23 @@
 {
   "name": "compact-bullets",
-  "applies_to_roles": ["context", "detail", "recommendation"],
-  "recommended_structure": "2-4 compact bullets with one framing line",
-  "required_signals": ["compact-bullets"],
-  "visual_constraints": ["max 4 bullets", "one framing line or cue"],
-  "anti_patterns": ["5-plus-bullets", "unstyled-document-section"]
+  "applies_to_roles": [
+    "context",
+    "detail",
+    "recommendation"
+  ],
+  "recommended_structure": "section kicker + 2-4 compact bullets + one framing line",
+  "required_signals": [
+    "section-kicker",
+    "compact-bullets"
+  ],
+  "visual_constraints": [
+    "max 4 bullets",
+    "one framing line or cue",
+    "avoid paragraph wall"
+  ],
+  "anti_patterns": [
+    "5-plus-bullets",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
 }

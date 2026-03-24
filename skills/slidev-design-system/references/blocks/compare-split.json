@@ -1,8 +1,22 @@
 {
   "name": "compare-split",
-  "applies_to_roles": ["comparison"],
-  "recommended_structure": "two-cols or explicit compare table",
-  "required_signals": ["split-compare", "contrast-labels"],
-  "visual_constraints": ["paired contrast", "labeled sides"],
-  "anti_patterns": ["plain-bullet-dump", "unstyled-document-section"]
+  "applies_to_roles": [
+    "comparison"
+  ],
+  "recommended_structure": "labeled left/right contrast plus verdict line",
+  "required_signals": [
+    "split-compare",
+    "contrast-labels",
+    "verdict-line"
+  ],
+  "visual_constraints": [
+    "paired contrast",
+    "labeled sides",
+    "one verdict line"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "unlabeled-compare"
+  ]
 }

@@ -20,5 +20,16 @@
   ],
   "theme_reason": "Use the official seriph theme for a narrative briefing that still keeps Slidev-native structure.",
   "theme_mode": "official-theme-plus-light-overrides",
-  "description": "Narrative-forward deck style for change, trend, and future-facing presentations."
+  "description": "Narrative-forward deck style for change, trend, and future-facing presentations.",
+  "deck_scaffold_class": "theme-narrative-brief",
+  "theme_config": {
+    "palette": "narrative-brief",
+    "density": "story",
+    "emphasis": "narrative-accent"
+  },
+  "baseline_constraints": [
+    "open with one framing line before detail",
+    "use rhythm changes across slides instead of repeating report sections",
+    "avoid paragraph walls and keep transitions presentation-like"
+  ]
 }

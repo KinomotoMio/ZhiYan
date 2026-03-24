@@ -73,7 +73,13 @@ def validate_deck(
                 "selected_theme": str((selected_theme or {}).get("theme") or (selected_style or {}).get("theme") or "seriph"),
                 "observed_theme": None,
                 "status": "missing",
-                "observed_theme_markers": {"recipe_class_slides": 0, "ad_hoc_inline_style_count": 0},
+                "observed_theme_markers": {
+                    "recipe_class_slides": 0,
+                    "recipe_class_count": 0,
+                    "ad_hoc_inline_style_count": 0,
+                    "deck_scaffold_class_present": False,
+                    "theme_config_present": False,
+                },
             },
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
         )
@@ -377,14 +383,24 @@ def _theme_fidelity_summary(
     selected_theme = dict(selected_theme) if isinstance(selected_theme, dict) else {}
     selected_theme_name = str(selected_theme.get("theme") or selected_style.get("theme") or "seriph")
     observed_theme = _global_frontmatter_value(markdown, "theme") or None
-    recipe_class_slides = sum(int(value) for key, value in (native_usage_summary.get("recipe_classes") or {}).items() if str(key).startswith("deck-"))
+    observed_frontmatter = _frontmatter_block(markdown)
+    recipe_class_slides = sum(
+        int(value) for key, value in (native_usage_summary.get("recipe_classes") or {}).items() if str(key).startswith("deck-")
+    )
+    recipe_class_count = sum(int(value) for value in (native_usage_summary.get("recipe_classes") or {}).values())
     inline_style_count = len(re.findall(r'style\s*=\s*"', markdown)) + len(re.findall(r"style\s*=\s*'", markdown))
+    deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "").strip()
+    theme_config_present = "themeconfig:" in observed_frontmatter.lower()
     status = "matched"
     if observed_theme and observed_theme != selected_theme_name:
         status = "weak"
     if inline_style_count > max(2, int(native_usage_summary.get("native_slide_count") or 0)):
         status = "weak"
     if recipe_class_slides == 0:
+        status = "weak"
+    if deck_scaffold_class and deck_scaffold_class not in markdown:
+        status = "weak"
+    if selected_theme.get("theme_config") and not theme_config_present:
         status = "weak"
     return {
         "selected_theme": selected_theme_name,
@@ -393,7 +409,10 @@ def _theme_fidelity_summary(
         "theme_mode": str(selected_theme.get("theme_mode") or selected_style.get("theme_mode") or "") or None,
         "observed_theme_markers": {
             "recipe_class_slides": recipe_class_slides,
+            "recipe_class_count": recipe_class_count,
             "ad_hoc_inline_style_count": inline_style_count,
+            "deck_scaffold_class_present": bool(deck_scaffold_class and deck_scaffold_class in markdown),
+            "theme_config_present": theme_config_present,
         },
     }
 
@@ -574,11 +593,19 @@ def _observed_signals(
     body = _strip_slide_frontmatter(slide)
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     signals: set[str] = set()
+    first_heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
     if observed_layout in {"cover", "center", "end", "two-cols"}:
         signals.add(observed_layout)
     if re.search(r"^\s*#\s+", body, re.MULTILINE):
         signals.add("hero-title")
         signals.add("short-positioning-line")
+    if first_heading_index is not None and first_heading_index > 0:
+        kicker = lines[first_heading_index - 1]
+        if kicker and len(kicker) <= 48:
+            signals.add("launch-kicker")
+            signals.add("section-kicker")
+    elif lines and not lines[0].startswith("#") and len(lines[0]) <= 48:
+        signals.add("section-kicker")
     non_heading = [line for line in lines if not line.startswith("#")]
     if non_heading and len(non_heading[0]) <= 120:
         signals.add("short-subtitle")
@@ -606,6 +633,8 @@ def _observed_signals(
         signals.add("contrast-labels")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
         signals.add("model-takeaway")
+    if any(token in lower for token in ("结论", "核心判断", "bottom line", "verdict", "takeaway:", "so what")):
+        signals.add("verdict-line")
     return sorted(signals)
 
 
@@ -693,8 +722,14 @@ def _looks_like_cover(slide: str) -> bool:
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return False
-    first = lines[0]
-    return first.startswith("#") and _bullet_count(slide) <= 1 and len(lines) <= 4
+    heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
+    if heading_index is None:
+        return False
+    if heading_index > 1:
+        return False
+    if heading_index == 1 and len(lines[0]) > 48:
+        return False
+    return _bullet_count(slide) <= 1 and len(lines) <= 6
 
 
 def _looks_like_closing(slide: str) -> bool:
