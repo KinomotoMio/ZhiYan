@@ -18,6 +18,8 @@ import subprocess
 from typing import Any
 from uuid import uuid4
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+
 from app.core.config import settings
 from app.services.document.parser import estimate_tokens, extract_structure_signals
 from app.services.generation.agentic import (
@@ -172,6 +174,25 @@ class SlidevMvpValidationError(SlidevMvpError):
         super().__init__(" | ".join(details))
 
 
+class SlidevMvpProviderError(SlidevMvpError):
+    """Raised when the upstream model/provider fails in a classified way."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        next_action: str | None = None,
+    ) -> None:
+        self.message = message
+        self.reason_code = reason_code
+        self.next_action = next_action
+        details = [message, f"reason={reason_code}"]
+        if next_action:
+            details.append(f"next={next_action}")
+        super().__init__(" | ".join(details))
+
+
 class SlidevMvpBuildError(SlidevMvpError):
     """Raised when the local Slidev build command fails."""
 
@@ -307,17 +328,20 @@ class SlidevMvpService:
         )
         registry = self._build_registry(state=state, runtime=runtime, todo_manager=todo_manager)
 
-        loop_result = await agentic_loop(
-            user_prompt=self._build_user_prompt(resolved),
-            model=self.model,
-            state=state,
-            todo_manager=todo_manager,
-            skill_summaries=build_skill_summaries(self.skill_registry),
-            harness_path=self.harness_path,
-            tool_definitions=registry.to_model_tools(),
-            dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
-            max_turns=24,
-        )
+        try:
+            loop_result = await agentic_loop(
+                user_prompt=self._build_user_prompt(resolved),
+                model=self.model,
+                state=state,
+                todo_manager=todo_manager,
+                skill_summaries=build_skill_summaries(self.skill_registry),
+                harness_path=self.harness_path,
+                tool_definitions=registry.to_model_tools(),
+                dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+                max_turns=24,
+            )
+        except UnexpectedModelBehavior as exc:
+            raise _provider_response_error(exc) from exc
         self.last_loop_result = loop_result
 
         if runtime.saved_artifact is None:
@@ -1448,6 +1472,18 @@ def _collect_structure_warnings(*reports: dict[str, Any] | None) -> list[dict[st
 
 def _save_gate_error(*, reason_code: str, message: str, next_action: str) -> SlidevMvpValidationError:
     return SlidevMvpValidationError(message, reason_code=reason_code, next_action=next_action)
+
+
+def _provider_response_error(exc: UnexpectedModelBehavior) -> SlidevMvpProviderError:
+    provider_message = str(exc).strip() or type(exc).__name__
+    message = "上游模型返回了不完整或异常的响应，Slidev deck 生成已中止。"
+    if provider_message:
+        message = f"{message} provider={provider_message}"
+    return SlidevMvpProviderError(
+        message,
+        reason_code="provider_malformed_response",
+        next_action="请重试生成；若持续失败，请切换模型或稍后重试。",
+    )
 
 
 def _ensure_save_prerequisites(

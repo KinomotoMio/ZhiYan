@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
 from app.core.config import settings
 from app.main import app
 from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
 from app.services.generation.slidev_mvp import (
     SlidevMvpArtifacts,
+    SlidevMvpProviderError,
     SlidevMvpService,
     SlidevMvpValidationError,
 )
@@ -654,6 +655,33 @@ def test_slidev_mvp_service_rejects_missing_inputs(monkeypatch, tmp_path):
         assert "请提供 topic、content 或 source_ids" in str(exc)
     else:
         raise AssertionError("expected SlidevMvpValidationError")
+
+
+def test_slidev_mvp_service_classifies_malformed_provider_responses(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    @dataclass
+    class MalformedProviderModel(AgenticModelClient):
+        async def complete(self, messages, tools) -> AssistantMessage:
+            raise UnexpectedModelBehavior("tool call truncated")
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=MalformedProviderModel(),
+    )
+
+    try:
+        asyncio.run(service.generate_deck(topic="AI Deck", content="offline slidev", num_pages=2))
+    except SlidevMvpProviderError as exc:
+        assert exc.reason_code == "provider_malformed_response"
+        assert "tool call truncated" in str(exc)
+    else:
+        raise AssertionError("expected SlidevMvpProviderError")
 
 
 def test_slidev_mvp_counts_slides_with_per_slide_frontmatter():
@@ -1649,3 +1677,36 @@ def test_slidev_mvp_api_maps_model_http_errors(monkeypatch):
 
     assert response.status_code == 503
     assert "上游模型请求失败 (429)" in response.json()["detail"]
+
+
+def test_slidev_mvp_api_maps_provider_malformed_errors(monkeypatch):
+    from app.api.v2 import generation as generation_api
+
+    class FakeService:
+        def __init__(self, *, workspace_id: str):
+            self.workspace_id = workspace_id
+
+        async def generate_deck(self, **kwargs):
+            raise SlidevMvpProviderError(
+                "上游模型返回了不完整或异常的响应，Slidev deck 生成已中止。",
+                reason_code="provider_malformed_response",
+                next_action="请重试生成；若持续失败，请切换模型或稍后重试。",
+            )
+
+    monkeypatch.setattr(generation_api, "SlidevMvpService", FakeService)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v2/generation/slidev-mvp",
+        headers={"X-Workspace-Id": "workspace-api"},
+        json={
+            "topic": "API Deck",
+            "content": "offline slidev",
+            "num_pages": 2,
+        },
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "上游模型返回了不完整或异常的响应" in detail
+    assert "reason=provider_malformed_response" in detail

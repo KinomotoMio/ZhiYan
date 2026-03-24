@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import logging
 from typing import Any
 
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -90,6 +90,22 @@ class PydanticAIModelClient(AgenticModelClient):
                     extra={
                         "status_code": exc.status_code,
                         "model_name": exc.model_name,
+                        "attempt": attempt,
+                        "delay_seconds": delay_seconds,
+                    },
+                )
+                await asyncio.sleep(delay_seconds)
+            except UnexpectedModelBehavior as exc:
+                attempt += 1
+                if attempt >= _MAX_REQUEST_RETRIES:
+                    logger.exception("agentic model request failed after malformed provider responses")
+                    raise
+
+                delay_seconds = _BASE_RETRY_DELAY_SECONDS * attempt
+                logger.warning(
+                    "agentic model request retrying after malformed provider response",
+                    extra={
+                        "exception_type": type(exc).__name__,
                         "attempt": attempt,
                         "delay_seconds": delay_seconds,
                     },
