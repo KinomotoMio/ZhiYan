@@ -5,6 +5,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogClient";
+import {
+  buildLayoutCatalogEntries,
+  getLayoutCatalogFixtureIds,
+} from "@/app/dev/layout-catalog/catalog-data";
 import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
 
@@ -39,6 +43,7 @@ test("template registry exposes usage metadata for built-in layouts", () => {
   assert.equal(outline.subGroup, "default");
   assert.equal(outline.variantId, "section-cards");
   assert.equal(outline.variantLabel, "章节卡片目录");
+  assert.equal(outline.fileName, "OutlineSlideLayout.tsx");
   assert.deepEqual(outline.designTraits, {
     tone: "formal",
     style: "card-based",
@@ -111,6 +116,28 @@ test("template registry matches shared metadata for all layouts", () => {
     assert.deepEqual(runtime.notes, expected.notes);
     assert.equal(runtime.description, expected.notes.purpose);
   }
+});
+
+test("layout catalog fixtures stay aligned with the runtime registry", () => {
+  const runtimeLayoutIds = getAllLayouts().map((entry) => entry.id).sort();
+  const catalogFixtureIds = getLayoutCatalogFixtureIds().sort();
+  const catalogEntryIds = buildLayoutCatalogEntries().map((entry) => entry.id);
+
+  assert.deepEqual(
+    catalogFixtureIds,
+    runtimeLayoutIds,
+    "Catalog fixtures must cover every runtime layout exactly once",
+  );
+  assert.deepEqual(
+    [...catalogEntryIds].sort(),
+    runtimeLayoutIds,
+    "Catalog entries should be derived from the runtime registry inventory",
+  );
+  assert.equal(
+    new Set(catalogEntryIds).size,
+    catalogEntryIds.length,
+    "Catalog entries should not contain duplicate layout IDs",
+  );
 });
 
 test("layout catalog renders template directory metadata and taxonomy reference", () => {

@@ -4,31 +4,10 @@ import { Fragment, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
 import layoutMetadataJson from "@/generated/layout-metadata.json";
-import * as IntroSlide from "@/components/slide-layouts/IntroSlideLayout";
-import * as IntroSlideLeft from "@/components/slide-layouts/IntroSlideLeftLayout";
-import * as SectionHeader from "@/components/slide-layouts/SectionHeaderLayout";
-import * as SectionHeaderSide from "@/components/slide-layouts/SectionHeaderSideLayout";
-import * as OutlineSlide from "@/components/slide-layouts/OutlineSlideLayout";
-import * as OutlineSlideRail from "@/components/slide-layouts/OutlineSlideRailLayout";
-import * as BulletWithIcons from "@/components/slide-layouts/BulletWithIconsLayout";
-import * as BulletWithIconsCards from "@/components/slide-layouts/BulletWithIconsCardsLayout";
-import * as NumberedBullets from "@/components/slide-layouts/NumberedBulletsLayout";
-import * as NumberedBulletsTrack from "@/components/slide-layouts/NumberedBulletsTrackLayout";
-import * as MetricsSlide from "@/components/slide-layouts/MetricsSlideLayout";
-import * as MetricsSlideBand from "@/components/slide-layouts/MetricsSlideBandLayout";
-import * as MetricsWithImage from "@/components/slide-layouts/MetricsWithImageLayout";
-import * as ChartWithBullets from "@/components/slide-layouts/ChartWithBulletsLayout";
-import * as TableInfo from "@/components/slide-layouts/TableInfoLayout";
-import * as TwoColumnCompare from "@/components/slide-layouts/TwoColumnCompareLayout";
-import * as ImageAndDescription from "@/components/slide-layouts/ImageAndDescriptionLayout";
-import * as Timeline from "@/components/slide-layouts/TimelineLayout";
-import * as QuoteSlide from "@/components/slide-layouts/QuoteSlideLayout";
-import * as QuoteBanner from "@/components/slide-layouts/QuoteBannerLayout";
-import * as BulletIconsOnly from "@/components/slide-layouts/BulletIconsOnlyLayout";
-import * as ChallengeOutcome from "@/components/slide-layouts/ChallengeOutcomeLayout";
-import * as ThankYou from "@/components/slide-layouts/ThankYouLayout";
-import * as ThankYouContact from "@/components/slide-layouts/ThankYouContactLayout";
-import { getLayout, type LayoutEntry as RuntimeLayoutEntry } from "@/lib/template-registry";
+import {
+  buildLayoutCatalogEntries,
+  type CatalogEntry,
+} from "@/app/dev/layout-catalog/catalog-data";
 import {
   compareLayoutRoles,
   getLayoutRoleDescription,
@@ -36,11 +15,7 @@ import {
   LAYOUT_ROLE_ORDER,
   type LayoutRole,
 } from "@/lib/layout-role";
-import {
-  getLayoutUsage,
-  getUsageLabel,
-  type LayoutUsageTag,
-} from "@/lib/layout-usage";
+import { getUsageLabel, type LayoutUsageTag } from "@/lib/layout-usage";
 import { compareLayoutNames } from "@/lib/sort";
 import {
   getLayoutDesignTraitDescription,
@@ -54,594 +29,12 @@ import {
   type LayoutSubGroup,
 } from "@/lib/layout-taxonomy";
 
-type LayoutModule = {
-  default: ComponentType<{ data: Record<string, unknown> }>;
-  layoutId: string;
-  layoutName: string;
-  layoutDescription: string;
-};
-
-type CatalogEntry = {
-  module: LayoutModule;
-  fileName: string;
-  schemaName: string;
-  group: LayoutRole;
-  subGroup: RuntimeLayoutEntry["subGroup"];
-  variantId: RuntimeLayoutEntry["variantId"];
-  variantLabel: RuntimeLayoutEntry["variantLabel"];
-  variantDescription: RuntimeLayoutEntry["variantDescription"];
-  designTraits: RuntimeLayoutEntry["designTraits"];
-  isVariantDefault: RuntimeLayoutEntry["isVariantDefault"];
-  usage: LayoutUsageTag[];
-  notes: RuntimeLayoutEntry["notes"];
-  keyFields: string[];
-  data: Record<string, unknown>;
-};
-
 type CatalogFilter = "all" | LayoutRole;
-
-function getRuntimeLayoutEntry(layoutId: string): RuntimeLayoutEntry {
-  const layout = getLayout(layoutId);
-  if (!layout) {
-    throw new Error(`Unknown runtime layout entry: ${layoutId}`);
-  }
-  return layout;
-}
-
-function getRuntimeCatalogFields(
-  layoutId: string,
-): Pick<
-  CatalogEntry,
-  | "group"
-  | "subGroup"
-  | "variantId"
-  | "variantLabel"
-  | "variantDescription"
-  | "designTraits"
-  | "isVariantDefault"
-  | "notes"
-> {
-  const layout = getRuntimeLayoutEntry(layoutId);
-  return {
-    group: layout.group,
-    subGroup: layout.subGroup,
-    variantId: layout.variantId,
-    variantLabel: layout.variantLabel,
-    variantDescription: layout.variantDescription,
-    designTraits: layout.designTraits,
-    isVariantDefault: layout.isVariantDefault,
-    notes: layout.notes,
-  };
-}
-
-function svgDataUrl(stops: string[], label: string): string {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
-      <defs>
-        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="${stops[0]}"/>
-          <stop offset="100%" stop-color="${stops[1]}"/>
-        </linearGradient>
-      </defs>
-      <rect width="1280" height="720" fill="url(#g)"/>
-      <circle cx="1040" cy="160" r="140" fill="rgba(255,255,255,0.14)"/>
-      <circle cx="180" cy="560" r="180" fill="rgba(255,255,255,0.12)"/>
-      <text x="96" y="602" fill="white" font-family="Arial, sans-serif" font-size="56" font-weight="700">${label}</text>
-    </svg>
-  `;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-const photoA = svgDataUrl(["#1d4ed8", "#06b6d4"], "Product View");
-const photoB = svgDataUrl(["#0f766e", "#65a30d"], "Dashboard");
 const DESIGN_TRAIT_ORDER = ["tone", "style", "density"] as const;
 const FORMAL_SUBGROUP_ROLES = LAYOUT_ROLE_ORDER.filter((role) =>
   getLayoutSubGroupsForGroup(role).some((subGroup) => subGroup !== "default"),
 );
-
-const entries: CatalogEntry[] = [
-  {
-    module: IntroSlide as unknown as LayoutModule,
-    fileName: "IntroSlideLayout.tsx",
-    schemaName: "IntroSlideData",
-    ...getRuntimeCatalogFields("intro-slide"),
-    usage: getLayoutUsage("intro-slide"),
-    keyFields: ["title", "subtitle", "author?", "date?"],
-    data: {
-      title: "ZhiYan Layout Catalog",
-      subtitle: "Preview every built-in layout with sample content.",
-      author: "Codex",
-      date: "2026-03-11",
-    },
-  },
-  {
-    module: IntroSlideLeft as unknown as LayoutModule,
-    fileName: "IntroSlideLeftLayout.tsx",
-    schemaName: "IntroSlideData",
-    ...getRuntimeCatalogFields("intro-slide-left"),
-    usage: getLayoutUsage("intro-slide-left"),
-    keyFields: ["title", "subtitle", "author?", "date?"],
-    data: {
-      title: "Variant-Led Layout Selection",
-      subtitle:
-        "Choose a left-aligned cover when the opening slide needs more narrative context and setup.",
-      author: "Zhiyan Team",
-      date: "2026-03-14",
-    },
-  },
-  {
-    module: OutlineSlide as unknown as LayoutModule,
-    fileName: "OutlineSlideLayout.tsx",
-    schemaName: "OutlineSlideData",
-    ...getRuntimeCatalogFields("outline-slide"),
-    usage: getLayoutUsage("outline-slide"),
-    keyFields: ["title", "subtitle?", "sections[4-10]"],
-    data: {
-      title: "Presentation Outline",
-      subtitle:
-        "A navigation page that frames the full report structure before the detailed sections begin.",
-      sections: [
-        {
-          title: "Background",
-          description: "Business context and project motivation",
-        },
-        {
-          title: "Method",
-          description: "Approach, data sources, and evaluation logic",
-        },
-        {
-          title: "Findings",
-          description: "Key observations and critical metrics",
-        },
-        {
-          title: "Results",
-          description: "Outcome summary and measurable impact",
-        },
-      ],
-    },
-  },
-  {
-    module: OutlineSlideRail as unknown as LayoutModule,
-    fileName: "OutlineSlideRailLayout.tsx",
-    schemaName: "OutlineSlideData",
-    ...getRuntimeCatalogFields("outline-slide-rail"),
-    usage: getLayoutUsage("outline-slide-rail"),
-    keyFields: ["title", "subtitle?", "sections[1-10]"],
-    data: {
-      title: "Delivery Roadmap",
-      subtitle:
-        "A directional agenda variant that emphasizes sequence and stage progression over card symmetry.",
-      sections: [
-        { title: "Context", description: "Why the taxonomy needs a new variant layer" },
-        { title: "Model", description: "Define variant as a formal design option" },
-        { title: "Runtime", description: "Select variant first, then resolve layout" },
-        { title: "Templates", description: "Ship real layouts under variant tracks" },
-      ],
-    },
-  },
-  {
-    module: SectionHeader as unknown as LayoutModule,
-    fileName: "SectionHeaderLayout.tsx",
-    schemaName: "SectionHeaderData",
-    ...getRuntimeCatalogFields("section-header"),
-    usage: getLayoutUsage("section-header"),
-    keyFields: ["title", "subtitle?"],
-    data: {
-      title: "Platform Overview",
-      subtitle: "A clean transition slide between major chapters.",
-    },
-  },
-  {
-    module: SectionHeaderSide as unknown as LayoutModule,
-    fileName: "SectionHeaderSideLayout.tsx",
-    schemaName: "SectionHeaderData",
-    ...getRuntimeCatalogFields("section-header-side"),
-    usage: getLayoutUsage("section-header-side"),
-    keyFields: ["title", "subtitle?"],
-    data: {
-      title: "Selector Contract",
-      subtitle: "Shift runtime choice from direct layout IDs to variant-first resolution.",
-    },
-  },
-  {
-    module: BulletWithIcons as unknown as LayoutModule,
-    fileName: "BulletWithIconsLayout.tsx",
-    schemaName: "BulletWithIconsData",
-    ...getRuntimeCatalogFields("bullet-with-icons"),
-    usage: getLayoutUsage("bullet-with-icons"),
-    keyFields: ["title", "items[3-4]"],
-    data: {
-      title: "Why Teams Use This Layout",
-      items: [
-        {
-          icon: { query: "sparkles" },
-          title: "Scannable",
-          description:
-            "Each point gets a visual anchor and one concise explanation.",
-        },
-        {
-          icon: { query: "blocks" },
-          title: "Balanced",
-          description:
-            "Works well for three or four capabilities on one slide.",
-        },
-        {
-          icon: { query: "shield-check" },
-          title: "Reliable",
-          description: "Predictable spacing keeps the page from feeling crowded.",
-        },
-      ],
-    },
-  },
-  {
-    module: BulletWithIconsCards as unknown as LayoutModule,
-    fileName: "BulletWithIconsCardsLayout.tsx",
-    schemaName: "BulletWithIconsData",
-    ...getRuntimeCatalogFields("bullet-with-icons-cards"),
-    usage: getLayoutUsage("bullet-with-icons-cards"),
-    keyFields: ["title", "items[3-4]"],
-    data: {
-      title: "Why Feature Cards Work",
-      items: [
-        {
-          icon: { query: "layout-grid" },
-          title: "Modular",
-          description: "Each capability becomes its own card with a cleaner boundary.",
-        },
-        {
-          icon: { query: "sparkles" },
-          title: "Productive",
-          description: "Useful when the story is closer to product modules than plain bullets.",
-        },
-        {
-          icon: { query: "shield-check" },
-          title: "Stable",
-          description: "Keeps a stronger visual system without changing the underlying content schema.",
-        },
-        {
-          icon: { query: "arrow-right-left" },
-          title: "Reusable",
-          description: "Lets the same icon-points structure host multiple official design variants.",
-        },
-      ],
-    },
-  },
-  {
-    module: ImageAndDescription as unknown as LayoutModule,
-    fileName: "ImageAndDescriptionLayout.tsx",
-    schemaName: "ImageAndDescriptionData",
-    ...getRuntimeCatalogFields("image-and-description"),
-    usage: getLayoutUsage("image-and-description"),
-    keyFields: ["title", "image", "description", "bullets?"],
-    data: {
-      title: "Feature Spotlight",
-      image: { prompt: "hero product mockup", url: photoA, alt: "product preview" },
-      description:
-        "This layout works when one image should do most of the emotional work, with the text explaining why it matters.",
-      bullets: [
-        "Strong for demos and case studies",
-        "Keeps the message focused",
-        "Easy to theme with photography",
-      ],
-    },
-  },
-  {
-    module: BulletIconsOnly as unknown as LayoutModule,
-    fileName: "BulletIconsOnlyLayout.tsx",
-    schemaName: "BulletIconsOnlyData",
-    ...getRuntimeCatalogFields("bullet-icons-only"),
-    usage: getLayoutUsage("bullet-icons-only"),
-    keyFields: ["title", "items[4-8]"],
-    data: {
-      title: "Capability Grid",
-      items: [
-        { icon: { query: "database" }, label: "Source ingest" },
-        { icon: { query: "message-square" }, label: "Chat edits" },
-        { icon: { query: "image" }, label: "Asset prompts" },
-        { icon: { query: "file-chart-column" }, label: "Export" },
-        { icon: { query: "sparkles" }, label: "Themeing" },
-        { icon: { query: "shield-check" }, label: "Verification" },
-      ],
-    },
-  },
-  {
-    module: MetricsSlide as unknown as LayoutModule,
-    fileName: "MetricsSlideLayout.tsx",
-    schemaName: "MetricsSlideData",
-    ...getRuntimeCatalogFields("metrics-slide"),
-    usage: getLayoutUsage("metrics-slide"),
-    keyFields: ["title", "conclusion", "conclusionBrief", "metrics[2-4]"],
-    data: {
-      title: "Quarterly Snapshot",
-      conclusion: "Enterprise adoption is no longer the bottleneck.",
-      conclusionBrief:
-        "Coverage expanded across the org, so the next constraint is shortening review latency and increasing reuse in late-stage polish.",
-      metrics: [
-        { value: "92%", label: "Adoption", description: "active team usage" },
-        { value: "14d", label: "Lead Time", description: "from brief to deck" },
-        { value: "3.6x", label: "Reuse", description: "template leverage" },
-      ],
-    },
-  },
-  {
-    module: MetricsSlideBand as unknown as LayoutModule,
-    fileName: "MetricsSlideBandLayout.tsx",
-    schemaName: "MetricsSlideData",
-    ...getRuntimeCatalogFields("metrics-slide-band"),
-    usage: getLayoutUsage("metrics-slide-band"),
-    keyFields: ["title", "conclusion", "conclusionBrief", "metrics[2-4]"],
-    data: {
-      title: "Variant Delivery Progress",
-      conclusion:
-        "The variant layer now carries real design options instead of a single baseline tag.",
-      conclusionBrief:
-        "Metadata, selector, and catalog can all reference one canonical variant ID before the system resolves a specific template.",
-      metrics: [
-        { value: "8", label: "new layouts", description: "Fresh built-ins shipped under the new variant model" },
-        { value: "3", label: "design traits", description: "Tone, style, and density kept as helper descriptors" },
-        { value: "1", label: "selector chain", description: "group -> sub-group -> variant -> layoutId" },
-      ],
-    },
-  },
-  {
-    module: MetricsWithImage as unknown as LayoutModule,
-    fileName: "MetricsWithImageLayout.tsx",
-    schemaName: "MetricsWithImageData",
-    ...getRuntimeCatalogFields("metrics-with-image"),
-    usage: getLayoutUsage("metrics-with-image"),
-    keyFields: ["title", "metrics[2-3]", "image"],
-    data: {
-      title: "Impact + Product Shot",
-      metrics: [
-        {
-          value: "48%",
-          label: "Faster review",
-          description: "less manual cleanup",
-        },
-        {
-          value: "11",
-          label: "Teams onboarded",
-          description: "within two sprints",
-        },
-        { value: "4.8/5", label: "Satisfaction", description: "pilot feedback" },
-      ],
-      image: {
-        prompt: "analytics dashboard",
-        url: photoB,
-        alt: "dashboard preview",
-      },
-    },
-  },
-  {
-    module: ChartWithBullets as unknown as LayoutModule,
-    fileName: "ChartWithBulletsLayout.tsx",
-    schemaName: "ChartWithBulletsData",
-    ...getRuntimeCatalogFields("chart-with-bullets"),
-    usage: getLayoutUsage("chart-with-bullets"),
-    keyFields: ["title", "chart", "bullets[2-4]"],
-    data: {
-      title: "Trend + Commentary",
-      chart: {
-        chartType: "bar",
-        labels: ["Q1", "Q2", "Q3", "Q4"],
-        datasets: [{ label: "Growth", data: [12, 18, 24, 31] }],
-      },
-      bullets: [
-        { text: "Usage climbs steadily after template standardization." },
-        { text: "The largest jump happens once review loops are shortened." },
-        { text: "Best used when one chart needs 2-3 plain-language takeaways." },
-      ],
-    },
-  },
-  {
-    module: TableInfo as unknown as LayoutModule,
-    fileName: "TableInfoLayout.tsx",
-    schemaName: "TableInfoData",
-    ...getRuntimeCatalogFields("table-info"),
-    usage: getLayoutUsage("table-info"),
-    keyFields: ["title", "headers", "rows", "caption?"],
-    data: {
-      title: "Option Comparison",
-      headers: ["Option", "Speed", "Control", "Best For"],
-      rows: [
-        ["Default", "Fast", "Low", "simple briefs"],
-        ["Custom", "Medium", "High", "brand-heavy decks"],
-        ["Hybrid", "Fast", "Medium", "most teams"],
-      ],
-      caption: "A compact matrix for structured comparisons.",
-    },
-  },
-  {
-    module: TwoColumnCompare as unknown as LayoutModule,
-    fileName: "TwoColumnCompareLayout.tsx",
-    schemaName: "TwoColumnCompareData",
-    ...getRuntimeCatalogFields("two-column-compare"),
-    usage: getLayoutUsage("two-column-compare"),
-    keyFields: ["title", "left", "right"],
-    data: {
-      title: "Manual vs Assisted Workflow",
-      left: {
-        heading: "Manual",
-        icon: { query: "pen-tool" },
-        items: ["Slower setup", "Inconsistent page rhythm", "Harder to reuse"],
-      },
-      right: {
-        heading: "Assisted",
-        icon: { query: "bot" },
-        items: [
-          "Faster first draft",
-          "Repeatable layout system",
-          "Easier to refine",
-        ],
-      },
-    },
-  },
-  {
-    module: ChallengeOutcome as unknown as LayoutModule,
-    fileName: "ChallengeOutcomeLayout.tsx",
-    schemaName: "ChallengeOutcomeData",
-    ...getRuntimeCatalogFields("challenge-outcome"),
-    usage: getLayoutUsage("challenge-outcome"),
-    keyFields: ["title", "items[2-4]"],
-    data: {
-      title: "Problems and Fixes",
-      items: [
-        {
-          challenge: "Slides feel visually inconsistent across authors.",
-          outcome: "Use a constrained layout library with schema-guided content.",
-        },
-        {
-          challenge: "Reviewers spend time fixing spacing and hierarchy.",
-          outcome: "Push style decisions into reusable TSX layouts.",
-        },
-      ],
-    },
-  },
-  {
-    module: NumberedBullets as unknown as LayoutModule,
-    fileName: "NumberedBulletsLayout.tsx",
-    schemaName: "NumberedBulletsData",
-    ...getRuntimeCatalogFields("numbered-bullets"),
-    usage: getLayoutUsage("numbered-bullets"),
-    keyFields: ["title", "items[3-5]"],
-    data: {
-      title: "Rollout Plan",
-      items: [
-        {
-          title: "Collect input",
-          description:
-            "Gather source docs, goals, and constraints from the team.",
-        },
-        {
-          title: "Draft structure",
-          description:
-            "Turn raw material into a short narrative with a clear order.",
-        },
-        {
-          title: "Polish visuals",
-          description: "Pick a layout, tune wording, and verify readability.",
-        },
-      ],
-    },
-  },
-  {
-    module: NumberedBulletsTrack as unknown as LayoutModule,
-    fileName: "NumberedBulletsTrackLayout.tsx",
-    schemaName: "NumberedBulletsData",
-    ...getRuntimeCatalogFields("numbered-bullets-track"),
-    usage: getLayoutUsage("numbered-bullets-track"),
-    keyFields: ["title", "items[3-5]"],
-    data: {
-      title: "Implementation Rollout",
-      items: [
-        {
-          title: "Model metadata",
-          description: "Move variant into canonical metadata and make it an explicit node.",
-        },
-        {
-          title: "Runtime selection",
-          description: "Have selector choose variant IDs before layout IDs.",
-        },
-        {
-          title: "Catalog surface",
-          description: "Expose grouped variants and real layouts in the internal catalog.",
-        },
-        {
-          title: "Template supply",
-          description: "Ship new concrete templates so the variants are actually selectable.",
-        },
-      ],
-    },
-  },
-  {
-    module: Timeline as unknown as LayoutModule,
-    fileName: "TimelineLayout.tsx",
-    schemaName: "TimelineData",
-    ...getRuntimeCatalogFields("timeline"),
-    usage: getLayoutUsage("timeline"),
-    keyFields: ["title", "events[3-6]"],
-    data: {
-      title: "Delivery Timeline",
-      events: [
-        {
-          date: "Week 1",
-          title: "Research",
-          description: "Audit current layouts and sample decks.",
-        },
-        {
-          date: "Week 2",
-          title: "Prototype",
-          description: "Add new layout components and schemas.",
-        },
-        {
-          date: "Week 3",
-          title: "Validate",
-          description: "Run generation checks and visual review.",
-        },
-        {
-          date: "Week 4",
-          title: "Ship",
-          description: "Document patterns and hand off to the team.",
-        },
-      ],
-    },
-  },
-  {
-    module: QuoteSlide as unknown as LayoutModule,
-    fileName: "QuoteSlideLayout.tsx",
-    schemaName: "QuoteSlideData",
-    ...getRuntimeCatalogFields("quote-slide"),
-    usage: getLayoutUsage("quote-slide"),
-    keyFields: ["quote", "author?", "context?"],
-    data: {
-      quote:
-        "A layout system is just a promise that content will land in a predictable, readable place.",
-      author: "Design review note",
-      context: "internal principle",
-    },
-  },
-  {
-    module: QuoteBanner as unknown as LayoutModule,
-    fileName: "QuoteBannerLayout.tsx",
-    schemaName: "QuoteSlideData",
-    ...getRuntimeCatalogFields("quote-banner"),
-    usage: getLayoutUsage("quote-banner"),
-    keyFields: ["quote", "author?", "context?"],
-    data: {
-      quote:
-        "Variant should name the design answer itself, not hide behind a stack of abstract axes.",
-      author: "Issue #102",
-      context: "product framing",
-    },
-  },
-  {
-    module: ThankYou as unknown as LayoutModule,
-    fileName: "ThankYouLayout.tsx",
-    schemaName: "ThankYouData",
-    ...getRuntimeCatalogFields("thank-you"),
-    usage: getLayoutUsage("thank-you"),
-    keyFields: ["title", "subtitle?", "contact?"],
-    data: {
-      title: "Thanks",
-      subtitle: "Questions, feedback, or layout ideas are welcome.",
-      contact: "design-system@zhiyan.local",
-    },
-  },
-  {
-    module: ThankYouContact as unknown as LayoutModule,
-    fileName: "ThankYouContactLayout.tsx",
-    schemaName: "ThankYouData",
-    ...getRuntimeCatalogFields("thank-you-contact"),
-    usage: getLayoutUsage("thank-you-contact"),
-    keyFields: ["title", "subtitle?", "contact?"],
-    data: {
-      title: "Thanks for Reviewing",
-      subtitle:
-        "Use the contact-card closing variant when the ending should invite a concrete next step.",
-      contact: "pm@zhiyan.ai",
-    },
-  },
-];
+const entries = buildLayoutCatalogEntries();
 
 const sortedEntries = [...entries].sort((left, right) => {
   const roleDelta = compareLayoutRoles(left.group, right.group);
@@ -666,10 +59,10 @@ const sortedEntries = [...entries].sort((left, right) => {
   if (variantDelta !== 0) return variantDelta;
 
   return compareLayoutNames(
-    left.module.layoutName,
-    right.module.layoutName,
-    left.module.layoutId,
-    right.module.layoutId,
+    left.name,
+    right.name,
+    left.id,
+    right.id,
   );
 });
 
@@ -741,7 +134,7 @@ function SubGroupBadge({
   subGroup,
 }: {
   group: LayoutRole;
-  subGroup: RuntimeLayoutEntry["subGroup"];
+  subGroup: CatalogEntry["subGroup"];
 }) {
   return (
     <div>
@@ -760,7 +153,7 @@ function VariantCard({
   entry,
 }: {
   entry: Pick<
-    RuntimeLayoutEntry,
+    CatalogEntry,
     "variantId" | "variantLabel" | "variantDescription" | "designTraits" | "isVariantDefault"
   >;
 }) {
@@ -809,7 +202,7 @@ function VariantCard({
 }
 
 const NOTES_SLOT_LABELS: Array<{
-  key: keyof RuntimeLayoutEntry["notes"];
+  key: keyof CatalogEntry["notes"];
   label: string;
 }> = [
   { key: "purpose", label: "Purpose" },
@@ -820,7 +213,7 @@ const NOTES_SLOT_LABELS: Array<{
   { key: "usage_bias", label: "Usage bias" },
 ];
 
-function NotesCard({ notes }: { notes: RuntimeLayoutEntry["notes"] }) {
+function NotesCard({ notes }: { notes: CatalogEntry["notes"] }) {
   return (
     <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -1072,11 +465,11 @@ export function LayoutCatalogClientPage() {
               </thead>
               <tbody>
                 {visibleEntries.map((entry) => {
-                  const isExpanded = expandedLayoutId === entry.module.layoutId;
-                  const Component = entry.module.default;
+                  const isExpanded = expandedLayoutId === entry.id;
+                  const Component = entry.component;
 
                   return (
-                    <Fragment key={entry.module.layoutId}>
+                    <Fragment key={entry.id}>
                       <tr
                         className="border-t border-slate-200 align-top"
                       >
@@ -1085,10 +478,10 @@ export function LayoutCatalogClientPage() {
                         </td>
                         <td className="px-5 py-5">
                           <div className="text-sm font-semibold text-slate-900">
-                            {entry.module.layoutName}
+                            {entry.name}
                           </div>
                           <code className="mt-2 block rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                            {entry.module.layoutId}
+                            {entry.id}
                           </code>
                           <code className="mt-3 block rounded bg-slate-50 px-2 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
                             frontend/src/components/slide-layouts/{entry.fileName}
@@ -1127,9 +520,9 @@ export function LayoutCatalogClientPage() {
                             type="button"
                             onClick={() =>
                               setExpandedLayoutId((current) =>
-                                current === entry.module.layoutId
+                                current === entry.id
                                   ? null
-                                  : entry.module.layoutId,
+                                  : entry.id,
                               )
                             }
                             className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-700"

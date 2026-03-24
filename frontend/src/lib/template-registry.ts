@@ -46,6 +46,7 @@ import { getLayoutUsage, type LayoutUsageTag } from "@/lib/layout-usage";
 export interface LayoutEntry {
   id: string;
   name: string;
+  fileName: string;
   description: string;
   notes: LayoutTemplateNotes;
   group: LayoutGroup;
@@ -66,31 +67,36 @@ interface LayoutModule {
   default: ComponentType<{ data: Record<string, unknown> }>;
 }
 
-const allModules: LayoutModule[] = [
-  IntroSlide as unknown as LayoutModule,
-  IntroSlideLeft as unknown as LayoutModule,
-  SectionHeader as unknown as LayoutModule,
-  SectionHeaderSide as unknown as LayoutModule,
-  OutlineSlide as unknown as LayoutModule,
-  OutlineSlideRail as unknown as LayoutModule,
-  BulletWithIcons as unknown as LayoutModule,
-  BulletWithIconsCards as unknown as LayoutModule,
-  NumberedBullets as unknown as LayoutModule,
-  NumberedBulletsTrack as unknown as LayoutModule,
-  MetricsSlide as unknown as LayoutModule,
-  MetricsSlideBand as unknown as LayoutModule,
-  MetricsWithImage as unknown as LayoutModule,
-  ChartWithBullets as unknown as LayoutModule,
-  TableInfo as unknown as LayoutModule,
-  TwoColumnCompare as unknown as LayoutModule,
-  ImageAndDescription as unknown as LayoutModule,
-  Timeline as unknown as LayoutModule,
-  QuoteSlide as unknown as LayoutModule,
-  QuoteBanner as unknown as LayoutModule,
-  BulletIconsOnly as unknown as LayoutModule,
-  ChallengeOutcome as unknown as LayoutModule,
-  ThankYou as unknown as LayoutModule,
-  ThankYouContact as unknown as LayoutModule,
+interface RegisteredLayoutModule {
+  fileName: string;
+  module: LayoutModule;
+}
+
+const allModules: RegisteredLayoutModule[] = [
+  { fileName: "IntroSlideLayout.tsx", module: IntroSlide as unknown as LayoutModule },
+  { fileName: "IntroSlideLeftLayout.tsx", module: IntroSlideLeft as unknown as LayoutModule },
+  { fileName: "SectionHeaderLayout.tsx", module: SectionHeader as unknown as LayoutModule },
+  { fileName: "SectionHeaderSideLayout.tsx", module: SectionHeaderSide as unknown as LayoutModule },
+  { fileName: "OutlineSlideLayout.tsx", module: OutlineSlide as unknown as LayoutModule },
+  { fileName: "OutlineSlideRailLayout.tsx", module: OutlineSlideRail as unknown as LayoutModule },
+  { fileName: "BulletWithIconsLayout.tsx", module: BulletWithIcons as unknown as LayoutModule },
+  { fileName: "BulletWithIconsCardsLayout.tsx", module: BulletWithIconsCards as unknown as LayoutModule },
+  { fileName: "NumberedBulletsLayout.tsx", module: NumberedBullets as unknown as LayoutModule },
+  { fileName: "NumberedBulletsTrackLayout.tsx", module: NumberedBulletsTrack as unknown as LayoutModule },
+  { fileName: "MetricsSlideLayout.tsx", module: MetricsSlide as unknown as LayoutModule },
+  { fileName: "MetricsSlideBandLayout.tsx", module: MetricsSlideBand as unknown as LayoutModule },
+  { fileName: "MetricsWithImageLayout.tsx", module: MetricsWithImage as unknown as LayoutModule },
+  { fileName: "ChartWithBulletsLayout.tsx", module: ChartWithBullets as unknown as LayoutModule },
+  { fileName: "TableInfoLayout.tsx", module: TableInfo as unknown as LayoutModule },
+  { fileName: "TwoColumnCompareLayout.tsx", module: TwoColumnCompare as unknown as LayoutModule },
+  { fileName: "ImageAndDescriptionLayout.tsx", module: ImageAndDescription as unknown as LayoutModule },
+  { fileName: "TimelineLayout.tsx", module: Timeline as unknown as LayoutModule },
+  { fileName: "QuoteSlideLayout.tsx", module: QuoteSlide as unknown as LayoutModule },
+  { fileName: "QuoteBannerLayout.tsx", module: QuoteBanner as unknown as LayoutModule },
+  { fileName: "BulletIconsOnlyLayout.tsx", module: BulletIconsOnly as unknown as LayoutModule },
+  { fileName: "ChallengeOutcomeLayout.tsx", module: ChallengeOutcome as unknown as LayoutModule },
+  { fileName: "ThankYouLayout.tsx", module: ThankYou as unknown as LayoutModule },
+  { fileName: "ThankYouContactLayout.tsx", module: ThankYouContact as unknown as LayoutModule },
 ];
 
 const _registry = new Map<string, LayoutEntry>();
@@ -100,7 +106,7 @@ function ensureInitialized() {
   if (_initialized) return;
   _initialized = true;
 
-  for (const mod of allModules) {
+  for (const { fileName, module: mod } of allModules) {
     if (!mod.layoutId || !mod.default) continue;
     const taxonomy = getLayoutTaxonomy(mod.layoutId);
     const notes = getLayoutNotes(mod.layoutId);
@@ -114,6 +120,7 @@ function ensureInitialized() {
     _registry.set(mod.layoutId, {
       id: mod.layoutId,
       name: mod.layoutName || mod.layoutId,
+      fileName,
       description: notes.purpose,
       notes,
       group: taxonomy.group,
