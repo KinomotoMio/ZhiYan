@@ -188,7 +188,7 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
         warnings.append(
             {
                 "code": "low_visual_recipe_usage",
-                "message": "Deck uses too few stable visual recipe classes; key pages still look close to plain default-theme output.",
+                "message": "Deck uses too few stable visual recipe classes; key pages still look closer to markdown document sections than presentation slides.",
             }
         )
 

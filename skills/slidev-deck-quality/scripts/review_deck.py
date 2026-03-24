@@ -201,6 +201,8 @@ def _review_slide(
             add_issue("cover_role_mismatch", f"Slide `{title}` is tagged cover but does not read like a cover slide.")
         elif observed_layout not in {"cover", "center"}:
             add_warning("cover_native_layout_missing", f"Slide `{title}` reads like cover but does not use `layout: cover` or `layout: center`.")
+        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals and observed_layout not in {"cover", "center"}:
+            add_warning("document_like_cover", f"Slide `{title}` still looks like a document title page instead of a strong presentation cover.")
     elif role == "closing":
         if not _looks_like_closing(slide):
             add_issue(
@@ -211,6 +213,8 @@ def _review_slide(
             add_warning("weak_closing", f"Slide `{title}` closes the deck but the closing signal is still weak.")
         elif observed_layout not in {"end", "center"}:
             add_warning("closing_native_layout_missing", f"Slide `{title}` closes correctly but does not use `layout: end` or `layout: center`.")
+        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals and observed_layout not in {"end", "center"}:
+            add_warning("document_like_closing", f"Slide `{title}` closes semantically, but still feels like a document paragraph instead of a presentation ending.")
     elif role == "comparison":
         if not _looks_comparison_like(slide):
             add_issue(
@@ -222,6 +226,8 @@ def _review_slide(
                 "comparison_native_pattern_missing",
                 f"Slide `{title}` should use `layout: two-cols` or an explicit compare table.",
             )
+        elif visual_recipe_status != "matched" and "recipe-class" not in observed_signals:
+            add_warning("document_like_comparison", f"Slide `{title}` compares correctly, but the page still lacks strong left/right presentation contrast.")
     elif role == "framework":
         if _looks_flat_framework(slide):
             add_issue(
@@ -238,6 +244,10 @@ def _review_slide(
                 "framework_native_pattern_missing",
                 f"Slide `{title}` is a framework page but does not yet use a strong native structure such as Mermaid, table, or grid.",
             )
+        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals:
+            add_warning("document_like_framework", f"Slide `{title}` is structurally valid, but still feels too much like a document section instead of a modeled framework page.")
+    elif role == "context" and visual_recipe_status != "matched" and _bullet_count(slide) >= 3 and "quote-or-callout" not in observed_signals and "recipe-class" not in observed_signals:
+        add_warning("document_like_context", f"Slide `{title}` still reads like a plain markdown context page instead of a presentation setup page.")
     elif role in {"context", "detail"} and _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
         add_warning(
             "dense_context_or_detail",

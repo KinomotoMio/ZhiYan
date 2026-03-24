@@ -342,7 +342,7 @@ def _quality_outline_items_five() -> list[dict[str, str | int]]:
 
 def _copy_slidev_skills(tmp_path, monkeypatch) -> SkillRegistry:
     skills_dir = tmp_path / "skills"
-    for skill_name in ("slidev-syntax", "slidev-deck-quality"):
+    for skill_name in ("slidev-syntax", "slidev-deck-quality", "slidev-design-system"):
         source_skill_dir = settings.project_root / "skills" / skill_name
         target_dir = skills_dir / skill_name / "scripts"
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -350,8 +350,10 @@ def _copy_slidev_skills(tmp_path, monkeypatch) -> SkillRegistry:
             (source_skill_dir / "SKILL.md").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
-        for script_path in (source_skill_dir / "scripts").glob("*.py"):
-            (target_dir / script_path.name).write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
+        scripts_dir = source_skill_dir / "scripts"
+        if scripts_dir.exists():
+            for script_path in scripts_dir.glob("*.py"):
+                (target_dir / script_path.name).write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(settings, "skills_dir", skills_dir)
     return SkillRegistry(skills_dir)
 
@@ -386,6 +388,9 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
             ),
             AssistantMessage(
                 parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
+            ),
+            AssistantMessage(
+                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-3b")]
             ),
             AssistantMessage(
                 parts=[
@@ -474,7 +479,7 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
     assert artifact.quality["visual_recipe_summary"]["matched_recipe_count"] >= 3
     assert artifact.quality["blank_first_slide_detected"] is False
     assert artifact.agentic["used_subagent"] is True
-    assert artifact.agentic["loaded_skills"] == ["slidev-deck-quality", "slidev-syntax"]
+    assert artifact.agentic["loaded_skills"] == ["slidev-deck-quality", "slidev-design-system", "slidev-syntax"]
     assert "大纲已生成：5 页 - 封面(cover)；为什么现在要做(context)；Harness 分层(framework)" in artifact.agentic["final_state_summary"]
     assert "大纲审查：通过" in artifact.agentic["final_state_summary"]
     assert service.last_loop_result is not None
@@ -532,6 +537,9 @@ def test_slidev_mvp_service_combines_sources_and_runs_build(monkeypatch, tmp_pat
             ),
             AssistantMessage(
                 parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
+            ),
+            AssistantMessage(
+                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-3b")]
             ),
             AssistantMessage(
                 parts=[
@@ -675,6 +683,25 @@ def test_slidev_mvp_normalizes_double_separator_slide_frontmatter():
     assert "\n---\n\n---\nlayout: two-cols" not in normalized
     assert "\n---\nlayout: two-cols" in normalized
     assert slidev_mvp_mod._count_slidev_slides(normalized) == 3
+
+
+def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
+    from app.services.generation.slidev_mvp import SlidevMvpService, _ResolvedInputs
+
+    service = SlidevMvpService(workspace_id="workspace-slidev")
+    prompt = service._build_user_prompt(
+        _ResolvedInputs(
+            topic="AI Strategy",
+            material="准备一份 deck",
+            num_pages=5,
+            title_hint="AI Strategy",
+            source_hints={"total_sources": 0, "by_file_category": {}},
+        )
+    )
+
+    assert "slidev-design-system" in prompt
+    assert "theme: seriph" in prompt
+    assert "不要生成“像 markdown 文档章节”的页面" in prompt
 
 
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
@@ -1013,6 +1040,57 @@ def test_slidev_deck_review_reports_blank_first_slide_normalization(monkeypatch,
     assert deck_review["ok"] is True
     assert deck_review["blank_first_slide_detected"] is True
     assert {warning["code"] for warning in deck_review["warnings"]} >= {"blank_first_slide_normalized"}
+
+
+def test_slidev_deck_review_warns_when_cover_is_document_like(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    markdown = """---
+theme: seriph
+title: Document Like Cover
+---
+
+# Document Like Cover
+
+Short subtitle
+
+---
+
+## Next Step
+
+- decide
+"""
+    outline_items = [
+        {
+            "slide_number": 1,
+            "title": "封面",
+            "slide_role": "cover",
+            "content_shape": "title-subtitle",
+            "goal": "开场",
+            "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+            "slidev_visual_hint": {"name": "cover-hero", "preferred_classes": ["deck-cover"], "required_signals": ["hero-title", "short-subtitle"]},
+        },
+        {
+            "slide_number": 2,
+            "title": "收尾",
+            "slide_role": "closing",
+            "content_shape": "next-step",
+            "goal": "收束",
+            "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+            "slidev_visual_hint": {"name": "closing-takeaway", "preferred_classes": ["deck-closing"], "required_signals": ["next-step-or-takeaway"]},
+        },
+    ]
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert {warning["code"] for warning in deck_review["warnings"]} >= {"document_like_cover"}
 
 
 def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):
@@ -1382,6 +1460,9 @@ def test_slidev_mvp_service_reports_failed_outline_review_reason_after_max_turns
             ),
             AssistantMessage(
                 parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
+            ),
+            AssistantMessage(
+                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-3b")]
             ),
             AssistantMessage(
                 parts=[
