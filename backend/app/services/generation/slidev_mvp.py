@@ -2818,7 +2818,6 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
         "container_classes": " ".join(selected["required_classes"]),
         "content_classes": "",
         "required_patterns": list(selected["required_patterns"]),
-        "required_signals": list(selected["required_patterns"]),
         "required_visual_signals": list(selected["required_visual_signals"]),
         "required_classes": list(selected["required_classes"]),
         "anti_patterns": _reference_string_list(selected.get("anti_patterns")),
