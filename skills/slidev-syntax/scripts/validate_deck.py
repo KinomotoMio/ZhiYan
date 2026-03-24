@@ -305,6 +305,7 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         "table": 0,
         "div_grid": 0,
         "class": 0,
+        "callout": 0,
     }
     class_counts: dict[str, int] = {}
     recipe_classes: dict[str, int] = {}
@@ -336,6 +337,9 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
             native_found = True
         if "<div" in slide and "grid" in slide:
             pattern_counts["div_grid"] += 1
+            native_found = True
+        if "::" in slide:
+            pattern_counts["callout"] += 1
             native_found = True
         if recipe_classes and any(name in recipe_classes for name in classes):
             visual_recipe_slide_count += 1

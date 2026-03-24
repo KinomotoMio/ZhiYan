@@ -726,6 +726,42 @@ def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, t
     assert native_usage["visual_recipe_slide_count"] >= 3
 
 
+def test_slidev_syntax_validate_deck_counts_callout_usage(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    markdown = """---
+theme: default
+title: Callout Deck
+layout: cover
+class: deck-cover
+---
+
+# Callout Deck
+
+Deck with a callout block.
+
+---
+class: deck-context
+---
+
+## Context
+
+::note::
+This slide should count as callout usage.
+::"""
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["native_usage_summary"]["pattern_counts"]["callout"] == 1
+
+
 def test_slidev_syntax_validate_deck_detects_blank_first_slide_pattern(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
