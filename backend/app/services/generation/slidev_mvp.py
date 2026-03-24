@@ -52,7 +52,9 @@ SLIDEV_SANDBOX_DIR = settings.project_root / "design" / "slidev-mvp"
 SLIDEV_SLIDES_FILENAME = "slides.md"
 LONG_DECK_TRIGGER_PAGES = 12
 LONG_DECK_CHUNK_SIZE = 3
+SHORT_DECK_GENERATION_RETRY_LIMIT = 2
 LONG_DECK_PLANNING_MAX_TURNS = 16
+LONG_DECK_PLANNING_RETRY_LIMIT = 2
 LONG_DECK_CHUNK_MAX_TURNS = 10
 LONG_DECK_CHUNK_RETRY_LIMIT = 2
 SLIDEV_SUPPORTED_LAYOUTS = (
@@ -297,6 +299,9 @@ class _RuntimeContext:
     long_deck_mode: bool = False
     chunk_plan: list[dict[str, Any]] = field(default_factory=list)
     chunk_reports: list[dict[str, Any]] = field(default_factory=list)
+    stage_history: list[dict[str, Any]] = field(default_factory=list)
+    retry_events: list[dict[str, Any]] = field(default_factory=list)
+    provider_errors: list[dict[str, Any]] = field(default_factory=list)
     save_failure: SlidevMvpValidationError | None = None
     saved_artifact: SlidevMvpArtifacts | None = None
 
@@ -393,6 +398,7 @@ class SlidevMvpService:
             slides_path=slides_path,
             requested_pages=resolved.num_pages,
         )
+        self._record_stage(state=state, runtime=runtime, stage="inputs_ready", status="ok")
         registry = self._build_registry(state=state, runtime=runtime, todo_manager=todo_manager)
 
         if self._should_use_long_deck_mode(resolved.num_pages):
@@ -404,26 +410,13 @@ class SlidevMvpService:
                 registry=registry,
             )
         else:
-            try:
-                loop_result = await agentic_loop(
-                    user_prompt=self._build_user_prompt(resolved),
-                    model=self.model,
-                    state=state,
-                    todo_manager=todo_manager,
-                    skill_summaries=build_skill_summaries(self.skill_registry),
-                    harness_path=self.harness_path,
-                    tool_definitions=registry.to_model_tools(),
-                    dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
-                    max_turns=24,
-                )
-            except UnexpectedModelBehavior as exc:
-                raise _provider_response_error(exc) from exc
-            if runtime.saved_artifact is None:
-                runtime.saved_artifact = await self._controller_finalize_deck(
-                    title=resolved.title_hint,
-                    state=state,
-                    runtime=runtime,
-                )
+            loop_result = await self._run_short_deck_generation(
+                resolved=resolved,
+                state=state,
+                runtime=runtime,
+                todo_manager=todo_manager,
+                registry=registry,
+            )
         self.last_loop_result = loop_result
 
         artifact = runtime.saved_artifact
@@ -436,6 +429,9 @@ class SlidevMvpService:
             "used_subagent": runtime.used_subagent,
             "loaded_skills": sorted(runtime.loaded_skills),
             "long_deck_mode": runtime.long_deck_mode,
+            "stage_history": list(runtime.stage_history),
+            "retry_summary": _build_retry_summary(runtime.retry_events),
+            "provider_error_summary": _build_provider_error_summary(runtime.provider_errors),
             "final_state_summary": summarize_state(state),
         }
         artifact = SlidevMvpArtifacts(
@@ -521,6 +517,106 @@ class SlidevMvpService:
     def _should_use_long_deck_mode(self, num_pages: int) -> bool:
         return int(num_pages) >= LONG_DECK_TRIGGER_PAGES
 
+    async def _run_short_deck_generation(
+        self,
+        *,
+        resolved: _ResolvedInputs,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        todo_manager: TodoManager,
+        registry: ToolRegistry,
+    ) -> AgenticLoopResult:
+        last_error: SlidevMvpError | None = None
+        for attempt in range(1, SHORT_DECK_GENERATION_RETRY_LIMIT + 1):
+            self._prepare_generation_attempt(
+                state=state,
+                runtime=runtime,
+                stage="short_generation",
+                attempt=attempt,
+            )
+            try:
+                loop_result = await agentic_loop(
+                    user_prompt=self._build_user_prompt(resolved),
+                    model=self.model,
+                    state=state,
+                    todo_manager=todo_manager,
+                    skill_summaries=build_skill_summaries(self.skill_registry),
+                    harness_path=self.harness_path,
+                    tool_definitions=registry.to_model_tools(),
+                    dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+                    max_turns=24,
+                )
+                if runtime.saved_artifact is None:
+                    runtime.saved_artifact = await self._controller_finalize_deck(
+                        title=resolved.title_hint,
+                        state=state,
+                        runtime=runtime,
+                    )
+                self._record_stage(
+                    state=state,
+                    runtime=runtime,
+                    stage="short_generation",
+                    status="ok",
+                    attempt=attempt,
+                )
+                return loop_result
+            except UnexpectedModelBehavior as exc:
+                provider_error = _provider_response_error(exc)
+                self._record_provider_error(
+                    state=state,
+                    runtime=runtime,
+                    stage="short_generation",
+                    attempt=attempt,
+                    error=provider_error,
+                )
+                last_error = provider_error
+                if attempt >= SHORT_DECK_GENERATION_RETRY_LIMIT:
+                    self._record_stage(
+                        state=state,
+                        runtime=runtime,
+                        stage="short_generation",
+                        status="failed",
+                        attempt=attempt,
+                        reason_code=provider_error.reason_code,
+                    )
+                    raise provider_error from exc
+                self._record_retry(
+                    state=state,
+                    runtime=runtime,
+                    stage="short_generation",
+                    attempt=attempt,
+                    reason_code=provider_error.reason_code,
+                    message=provider_error.message,
+                )
+            except SlidevMvpValidationError as exc:
+                last_error = exc
+                retryable = _should_retry_generation_failure(
+                    exc,
+                    attempt=attempt,
+                    retry_limit=SHORT_DECK_GENERATION_RETRY_LIMIT,
+                )
+                self._record_stage(
+                    state=state,
+                    runtime=runtime,
+                    stage="short_generation",
+                    status="retrying" if retryable else "failed",
+                    attempt=attempt,
+                    reason_code=exc.reason_code,
+                )
+                if not retryable:
+                    raise
+                self._record_retry(
+                    state=state,
+                    runtime=runtime,
+                    stage="short_generation",
+                    attempt=attempt,
+                    reason_code=exc.reason_code or "generation_validation_failed",
+                    message=exc.message,
+                )
+        if last_error is not None:
+            raise last_error
+        raise SlidevMvpValidationError("Slidev short deck generation ended without a result.")
+
     async def _run_long_deck_generation(
         self,
         *,
@@ -534,31 +630,24 @@ class SlidevMvpService:
         state.document_metadata["slidev_long_deck_mode"] = True
 
         planning_registry = filter_registry(registry, LONG_DECK_PLANNING_TOOLS)
-        try:
-            planning_result = await agentic_loop(
-                user_prompt=self._build_long_deck_planning_prompt(resolved),
-                model=self.model,
-                state=state,
-                todo_manager=todo_manager,
-                skill_summaries=build_skill_summaries(self.skill_registry),
-                harness_path=self.harness_path,
-                tool_definitions=planning_registry.to_model_tools(),
-                dispatch_tools=lambda calls: dispatch_tool_calls(calls, planning_registry),
-                max_turns=LONG_DECK_PLANNING_MAX_TURNS,
-            )
-        except UnexpectedModelBehavior as exc:
-            raise _provider_response_error(exc) from exc
-
-        self._ensure_long_deck_planning_ready(runtime=runtime, state=state)
+        planning_result = await self._run_long_deck_planning(
+            resolved=resolved,
+            state=state,
+            runtime=runtime,
+            todo_manager=todo_manager,
+            planning_registry=planning_registry,
+        )
         chunk_specs = self._build_chunk_specs(state=state, runtime=runtime)
         runtime.chunk_plan = [_chunk_metadata(spec) for spec in chunk_specs]
         state.document_metadata["slidev_chunk_plan"] = list(runtime.chunk_plan)
 
         try:
+            self._record_stage(state=state, runtime=runtime, stage="chunk_generation", status="started")
             chunk_executions = await self._run_chunk_generation(
                 chunk_specs=chunk_specs,
                 resolved=resolved,
                 runtime=runtime,
+                state=state,
             )
         except SlidevMvpValidationError:
             state.document_metadata["slidev_chunk_reports"] = list(runtime.chunk_reports)
@@ -566,7 +655,9 @@ class SlidevMvpService:
                 runtime.chunk_plan,
                 runtime.chunk_reports,
             )
+            self._record_stage(state=state, runtime=runtime, stage="chunk_generation", status="failed")
             raise
+        self._record_stage(state=state, runtime=runtime, stage="chunk_generation", status="ok")
 
         runtime.used_subagent = True
         runtime.chunk_reports = [_chunk_report_payload(execution) for execution in chunk_executions]
@@ -581,6 +672,7 @@ class SlidevMvpService:
             runtime=runtime,
             chunk_executions=chunk_executions,
         )
+        self._record_stage(state=state, runtime=runtime, stage="deck_assembly", status="ok")
         runtime.latest_markdown = markdown
         runtime.saved_artifact = await self._controller_finalize_deck(
             title=resolved.title_hint,
@@ -597,6 +689,182 @@ class SlidevMvpService:
             last_response=planning_result.last_response,
         )
 
+    async def _run_long_deck_planning(
+        self,
+        *,
+        resolved: _ResolvedInputs,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        todo_manager: TodoManager,
+        planning_registry: ToolRegistry,
+    ) -> AgenticLoopResult:
+        last_error: SlidevMvpError | None = None
+        for attempt in range(1, LONG_DECK_PLANNING_RETRY_LIMIT + 1):
+            self._prepare_generation_attempt(
+                state=state,
+                runtime=runtime,
+                stage="long_deck_planning",
+                attempt=attempt,
+                preserve_long_deck_mode=True,
+            )
+            try:
+                planning_result = await agentic_loop(
+                    user_prompt=self._build_long_deck_planning_prompt(resolved),
+                    model=self.model,
+                    state=state,
+                    todo_manager=todo_manager,
+                    skill_summaries=build_skill_summaries(self.skill_registry),
+                    harness_path=self.harness_path,
+                    tool_definitions=planning_registry.to_model_tools(),
+                    dispatch_tools=lambda calls: dispatch_tool_calls(calls, planning_registry),
+                    max_turns=LONG_DECK_PLANNING_MAX_TURNS,
+                )
+                self._ensure_long_deck_planning_ready(runtime=runtime, state=state)
+                self._record_stage(
+                    state=state,
+                    runtime=runtime,
+                    stage="long_deck_planning",
+                    status="ok",
+                    attempt=attempt,
+                )
+                return planning_result
+            except UnexpectedModelBehavior as exc:
+                provider_error = _provider_response_error(exc)
+                self._record_provider_error(
+                    state=state,
+                    runtime=runtime,
+                    stage="long_deck_planning",
+                    attempt=attempt,
+                    error=provider_error,
+                )
+                last_error = provider_error
+                if attempt >= LONG_DECK_PLANNING_RETRY_LIMIT:
+                    self._record_stage(
+                        state=state,
+                        runtime=runtime,
+                        stage="long_deck_planning",
+                        status="failed",
+                        attempt=attempt,
+                        reason_code=provider_error.reason_code,
+                    )
+                    raise provider_error from exc
+                self._record_retry(
+                    state=state,
+                    runtime=runtime,
+                    stage="long_deck_planning",
+                    attempt=attempt,
+                    reason_code=provider_error.reason_code,
+                    message=provider_error.message,
+                )
+            except SlidevMvpValidationError as exc:
+                last_error = exc
+                retryable = _should_retry_generation_failure(
+                    exc,
+                    attempt=attempt,
+                    retry_limit=LONG_DECK_PLANNING_RETRY_LIMIT,
+                )
+                self._record_stage(
+                    state=state,
+                    runtime=runtime,
+                    stage="long_deck_planning",
+                    status="retrying" if retryable else "failed",
+                    attempt=attempt,
+                    reason_code=exc.reason_code,
+                )
+                if not retryable:
+                    raise
+                self._record_retry(
+                    state=state,
+                    runtime=runtime,
+                    stage="long_deck_planning",
+                    attempt=attempt,
+                    reason_code=exc.reason_code or "planning_validation_failed",
+                    message=exc.message,
+                )
+        if last_error is not None:
+            raise last_error
+        raise SlidevMvpValidationError("Slidev long deck planning ended without a result.")
+
+    def _prepare_generation_attempt(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        stage: str,
+        attempt: int,
+        preserve_long_deck_mode: bool = False,
+    ) -> None:
+        _reset_generation_state(
+            state=state,
+            runtime=runtime,
+            preserve_long_deck_mode=preserve_long_deck_mode,
+        )
+        self._record_stage(
+            state=state,
+            runtime=runtime,
+            stage=stage,
+            status="started",
+            attempt=attempt,
+        )
+
+    def _record_stage(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        stage: str,
+        status: str,
+        attempt: int | None = None,
+        reason_code: str | None = None,
+    ) -> None:
+        event: dict[str, Any] = {"stage": stage, "status": status}
+        if attempt is not None:
+            event["attempt"] = attempt
+        if reason_code:
+            event["reason_code"] = reason_code
+        runtime.stage_history.append(event)
+        state.document_metadata["slidev_stage_history"] = list(runtime.stage_history)
+        state.document_metadata["slidev_current_stage"] = {"stage": stage, "status": status}
+
+    def _record_retry(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        stage: str,
+        attempt: int,
+        reason_code: str,
+        message: str,
+    ) -> None:
+        event = {
+            "stage": stage,
+            "attempt": attempt,
+            "reason_code": reason_code,
+            "message": message,
+        }
+        runtime.retry_events.append(event)
+        state.document_metadata["slidev_retry_events"] = list(runtime.retry_events)
+        state.document_metadata["slidev_retry_summary"] = _build_retry_summary(runtime.retry_events)
+
+    def _record_provider_error(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        stage: str,
+        attempt: int,
+        error: SlidevMvpProviderError,
+    ) -> None:
+        event = {
+            "stage": stage,
+            "attempt": attempt,
+            "reason_code": error.reason_code,
+            "message": error.message,
+        }
+        runtime.provider_errors.append(event)
+        state.document_metadata["slidev_provider_errors"] = list(runtime.provider_errors)
+        state.document_metadata["slidev_provider_error_summary"] = _build_provider_error_summary(runtime.provider_errors)
+
     async def _controller_finalize_deck(
         self,
         *,
@@ -605,77 +873,90 @@ class SlidevMvpService:
         runtime: _RuntimeContext,
         markdown: str | None = None,
     ) -> SlidevMvpArtifacts:
-        current_outline_hash = _outline_hash(state.outline)
-        if runtime.outline_review is None:
-            raise _save_gate_error(
-                reason_code="outline_review_missing",
-                message="还没有完成大纲正式审查，controller 不能 finalization。",
-                next_action="调用 review_slidev_outline()",
-            )
-        if not bool(runtime.outline_review.get("ok")):
-            raise _save_gate_error(
-                reason_code="outline_review_failed",
-                message="Deck 大纲结构审查未通过，controller 不能 finalization。",
-                next_action="修正大纲后重新调用 review_slidev_outline()",
-            )
-        if runtime.outline_review_hash and runtime.outline_review_hash != current_outline_hash:
-            raise _save_gate_error(
-                reason_code="outline_review_stale",
-                message="大纲在审查后发生了变化，controller 不能直接 finalization。",
-                next_action="重新调用 review_slidev_outline()",
-            )
-        if runtime.reference_selection is None:
-            raise _save_gate_error(
-                reason_code="reference_selection_missing",
-                message="还没有完成 Slidev references 选择，controller 不能 finalization。",
-                next_action="调用 select_slidev_references()",
-            )
-        if runtime.reference_selection_hash and runtime.reference_selection_hash != current_outline_hash:
-            raise _save_gate_error(
-                reason_code="reference_selection_stale",
-                message="大纲在选择 references 后发生了变化，controller 不能直接 finalization。",
-                next_action="重新调用 select_slidev_references()",
-            )
+        self._record_stage(state=state, runtime=runtime, stage="controller_finalization", status="started")
+        try:
+            current_outline_hash = _outline_hash(state.outline)
+            if runtime.outline_review is None:
+                raise _save_gate_error(
+                    reason_code="outline_review_missing",
+                    message="还没有完成大纲正式审查，controller 不能 finalization。",
+                    next_action="调用 review_slidev_outline()",
+                )
+            if not bool(runtime.outline_review.get("ok")):
+                raise _save_gate_error(
+                    reason_code="outline_review_failed",
+                    message="Deck 大纲结构审查未通过，controller 不能 finalization。",
+                    next_action="修正大纲后重新调用 review_slidev_outline()",
+                )
+            if runtime.outline_review_hash and runtime.outline_review_hash != current_outline_hash:
+                raise _save_gate_error(
+                    reason_code="outline_review_stale",
+                    message="大纲在审查后发生了变化，controller 不能直接 finalization。",
+                    next_action="重新调用 review_slidev_outline()",
+                )
+            if runtime.reference_selection is None:
+                raise _save_gate_error(
+                    reason_code="reference_selection_missing",
+                    message="还没有完成 Slidev references 选择，controller 不能 finalization。",
+                    next_action="调用 select_slidev_references()",
+                )
+            if runtime.reference_selection_hash and runtime.reference_selection_hash != current_outline_hash:
+                raise _save_gate_error(
+                    reason_code="reference_selection_stale",
+                    message="大纲在选择 references 后发生了变化，controller 不能直接 finalization。",
+                    next_action="重新调用 select_slidev_references()",
+                )
 
-        candidate_markdown = str(markdown or runtime.latest_markdown or "").strip()
-        if not candidate_markdown:
-            raise SlidevMvpValidationError(
-                "Controller 没有拿到可 finalization 的 deck markdown。",
-                reason_code="deck_markdown_missing",
-                next_action="先产出完整 deck markdown，并至少完成一次 review_slidev_deck/validate_slidev_deck。",
+            candidate_markdown = str(markdown or runtime.latest_markdown or "").strip()
+            if not candidate_markdown:
+                raise SlidevMvpValidationError(
+                    "Controller 没有拿到可 finalization 的 deck markdown。",
+                    reason_code="deck_markdown_missing",
+                    next_action="先产出完整 deck markdown，并至少完成一次 review_slidev_deck/validate_slidev_deck。",
+                )
+
+            runtime.save_failure = None
+            outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+            runtime.deck_review = await self._review_markdown(
+                markdown=candidate_markdown,
+                outline_items=outline_items,
+                selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+                selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+                selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
+                selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
             )
+            runtime.deck_review_hash = _text_hash(candidate_markdown)
+            state.document_metadata["slidev_deck_review"] = runtime.deck_review
 
-        runtime.save_failure = None
-        outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
-        runtime.deck_review = await self._review_markdown(
-            markdown=candidate_markdown,
-            outline_items=outline_items,
-            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
-            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
-            selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
-            selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
-        )
-        runtime.deck_review_hash = _text_hash(candidate_markdown)
-        state.document_metadata["slidev_deck_review"] = runtime.deck_review
+            runtime.validation = await self._validate_markdown(
+                markdown=candidate_markdown,
+                expected_pages=int(state.num_pages or runtime.requested_pages or 0),
+                selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+                selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+                selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
+                selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
+            )
+            runtime.validation_hash = _text_hash(candidate_markdown)
+            state.document_metadata["slidev_validation"] = runtime.validation
 
-        runtime.validation = await self._validate_markdown(
-            markdown=candidate_markdown,
-            expected_pages=int(state.num_pages or runtime.requested_pages or 0),
-            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
-            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
-            selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
-            selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
-        )
-        runtime.validation_hash = _text_hash(candidate_markdown)
-        state.document_metadata["slidev_validation"] = runtime.validation
-
-        _ensure_save_prerequisites(runtime=runtime, state=state, markdown=candidate_markdown)
-        return await self._persist_artifact(
-            title=title,
-            markdown=candidate_markdown,
-            runtime=runtime,
-            state=state,
-        )
+            _ensure_save_prerequisites(runtime=runtime, state=state, markdown=candidate_markdown)
+            artifact = await self._persist_artifact(
+                title=title,
+                markdown=candidate_markdown,
+                runtime=runtime,
+                state=state,
+            )
+            self._record_stage(state=state, runtime=runtime, stage="controller_finalization", status="ok")
+            return artifact
+        except SlidevMvpValidationError as exc:
+            self._record_stage(
+                state=state,
+                runtime=runtime,
+                stage="controller_finalization",
+                status="failed",
+                reason_code=exc.reason_code,
+            )
+            raise
 
     def _build_long_deck_planning_prompt(self, resolved: _ResolvedInputs) -> str:
         return (
@@ -760,6 +1041,7 @@ class SlidevMvpService:
         chunk_specs: Sequence[_ChunkSpec],
         resolved: _ResolvedInputs,
         runtime: _RuntimeContext,
+        state: PipelineState,
     ) -> list[_ChunkExecution]:
         pending_specs = list(chunk_specs)
         executions: dict[str, _ChunkExecution] = {}
@@ -770,28 +1052,57 @@ class SlidevMvpService:
         for _attempt in range(1, LONG_DECK_CHUNK_RETRY_LIMIT + 1):
             if not pending_specs:
                 break
-            results = await run_parallel_subagents(
-                [
-                    SubagentSpec(
-                        task=self._build_chunk_task(
-                            spec=spec,
-                            resolved=resolved,
-                            runtime=runtime,
-                            retry_feedback=feedback_by_chunk.get(spec.chunk_id, ""),
-                        ),
-                        allowed_tool_names=[],
-                        max_turns=LONG_DECK_CHUNK_MAX_TURNS,
-                        system_prompt=(
-                            "You are a Slidev chunk writer. Output only markdown for the assigned slides. "
-                            "Do not include explanations or wrap the whole answer in code fences. "
-                            "Use only supported Slidev layouts and fix every retry finding when provided."
-                        ),
+            try:
+                results = await run_parallel_subagents(
+                    [
+                        SubagentSpec(
+                            task=self._build_chunk_task(
+                                spec=spec,
+                                resolved=resolved,
+                                runtime=runtime,
+                                retry_feedback=feedback_by_chunk.get(spec.chunk_id, ""),
+                            ),
+                            allowed_tool_names=[],
+                            max_turns=LONG_DECK_CHUNK_MAX_TURNS,
+                            system_prompt=(
+                                "You are a Slidev chunk writer. Output only markdown for the assigned slides. "
+                                "Do not include explanations or wrap the whole answer in code fences. "
+                                "Use only supported Slidev layouts and fix every retry finding when provided."
+                            ),
+                        )
+                        for spec in pending_specs
+                    ],
+                    registry=None,
+                    model=self.model,
+                )
+            except UnexpectedModelBehavior as exc:
+                provider_error = _provider_response_error(exc)
+                self._record_provider_error(
+                    state=state,
+                    runtime=runtime,
+                    stage="chunk_generation",
+                    attempt=_attempt,
+                    error=provider_error,
+                )
+                if _attempt >= LONG_DECK_CHUNK_RETRY_LIMIT:
+                    self._record_stage(
+                        state=state,
+                        runtime=runtime,
+                        stage="chunk_generation",
+                        status="failed",
+                        attempt=_attempt,
+                        reason_code=provider_error.reason_code,
                     )
-                    for spec in pending_specs
-                ],
-                registry=None,
-                model=self.model,
-            )
+                    raise provider_error from exc
+                self._record_retry(
+                    state=state,
+                    runtime=runtime,
+                    stage="chunk_generation",
+                    attempt=_attempt,
+                    reason_code=provider_error.reason_code,
+                    message=provider_error.message,
+                )
+                continue
 
             next_pending: list[_ChunkSpec] = []
             for spec, result in zip(pending_specs, results, strict=False):
@@ -1440,6 +1751,8 @@ class SlidevMvpService:
         selected_layouts = list(reference_selection.get("selected_layouts") or [])
         selected_blocks = list(reference_selection.get("selected_blocks") or [])
         chunk_summary = _build_chunk_summary(runtime.chunk_plan, runtime.chunk_reports)
+        retry_summary = _build_retry_summary(runtime.retry_events)
+        provider_error_summary = _build_provider_error_summary(runtime.provider_errors)
         runtime.pattern_hints = pattern_hints
         titles_by_slide_number = {
             int(item.get("slide_number") or index + 1): str(item.get("title") or f"Slide {index + 1}")
@@ -1478,6 +1791,9 @@ class SlidevMvpService:
                 "slidev_chunk_plan": list(runtime.chunk_plan),
                 "slidev_chunk_reports": list(runtime.chunk_reports),
                 "slidev_chunk_summary": chunk_summary,
+                "slidev_retry_summary": retry_summary,
+                "slidev_provider_error_summary": provider_error_summary,
+                "slidev_stage_history": list(runtime.stage_history),
                 "slidev_composition_normalization": {
                     "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                     "double_separator_frontmatter_detected": bool(
@@ -1522,6 +1838,9 @@ class SlidevMvpService:
                 ),
                 "chunk_summary": chunk_summary,
                 "chunk_reports": list(runtime.chunk_reports),
+                "retry_summary": retry_summary,
+                "provider_error_summary": provider_error_summary,
+                "stage_history": list(runtime.stage_history),
                 "composition_normalization": {
                     "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                     "double_separator_frontmatter_detected": bool(
@@ -2187,6 +2506,100 @@ def _build_chunk_summary(
         "failed_chunks": failed_chunks,
         "chunk_ids": [str(item.get("chunk_id") or "") for item in chunk_plan if isinstance(item, Mapping)],
     }
+
+
+def _build_retry_summary(retry_events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    retries_by_stage: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    for event in retry_events:
+        if not isinstance(event, Mapping):
+            continue
+        stage = str(event.get("stage") or "unknown")
+        reason = str(event.get("reason_code") or "unknown")
+        retries_by_stage[stage] = retries_by_stage.get(stage, 0) + 1
+        reasons[reason] = reasons.get(reason, 0) + 1
+    return {
+        "total_retries": len(retry_events),
+        "retries_by_stage": retries_by_stage,
+        "reasons": reasons,
+        "events": [dict(event) for event in retry_events if isinstance(event, Mapping)],
+    }
+
+
+def _build_provider_error_summary(provider_errors: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    errors_by_reason: dict[str, int] = {}
+    errors_by_stage: dict[str, int] = {}
+    for event in provider_errors:
+        if not isinstance(event, Mapping):
+            continue
+        stage = str(event.get("stage") or "unknown")
+        reason = str(event.get("reason_code") or "provider_unknown")
+        errors_by_stage[stage] = errors_by_stage.get(stage, 0) + 1
+        errors_by_reason[reason] = errors_by_reason.get(reason, 0) + 1
+    return {
+        "total_provider_errors": len(provider_errors),
+        "errors_by_stage": errors_by_stage,
+        "errors_by_reason": errors_by_reason,
+        "events": [dict(event) for event in provider_errors if isinstance(event, Mapping)],
+    }
+
+
+def _reset_generation_state(
+    *,
+    state: PipelineState,
+    runtime: _RuntimeContext,
+    preserve_long_deck_mode: bool,
+) -> None:
+    state.outline = {}
+    state.slide_contents = []
+    for key in [name for name in list(state.document_metadata) if name.startswith("slidev_")]:
+        if preserve_long_deck_mode and key == "slidev_long_deck_mode":
+            continue
+        state.document_metadata.pop(key, None)
+
+    runtime.outline_review = None
+    runtime.outline_review_hash = None
+    runtime.deck_review = None
+    runtime.deck_review_hash = None
+    runtime.validation = None
+    runtime.validation_hash = None
+    runtime.reference_selection = None
+    runtime.reference_selection_hash = None
+    runtime.pattern_hints = []
+    runtime.latest_markdown = ""
+    runtime.chunk_plan = []
+    runtime.chunk_reports = []
+    runtime.save_failure = None
+    runtime.saved_artifact = None
+    if not preserve_long_deck_mode:
+        runtime.long_deck_mode = False
+
+
+def _should_retry_generation_failure(
+    exc: SlidevMvpValidationError,
+    *,
+    attempt: int,
+    retry_limit: int,
+) -> bool:
+    if attempt >= retry_limit:
+        return False
+    retryable_reasons = {
+        "outline_missing",
+        "outline_review_missing",
+        "outline_review_failed",
+        "outline_review_stale",
+        "reference_selection_missing",
+        "reference_selection_stale",
+        "deck_markdown_missing",
+        "deck_review_missing",
+        "deck_review_failed",
+        "deck_review_stale",
+        "validation_missing",
+        "validation_failed",
+        "validation_stale",
+        "chunk_generation_failed",
+    }
+    return str(exc.reason_code or "") in retryable_reasons
 
 
 def _count_slidev_slides(markdown: str) -> int:

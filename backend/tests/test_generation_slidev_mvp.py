@@ -32,6 +32,21 @@ class StubModel(AgenticModelClient):
         return self.responses.pop(0)
 
 
+@dataclass
+class SequenceModel(AgenticModelClient):
+    responses: list[AssistantMessage | Exception]
+    seen_messages: list[list[AgenticMessage]] | None = None
+
+    async def complete(self, messages, tools) -> AssistantMessage:
+        del tools
+        if self.seen_messages is not None:
+            self.seen_messages.append(list(messages))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class FakeSessionStore:
     def __init__(
         self,
@@ -318,6 +333,27 @@ class: deck-closing
 
 Ship the normalized composition only once.
 """
+
+
+def _short_deck_agentic_responses(
+    markdown: str,
+    *,
+    outline_items: list[dict[str, str | int]] | None = None,
+    title: str = "Mini Deck",
+) -> list[AssistantMessage]:
+    items = outline_items or _quality_outline_items_five()
+    return [
+        AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "生成 Slidev deck", "status": "in_progress"}]}, tool_call_id="call-1")]),
+        AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+        AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+        AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+        AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": items}, tool_call_id="call-5")]),
+        AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+        AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-7")]),
+        AssistantMessage(parts=[ToolCall(tool_name="review_slidev_deck", args={"markdown": markdown}, tool_call_id="call-8")]),
+        AssistantMessage(parts=[ToolCall(tool_name="validate_slidev_deck", args={"markdown": markdown}, tool_call_id="call-9")]),
+        AssistantMessage(parts=[ToolCall(tool_name="save_slidev_artifact", args={"title": title, "markdown": markdown}, tool_call_id="call-10")]),
+    ]
 
 
 def _quality_outline_items() -> list[dict[str, str | int]]:
@@ -846,6 +882,78 @@ def test_slidev_mvp_service_combines_sources_and_runs_build(monkeypatch, tmp_pat
     assert fake_store.source_content_calls == [("workspace-slidev", "session-1", ["src-1"])]
 
 
+def test_slidev_mvp_service_long_deck_build_smoke(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
+    (sandbox_dir / "package.json").write_text('{"name":"slidev-mvp"}', encoding="utf-8")
+
+    commands: list[tuple[list[str], Path]] = []
+
+    async def fake_shell_runner(command, cwd):
+        commands.append((list(command), cwd))
+        return subprocess.CompletedProcess(list(command), 0, stdout="ok", stderr="")
+
+    async def fake_parallel_subagents(specs, *, registry=None, model=None):
+        del registry, model
+        return [
+            slidev_mvp_mod.AgenticLoopResult(output_text=_chunk_fragment(index), turns=1, stop_reason="text")
+            for index, _spec in enumerate(specs, start=1)
+        ]
+
+    monkeypatch.setattr(slidev_mvp_mod, "run_parallel_subagents", fake_parallel_subagents)
+
+    model = StubModel(
+        responses=[
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "长 deck 规划", "status": "in_progress"}]}, tool_call_id="call-1")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_twelve()}, tool_call_id="call-5")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+            AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-7")]),
+            AssistantMessage(parts=["planning complete"]),
+        ]
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=sandbox_dir,
+        shell_runner=fake_shell_runner,
+        model=model,
+    )
+
+    artifact = asyncio.run(
+        service.generate_deck(
+            topic="人工智能对未来工作影响",
+            content="准备一个关于人工智能对未来工作影响的12页演示文稿",
+            num_pages=12,
+            build=True,
+        )
+    )
+
+    assert artifact.validation["slide_count"] == 12
+    assert artifact.build_output_dir == artifact.artifact_dir / "dist"
+    assert commands == [
+        (["pnpm", "install"], sandbox_dir),
+        (
+            [
+                "./node_modules/.bin/slidev",
+                "build",
+                artifact.slides_path.name,
+                "--out",
+                artifact.build_output_dir.name,
+            ],
+            artifact.artifact_dir,
+        ),
+    ]
+
+
 def test_slidev_mvp_service_rejects_missing_inputs(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
 
@@ -919,6 +1027,70 @@ def test_slidev_mvp_service_classifies_non_malformed_unexpected_provider_behavio
         assert "provider_malformed_response" not in str(exc)
     else:
         raise AssertionError("expected SlidevMvpProviderError")
+
+
+def test_slidev_mvp_service_retries_short_deck_after_provider_malformed_response(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    model = SequenceModel(
+        responses=[
+            IncompleteToolCall("tool call truncated"),
+            *_short_deck_agentic_responses(_slidev_markdown(), title="AI Product Architecture Evolution"),
+        ],
+        seen_messages=[],
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(service.generate_deck(topic="AI Deck", content="offline slidev", num_pages=5))
+
+    assert artifact.validation["ok"] is True
+    assert artifact.quality["retry_summary"]["total_retries"] == 1
+    assert artifact.quality["retry_summary"]["retries_by_stage"]["short_generation"] == 1
+    assert artifact.quality["provider_error_summary"]["total_provider_errors"] == 1
+    assert artifact.quality["provider_error_summary"]["errors_by_reason"]["provider_malformed_response"] == 1
+    assert artifact.agentic["retry_summary"]["total_retries"] == 1
+
+
+def test_slidev_mvp_service_retries_short_deck_after_missing_finalizable_markdown(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    model = SequenceModel(
+        responses=[
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "生成 Slidev deck", "status": "in_progress"}]}, tool_call_id="call-1")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_five()}, tool_call_id="call-5")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+            AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-7")]),
+            AssistantMessage(parts=["done without markdown"]),
+            *_short_deck_agentic_responses(_slidev_markdown(), title="AI Product Architecture Evolution"),
+        ],
+        seen_messages=[],
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(service.generate_deck(topic="AI Deck", content="offline slidev", num_pages=5))
+
+    assert artifact.validation["ok"] is True
+    assert artifact.quality["retry_summary"]["total_retries"] == 1
+    assert artifact.quality["retry_summary"]["reasons"]["deck_markdown_missing"] == 1
 
 
 def test_slidev_mvp_counts_slides_with_per_slide_frontmatter():
@@ -1767,41 +1939,45 @@ def test_slidev_mvp_service_reports_failed_outline_review_reason_after_max_turns
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
     monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
-    model = StubModel(
+    first_attempt = [
+        AssistantMessage(
+            parts=[
+                ToolCall(
+                    tool_name="update_todo",
+                    args={"items": [{"id": 1, "task": "规划 deck", "status": "in_progress"}]},
+                    tool_call_id="call-1",
+                )
+            ]
+        ),
+        AssistantMessage(
+            parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]
+        ),
+        AssistantMessage(
+            parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
+        ),
+        AssistantMessage(
+            parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-3b")]
+        ),
+        AssistantMessage(
+            parts=[
+                ToolCall(
+                    tool_name="set_slidev_outline",
+                    args={
+                        "items": [
+                            {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+                            {"slide_number": 2, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "解释结构"},
+                        ]
+                    },
+                    tool_call_id="call-4",
+                )
+            ]
+        ),
+        AssistantMessage(parts=["done"]),
+    ]
+    model = SequenceModel(
         responses=[
-            AssistantMessage(
-                parts=[
-                    ToolCall(
-                        tool_name="update_todo",
-                        args={"items": [{"id": 1, "task": "规划 deck", "status": "in_progress"}]},
-                        tool_call_id="call-1",
-                    )
-                ]
-            ),
-            AssistantMessage(
-                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]
-            ),
-            AssistantMessage(
-                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]
-            ),
-            AssistantMessage(
-                parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-3b")]
-            ),
-            AssistantMessage(
-                parts=[
-                    ToolCall(
-                        tool_name="set_slidev_outline",
-                        args={
-                            "items": [
-                                {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
-                                {"slide_number": 2, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "解释结构"},
-                            ]
-                        },
-                        tool_call_id="call-4",
-                    )
-                ]
-            ),
-            AssistantMessage(parts=["done"]),
+            *first_attempt,
+            *first_attempt,
         ]
     )
     service = SlidevMvpService(
@@ -1954,6 +2130,63 @@ def test_slidev_mvp_service_uses_long_deck_chunk_orchestration_for_12_pages(monk
     assert len(artifact.quality["chunk_reports"]) == 4
 
 
+def test_slidev_mvp_service_retries_long_deck_planning_when_references_are_missing(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+
+    async def fake_parallel_subagents(specs, *, registry=None, model=None):
+        del registry, model
+        return [
+            slidev_mvp_mod.AgenticLoopResult(output_text=_chunk_fragment(index), turns=1, stop_reason="text")
+            for index, _spec in enumerate(specs, start=1)
+        ]
+
+    monkeypatch.setattr(slidev_mvp_mod, "run_parallel_subagents", fake_parallel_subagents)
+
+    model = SequenceModel(
+        responses=[
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "长 deck 规划", "status": "in_progress"}]}, tool_call_id="call-1")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_twelve()}, tool_call_id="call-5")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+            AssistantMessage(parts=["planning complete but no references"]),
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "长 deck 规划", "status": "in_progress"}]}, tool_call_id="call-7")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-8")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-9")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-10")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_twelve()}, tool_call_id="call-11")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-12")]),
+            AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-13")]),
+            AssistantMessage(parts=["planning complete"]),
+        ],
+        seen_messages=[],
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(
+        service.generate_deck(
+            topic="人工智能对未来工作影响",
+            content="准备一个关于人工智能对未来工作影响的12页演示文稿",
+            num_pages=12,
+            build=False,
+        )
+    )
+
+    assert artifact.validation["ok"] is True
+    assert artifact.quality["retry_summary"]["retries_by_stage"]["long_deck_planning"] == 1
+    assert artifact.quality["retry_summary"]["reasons"]["reference_selection_missing"] == 1
+
+
 def test_slidev_mvp_service_retries_only_failed_chunk_in_long_deck_mode(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
 
@@ -2009,6 +2242,60 @@ def test_slidev_mvp_service_retries_only_failed_chunk_in_long_deck_mode(monkeypa
     assert artifact.quality["chunk_summary"]["retried_chunks"] == 1
     chunk_two = next(report for report in artifact.quality["chunk_reports"] if report["chunk_id"] == "chunk-2")
     assert chunk_two["attempts"] == 2
+
+
+def test_slidev_mvp_service_retries_chunk_batch_after_provider_error(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    batch_calls: list[list[str]] = []
+
+    async def fake_parallel_subagents(specs, *, registry=None, model=None):
+        del registry, model
+        chunk_ids = [spec.task.split(" ")[3] for spec in specs]
+        batch_calls.append(chunk_ids)
+        if len(batch_calls) == 1:
+            raise IncompleteToolCall("chunk batch truncated")
+        return [
+            slidev_mvp_mod.AgenticLoopResult(output_text=_chunk_fragment(index), turns=1, stop_reason="text")
+            for index, _spec in enumerate(specs, start=1)
+        ]
+
+    monkeypatch.setattr(slidev_mvp_mod, "run_parallel_subagents", fake_parallel_subagents)
+
+    model = StubModel(
+        responses=[
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "长 deck 规划", "status": "in_progress"}]}, tool_call_id="call-1")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_twelve()}, tool_call_id="call-5")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+            AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-7")]),
+            AssistantMessage(parts=["planning complete"]),
+        ]
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(
+        service.generate_deck(
+            topic="人工智能对未来工作影响",
+            content="准备一个关于人工智能对未来工作影响的12页演示文稿",
+            num_pages=12,
+            build=False,
+        )
+    )
+
+    assert batch_calls == [["chunk-1", "chunk-2", "chunk-3", "chunk-4"], ["chunk-1", "chunk-2", "chunk-3", "chunk-4"]]
+    assert artifact.quality["retry_summary"]["retries_by_stage"]["chunk_generation"] == 1
+    assert artifact.quality["provider_error_summary"]["errors_by_reason"]["provider_malformed_response"] == 1
 
 
 def test_slidev_mvp_service_exposes_failed_chunk_reasons_in_long_deck_mode(monkeypatch, tmp_path):
