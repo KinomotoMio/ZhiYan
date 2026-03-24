@@ -18,6 +18,8 @@ import subprocess
 from typing import Any
 from uuid import uuid4
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+
 from app.core.config import settings
 from app.services.document.parser import estimate_tokens, extract_structure_signals
 from app.services.generation.agentic import (
@@ -34,6 +36,7 @@ from app.services.generation.agentic import (
     dispatch_tool_calls,
     summarize_state,
 )
+from app.services.generation.agentic.provider_failures import is_malformed_provider_response
 from app.services.generation.agentic.todo import TodoManager
 from app.services.generation.agentic.types import AgenticModelClient
 from app.services.pipeline.graph import PipelineState
@@ -167,6 +170,25 @@ class SlidevMvpValidationError(SlidevMvpError):
         details = [message]
         if reason_code:
             details.append(f"reason={reason_code}")
+        if next_action:
+            details.append(f"next={next_action}")
+        super().__init__(" | ".join(details))
+
+
+class SlidevMvpProviderError(SlidevMvpError):
+    """Raised when the upstream model/provider fails in a classified way."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        next_action: str | None = None,
+    ) -> None:
+        self.message = message
+        self.reason_code = reason_code
+        self.next_action = next_action
+        details = [message, f"reason={reason_code}"]
         if next_action:
             details.append(f"next={next_action}")
         super().__init__(" | ".join(details))
@@ -307,17 +329,20 @@ class SlidevMvpService:
         )
         registry = self._build_registry(state=state, runtime=runtime, todo_manager=todo_manager)
 
-        loop_result = await agentic_loop(
-            user_prompt=self._build_user_prompt(resolved),
-            model=self.model,
-            state=state,
-            todo_manager=todo_manager,
-            skill_summaries=build_skill_summaries(self.skill_registry),
-            harness_path=self.harness_path,
-            tool_definitions=registry.to_model_tools(),
-            dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
-            max_turns=24,
-        )
+        try:
+            loop_result = await agentic_loop(
+                user_prompt=self._build_user_prompt(resolved),
+                model=self.model,
+                state=state,
+                todo_manager=todo_manager,
+                skill_summaries=build_skill_summaries(self.skill_registry),
+                harness_path=self.harness_path,
+                tool_definitions=registry.to_model_tools(),
+                dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+                max_turns=24,
+            )
+        except UnexpectedModelBehavior as exc:
+            raise _provider_response_error(exc) from exc
         self.last_loop_result = loop_result
 
         if runtime.saved_artifact is None:
@@ -429,29 +454,40 @@ class SlidevMvpService:
             "1. 第一轮先调用 update_todo，给出本次 deck 生成计划；除非计划状态发生明显变化，否则不要重复调用 update_todo。\n"
             "2. 再调用 load_skill，name 必须是 'slidev-syntax'。\n"
             "3. 再调用 load_skill，name 必须是 'slidev-deck-quality'。\n"
-            "4. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal；这个 outline 是 deck contract，不是随手草稿。\n"
-            "5. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
-            "6. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
-            "7. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
-            "8. 在保存前调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
-            "9. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
-            "10. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
+            "4. 再调用 load_skill，name 必须是 'slidev-design-system'。\n"
+            "5. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal；这个 outline 是 deck contract，不是随手草稿。\n"
+            "6. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
+            "7. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
+            "8. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
+            "9. 在保存前调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
+            "10. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
+            "11. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
             "额外约束：\n"
             "- 不要直接调用 run_skill 来做 review_outline.py / review_deck.py / validate_deck.py。\n"
             "- subagent 的文本意见不能替代正式审查结果。\n"
+            "- 默认采用官方 `seriph` theme 作为视觉基底，不要回退成 `theme: default`。\n"
+            "- 每页先满足 role contract，再兑现对应 visual recipe；不要生成“像 markdown 文档章节”的页面。\n"
+            "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
+            "- `cover / context / framework / comparison / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
             "- 只在 review_slidev_outline / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n\n"
             "第一页语法约束：\n"
             "- 如果第一页就是 cover / center，请把 `layout`、`class` 直接写进开头的全局 frontmatter，不要先输出一个空 `---` 再开封面页。\n"
             "- 如果后续页面要使用 `layout:` / `class:` frontmatter，必须写成完整 fenced block：`---` / `layout: ...` / `class: ...` / `---`；不要输出裸 `layout:` 行。\n"
             "- 推荐第一张 slide 的开头示例：\n"
             "  ---\n"
-            "  theme: default\n"
+            "  theme: seriph\n"
             "  title: Deck Title\n"
             "  layout: cover\n"
             "  class: deck-cover\n"
             "  ---\n"
             "  # 标题\n"
             "  一句副标题\n\n"
+            "重点页型 visual recipe：\n"
+            "- cover: hero title + short subtitle + sparse density；不能像普通正文标题页。\n"
+            "- context: compact bullets + quote/callout 至少一种；不能只有平铺 bullet dump。\n"
+            "- framework: Mermaid / table / grid 优先，并补一句 takeaway；不能只列条目。\n"
+            "- comparison: `layout: two-cols` 或强 compare table，左右要有明确标签或结论。\n"
+            "- closing: `layout: end` / `center` + takeaway / next steps；不能只是“谢谢”。\n\n"
             "Slidev native pattern 优先级（按当前 slide_role 兑现，不要把它们当新的主 taxonomy）：\n"
             f"{native_mapping_guide}\n\n"
             f"目标页数：约 {resolved.num_pages} 页\n"
@@ -727,7 +763,7 @@ class SlidevMvpService:
         runtime: _RuntimeContext,
         state: PipelineState,
     ) -> SlidevMvpArtifacts:
-        normalized_markdown, normalization = _normalize_leading_first_slide_frontmatter(markdown)
+        normalized_markdown, normalization = _normalize_slidev_composition(markdown)
         runtime.artifact_dir.mkdir(parents=True, exist_ok=True)
         runtime.slides_path.write_text(normalized_markdown.rstrip() + "\n", encoding="utf-8")
         self._ensure_runtime_link(runtime.artifact_dir)
@@ -766,6 +802,15 @@ class SlidevMvpService:
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "slidev_composition_normalization": {
+                    "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
+                    "double_separator_frontmatter_detected": bool(
+                        normalization.get("double_separator_frontmatter_detected")
+                    ),
+                    "normalized_double_separator_frontmatter_count": int(
+                        normalization.get("normalized_double_separator_frontmatter_count") or 0
+                    ),
+                },
                 "slidev_blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                 "slidev_artifact_dir": str(runtime.artifact_dir),
                 "slidev_slides_path": str(runtime.slides_path),
@@ -794,6 +839,15 @@ class SlidevMvpService:
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "composition_normalization": {
+                    "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
+                    "double_separator_frontmatter_detected": bool(
+                        normalization.get("double_separator_frontmatter_detected")
+                    ),
+                    "normalized_double_separator_frontmatter_count": int(
+                        normalization.get("normalized_double_separator_frontmatter_count") or 0
+                    ),
+                },
                 "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
             },
             agentic={},
@@ -1185,6 +1239,13 @@ def _build_visual_recipe_summary(
     }
 
 
+def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, Any]]:
+    normalized, metadata = _normalize_leading_first_slide_frontmatter(markdown)
+    normalized, separator_metadata = _normalize_double_separator_slide_frontmatter(normalized)
+    metadata.update(separator_metadata)
+    return normalized, metadata
+
+
 def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict[str, Any]]:
     text = str(markdown or "")
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
@@ -1206,6 +1267,49 @@ def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict
     merged_frontmatter = _merge_frontmatter_blocks(global_frontmatter, slide_frontmatter)
     normalized = f"---\n{merged_frontmatter}\n---\n\n{remaining.lstrip()}".rstrip() + "\n"
     return normalized, {"blank_first_slide_detected": True, "normalized_first_slide_frontmatter": True}
+
+
+def _normalize_double_separator_slide_frontmatter(markdown: str) -> tuple[str, dict[str, Any]]:
+    text = str(markdown or "")
+    prefix, body = _split_global_frontmatter_block(text)
+    if not body.strip():
+        return text, {"double_separator_frontmatter_detected": False, "normalized_double_separator_frontmatter_count": 0}
+
+    lines = body.splitlines()
+    normalized_lines: list[str] = []
+    index = 0
+    inside_fence = False
+    normalized_count = 0
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            probe_index = index + 1
+            while probe_index < len(lines) and not lines[probe_index].strip():
+                probe_index += 1
+            if probe_index < len(lines) and lines[probe_index].strip() == "---":
+                frontmatter_block, next_index = _consume_slide_frontmatter_block(lines, probe_index + 1)
+                if frontmatter_block is not None:
+                    normalized_lines.extend(["---", *frontmatter_block, "---"])
+                    normalized_count += 1
+                    index = next_index
+                    continue
+
+        normalized_lines.append(line)
+        index += 1
+
+    normalized_body = "\n".join(normalized_lines).strip()
+    normalized = prefix + normalized_body
+    if normalized_body:
+        normalized = normalized.rstrip() + "\n"
+    return normalized, {
+        "double_separator_frontmatter_detected": normalized_count > 0,
+        "normalized_double_separator_frontmatter_count": normalized_count,
+    }
 
 
 def _merge_frontmatter_blocks(base: str, extra: str) -> str:
@@ -1288,6 +1392,13 @@ def _parse_slidev_slides(markdown: str) -> list[str]:
     return slides
 
 
+def _split_global_frontmatter_block(text: str) -> tuple[str, str]:
+    match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
+    if not match:
+        return "", text
+    return match.group(1), match.group(2)
+
+
 def _strip_global_frontmatter(text: str) -> str:
     match = re.match(r"^---\s*\n.*?\n---\s*\n?", text, re.DOTALL)
     if match:
@@ -1362,6 +1473,25 @@ def _collect_structure_warnings(*reports: dict[str, Any] | None) -> list[dict[st
 
 def _save_gate_error(*, reason_code: str, message: str, next_action: str) -> SlidevMvpValidationError:
     return SlidevMvpValidationError(message, reason_code=reason_code, next_action=next_action)
+
+
+def _provider_response_error(exc: UnexpectedModelBehavior) -> SlidevMvpProviderError:
+    provider_message = str(exc).strip() or type(exc).__name__
+    if is_malformed_provider_response(exc):
+        reason_code = "provider_malformed_response"
+        message = "上游模型返回了不完整或异常的响应，Slidev deck 生成已中止。"
+        next_action = "请重试生成；若持续失败，请切换模型或稍后重试。"
+    else:
+        reason_code = "provider_unexpected_behavior"
+        message = "上游模型返回了未分类的异常行为，Slidev deck 生成已中止。"
+        next_action = "请检查模型/provider 配置或更换模型后重试。"
+    if provider_message:
+        message = f"{message} provider={provider_message}"
+    return SlidevMvpProviderError(
+        message,
+        reason_code=reason_code,
+        next_action=next_action,
+    )
 
 
 def _ensure_save_prerequisites(

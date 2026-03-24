@@ -22,7 +22,7 @@ def main() -> int:
 def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
-    normalized_markdown, normalization = _normalize_leading_first_slide_frontmatter(markdown)
+    normalized_markdown, normalization = _normalize_slidev_composition(markdown)
     text = normalized_markdown.strip()
 
     if not text:
@@ -41,6 +41,13 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
             {
                 "code": "blank_first_slide_normalized",
                 "message": "Detected an empty first-slide pattern; merged the first slide frontmatter into the opening headmatter.",
+            }
+        )
+    if normalization.get("double_separator_frontmatter_detected"):
+        warnings.append(
+            {
+                "code": "double_separator_frontmatter_normalized",
+                "message": "Detected duplicated slide separator/frontmatter fences and normalized them before validation.",
             }
         )
 
@@ -181,7 +188,7 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
         warnings.append(
             {
                 "code": "low_visual_recipe_usage",
-                "message": "Deck uses too few stable visual recipe classes; key pages still look close to plain default-theme output.",
+                "message": "Deck uses too few stable visual recipe classes; key pages still look closer to markdown document sections than presentation slides.",
             }
         )
 
@@ -468,6 +475,13 @@ def _extract_first_slide_frontmatter_from_global(text: str) -> list[str]:
     return lines
 
 
+def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, bool | int]]:
+    normalized, metadata = _normalize_leading_first_slide_frontmatter(markdown)
+    normalized, separator_metadata = _normalize_double_separator_slide_frontmatter(normalized)
+    metadata.update(separator_metadata)
+    return normalized, metadata
+
+
 def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict[str, bool]]:
     text = str(markdown or "")
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
@@ -491,6 +505,49 @@ def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict
     merged = _merge_frontmatter_blocks(global_frontmatter, slide_frontmatter)
     normalized = f"---\n{merged}\n---\n\n{remaining.lstrip()}".rstrip() + "\n"
     return normalized, {"blank_first_slide_detected": True, "normalized_first_slide_frontmatter": True}
+
+
+def _normalize_double_separator_slide_frontmatter(markdown: str) -> tuple[str, dict[str, bool | int]]:
+    text = str(markdown or "")
+    prefix, body = _split_global_frontmatter_block(text)
+    if not body.strip():
+        return text, {"double_separator_frontmatter_detected": False, "normalized_double_separator_frontmatter_count": 0}
+
+    lines = body.splitlines()
+    normalized_lines: list[str] = []
+    index = 0
+    inside_fence = False
+    normalized_count = 0
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            probe_index = index + 1
+            while probe_index < len(lines) and not lines[probe_index].strip():
+                probe_index += 1
+            if probe_index < len(lines) and lines[probe_index].strip() == "---":
+                frontmatter_block, next_index = _consume_slide_frontmatter(lines, probe_index + 1)
+                if frontmatter_block is not None:
+                    normalized_lines.extend(["---", *frontmatter_block, "---"])
+                    normalized_count += 1
+                    index = next_index
+                    continue
+
+        normalized_lines.append(line)
+        index += 1
+
+    normalized_body = "\n".join(normalized_lines).strip()
+    normalized = prefix + normalized_body
+    if normalized_body:
+        normalized = normalized.rstrip() + "\n"
+    return normalized, {
+        "double_separator_frontmatter_detected": normalized_count > 0,
+        "normalized_double_separator_frontmatter_count": normalized_count,
+    }
 
 
 def _merge_frontmatter_blocks(base: str, extra: str) -> str:
@@ -517,6 +574,13 @@ def _frontmatter_key(line: str) -> str | None:
     if not line or line.startswith((" ", "\t", "-", "#")) or ":" not in line:
         return None
     return line.split(":", 1)[0].strip() or None
+
+
+def _split_global_frontmatter_block(text: str) -> tuple[str, str]:
+    match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
+    if not match:
+        return "", text
+    return match.group(1), match.group(2)
 
 
 if __name__ == "__main__":
