@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -572,16 +573,7 @@ def _copy_slidev_skills(tmp_path, monkeypatch) -> SkillRegistry:
     skills_dir = tmp_path / "skills"
     for skill_name in ("slidev-syntax", "slidev-deck-quality", "slidev-design-system"):
         source_skill_dir = settings.project_root / "skills" / skill_name
-        target_dir = skills_dir / skill_name / "scripts"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        (skills_dir / skill_name / "SKILL.md").write_text(
-            (source_skill_dir / "SKILL.md").read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
-        scripts_dir = source_skill_dir / "scripts"
-        if scripts_dir.exists():
-            for script_path in scripts_dir.glob("*.py"):
-                (target_dir / script_path.name).write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
+        shutil.copytree(source_skill_dir, skills_dir / skill_name, dirs_exist_ok=True)
     monkeypatch.setattr(settings, "skills_dir", skills_dir)
     return SkillRegistry(skills_dir)
 
@@ -1138,7 +1130,37 @@ def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
 
     assert "slidev-design-system" in prompt
     assert "theme: seriph" in prompt
+    assert "selected_style / selected_layouts / selected_blocks 当成执行协议" in prompt
     assert "不要生成“像 markdown 文档章节”的页面" in prompt
+
+
+def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=_quality_outline_items_twelve(),
+        topic="AI future of work",
+        num_pages=12,
+        material_excerpt="Prepare a structured AI presentation about the future of work.",
+    )
+
+    assert selection["selected_style"]["name"] == "tech-launch"
+    assert selection["selected_theme"]["theme"] == "seriph"
+    assert selection["selection_summary"]["reference_root"].endswith("slidev-design-system/references")
+    assert selection["selection_summary"]["selected_layout_names"][:3] == [
+        "cover-hero",
+        "context-brief",
+        "framework-visual",
+    ]
+    assert selection["selected_layouts"][0]["required_classes"] == ["deck-cover"]
+    assert selection["selected_layouts"][4]["layout"] == "two-cols"
+    assert [block["name"] for block in selection["selected_blocks"][1]["blocks"]] == [
+        "compact-bullets",
+        "quote-callout",
+    ]
+    assert selection["selected_blocks"][2]["blocks"][0]["name"] == "framework-explainer"
 
 
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
@@ -1235,6 +1257,43 @@ def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, t
     assert native_usage["plain_slide_count"] == 0
     assert native_usage["recipe_classes"]["deck-cover"] == 1
     assert native_usage["visual_recipe_slide_count"] >= 3
+
+
+def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = _quality_outline_items_five()
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI product architecture evolution",
+        num_pages=5,
+        material_excerpt="Harness drives Slidev through a layered control plane.",
+    )
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": _slidev_markdown(),
+                    "expected_pages": 5,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                },
+            },
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["reference_usage_summary"]["matched_slide_count"] >= 3
+    assert result["reference_usage_summary"]["slides"][0]["selected_layout"] == "cover-hero"
+    assert result["reference_fidelity_summary"]["matched_slide_count"] == result["reference_usage_summary"]["matched_slide_count"]
+    assert result["theme_fidelity_summary"]["selected_theme"] == "seriph"
 
 
 def test_slidev_syntax_validate_deck_counts_callout_usage(monkeypatch, tmp_path):
@@ -1342,6 +1401,43 @@ def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_
     assert {issue["code"] for issue in outline_review["issues"]} >= {"missing_closing"}
     assert deck_review["ok"] is True
     assert isinstance(deck_review["warnings"], list)
+
+
+def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = _quality_outline_items_five()
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI product architecture evolution",
+        num_pages=5,
+        material_excerpt="Harness drives Slidev through a layered control plane.",
+    )
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": _slidev_markdown(),
+                    "outline_items": outline_items,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                },
+            },
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert deck_review["reference_fidelity_summary"]["matched_slide_count"] >= 3
+    assert deck_review["theme_fidelity_summary"]["selected_theme"] == "seriph"
+    assert deck_review["slide_reports"][0]["selected_layout"]["recipe_name"] == "cover-hero"
+    assert "hero-title" in deck_review["slide_reports"][0]["selected_blocks"]
 
 
 def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):
@@ -1932,6 +2028,97 @@ def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
     assert runtime.deck_review == deck_review
     assert runtime.validation == validation
     assert state.document_metadata["slidev_visual_hints"][0]["visual_recipe"]["name"] == "cover-hero"
+
+
+def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    model = StubModel(
+        responses=_short_deck_agentic_responses(_slidev_markdown(), title="AI Product Architecture Evolution")
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(
+        service.generate_deck(
+            topic="AI Product Architecture Evolution",
+            content="Harness drives Slidev through a layered control plane.",
+            num_pages=5,
+            build=False,
+        )
+    )
+
+    assert artifact.quality["selected_style"]["name"] in {"tech-launch", "structured-insight", "narrative-brief"}
+    assert artifact.quality["selected_theme"] == "seriph"
+    assert artifact.quality["selected_layouts"][0]["recipe_name"] == "cover-hero"
+    assert artifact.quality["selected_blocks"][0]["blocks"][0]["name"] == "hero-title"
+    assert "matched_slide_count" in artifact.quality["reference_fidelity_summary"]
+    assert artifact.quality["theme_fidelity_summary"]["selected_theme"] == "seriph"
+    assert service.last_state is not None
+    assert service.last_state.document_metadata["slidev_selected_layouts"][0]["recipe_name"] == "cover-hero"
+    assert service.last_state.document_metadata["slidev_reference_selection"]["reference_root"].endswith(
+        "slidev-design-system/references"
+    )
+
+
+def test_slidev_mvp_long_deck_dispatches_selected_reference_chunks(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    captured_specs = []
+
+    async def fake_parallel_subagents(specs, *, registry=None, model=None):
+        del registry, model
+        captured_specs.extend(specs)
+        return [
+            slidev_mvp_mod.AgenticLoopResult(output_text=_chunk_fragment(index), turns=1, stop_reason="text")
+            for index, _spec in enumerate(specs, start=1)
+        ]
+
+    monkeypatch.setattr(slidev_mvp_mod, "run_parallel_subagents", fake_parallel_subagents)
+
+    model = StubModel(
+        responses=[
+            AssistantMessage(parts=[ToolCall(tool_name="update_todo", args={"items": [{"id": 1, "task": "长 deck 规划", "status": "in_progress"}]}, tool_call_id="call-1")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-syntax"}, tool_call_id="call-2")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-deck-quality"}, tool_call_id="call-3")]),
+            AssistantMessage(parts=[ToolCall(tool_name="load_skill", args={"name": "slidev-design-system"}, tool_call_id="call-4")]),
+            AssistantMessage(parts=[ToolCall(tool_name="set_slidev_outline", args={"items": _quality_outline_items_twelve()}, tool_call_id="call-5")]),
+            AssistantMessage(parts=[ToolCall(tool_name="review_slidev_outline", args={}, tool_call_id="call-6")]),
+            AssistantMessage(parts=[ToolCall(tool_name="select_slidev_references", args={}, tool_call_id="call-7")]),
+            AssistantMessage(parts=["planning complete"]),
+        ]
+    )
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+        model=model,
+    )
+
+    artifact = asyncio.run(
+        service.generate_deck(
+            topic="AI future of work",
+            content="Prepare a structured 12-page Slidev deck.",
+            num_pages=12,
+            build=False,
+        )
+    )
+
+    assert artifact.validation["slide_count"] == 12
+    assert len(captured_specs) == 4
+    assert all("layout_recipe=cover-hero" in spec.task or "layout_recipe=context-brief" in spec.task or "layout_recipe=framework-visual" in spec.task or "layout_recipe=comparison-split" in spec.task or "layout_recipe=recommendation-actions" in spec.task or "layout_recipe=closing-takeaway" in spec.task for spec in captured_specs)
+    assert "blocks=hero-title" in captured_specs[0].task
+    assert "blocks=takeaway-next-steps" in captured_specs[-1].task
 
 
 def test_slidev_mvp_service_reports_failed_outline_review_reason_after_max_turns(monkeypatch, tmp_path):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Review Slidev deck structure quality after markdown generation."""
+"""Review Slidev deck structure and selected-reference fidelity."""
 
 from __future__ import annotations
 
@@ -14,12 +14,31 @@ def main() -> int:
     parameters = payload.get("parameters") or {}
     markdown = str(parameters.get("markdown") or "")
     outline_items = parameters.get("outline_items") or []
-    result = review_deck(markdown=markdown, outline_items=outline_items)
+    selected_style = parameters.get("selected_style") or {}
+    selected_theme = parameters.get("selected_theme") or {}
+    selected_layouts = parameters.get("selected_layouts") or []
+    selected_blocks = parameters.get("selected_blocks") or []
+    result = review_deck(
+        markdown=markdown,
+        outline_items=outline_items,
+        selected_style=selected_style,
+        selected_theme=selected_theme,
+        selected_layouts=selected_layouts,
+        selected_blocks=selected_blocks,
+    )
     json.dump(result, sys.stdout, ensure_ascii=False)
     return 0
 
 
-def review_deck(*, markdown: str, outline_items: Any) -> dict[str, Any]:
+def review_deck(
+    *,
+    markdown: str,
+    outline_items: Any,
+    selected_style: Any = None,
+    selected_theme: Any = None,
+    selected_layouts: Any = None,
+    selected_blocks: Any = None,
+) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     slide_reports: list[dict[str, Any]] = []
@@ -48,6 +67,9 @@ def review_deck(*, markdown: str, outline_items: Any) -> dict[str, Any]:
             warnings,
             [],
             slide_reports,
+            markdown=normalized_markdown,
+            selected_style=_mapping(selected_style),
+            selected_theme=_mapping(selected_theme),
             expected_slide_count=0,
             actual_slide_count=0,
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
@@ -61,10 +83,16 @@ def review_deck(*, markdown: str, outline_items: Any) -> dict[str, Any]:
             warnings,
             _deck_signatures(slides),
             slide_reports,
+            markdown=normalized_markdown,
+            selected_style=_mapping(selected_style),
+            selected_theme=_mapping(selected_theme),
             expected_slide_count=0,
             actual_slide_count=len(slides),
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
         )
+
+    selected_layout_map = _selected_layout_map(selected_layouts)
+    selected_block_map = _selected_block_map(selected_blocks)
 
     if len(outline_items) != len(slides):
         issues.append(
@@ -76,7 +104,17 @@ def review_deck(*, markdown: str, outline_items: Any) -> dict[str, Any]:
 
     for slide_number, slide in enumerate(slides, start=1):
         item = outline_items[slide_number - 1] if slide_number - 1 < len(outline_items) else {}
-        slide_reports.append(_review_slide(slide_number=slide_number, slide=slide, item=item, issues=issues, warnings=warnings))
+        slide_reports.append(
+            _review_slide(
+                slide_number=slide_number,
+                slide=slide,
+                item=item,
+                selected_layout=selected_layout_map.get(slide_number, {}),
+                selected_blocks=selected_block_map.get(slide_number, []),
+                issues=issues,
+                warnings=warnings,
+            )
+        )
 
     bullet_heavy = sum(1 for slide in slides if _bullet_count(slide) >= 4)
     if len(slides) >= 4 and bullet_heavy / len(slides) >= 0.75:
@@ -102,6 +140,9 @@ def review_deck(*, markdown: str, outline_items: Any) -> dict[str, Any]:
         warnings,
         signatures,
         slide_reports,
+        markdown=normalized_markdown,
+        selected_style=_mapping(selected_style),
+        selected_theme=_mapping(selected_theme),
         expected_slide_count=len(outline_items),
         actual_slide_count=len(slides),
         blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
@@ -115,6 +156,9 @@ def _result(
     signatures: list[str],
     slide_reports: list[dict[str, Any]],
     *,
+    markdown: str,
+    selected_style: dict[str, Any],
+    selected_theme: dict[str, Any],
     expected_slide_count: int,
     actual_slide_count: int,
     blank_first_slide_detected: bool,
@@ -123,6 +167,13 @@ def _result(
     failed_slides = sum(1 for report in slide_reports if report.get("status") == "failed")
     warning_slides = sum(1 for report in slide_reports if report.get("status") == "warning")
     visual_recipe_summary = _visual_recipe_summary(slide_reports)
+    reference_fidelity_summary = _reference_fidelity_summary(slide_reports)
+    theme_fidelity_summary = _theme_fidelity_summary(
+        markdown=markdown,
+        slide_reports=slide_reports,
+        selected_style=selected_style,
+        selected_theme=selected_theme,
+    )
     return {
         "ok": ok,
         "issues": issues,
@@ -130,6 +181,8 @@ def _result(
         "signatures": signatures,
         "slide_reports": slide_reports,
         "visual_recipe_summary": visual_recipe_summary,
+        "reference_fidelity_summary": reference_fidelity_summary,
+        "theme_fidelity_summary": theme_fidelity_summary,
         "blank_first_slide_detected": blank_first_slide_detected,
         "contract_summary": {
             "expected_slide_count": expected_slide_count,
@@ -141,6 +194,8 @@ def _result(
             "failed_slides": failed_slides,
             "matched_visual_recipes": visual_recipe_summary["matched_recipe_count"],
             "weak_visual_recipes": visual_recipe_summary["weak_recipe_count"],
+            "matched_reference_recipes": reference_fidelity_summary["matched_slide_count"],
+            "weak_reference_recipes": reference_fidelity_summary["weak_slide_count"],
         },
     }
 
@@ -150,6 +205,8 @@ def _review_slide(
     slide_number: int,
     slide: str,
     item: Any,
+    selected_layout: dict[str, Any],
+    selected_blocks: list[dict[str, Any]],
     issues: list[dict[str, str]],
     warnings: list[dict[str, str]],
 ) -> dict[str, Any]:
@@ -168,13 +225,40 @@ def _review_slide(
     observed_patterns = _observed_patterns(slide)
     observed_classes = _extract_classes(slide)
     observed_signals = _observed_signals(slide, observed_layout, observed_patterns, observed_classes)
-    expected_recipe_name = str(visual_hint.get("name") or "")
-    expected_recipe_classes = [str(name).strip() for name in (visual_hint.get("preferred_classes") or []) if str(name).strip()]
-    expected_recipe_signals = [str(name).strip() for name in (visual_hint.get("required_signals") or []) if str(name).strip()]
+
+    expected_recipe_name = str(selected_layout.get("recipe_name") or visual_hint.get("name") or "")
+    expected_recipe_classes = _string_list(selected_layout.get("required_classes")) or [
+        str(name).strip() for name in (visual_hint.get("preferred_classes") or []) if str(name).strip()
+    ]
+    expected_recipe_signals = _string_list(selected_layout.get("required_visual_signals")) or [
+        str(name).strip() for name in (visual_hint.get("required_signals") or []) if str(name).strip()
+    ]
+    expected_patterns = _string_list(selected_layout.get("required_patterns"))
+    expected_block_signals = sorted(
+        {
+            signal
+            for block in selected_blocks
+            if isinstance(block, dict)
+            for signal in _string_list(block.get("required_signals"))
+        }
+    )
+    forbidden_patterns = _string_list(selected_layout.get("forbidden_patterns"))
+    forbidden_hits = _forbidden_pattern_hits(slide=slide, forbidden_patterns=forbidden_patterns)
     visual_recipe_status = _visual_recipe_status(
         role=role,
         expected_classes=expected_recipe_classes,
         expected_signals=expected_recipe_signals,
+        observed_classes=observed_classes,
+        observed_signals=observed_signals,
+    )
+    reference_fidelity = _reference_fidelity(
+        preferred_layout=str(selected_layout.get("preferred_layout") or "").strip() or None,
+        expected_patterns=expected_patterns,
+        expected_classes=expected_recipe_classes,
+        expected_block_signals=expected_block_signals,
+        forbidden_hits=forbidden_hits,
+        observed_layout=observed_layout,
+        observed_patterns=observed_patterns,
         observed_classes=observed_classes,
         observed_signals=observed_signals,
     )
@@ -214,8 +298,6 @@ def _review_slide(
             add_warning("weak_closing", f"Slide `{title}` closes the deck but the closing signal is still weak.")
         elif observed_layout not in {"end", "center"}:
             add_warning("closing_native_layout_missing", f"Slide `{title}` closes correctly but does not use `layout: end` or `layout: center`.")
-        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals and observed_layout not in {"end", "center"}:
-            add_warning("document_like_closing", f"Slide `{title}` closes semantically, but still feels like a document paragraph instead of a presentation ending.")
     elif role == "comparison":
         if not _looks_comparison_like(slide):
             add_issue(
@@ -227,43 +309,42 @@ def _review_slide(
                 "comparison_native_pattern_missing",
                 f"Slide `{title}` should use `layout: two-cols` or an explicit compare table.",
             )
-        elif visual_recipe_status != "matched" and "recipe-class" not in observed_signals:
-            add_warning("document_like_comparison", f"Slide `{title}` compares correctly, but the page still lacks strong left/right presentation contrast.")
     elif role == "framework":
         if _looks_flat_framework(slide):
             add_issue(
                 "framework_role_too_flat",
                 f"Slide `{title}` is tagged framework but reads like a flat bullet dump instead of a structured model.",
             )
-        elif _bullet_count(slide) >= 3 and not _has_visual_structure(slide):
-            add_warning(
-                "framework_role_weakened",
-                f"Slide `{title}` is a framework page but could use a clearer visual or native Slidev structure.",
-            )
         elif not {"mermaid", "table", "div-grid"}.intersection(observed_patterns):
             add_warning(
                 "framework_native_pattern_missing",
                 f"Slide `{title}` is a framework page but does not yet use a strong native structure such as Mermaid, table, or grid.",
             )
-        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals:
-            add_warning("document_like_framework", f"Slide `{title}` is structurally valid, but still feels too much like a document section instead of a modeled framework page.")
-    elif role == "context" and visual_recipe_status != "matched" and _bullet_count(slide) >= 3 and "quote-or-callout" not in observed_signals and "recipe-class" not in observed_signals:
-        add_warning("document_like_context", f"Slide `{title}` still reads like a plain markdown context page instead of a presentation setup page.")
     elif role in {"context", "detail"} and _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
         add_warning(
             "dense_context_or_detail",
             f"Slide `{title}` is dense and mostly flat bullets; consider trimming or adding one structural cue.",
         )
-    elif role == "recommendation" and "callout" not in observed_patterns and _bullet_count(slide) >= 4:
+
+    if forbidden_hits:
         add_warning(
-            "recommendation_native_pattern_missing",
-            f"Slide `{title}` would benefit from a clearer decision/callout structure instead of a flat action list.",
+            "selected_reference_forbidden_pattern",
+            f"Slide `{title}` violates selected reference anti-patterns: {', '.join(forbidden_hits)}.",
+        )
+
+    if expected_recipe_name and reference_fidelity["status"] != "matched":
+        code = "selected_reference_recipe_weak" if reference_fidelity["status"] == "weak" else "selected_reference_recipe_missing"
+        add_warning(
+            code,
+            f"Slide `{title}` does not yet fully realize selected layout/block recipe `{expected_recipe_name}`.",
         )
 
     if expected_recipe_name and visual_recipe_status != "matched":
         code = f"{role or 'slide'}_visual_recipe_weak"
-        message = f"Slide `{title}` is structurally acceptable but does not yet fully realize the `{expected_recipe_name}` visual recipe."
-        add_warning(code, message)
+        add_warning(
+            code,
+            f"Slide `{title}` is structurally acceptable but does not yet fully realize the `{expected_recipe_name}` visual recipe.",
+        )
 
     status = "pass"
     if any(finding["severity"] == "issue" for finding in findings):
@@ -287,14 +368,168 @@ def _review_slide(
             "preferred_classes": expected_recipe_classes,
             "required_signals": expected_recipe_signals,
         },
+        "selected_layout": {
+            "recipe_name": str(selected_layout.get("recipe_name") or "") or None,
+            "preferred_layout": str(selected_layout.get("preferred_layout") or "") or None,
+            "required_patterns": expected_patterns,
+            "required_classes": expected_recipe_classes,
+            "forbidden_patterns": forbidden_patterns,
+        },
+        "selected_blocks": [str(block.get("name") or "") for block in selected_blocks if isinstance(block, dict)],
         "observed_visual_recipe": {
             "matched_classes": [name for name in observed_classes if name in expected_recipe_classes],
             "matched_signals": [name for name in observed_signals if name in expected_recipe_signals],
         },
         "visual_recipe_status": visual_recipe_status if expected_recipe_name else "n/a",
+        "reference_fidelity": reference_fidelity,
         "status": status,
         "findings": findings,
     }
+
+
+def _selected_layout_map(selected_layouts: Any) -> dict[int, dict[str, Any]]:
+    result: dict[int, dict[str, Any]] = {}
+    if not isinstance(selected_layouts, list):
+        return result
+    for item in selected_layouts:
+        if not isinstance(item, dict):
+            continue
+        result[int(item.get("slide_number") or 0)] = dict(item)
+    return result
+
+
+def _selected_block_map(selected_blocks: Any) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = {}
+    if not isinstance(selected_blocks, list):
+        return result
+    for item in selected_blocks:
+        if not isinstance(item, dict):
+            continue
+        result[int(item.get("slide_number") or 0)] = [
+            dict(block) for block in (item.get("blocks") or []) if isinstance(block, dict)
+        ]
+    return result
+
+
+def _reference_fidelity(
+    *,
+    preferred_layout: str | None,
+    expected_patterns: list[str],
+    expected_classes: list[str],
+    expected_block_signals: list[str],
+    forbidden_hits: list[str],
+    observed_layout: str | None,
+    observed_patterns: list[str],
+    observed_classes: list[str],
+    observed_signals: list[str],
+) -> dict[str, Any]:
+    matched_layout = bool(preferred_layout) and observed_layout == preferred_layout
+    matched_patterns = [pattern for pattern in expected_patterns if pattern in observed_patterns or pattern in observed_signals]
+    matched_classes = [name for name in expected_classes if name in observed_classes]
+    matched_block_signals = [signal for signal in expected_block_signals if signal in observed_signals]
+    if forbidden_hits:
+        status = "forbidden"
+    elif (not preferred_layout or matched_layout) and (matched_classes or matched_patterns or matched_block_signals):
+        status = "matched"
+    elif matched_classes or matched_patterns or matched_block_signals or matched_layout:
+        status = "weak"
+    else:
+        status = "missing"
+    return {
+        "status": status,
+        "matched_layout": matched_layout,
+        "matched_patterns": matched_patterns,
+        "matched_classes": matched_classes,
+        "matched_block_signals": matched_block_signals,
+        "forbidden_patterns": forbidden_hits,
+    }
+
+
+def _reference_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0}
+    layout_names: list[str] = []
+    block_names: set[str] = set()
+    plain_like = 0
+    for report in slide_reports:
+        reference = report.get("reference_fidelity") or {}
+        status = str(reference.get("status") or "missing")
+        if status in counts:
+            counts[status] += 1
+        layout = report.get("selected_layout") or {}
+        if isinstance(layout, dict):
+            name = str(layout.get("recipe_name") or "").strip()
+            if name:
+                layout_names.append(name)
+        for name in report.get("selected_blocks") or []:
+            if str(name).strip():
+                block_names.add(str(name).strip())
+        if status in {"missing", "forbidden"}:
+            plain_like += 1
+    return {
+        "selected_layout_names": layout_names,
+        "selected_block_names": sorted(block_names),
+        "matched_slide_count": counts["matched"],
+        "weak_slide_count": counts["weak"],
+        "missing_slide_count": counts["missing"],
+        "forbidden_slide_count": counts["forbidden"],
+        "plain_like_slide_count": plain_like,
+    }
+
+
+def _theme_fidelity_summary(
+    *,
+    markdown: str,
+    slide_reports: list[dict[str, Any]],
+    selected_style: dict[str, Any],
+    selected_theme: dict[str, Any],
+) -> dict[str, Any]:
+    selected_theme_name = str(selected_theme.get("theme") or selected_style.get("theme") or "seriph")
+    observed_theme = _global_frontmatter_value(markdown, "theme") or None
+    recipe_class_slides = sum(
+        1 for report in slide_reports if any(str(name).startswith("deck-") for name in (report.get("observed_classes") or []))
+    )
+    inline_style_count = len(re.findall(r'style\s*=\s*"', markdown)) + len(re.findall(r"style\s*=\s*'", markdown))
+    status = "matched"
+    if observed_theme and observed_theme != selected_theme_name:
+        status = "weak"
+    if inline_style_count > max(2, len(slide_reports) // 2):
+        status = "weak"
+    if not recipe_class_slides:
+        status = "weak"
+    return {
+        "selected_style": str(selected_style.get("name") or "") or None,
+        "selected_theme": selected_theme_name,
+        "observed_theme": observed_theme,
+        "theme_mode": str(selected_theme.get("theme_mode") or selected_style.get("theme_mode") or "") or None,
+        "status": status,
+        "observed_theme_markers": {
+            "recipe_class_slides": recipe_class_slides,
+            "ad_hoc_inline_style_count": inline_style_count,
+        },
+    }
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _string_list(value: Any) -> list[str]:
+    return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+
+def _forbidden_pattern_hits(*, slide: str, forbidden_patterns: list[str]) -> list[str]:
+    hits: list[str] = []
+    lower = _strip_slide_frontmatter(slide).lower()
+    for pattern in forbidden_patterns:
+        if pattern == "plain-bullet-dump" and _bullet_count(slide) >= 4 and not _has_visual_structure(slide):
+            hits.append(pattern)
+        elif pattern == "unstyled-document-section" and _bullet_count(slide) >= 3 and not _has_visual_structure(slide):
+            hits.append(pattern)
+        elif pattern == "generic-thanks" and any(token in lower for token in ("thank you", "thanks", "q&a", "谢谢")):
+            hits.append(pattern)
+        elif pattern == "too-much-inline-style" and len(re.findall(r"style\s*=", slide)) > 2:
+            hits.append(pattern)
+    return hits
 
 
 def _slide_chunks(markdown: str) -> list[str]:
@@ -365,15 +600,7 @@ def _slide_signature(slide: str) -> str:
 
 
 def _has_visual_structure(slide: str) -> bool:
-    markers = (
-        "```mermaid",
-        "layout:",
-        "class:",
-        "> ",
-        "|",
-        "::",
-        "<div",
-    )
+    markers = ("```mermaid", "layout:", "class:", "> ", "|", "::", "<div")
     return any(marker in slide for marker in markers)
 
 
@@ -432,6 +659,7 @@ def _observed_signals(
         signals.add(observed_layout)
     if re.search(r"^\s*#\s+", body, re.MULTILINE):
         signals.add("hero-title")
+        signals.add("short-positioning-line")
     non_heading = [line for line in lines if not line.startswith("#")]
     if non_heading and len(non_heading[0]) <= 120:
         signals.add("short-subtitle")
@@ -454,6 +682,7 @@ def _observed_signals(
         signals.add("action-list")
     if observed_layout == "two-cols" or "table" in observed_patterns or "::left::" in body or "::right::" in body:
         signals.add("split-compare")
+        signals.add("before-after")
     if re.search(r"^\s*###?\s+", body, re.MULTILINE) or "::left::" in body or "::right::" in body:
         signals.add("contrast-labels")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
@@ -528,8 +757,7 @@ def _looks_like_cover(slide: str) -> bool:
     if not lines:
         return False
     first = lines[0]
-    heading_like = first.startswith("#")
-    return heading_like and _bullet_count(slide) <= 1 and len(lines) <= 5
+    return first.startswith("#") and _bullet_count(slide) <= 1 and len(lines) <= 5
 
 
 def _looks_like_closing(slide: str) -> bool:
@@ -598,6 +826,17 @@ def _extract_first_slide_frontmatter_from_global(text: str) -> list[str]:
         if key in allowed:
             lines.append(raw_line.rstrip())
     return lines
+
+
+def _global_frontmatter_value(markdown: str, key: str) -> str:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", markdown, re.DOTALL)
+    if not match:
+        return ""
+    frontmatter = match.group(1)
+    key_match = re.search(rf"^\s*{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not key_match:
+        return ""
+    return key_match.group(1).strip()
 
 
 def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, bool | int]]:
@@ -675,6 +914,25 @@ def _normalize_double_separator_slide_frontmatter(markdown: str) -> tuple[str, d
     }
 
 
+def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
+    index = start_index
+    block: list[str] = []
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "---":
+            return (block if _looks_like_slide_frontmatter(block) else None, index + 1)
+        block.append(lines[index])
+        index += 1
+    return None, start_index
+
+
+def _looks_like_slide_frontmatter(lines: list[str]) -> bool:
+    meaningful = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if not meaningful:
+        return False
+    return all(":" in line and not line.startswith("::") for line in meaningful)
+
+
 def _merge_frontmatter_blocks(base: str, extra: str) -> str:
     merged: list[str] = []
     key_positions: dict[str, int] = {}
@@ -706,25 +964,6 @@ def _split_global_frontmatter_block(text: str) -> tuple[str, str]:
     if not match:
         return "", text
     return match.group(1), match.group(2)
-
-
-def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
-    index = start_index
-    block: list[str] = []
-    while index < len(lines):
-        stripped = lines[index].strip()
-        if stripped == "---":
-            return (block if _looks_like_slide_frontmatter(block) else None, index + 1)
-        block.append(lines[index])
-        index += 1
-    return None, start_index
-
-
-def _looks_like_slide_frontmatter(lines: list[str]) -> bool:
-    meaningful = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
-    if not meaningful:
-        return False
-    return all(":" in line and not line.startswith("::") for line in meaningful)
 
 
 if __name__ == "__main__":

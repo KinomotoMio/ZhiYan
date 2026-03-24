@@ -1,0 +1,24 @@
+{
+  "name": "tech-launch",
+  "theme": "seriph",
+  "tone": "tech-product-launch",
+  "selection_signals": [
+    "ai",
+    "future",
+    "product",
+    "platform",
+    "launch",
+    "innovation",
+    "strategy",
+    "technology"
+  ],
+  "required_classes": [],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "too-much-inline-style"
+  ],
+  "theme_reason": "Use the official seriph theme as the baseline for a crisp tech-launch deck rhythm.",
+  "theme_mode": "official-theme-plus-light-overrides",
+  "description": "Product-launch framing with bold cover rhythm, contrast slides, and decisive closing pages."
+}

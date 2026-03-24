@@ -1,0 +1,8 @@
+{
+  "name": "compare-split",
+  "applies_to_roles": ["comparison"],
+  "recommended_structure": "two-cols or explicit compare table",
+  "required_signals": ["split-compare", "contrast-labels"],
+  "visual_constraints": ["paired contrast", "labeled sides"],
+  "anti_patterns": ["plain-bullet-dump", "unstyled-document-section"]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "context-brief",
+  "applies_to_roles": ["context", "detail"],
+  "preferred_layout": null,
+  "required_patterns": ["compact-bullets", "quote-or-callout"],
+  "required_classes": ["deck-context"],
+  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "description": "Compact setup slide with one structural cue beyond bullets.",
+  "required_visual_signals": ["compact-bullets", "quote-or-callout"]
+}

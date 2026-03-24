@@ -1,0 +1,24 @@
+{
+  "name": "structured-insight",
+  "theme": "seriph",
+  "tone": "executive-briefing",
+  "selection_signals": [
+    "report",
+    "brief",
+    "analysis",
+    "operations",
+    "team",
+    "roadmap",
+    "strategy",
+    "framework"
+  ],
+  "required_classes": [],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "too-much-inline-style"
+  ],
+  "theme_reason": "Keep the official seriph theme but bias the deck toward structured executive briefing pages.",
+  "theme_mode": "official-theme-plus-light-overrides",
+  "description": "Balanced briefing style for strategy, operating review, and framework-heavy topics."
+}

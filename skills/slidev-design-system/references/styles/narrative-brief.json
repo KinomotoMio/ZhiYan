@@ -1,0 +1,24 @@
+{
+  "name": "narrative-brief",
+  "theme": "seriph",
+  "tone": "vision-storytelling",
+  "selection_signals": [
+    "vision",
+    "story",
+    "trend",
+    "journey",
+    "future",
+    "market",
+    "change",
+    "impact"
+  ],
+  "required_classes": [],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "too-much-inline-style"
+  ],
+  "theme_reason": "Use the official seriph theme for a narrative briefing that still keeps Slidev-native structure.",
+  "theme_mode": "official-theme-plus-light-overrides",
+  "description": "Narrative-forward deck style for change, trend, and future-facing presentations."
+}
