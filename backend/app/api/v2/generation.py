@@ -37,6 +37,7 @@ from app.services.generation.loading_title import DEFAULT_LOADING_TITLE, build_l
 from app.services.generation.slidev_mvp import (
     SlidevMvpBuildError,
     SlidevMvpNotFoundError,
+    SlidevMvpProviderError,
     SlidevMvpService,
     SlidevMvpValidationError,
 )
@@ -182,6 +183,8 @@ async def create_slidev_mvp(req: SlidevMvpRequest, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SlidevMvpValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SlidevMvpProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SlidevMvpBuildError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ModelHTTPError as exc:
