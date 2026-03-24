@@ -1,0 +1,24 @@
+{
+  "name": "comparison-split",
+  "slide_role": "comparison",
+  "layout": "two-cols",
+  "container_classes": "px-12 py-10",
+  "content_classes": "gap-8",
+  "required_signals": [
+    "split-compare",
+    "contrast-labels"
+  ],
+  "anti_patterns": [
+    "single-column-comparison",
+    "unlabeled-sides"
+  ],
+  "preferred_layout": "two-cols",
+  "required_visual_signals": [
+    "split-compare",
+    "contrast-labels"
+  ],
+  "forbidden_patterns": [
+    "single-column-comparison",
+    "unlabeled-sides"
+  ]
+}

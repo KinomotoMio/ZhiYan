@@ -1,0 +1,24 @@
+{
+  "name": "context-brief",
+  "slide_role": "context",
+  "layout": null,
+  "container_classes": "px-12 py-10",
+  "content_classes": "max-w-4xl grid gap-5",
+  "required_signals": [
+    "compact-bullets",
+    "quote-or-callout"
+  ],
+  "anti_patterns": [
+    "five-plus-flat-bullets",
+    "no-intro-signal"
+  ],
+  "preferred_layout": null,
+  "required_visual_signals": [
+    "compact-bullets",
+    "quote-or-callout"
+  ],
+  "forbidden_patterns": [
+    "five-plus-flat-bullets",
+    "no-intro-signal"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "closing-takeaway",
+  "slide_role": "closing",
+  "layout": "end",
+  "container_classes": "px-12 py-12",
+  "content_classes": "max-w-4xl space-y-5",
+  "required_signals": [
+    "closing-line",
+    "next-step-or-takeaway"
+  ],
+  "anti_patterns": [
+    "weak-ending",
+    "body-copy-ending"
+  ],
+  "preferred_layout": "end",
+  "required_visual_signals": [
+    "closing-line",
+    "next-step-or-takeaway"
+  ],
+  "forbidden_patterns": [
+    "weak-ending",
+    "body-copy-ending"
+  ]
+}

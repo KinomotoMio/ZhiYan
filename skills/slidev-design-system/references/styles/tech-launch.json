@@ -1,0 +1,39 @@
+{
+  "name": "tech-launch",
+  "keywords": [
+    "ai",
+    "future",
+    "work",
+    "launch",
+    "product",
+    "platform",
+    "trend",
+    "impact",
+    "transformation",
+    "innovation"
+  ],
+  "prefers_comparison": true,
+  "supports_dense_decks": true,
+  "theme": "seriph",
+  "theme_mode": "official-theme-plus-light-overrides",
+  "theme_reason": "Use the official seriph theme as the default baseline for stronger editorial/product-launch presentation energy.",
+  "tone": "tech-product-launch",
+  "palette": [
+    "slate-950",
+    "slate-50",
+    "cyan-300"
+  ],
+  "density": "medium",
+  "typography": "hero-led launch deck with restrained supporting copy",
+  "background_rule": "dark base canvas with bright accent lines and sparse surfaces",
+  "emphasis_rule": "use one neon accent and one muted surface family to create stage-like contrast",
+  "deck_shell_classes": "bg-slate-950 text-slate-50",
+  "section_divider_classes": "uppercase tracking-[0.28em] text-cyan-300 text-xs font-600",
+  "panel_classes": "rounded-3xl border border-slate-800/80 bg-slate-900/82 shadow-2xl shadow-cyan-950/20",
+  "anti_patterns": [
+    "default-theme look",
+    "large inline style blocks",
+    "flat report tables with no visual framing",
+    "generic white document slides"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "editorial-dark",
+  "keywords": [
+    "ai",
+    "architecture",
+    "system",
+    "platform",
+    "harness",
+    "native mapping",
+    "security",
+    "infra"
+  ],
+  "prefers_comparison": false,
+  "supports_dense_decks": true,
+  "theme": "seriph",
+  "tone": "serious-technical",
+  "palette": [
+    "slate-950",
+    "slate-100",
+    "cyan-300"
+  ],
+  "density": "medium",
+  "typography": "strong-title + restrained body",
+  "background_rule": "dark canvas with sparse surfaces",
+  "emphasis_rule": "highlight only headings, tables, and short takeaway lines",
+  "anti_patterns": [
+    "rainbow accents",
+    "large emoji decoration",
+    "dense white cards on every slide"
+  ],
+  "theme_mode": "official-theme-plus-light-overrides",
+  "theme_reason": "Use the official seriph theme baseline to avoid default-theme output and keep a more presentation-like visual cadence."
+}

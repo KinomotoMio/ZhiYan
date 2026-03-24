@@ -1,0 +1,24 @@
+{
+  "name": "cover-hero",
+  "slide_role": "cover",
+  "layout": "cover",
+  "container_classes": "bg-slate-950 text-slate-50 px-14 py-12",
+  "content_classes": "max-w-4xl space-y-4",
+  "required_signals": [
+    "hero-title",
+    "short-subtitle"
+  ],
+  "anti_patterns": [
+    "bullets-on-cover",
+    "long-body-paragraph"
+  ],
+  "preferred_layout": "cover",
+  "required_visual_signals": [
+    "hero-title",
+    "short-subtitle"
+  ],
+  "forbidden_patterns": [
+    "bullets-on-cover",
+    "long-body-paragraph"
+  ]
+}
