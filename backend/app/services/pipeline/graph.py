@@ -595,6 +595,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
         deterministic = _build_deterministic_hint_selection(
             item=item,
             role=role,
+            job_id=state.job_id,
             effective_usage=effective_usage,
             content_signal_primary=primary_signal,
             content_signal_shadow=shadow_signal,
@@ -685,6 +686,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
                 selection, trace = _build_layout_selection(
                     item=item or {},
                     role=role,
+                    job_id=state.job_id,
                     requested_group=str(sel.get("group") or ""),
                     requested_sub_group=str(sel.get("sub_group") or "default"),
                     requested_variant_id=str(sel.get("variant_id") or ""),
@@ -732,6 +734,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             selection, trace = _build_layout_selection(
                 item=item,
                 role=role,
+                job_id=state.job_id,
                 requested_group="",
                 requested_sub_group="default",
                 requested_variant_id="",
@@ -1401,6 +1404,7 @@ def _build_layout_selection(
     *,
     item: dict[str, Any],
     role: str,
+    job_id: str | None,
     requested_group: str,
     requested_sub_group: str,
     requested_variant_id: str,
@@ -1471,7 +1475,7 @@ def _build_layout_selection(
         logger.error(
             "Layout selection fallback resolved to unknown layout, using safety default",
             extra={
-                "job_id": None,
+                "job_id": job_id,
                 "stage": "layout",
                 "group": role,
                 "sub_group": resolved_sub_group,
@@ -1519,6 +1523,7 @@ def _build_deterministic_hint_selection(
     *,
     item: dict[str, Any],
     role: str,
+    job_id: str | None,
     effective_usage: tuple[str, ...],
     content_signal_primary: Mapping[str, Any] | None,
     content_signal_shadow: Mapping[str, Any] | None,
@@ -1534,6 +1539,7 @@ def _build_deterministic_hint_selection(
     selection, trace = _build_layout_selection(
         item=item,
         role=role,
+        job_id=job_id,
         requested_group=role,
         requested_sub_group=hinted_sub_group,
         requested_variant_id="",
