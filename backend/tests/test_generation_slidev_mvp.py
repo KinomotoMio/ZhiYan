@@ -284,6 +284,41 @@ class: deck-closing
 """
 
 
+def _double_separator_frontmatter_markdown() -> str:
+    return """---
+theme: seriph
+title: Double Separator
+---
+
+# Double Separator
+
+This deck should not render blank slides between pages.
+
+---
+
+---
+layout: two-cols
+class: deck-comparison
+---
+
+## Compare
+
+- left
+- right
+
+---
+
+---
+layout: end
+class: deck-closing
+---
+
+# Closing
+
+Ship the normalized composition only once.
+"""
+
+
 def _quality_outline_items() -> list[dict[str, str | int]]:
     return [
         {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "建立主题定位"},
@@ -630,6 +665,18 @@ def test_slidev_mvp_normalizes_blank_first_slide_frontmatter():
     assert slidev_mvp_mod._count_slidev_slides(normalized) == 2
 
 
+def test_slidev_mvp_normalizes_double_separator_slide_frontmatter():
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    normalized, metadata = slidev_mvp_mod._normalize_slidev_composition(_double_separator_frontmatter_markdown())
+
+    assert metadata["double_separator_frontmatter_detected"] is True
+    assert metadata["normalized_double_separator_frontmatter_count"] == 2
+    assert "\n---\n\n---\nlayout: two-cols" not in normalized
+    assert "\n---\nlayout: two-cols" in normalized
+    assert slidev_mvp_mod._count_slidev_slides(normalized) == 3
+
+
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -740,6 +787,22 @@ def test_slidev_syntax_validate_deck_detects_blank_first_slide_pattern(monkeypat
     assert result["ok"] is True
     assert result["blank_first_slide_detected"] is True
     assert {warning["code"] for warning in result["warnings"]} >= {"blank_first_slide_normalized"}
+
+
+def test_slidev_syntax_validate_deck_detects_double_separator_frontmatter_pattern(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _double_separator_frontmatter_markdown(), "expected_pages": 3}},
+        )
+    )
+
+    assert result["ok"] is True
+    assert {warning["code"] for warning in result["warnings"]} >= {"double_separator_frontmatter_normalized"}
+    assert result["slide_count"] == 3
 
 
 def test_slidev_syntax_validate_deck_rejects_unfenced_slide_frontmatter(monkeypatch, tmp_path):
@@ -952,6 +1015,52 @@ def test_slidev_deck_review_reports_blank_first_slide_normalization(monkeypatch,
     assert {warning["code"] for warning in deck_review["warnings"]} >= {"blank_first_slide_normalized"}
 
 
+def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {
+            "slide_number": 1,
+            "title": "封面",
+            "slide_role": "cover",
+            "content_shape": "title-subtitle",
+            "goal": "开场",
+            "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+            "slidev_visual_hint": {"name": "cover-hero", "preferred_classes": ["deck-cover"], "required_signals": ["hero-title", "short-subtitle"]},
+        },
+        {
+            "slide_number": 2,
+            "title": "对比",
+            "slide_role": "comparison",
+            "content_shape": "compare-grid",
+            "goal": "对比",
+            "slidev_pattern_hint": {"preferred_layouts": ["two-cols"], "preferred_patterns": ["two-cols", "table"]},
+            "slidev_visual_hint": {"name": "comparison-split", "preferred_classes": ["deck-comparison"], "required_signals": ["split-compare", "contrast-labels"]},
+        },
+        {
+            "slide_number": 3,
+            "title": "收尾",
+            "slide_role": "closing",
+            "content_shape": "next-step",
+            "goal": "收束",
+            "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+            "slidev_visual_hint": {"name": "closing-takeaway", "preferred_classes": ["deck-closing"], "required_signals": ["next-step-or-takeaway"]},
+        },
+    ]
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": _double_separator_frontmatter_markdown(), "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert {warning["code"] for warning in deck_review["warnings"]} >= {"double_separator_frontmatter_normalized"}
+    assert deck_review["contract_summary"]["actual_slide_count"] == 3
+
+
 def test_slidev_deck_review_blocks_unfenced_slide_frontmatter(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -1148,6 +1257,70 @@ def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_pat
     assert runtime.saved_artifact is not None
     assert runtime.saved_artifact.markdown.startswith("---\ntheme: default\ntitle: Blank Cover Bug\nlayout: cover\nclass: deck-cover\n---")
     assert runtime.saved_artifact.quality["blank_first_slide_detected"] is True
+
+
+def test_slidev_mvp_service_persists_normalized_double_separator_frontmatter(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.generation.agentic.todo import TodoManager
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    markdown = _double_separator_frontmatter_markdown()
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    state = PipelineState(topic="demo", raw_content="demo", num_pages=3)
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=3,
+    )
+    registry = service._build_registry(state=state, runtime=runtime, todo_manager=TodoManager())
+    asyncio.run(
+        registry.get("set_slidev_outline").handler(
+            {
+                "items": [
+                    {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+                    {"slide_number": 2, "title": "对比", "slide_role": "comparison", "content_shape": "compare-grid", "goal": "对比"},
+                    {"slide_number": 3, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
+                ]
+            }
+        )
+    )
+    runtime.outline_review = {"ok": True, "issues": [], "warnings": [], "roles": ["cover", "comparison", "closing"], "contract_summary": {"hard_issue_count": 0, "warning_count": 0}}
+    runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
+    runtime.deck_review = {
+        "ok": True,
+        "issues": [],
+        "warnings": [{"code": "double_separator_frontmatter_normalized", "message": "warn"}],
+        "signatures": [],
+        "slide_reports": [],
+        "blank_first_slide_detected": False,
+        "visual_recipe_summary": {"matched_recipe_count": 0, "weak_recipe_count": 0, "missing_recipe_count": 0, "expected_recipe_names": []},
+        "contract_summary": {"hard_issue_count": 0, "warning_count": 1},
+    }
+    runtime.deck_review_hash = slidev_mvp_mod._text_hash(markdown)
+    runtime.validation = {
+        "ok": True,
+        "slide_count": 3,
+        "issues": [],
+        "warnings": [{"code": "double_separator_frontmatter_normalized", "message": "warn"}],
+        "blank_first_slide_detected": False,
+        "native_usage_summary": {"layouts": ["two-cols", "end"], "layout_counts": {"two-cols": 1, "end": 1}, "pattern_counts": {}, "class_counts": {"deck-comparison": 1, "deck-closing": 1}, "recipe_classes": {"deck-comparison": 1, "deck-closing": 1}, "native_slide_count": 3, "plain_slide_count": 0, "visual_recipe_slide_count": 2},
+    }
+    runtime.validation_hash = slidev_mvp_mod._text_hash(markdown)
+
+    asyncio.run(registry.get("save_slidev_artifact").handler({"title": "Double Separator", "markdown": markdown}))
+
+    assert runtime.saved_artifact is not None
+    assert "\n---\n\n---\nlayout: two-cols" not in runtime.saved_artifact.markdown
+    assert runtime.saved_artifact.quality["composition_normalization"]["double_separator_frontmatter_detected"] is True
+    assert runtime.saved_artifact.quality["composition_normalization"]["normalized_double_separator_frontmatter_count"] == 2
 
 
 def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):

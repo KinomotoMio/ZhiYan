@@ -727,7 +727,7 @@ class SlidevMvpService:
         runtime: _RuntimeContext,
         state: PipelineState,
     ) -> SlidevMvpArtifacts:
-        normalized_markdown, normalization = _normalize_leading_first_slide_frontmatter(markdown)
+        normalized_markdown, normalization = _normalize_slidev_composition(markdown)
         runtime.artifact_dir.mkdir(parents=True, exist_ok=True)
         runtime.slides_path.write_text(normalized_markdown.rstrip() + "\n", encoding="utf-8")
         self._ensure_runtime_link(runtime.artifact_dir)
@@ -766,6 +766,15 @@ class SlidevMvpService:
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "slidev_composition_normalization": {
+                    "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
+                    "double_separator_frontmatter_detected": bool(
+                        normalization.get("double_separator_frontmatter_detected")
+                    ),
+                    "normalized_double_separator_frontmatter_count": int(
+                        normalization.get("normalized_double_separator_frontmatter_count") or 0
+                    ),
+                },
                 "slidev_blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                 "slidev_artifact_dir": str(runtime.artifact_dir),
                 "slidev_slides_path": str(runtime.slides_path),
@@ -794,6 +803,15 @@ class SlidevMvpService:
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "composition_normalization": {
+                    "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
+                    "double_separator_frontmatter_detected": bool(
+                        normalization.get("double_separator_frontmatter_detected")
+                    ),
+                    "normalized_double_separator_frontmatter_count": int(
+                        normalization.get("normalized_double_separator_frontmatter_count") or 0
+                    ),
+                },
                 "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
             },
             agentic={},
@@ -1185,6 +1203,13 @@ def _build_visual_recipe_summary(
     }
 
 
+def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, Any]]:
+    normalized, metadata = _normalize_leading_first_slide_frontmatter(markdown)
+    normalized, separator_metadata = _normalize_double_separator_slide_frontmatter(normalized)
+    metadata.update(separator_metadata)
+    return normalized, metadata
+
+
 def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict[str, Any]]:
     text = str(markdown or "")
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
@@ -1206,6 +1231,49 @@ def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict
     merged_frontmatter = _merge_frontmatter_blocks(global_frontmatter, slide_frontmatter)
     normalized = f"---\n{merged_frontmatter}\n---\n\n{remaining.lstrip()}".rstrip() + "\n"
     return normalized, {"blank_first_slide_detected": True, "normalized_first_slide_frontmatter": True}
+
+
+def _normalize_double_separator_slide_frontmatter(markdown: str) -> tuple[str, dict[str, Any]]:
+    text = str(markdown or "")
+    prefix, body = _split_global_frontmatter_block(text)
+    if not body.strip():
+        return text, {"double_separator_frontmatter_detected": False, "normalized_double_separator_frontmatter_count": 0}
+
+    lines = body.splitlines()
+    normalized_lines: list[str] = []
+    index = 0
+    inside_fence = False
+    normalized_count = 0
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            probe_index = index + 1
+            while probe_index < len(lines) and not lines[probe_index].strip():
+                probe_index += 1
+            if probe_index < len(lines) and lines[probe_index].strip() == "---":
+                frontmatter_block, next_index = _consume_slide_frontmatter_block(lines, probe_index + 1)
+                if frontmatter_block is not None:
+                    normalized_lines.extend(["---", *frontmatter_block, "---"])
+                    normalized_count += 1
+                    index = next_index
+                    continue
+
+        normalized_lines.append(line)
+        index += 1
+
+    normalized_body = "\n".join(normalized_lines).strip()
+    normalized = prefix + normalized_body
+    if normalized_body:
+        normalized = normalized.rstrip() + "\n"
+    return normalized, {
+        "double_separator_frontmatter_detected": normalized_count > 0,
+        "normalized_double_separator_frontmatter_count": normalized_count,
+    }
 
 
 def _merge_frontmatter_blocks(base: str, extra: str) -> str:
@@ -1286,6 +1354,13 @@ def _parse_slidev_slides(markdown: str) -> list[str]:
     if slides and first_slide_frontmatter:
         slides[0] = "\n".join(["---", *first_slide_frontmatter, "---", slides[0]])
     return slides
+
+
+def _split_global_frontmatter_block(text: str) -> tuple[str, str]:
+    match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
+    if not match:
+        return "", text
+    return match.group(1), match.group(2)
 
 
 def _strip_global_frontmatter(text: str) -> str:
