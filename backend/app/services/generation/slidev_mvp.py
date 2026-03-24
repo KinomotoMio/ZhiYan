@@ -1203,7 +1203,7 @@ class SlidevMvpService:
 
         registry.register(build_set_slidev_outline_tool(state))
         registry.register(self._build_review_slidev_outline_tool(state=state, runtime=runtime, run_skill=_run_skill))
-        registry.register(self._build_select_slidev_references_tool(state=state, runtime=runtime, run_skill=_run_skill))
+        registry.register(self._build_select_slidev_references_tool(state=state, runtime=runtime))
         registry.register(self._build_review_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
         registry.register(self._build_validate_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
         registry.register(self._build_save_slidev_artifact_tool(state=state, runtime=runtime))
@@ -1248,7 +1248,6 @@ class SlidevMvpService:
         *,
         state: PipelineState,
         runtime: _RuntimeContext,
-        run_skill: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> ToolDef:
         async def _handler(args: dict[str, Any]) -> Any:
             del args
@@ -1260,20 +1259,12 @@ class SlidevMvpService:
                     next_action="先调用 set_slidev_outline(items)，再调用 select_slidev_references()",
                 )
 
-            result = await run_skill(
-                {
-                    "name": "slidev-design-system",
-                    "script": "select_references.py",
-                    "parameters": {
-                        "outline_items": outline_items,
-                        "topic": str(state.topic or state.document_metadata.get("title") or ""),
-                        "num_pages": int(state.num_pages or runtime.requested_pages or len(outline_items)),
-                        "material_excerpt": str(state.raw_content or "")[:1500],
-                    },
-                }
+            result = _select_slidev_references(
+                outline_items=outline_items,
+                topic=str(state.topic or state.document_metadata.get("title") or ""),
+                num_pages=int(state.num_pages or runtime.requested_pages or len(outline_items)),
+                material_excerpt=str(state.raw_content or "")[:1500],
             )
-            if not isinstance(result, dict):
-                raise SlidevMvpValidationError("slidev-design-system reference selection must return a JSON object.")
 
             runtime.reference_selection = result
             runtime.reference_selection_hash = _outline_hash(state.outline)
@@ -2289,6 +2280,144 @@ def _selected_theme_payload(reference_selection: Mapping[str, Any] | None) -> di
     )
     payload["theme_mode"] = str(payload.get("theme_mode") or "official-theme-plus-light-overrides")
     return payload
+
+
+def _select_slidev_references(
+    *,
+    outline_items: Sequence[Mapping[str, Any]],
+    topic: str,
+    num_pages: int,
+    material_excerpt: str,
+) -> dict[str, Any]:
+    selected_style = {
+        "name": "controller-baseline",
+        "tone": "structured-slidev",
+        "theme": "seriph",
+        "selection_reason": (
+            f"Use a deterministic controller-side baseline for `{topic or 'untitled'}` "
+            "so finalization can require a stable, non-stale reference selection."
+        ),
+    }
+    selected_theme = _selected_theme_payload({"selected_style": selected_style})
+    selected_layouts: list[dict[str, Any]] = []
+    selected_blocks: list[dict[str, Any]] = []
+    for item in outline_items:
+        if not isinstance(item, Mapping):
+            continue
+        slide_number = int(item.get("slide_number") or 0)
+        title = str(item.get("title") or f"Slide {slide_number}")
+        role = str(item.get("slide_role") or "").strip().lower()
+        content_shape = str(item.get("content_shape") or "")
+        pattern_hint = _build_slidev_pattern_hint(slide_role=role, content_shape=content_shape)
+        visual_hint = _build_slidev_visual_hint(slide_role=role, content_shape=content_shape)
+        selected_layouts.append(
+            {
+                "slide_number": slide_number,
+                "title": title,
+                "slide_role": role,
+                "recipe_name": str(visual_hint.get("name") or role or "default"),
+                "layout": _preferred_layout_for_role(role, pattern_hint),
+                "preferred_layout": _preferred_layout_for_role(role, pattern_hint),
+                "container_classes": " ".join(visual_hint.get("preferred_classes") or []),
+                "content_classes": "",
+                "required_signals": list(pattern_hint.get("preferred_patterns") or []),
+                "required_visual_signals": list(visual_hint.get("required_signals") or []),
+                "anti_patterns": ["plain-bullet-dump"],
+                "forbidden_patterns": ["unstyled-document-section"],
+            }
+        )
+        selected_blocks.append(
+            {
+                "slide_number": slide_number,
+                "title": title,
+                "slide_role": role,
+                "blocks": _block_recipes_for_role(role),
+            }
+        )
+
+    return {
+        "selected_style": selected_style,
+        "selected_theme": selected_theme,
+        "selected_layouts": selected_layouts,
+        "selected_blocks": selected_blocks,
+        "selection_summary": {
+            "style_name": selected_style["name"],
+            "style_reason": selected_style["selection_reason"],
+            "selected_theme": selected_theme["theme"],
+            "theme_reason": selected_theme["theme_reason"],
+            "selected_layout_names": [item.get("recipe_name") for item in selected_layouts],
+            "selected_block_names": [
+                block.get("name")
+                for item in selected_blocks
+                for block in (item.get("blocks") or [])
+                if isinstance(block, Mapping)
+            ],
+            "material_excerpt_used": bool(material_excerpt.strip()),
+            "num_pages": num_pages,
+        },
+    }
+
+
+def _preferred_layout_for_role(role: str, pattern_hint: Mapping[str, Any]) -> str | None:
+    layouts = [str(name).strip() for name in (pattern_hint.get("preferred_layouts") or []) if str(name).strip()]
+    if role in {"cover", "comparison", "closing"}:
+        return layouts[0] if layouts else None
+    return None
+
+
+def _block_recipes_for_role(role: str) -> list[dict[str, Any]]:
+    block_specs = {
+        "cover": [
+            {
+                "name": "hero-title",
+                "recommended_structure": "title + short subtitle",
+                "visual_constraints": ["1 title", "1 short subtitle"],
+            }
+        ],
+        "context": [
+            {
+                "name": "compact-bullets",
+                "recommended_structure": "2-4 compact bullets or one short callout",
+                "visual_constraints": ["max 4 bullets", "needs one structural cue"],
+            }
+        ],
+        "framework": [
+            {
+                "name": "framework-explainer",
+                "recommended_structure": "mermaid/table/grid + takeaway",
+                "visual_constraints": ["must look modeled", "must include takeaway"],
+            }
+        ],
+        "detail": [
+            {
+                "name": "focus-block",
+                "recommended_structure": "single focus area with 1-3 supporting points",
+                "visual_constraints": ["not a flat dump"],
+            }
+        ],
+        "comparison": [
+            {
+                "name": "compare-split",
+                "recommended_structure": "two-cols or explicit compare table",
+                "visual_constraints": ["paired contrast", "labeled sides"],
+            }
+        ],
+        "recommendation": [
+            {
+                "name": "takeaway-next-steps",
+                "recommended_structure": "decision headline + 2-4 actions",
+                "visual_constraints": ["explicit action list"],
+            }
+        ],
+        "closing": [
+            {
+                "name": "takeaway-next-steps",
+                "recommended_structure": "closing line + next steps",
+                "visual_constraints": ["clear takeaway", "strong ending"],
+            }
+        ],
+    }
+    return [dict(item) for item in block_specs.get(role, block_specs["context"])]
 
 
 def _block_recipe_prompt(block: Mapping[str, Any]) -> str:

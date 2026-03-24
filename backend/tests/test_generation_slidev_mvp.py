@@ -4,7 +4,6 @@ import asyncio
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
 
 from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError, UnexpectedModelBehavior
@@ -537,8 +536,16 @@ def _copy_slidev_skills(tmp_path, monkeypatch) -> SkillRegistry:
     skills_dir = tmp_path / "skills"
     for skill_name in ("slidev-syntax", "slidev-deck-quality", "slidev-design-system"):
         source_skill_dir = settings.project_root / "skills" / skill_name
-        target_skill_dir = skills_dir / skill_name
-        shutil.copytree(source_skill_dir, target_skill_dir, dirs_exist_ok=True)
+        target_dir = skills_dir / skill_name / "scripts"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (skills_dir / skill_name / "SKILL.md").write_text(
+            (source_skill_dir / "SKILL.md").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        scripts_dir = source_skill_dir / "scripts"
+        if scripts_dir.exists():
+            for script_path in scripts_dir.glob("*.py"):
+                (target_dir / script_path.name).write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(settings, "skills_dir", skills_dir)
     return SkillRegistry(skills_dir)
 
@@ -1549,20 +1556,11 @@ def test_slidev_mvp_service_allows_save_when_only_warnings_remain(monkeypatch, t
         "contract_summary": {"hard_issue_count": 0, "warning_count": 1},
     }
     runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
-    runtime.reference_selection = asyncio.run(
-        execute_skill(
-            "slidev-design-system",
-            "select_references.py",
-            {
-                "slides": [],
-                "parameters": {
-                    "outline_items": _quality_outline_items_five(),
-                    "topic": "demo",
-                    "num_pages": 5,
-                    "material_excerpt": "demo",
-                },
-            },
-        )
+    runtime.reference_selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=_quality_outline_items_five(),
+        topic="demo",
+        num_pages=5,
+        material_excerpt="demo",
     )
     runtime.reference_selection_hash = slidev_mvp_mod._outline_hash(state.outline)
     runtime.deck_review = {
@@ -1620,20 +1618,11 @@ def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_pat
     )
     runtime.outline_review = {"ok": True, "issues": [], "warnings": [], "roles": ["cover", "closing"], "contract_summary": {"hard_issue_count": 0, "warning_count": 0}}
     runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
-    runtime.reference_selection = asyncio.run(
-        execute_skill(
-            "slidev-design-system",
-            "select_references.py",
-            {
-                "slides": [],
-                "parameters": {
-                    "outline_items": state.outline["items"],
-                    "topic": "demo",
-                    "num_pages": 2,
-                    "material_excerpt": "demo",
-                },
-            },
-        )
+    runtime.reference_selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=state.outline["items"],
+        topic="demo",
+        num_pages=2,
+        material_excerpt="demo",
     )
     runtime.reference_selection_hash = slidev_mvp_mod._outline_hash(state.outline)
     runtime.deck_review = {
@@ -1699,20 +1688,11 @@ def test_slidev_mvp_service_persists_normalized_double_separator_frontmatter(mon
     )
     runtime.outline_review = {"ok": True, "issues": [], "warnings": [], "roles": ["cover", "comparison", "closing"], "contract_summary": {"hard_issue_count": 0, "warning_count": 0}}
     runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
-    runtime.reference_selection = asyncio.run(
-        execute_skill(
-            "slidev-design-system",
-            "select_references.py",
-            {
-                "slides": [],
-                "parameters": {
-                    "outline_items": state.outline["items"],
-                    "topic": "demo",
-                    "num_pages": 3,
-                    "material_excerpt": "demo",
-                },
-            },
-        )
+    runtime.reference_selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=state.outline["items"],
+        topic="demo",
+        num_pages=3,
+        material_excerpt="demo",
     )
     runtime.reference_selection_hash = slidev_mvp_mod._outline_hash(state.outline)
     runtime.deck_review = {
@@ -1900,20 +1880,11 @@ def test_slidev_mvp_controller_finalization_ignores_sticky_early_save_failure(mo
     )
     runtime.outline_review = {"ok": True, "issues": [], "warnings": []}
     runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
-    runtime.reference_selection = asyncio.run(
-        execute_skill(
-            "slidev-design-system",
-            "select_references.py",
-            {
-                "slides": [],
-                "parameters": {
-                    "outline_items": _quality_outline_items_five(),
-                    "topic": "demo",
-                    "num_pages": 5,
-                    "material_excerpt": "demo",
-                },
-            },
-        )
+    runtime.reference_selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=_quality_outline_items_five(),
+        topic="demo",
+        num_pages=5,
+        material_excerpt="demo",
     )
     runtime.reference_selection_hash = slidev_mvp_mod._outline_hash(state.outline)
     runtime.save_failure = SlidevMvpValidationError(
