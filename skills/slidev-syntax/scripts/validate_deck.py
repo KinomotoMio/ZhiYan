@@ -31,7 +31,8 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
     if not _has_frontmatter(text):
         issues.append({"code": "missing_frontmatter", "message": "The first slide is missing global frontmatter."})
 
-    slide_count = _count_slides(text)
+    slides = _slide_chunks(text)
+    slide_count = len(slides)
     if slide_count < 2:
         issues.append({"code": "too_few_slides", "message": "Slidev MVP deck should contain at least 2 slides."})
 
@@ -49,9 +50,10 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
 
     fence_issues = _validate_fences(text)
     issues.extend(fence_issues)
-    warnings.extend(_structure_warnings(text))
+    native_usage_summary = _native_usage_summary(slides)
+    warnings.extend(_structure_warnings(slides, native_usage_summary))
 
-    return _result(not issues, slide_count, issues, warnings)
+    return _result(not issues, slide_count, issues, warnings, native_usage_summary=native_usage_summary)
 
 
 def _result(
@@ -59,12 +61,15 @@ def _result(
     slide_count: int,
     issues: list[dict[str, str]],
     warnings: list[dict[str, str]],
+    *,
+    native_usage_summary: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "ok": ok,
         "slide_count": slide_count,
         "issues": issues,
         "warnings": warnings,
+        "native_usage_summary": native_usage_summary,
     }
 
 
@@ -80,11 +85,7 @@ def _strip_frontmatter(text: str) -> str:
 
 
 def _count_slides(text: str) -> int:
-    body = _strip_frontmatter(text).strip()
-    if not body:
-        return 1 if _has_frontmatter(text) else 0
-    chunks = [chunk for chunk in re.split(r"\n---\n", body) if chunk.strip()]
-    return max(1, len(chunks))
+    return len(_slide_chunks(text))
 
 
 def _coerce_expected_pages(value: Any) -> int | None:
@@ -114,9 +115,8 @@ def _count_fence_lines(text: str, marker: str) -> int:
     return count
 
 
-def _structure_warnings(text: str) -> list[dict[str, str]]:
+def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any]) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = []
-    slides = _slide_chunks(text)
     if not slides:
         return warnings
 
@@ -130,7 +130,7 @@ def _structure_warnings(text: str) -> list[dict[str, str]]:
                 }
             )
 
-    if len(slides) >= 4 and _native_structure_count(slides) == 0:
+    if len(slides) >= 4 and int(native_usage_summary.get("native_slide_count") or 0) == 0:
         warnings.append(
             {
                 "code": "low_slidev_native_usage",
@@ -170,7 +170,46 @@ def _slide_chunks(text: str) -> list[str]:
     body = _strip_frontmatter(text).strip()
     if not body:
         return []
-    return [chunk.strip() for chunk in re.split(r"\n---\n", body) if chunk.strip()]
+
+    slides: list[str] = []
+    current: list[str] = []
+    lines = body.splitlines()
+    index = 0
+    inside_fence = False
+    pending_frontmatter: list[str] | None = None
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            if current:
+                slide = "\n".join(current).strip()
+                if slide:
+                    slides.append(slide)
+                current = []
+            frontmatter_block, next_index = _consume_slide_frontmatter(lines, index + 1)
+            if frontmatter_block is not None:
+                pending_frontmatter = frontmatter_block
+                index = next_index
+                continue
+            index += 1
+            continue
+
+        if pending_frontmatter:
+            current.extend(["---", *pending_frontmatter, "---"])
+            pending_frontmatter = None
+        current.append(line)
+        index += 1
+
+    if pending_frontmatter:
+        current.extend(["---", *pending_frontmatter, "---"])
+    slide = "\n".join(current).strip()
+    if slide:
+        slides.append(slide)
+    return slides
 
 
 def _bullet_count(slide: str) -> int:
@@ -208,6 +247,76 @@ def _native_structure_count(slides: list[str]) -> int:
     return count
 
 
+def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
+    layout_counts: dict[str, int] = {}
+    pattern_counts: dict[str, int] = {
+        "mermaid": 0,
+        "quote": 0,
+        "table": 0,
+        "div_grid": 0,
+        "class": 0,
+    }
+    native_slide_count = 0
+
+    for slide in slides:
+        native_found = False
+        layout_name = _extract_layout_name(slide)
+        if layout_name:
+            layout_counts[layout_name] = layout_counts.get(layout_name, 0) + 1
+            native_found = True
+        if "```mermaid" in slide:
+            pattern_counts["mermaid"] += 1
+            native_found = True
+        if re.search(r"^\s*>\s+", slide, re.MULTILINE):
+            pattern_counts["quote"] += 1
+            native_found = True
+        if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
+            pattern_counts["table"] += 1
+            native_found = True
+        if "<div" in slide and "grid" in slide:
+            pattern_counts["div_grid"] += 1
+            native_found = True
+        if re.search(r"^\s*class:\s*", slide, re.MULTILINE):
+            pattern_counts["class"] += 1
+            native_found = True
+        if native_found:
+            native_slide_count += 1
+
+    return {
+        "layouts": sorted(layout_counts),
+        "layout_counts": layout_counts,
+        "pattern_counts": pattern_counts,
+        "native_slide_count": native_slide_count,
+        "plain_slide_count": max(0, len(slides) - native_slide_count),
+    }
+
+
+def _extract_layout_name(slide: str) -> str | None:
+    match = re.search(r"^\s*layout:\s*([A-Za-z0-9_-]+)\s*$", slide, re.MULTILINE)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
+    index = start_index
+    block: list[str] = []
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "---":
+            return (block if _looks_like_slide_frontmatter(block) else None, index + 1)
+        block.append(lines[index])
+        index += 1
+    return None, start_index
+
+
+def _looks_like_slide_frontmatter(lines: list[str]) -> bool:
+    meaningful = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if not meaningful:
+        return False
+    return all(":" in line and not line.startswith("::") for line in meaningful)
+
+
 def _has_repeated_run(signatures: list[str], *, threshold: int) -> bool:
     run = 1
     for index in range(1, len(signatures)):
@@ -221,7 +330,8 @@ def _has_repeated_run(signatures: list[str], *, threshold: int) -> bool:
 
 
 def _looks_like_cover(slide: str) -> bool:
-    lines = [line.strip() for line in slide.splitlines() if line.strip()]
+    body = _strip_slide_frontmatter(slide)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return False
     first = lines[0]
@@ -230,10 +340,15 @@ def _looks_like_cover(slide: str) -> bool:
 
 
 def _looks_like_closing(slide: str) -> bool:
-    lower = slide.lower()
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
     if any(token in lower for token in ("next step", "takeaway", "closing", "summary", "展望", "总结", "下一步", "结论")):
         return True
-    return _bullet_count(slide) <= 3 and len([line for line in slide.splitlines() if line.strip()]) <= 6
+    return _bullet_count(body) <= 3 and len([line for line in body.splitlines() if line.strip()]) <= 6
+
+
+def _strip_slide_frontmatter(slide: str) -> str:
+    return re.sub(r"^---\s*\n.*?\n---\s*\n?", "", slide, count=1, flags=re.DOTALL)
 
 
 if __name__ == "__main__":

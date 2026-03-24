@@ -52,6 +52,43 @@ SLIDEV_OUTLINE_ROLES = (
     "recommendation",
     "closing",
 )
+SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
+    "cover": {
+        "preferred_layouts": ["cover", "center"],
+        "preferred_patterns": ["hero-title", "short-positioning-line"],
+        "reason": "封面优先使用 Slidev 原生开场布局，突出标题与定位。",
+    },
+    "context": {
+        "preferred_layouts": [],
+        "preferred_patterns": ["callout", "quote", "compact-bullets"],
+        "reason": "背景页更适合轻量结构提示，而不是重布局。",
+    },
+    "framework": {
+        "preferred_layouts": [],
+        "preferred_patterns": ["mermaid", "table", "grid", "div-grid"],
+        "reason": "框架页优先使用图、表、网格等原生结构语言承载模型。",
+    },
+    "detail": {
+        "preferred_layouts": [],
+        "preferred_patterns": ["callout", "quote", "div-grid", "mermaid"],
+        "reason": "细节页应使用可聚焦的原生结构，而不是纯平铺 bullets。",
+    },
+    "comparison": {
+        "preferred_layouts": ["two-cols"],
+        "preferred_patterns": ["two-cols", "table", "before-after"],
+        "reason": "对比页优先使用 Slidev 双栏或表格结构建立左右对照。",
+    },
+    "recommendation": {
+        "preferred_layouts": [],
+        "preferred_patterns": ["decision-headline", "action-list", "callout"],
+        "reason": "建议页优先使用决策 headline + 行动列表的原生结构表达。",
+    },
+    "closing": {
+        "preferred_layouts": ["end", "center"],
+        "preferred_patterns": ["takeaway", "next-step", "closing-hero"],
+        "reason": "收尾页优先使用 Slidev 原生结束布局或强收束结构。",
+    },
+}
 _SUBAGENT_DEFAULT_TOOLS = ("load_skill", "run_skill")
 _SUBAGENT_FORBIDDEN_TOOLS = {
     "dispatch_subagent",
@@ -150,6 +187,7 @@ class _RuntimeContext:
     deck_review_hash: str | None = None
     validation: dict[str, Any] | None = None
     validation_hash: str | None = None
+    pattern_hints: list[dict[str, Any]] = field(default_factory=list)
     save_failure: SlidevMvpValidationError | None = None
     saved_artifact: SlidevMvpArtifacts | None = None
 
@@ -334,6 +372,10 @@ class SlidevMvpService:
 
     def _build_user_prompt(self, resolved: _ResolvedInputs) -> str:
         source_hint_text = _format_source_hints(resolved.source_hints)
+        native_mapping_guide = "\n".join(
+            f"- {role}: layouts={', '.join(spec['preferred_layouts']) or 'none'}; patterns={', '.join(spec['preferred_patterns'])}"
+            for role, spec in SLIDEV_NATIVE_PATTERN_GUIDE.items()
+        )
         return (
             "请生成一份离线 Slidev MVP deck 的 markdown 源文件。\n\n"
             "必须严格按下面顺序执行，不要跳步：\n"
@@ -343,7 +385,7 @@ class SlidevMvpService:
             "4. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal；这个 outline 是 deck contract，不是随手草稿。\n"
             "5. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
             "6. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
-            "7. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
+            "7. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
             "8. 在保存前调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
             "9. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
             "10. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
@@ -351,6 +393,8 @@ class SlidevMvpService:
             "- 不要直接调用 run_skill 来做 review_outline.py / review_deck.py / validate_deck.py。\n"
             "- subagent 的文本意见不能替代正式审查结果。\n"
             "- 只在 review_slidev_outline / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n\n"
+            "Slidev native pattern 优先级（按当前 slide_role 兑现，不要把它们当新的主 taxonomy）：\n"
+            f"{native_mapping_guide}\n\n"
             f"目标页数：约 {resolved.num_pages} 页\n"
             f"推荐页型集合：{', '.join(SLIDEV_OUTLINE_ROLES)}\n"
             f"主题：{resolved.topic}\n"
@@ -630,6 +674,8 @@ class SlidevMvpService:
 
         slide_count = _count_slidev_slides(markdown)
         outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+        pattern_hints = _extract_pattern_hints(outline_items)
+        runtime.pattern_hints = pattern_hints
         titles_by_slide_number = {
             int(item.get("slide_number") or index + 1): str(item.get("title") or f"Slide {index + 1}")
             for index, item in enumerate(outline_items)
@@ -650,6 +696,9 @@ class SlidevMvpService:
                 "slidev_outline_review": runtime.outline_review or {},
                 "slidev_deck_review": runtime.deck_review or {},
                 "slidev_structure_warnings": structure_warnings,
+                "slidev_pattern_hints": pattern_hints,
+                "slidev_native_usage": (runtime.validation or {}).get("native_usage_summary", {}),
+                "slidev_mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
                 "slidev_artifact_dir": str(runtime.artifact_dir),
                 "slidev_slides_path": str(runtime.slides_path),
             }
@@ -669,6 +718,8 @@ class SlidevMvpService:
                 "outline_review": runtime.outline_review or {},
                 "deck_review": runtime.deck_review or {},
                 "structure_warnings": structure_warnings,
+                "pattern_hints": pattern_hints,
+                "mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
             },
             agentic={},
         )
@@ -754,6 +805,7 @@ def build_set_slidev_outline_tool(state: PipelineState) -> ToolDef:
                 raise ValueError("set_slidev_outline slide_number must be an integer") from exc
             if slide_number <= 0:
                 raise ValueError("set_slidev_outline slide_number must be a positive integer")
+            pattern_hint = _build_slidev_pattern_hint(slide_role=slide_role, content_shape=content_shape)
             outline_items.append(
                 {
                     "slide_number": slide_number,
@@ -761,6 +813,7 @@ def build_set_slidev_outline_tool(state: PipelineState) -> ToolDef:
                     "slide_role": slide_role,
                     "content_shape": content_shape,
                     "goal": goal,
+                    "slidev_pattern_hint": pattern_hint,
                 }
             )
 
@@ -773,9 +826,23 @@ def build_set_slidev_outline_tool(state: PipelineState) -> ToolDef:
 
         state.outline = {"items": outline_items}
         state.num_pages = max(int(state.num_pages or 0), len(outline_items))
+        state.document_metadata["slidev_pattern_hints"] = [
+            {
+                "slide_number": int(item["slide_number"]),
+                "title": str(item["title"]),
+                "slide_role": str(item["slide_role"]),
+                "preferred_layouts": list(item.get("slidev_pattern_hint", {}).get("preferred_layouts") or []),
+                "preferred_patterns": list(item.get("slidev_pattern_hint", {}).get("preferred_patterns") or []),
+            }
+            for item in outline_items
+        ]
         role_preview = "，".join(f"{item['title']}({item['slide_role']})" for item in outline_items[:4])
         suffix = "，..." if len(outline_items) > 4 else ""
-        return f"Recorded Slidev outline with {len(outline_items)} planned slides: {role_preview}{suffix}"
+        hint_preview = "；".join(
+            _pattern_hint_preview(item.get("slidev_pattern_hint", {})) for item in outline_items[:3] if isinstance(item, dict)
+        )
+        hint_suffix = f" Native hints: {hint_preview}" if hint_preview else ""
+        return f"Recorded Slidev outline with {len(outline_items)} planned slides: {role_preview}{suffix}{hint_suffix}"
 
     return ToolDef(
         name="set_slidev_outline",
@@ -850,18 +917,174 @@ def _guess_title_from_content(material: str) -> str:
 
 
 def _count_slidev_slides(markdown: str) -> int:
+    return len(_parse_slidev_slides(markdown))
+
+
+def _build_slidev_pattern_hint(*, slide_role: str, content_shape: str) -> dict[str, Any]:
+    base = dict(SLIDEV_NATIVE_PATTERN_GUIDE.get(slide_role, {"preferred_layouts": [], "preferred_patterns": [], "reason": ""}))
+    layouts = list(base.get("preferred_layouts") or [])
+    patterns = list(base.get("preferred_patterns") or [])
+    lower_shape = content_shape.strip().lower()
+
+    if "compare" in lower_shape or "response" in lower_shape:
+        if "two-cols" not in layouts:
+            layouts.append("two-cols")
+        if "table" not in patterns:
+            patterns.append("table")
+    if "quote" in lower_shape and "quote" not in layouts:
+        layouts.append("quote")
+    if "section" in lower_shape and "section" not in layouts:
+        layouts.append("section")
+    if "timeline" in lower_shape or "diagram" in lower_shape:
+        if "mermaid" not in patterns:
+            patterns.append("mermaid")
+    if "grid" in lower_shape:
+        for name in ("grid", "div-grid"):
+            if name not in patterns:
+                patterns.append(name)
+    if "callout" in lower_shape and "callout" not in patterns:
+        patterns.append("callout")
+
+    return {
+        "preferred_layouts": layouts,
+        "preferred_patterns": patterns,
+        "reason": base.get("reason") or f"{slide_role} 应优先兑现其 Slidev native pattern。",
+    }
+
+
+def _pattern_hint_preview(pattern_hint: Mapping[str, Any]) -> str:
+    layouts = pattern_hint.get("preferred_layouts") or []
+    patterns = pattern_hint.get("preferred_patterns") or []
+    layout_text = ",".join(str(name) for name in layouts[:2]) or "none"
+    pattern_text = ",".join(str(name) for name in patterns[:2]) or "none"
+    return f"layouts={layout_text}; patterns={pattern_text}"
+
+
+def _extract_pattern_hints(outline_items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
+    for item in outline_items:
+        if not isinstance(item, Mapping):
+            continue
+        hint = item.get("slidev_pattern_hint") or {}
+        if not isinstance(hint, Mapping):
+            hint = {}
+        hints.append(
+            {
+                "slide_number": int(item.get("slide_number") or 0),
+                "title": str(item.get("title") or ""),
+                "slide_role": str(item.get("slide_role") or ""),
+                "content_shape": str(item.get("content_shape") or ""),
+                "preferred_layouts": list(hint.get("preferred_layouts") or []),
+                "preferred_patterns": list(hint.get("preferred_patterns") or []),
+                "reason": str(hint.get("reason") or ""),
+            }
+        )
+    return hints
+
+
+def _build_mapping_summary(pattern_hints: Sequence[Mapping[str, Any]], validation: Mapping[str, Any]) -> dict[str, Any]:
+    recommended_layouts = sorted(
+        {
+            str(layout).strip()
+            for hint in pattern_hints
+            for layout in (hint.get("preferred_layouts") or [])
+            if str(layout).strip()
+        }
+    )
+    recommended_patterns = sorted(
+        {
+            str(pattern).strip()
+            for hint in pattern_hints
+            for pattern in (hint.get("preferred_patterns") or [])
+            if str(pattern).strip()
+        }
+    )
+    native_usage = validation.get("native_usage_summary") if isinstance(validation, Mapping) else {}
+    if not isinstance(native_usage, Mapping):
+        native_usage = {}
+    return {
+        "hinted_slide_count": len(pattern_hints),
+        "recommended_layouts": recommended_layouts,
+        "recommended_patterns": recommended_patterns,
+        "observed_layouts": list(native_usage.get("layouts") or []),
+        "native_slide_count": int(native_usage.get("native_slide_count") or 0),
+        "plain_slide_count": int(native_usage.get("plain_slide_count") or 0),
+    }
+
+
+def _parse_slidev_slides(markdown: str) -> list[str]:
     text = markdown.strip()
     if not text:
-        return 0
+        return []
+    body = _strip_global_frontmatter(text)
+    if not body.strip():
+        return []
 
-    body = text
-    if body.startswith("---"):
-        match = re.match(r"^---\s*\n.*?\n---\s*\n?", body, re.DOTALL)
-        if match:
-            body = body[match.end():]
+    slides: list[str] = []
+    current: list[str] = []
+    lines = body.splitlines()
+    index = 0
+    inside_fence = False
+    pending_frontmatter: list[str] | None = None
 
-    slides = [chunk for chunk in re.split(r"\n---\n", body) if chunk.strip()]
-    return max(1, len(slides))
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            if current:
+                slide_text = "\n".join(current).strip()
+                if slide_text:
+                    slides.append(slide_text)
+                current = []
+            frontmatter_block, next_index = _consume_slide_frontmatter_block(lines, index + 1)
+            if frontmatter_block is not None:
+                pending_frontmatter = frontmatter_block
+                index = next_index
+                continue
+            index += 1
+            continue
+
+        if pending_frontmatter:
+            current.extend(["---", *pending_frontmatter, "---"])
+            pending_frontmatter = None
+        current.append(line)
+        index += 1
+
+    if pending_frontmatter:
+        current.extend(["---", *pending_frontmatter, "---"])
+    slide_text = "\n".join(current).strip()
+    if slide_text:
+        slides.append(slide_text)
+    return slides
+
+
+def _strip_global_frontmatter(text: str) -> str:
+    match = re.match(r"^---\s*\n.*?\n---\s*\n?", text, re.DOTALL)
+    if match:
+        return text[match.end():]
+    return text
+
+
+def _consume_slide_frontmatter_block(lines: Sequence[str], start_index: int) -> tuple[list[str] | None, int]:
+    index = start_index
+    block: list[str] = []
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "---":
+            return (block if _looks_like_slide_frontmatter(block) else None, index + 1)
+        block.append(lines[index])
+        index += 1
+    return None, start_index
+
+
+def _looks_like_slide_frontmatter(lines: Sequence[str]) -> bool:
+    meaningful = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if not meaningful:
+        return False
+    return all(":" in line and not line.startswith("::") for line in meaningful)
 
 
 def _text_hash(text: str) -> str:

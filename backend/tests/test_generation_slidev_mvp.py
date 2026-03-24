@@ -147,6 +147,52 @@ title: Contract Drift
 """
 
 
+def _native_layout_markdown() -> str:
+    return """---
+theme: default
+title: Native Mapping Deck
+---
+
+---
+layout: cover
+---
+
+# Native Mapping Deck
+
+Contract-first Slidev output
+
+---
+
+## Why Native Patterns Matter
+
+> Use built-in layouts when the semantic fit is stable.
+
+---
+layout: two-cols
+---
+
+## High Fidelity
+
+::left::
+
+- explicit layout mapping
+- stable compare structure
+
+::right::
+
+- less prompt ambiguity
+- better preview consistency
+
+---
+layout: end
+---
+
+# Next Steps
+
+Adopt the stable mappings first.
+"""
+
+
 def _quality_outline_items() -> list[dict[str, str | int]]:
     return [
         {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "建立主题定位"},
@@ -292,8 +338,11 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
 
     assert artifact.slides_path.exists()
     assert artifact.validation["ok"] is True
+    assert artifact.validation["native_usage_summary"]["plain_slide_count"] >= 1
     assert artifact.quality["outline_review"]["ok"] is True
     assert artifact.quality["deck_review"]["ok"] is True
+    assert artifact.quality["pattern_hints"][0]["slide_role"] == "cover"
+    assert "cover" in artifact.quality["mapping_summary"]["recommended_layouts"]
     assert artifact.agentic["used_subagent"] is True
     assert artifact.agentic["loaded_skills"] == ["slidev-deck-quality", "slidev-syntax"]
     assert "大纲已生成：5 页 - 封面(cover)；为什么现在要做(context)；Harness 分层(framework)" in artifact.agentic["final_state_summary"]
@@ -469,6 +518,12 @@ def test_slidev_mvp_service_rejects_missing_inputs(monkeypatch, tmp_path):
         raise AssertionError("expected SlidevMvpValidationError")
 
 
+def test_slidev_mvp_counts_slides_with_per_slide_frontmatter():
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    assert slidev_mvp_mod._count_slidev_slides(_native_layout_markdown()) == 4
+
+
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -542,6 +597,24 @@ title: Flat Deck
     assert result["ok"] is True
     warning_codes = {warning["code"] for warning in result["warnings"]}
     assert "low_slidev_native_usage" in warning_codes
+
+
+def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _native_layout_markdown(), "expected_pages": 4}},
+        )
+    )
+
+    assert result["ok"] is True
+    native_usage = result["native_usage_summary"]
+    assert native_usage["layouts"] == ["cover", "end", "two-cols"]
+    assert native_usage["native_slide_count"] == 4
+    assert native_usage["plain_slide_count"] == 0
 
 
 def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_path):
@@ -642,6 +715,58 @@ def test_slidev_deck_review_returns_slide_reports_and_blocks_contract_mismatches
     assert deck_review["slide_reports"][1]["role"] == "comparison"
     assert deck_review["slide_reports"][1]["status"] == "failed"
     assert {finding["code"] for finding in deck_review["slide_reports"][1]["findings"]} == {"comparison_role_mismatch"}
+
+
+def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {
+            "slide_number": 1,
+            "title": "封面",
+            "slide_role": "cover",
+            "content_shape": "title-subtitle",
+            "goal": "开场",
+            "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+        },
+        {
+            "slide_number": 2,
+            "title": "背景",
+            "slide_role": "context",
+            "content_shape": "quote-callout",
+            "goal": "背景",
+            "slidev_pattern_hint": {"preferred_layouts": [], "preferred_patterns": ["quote", "callout"]},
+        },
+        {
+            "slide_number": 3,
+            "title": "方案对比",
+            "slide_role": "comparison",
+            "content_shape": "compare-grid",
+            "goal": "对比路径",
+            "slidev_pattern_hint": {"preferred_layouts": ["two-cols"], "preferred_patterns": ["two-cols", "table"]},
+        },
+        {
+            "slide_number": 4,
+            "title": "下一步",
+            "slide_role": "closing",
+            "content_shape": "next-step",
+            "goal": "收束",
+            "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+        },
+    ]
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": _native_layout_markdown(), "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert deck_review["slide_reports"][0]["observed_layout"] == "cover"
+    assert deck_review["slide_reports"][2]["observed_layout"] == "two-cols"
+    assert deck_review["slide_reports"][3]["observed_layout"] == "end"
+    assert deck_review["slide_reports"][0]["preferred_layouts"] == ["cover", "center"]
 
 
 def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp_path):
@@ -758,6 +883,7 @@ def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
     registry = service._build_registry(state=state, runtime=runtime, todo_manager=TodoManager())
     asyncio.run(registry.get("set_slidev_outline").handler({"items": _quality_outline_items_five()}))
     markdown = _slidev_markdown()
+    assert state.document_metadata["slidev_pattern_hints"][0]["preferred_layouts"] == ["cover", "center"]
 
     outline_review = asyncio.run(registry.get("review_slidev_outline").handler({}))
     deck_review = asyncio.run(registry.get("review_slidev_deck").handler({"markdown": markdown}))

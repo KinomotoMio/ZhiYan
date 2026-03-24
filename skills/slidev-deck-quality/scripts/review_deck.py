@@ -122,7 +122,15 @@ def _review_slide(
     warnings: list[dict[str, str]],
 ) -> dict[str, Any]:
     role = str(item.get("slide_role") or "").strip().lower() if isinstance(item, dict) else ""
+    content_shape = str(item.get("content_shape") or "").strip().lower() if isinstance(item, dict) else ""
     title = str(item.get("title") or f"Slide {slide_number}").strip() if isinstance(item, dict) else f"Slide {slide_number}"
+    pattern_hint = item.get("slidev_pattern_hint") if isinstance(item, dict) else {}
+    if not isinstance(pattern_hint, dict):
+        pattern_hint = {}
+    preferred_layouts = [str(name).strip() for name in (pattern_hint.get("preferred_layouts") or []) if str(name).strip()]
+    preferred_patterns = [str(name).strip() for name in (pattern_hint.get("preferred_patterns") or []) if str(name).strip()]
+    observed_layout = _extract_layout_name(slide)
+    observed_patterns = _observed_patterns(slide)
     findings: list[dict[str, str]] = []
 
     def add_issue(code: str, message: str) -> None:
@@ -138,6 +146,8 @@ def _review_slide(
     if role == "cover":
         if not _looks_like_cover(slide):
             add_issue("cover_role_mismatch", f"Slide `{title}` is tagged cover but does not read like a cover slide.")
+        elif observed_layout not in {"cover", "center"}:
+            add_warning("cover_native_layout_missing", f"Slide `{title}` reads like cover but does not use `layout: cover` or `layout: center`.")
     elif role == "closing":
         if not _looks_like_closing(slide):
             add_issue(
@@ -146,11 +156,18 @@ def _review_slide(
             )
         elif not _has_strong_closing_signal(slide):
             add_warning("weak_closing", f"Slide `{title}` closes the deck but the closing signal is still weak.")
+        elif observed_layout not in {"end", "center"}:
+            add_warning("closing_native_layout_missing", f"Slide `{title}` closes correctly but does not use `layout: end` or `layout: center`.")
     elif role == "comparison":
         if not _looks_comparison_like(slide):
             add_issue(
                 "comparison_role_mismatch",
                 f"Slide `{title}` is tagged comparison but lacks a clear compare structure.",
+            )
+        elif observed_layout != "two-cols" and "table" not in observed_patterns:
+            add_issue(
+                "comparison_native_pattern_missing",
+                f"Slide `{title}` should use `layout: two-cols` or an explicit compare table.",
             )
     elif role == "framework":
         if _looks_flat_framework(slide):
@@ -163,10 +180,20 @@ def _review_slide(
                 "framework_role_weakened",
                 f"Slide `{title}` is a framework page but could use a clearer visual or native Slidev structure.",
             )
+        elif not {"mermaid", "table", "div-grid"}.intersection(observed_patterns):
+            add_warning(
+                "framework_native_pattern_missing",
+                f"Slide `{title}` is a framework page but does not yet use a strong native structure such as Mermaid, table, or grid.",
+            )
     elif role in {"context", "detail"} and _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
         add_warning(
             "dense_context_or_detail",
             f"Slide `{title}` is dense and mostly flat bullets; consider trimming or adding one structural cue.",
+        )
+    elif role == "recommendation" and "callout" not in observed_patterns and _bullet_count(slide) >= 4:
+        add_warning(
+            "recommendation_native_pattern_missing",
+            f"Slide `{title}` would benefit from a clearer decision/callout structure instead of a flat action list.",
         )
 
     status = "pass"
@@ -179,6 +206,11 @@ def _review_slide(
         "slide_number": slide_number,
         "title": title,
         "role": role or None,
+        "content_shape": content_shape or None,
+        "preferred_layouts": preferred_layouts,
+        "preferred_patterns": preferred_patterns,
+        "observed_layout": observed_layout,
+        "observed_patterns": observed_patterns,
         "status": status,
         "findings": findings,
     }
@@ -189,7 +221,48 @@ def _slide_chunks(markdown: str) -> list[str]:
     if not text:
         return []
     body = re.sub(r"^---\s*\n.*?\n---\s*\n?", "", text, count=1, flags=re.DOTALL)
-    return [chunk.strip() for chunk in re.split(r"\n---\n", body) if chunk.strip()]
+    if not body.strip():
+        return []
+
+    slides: list[str] = []
+    current: list[str] = []
+    lines = body.splitlines()
+    index = 0
+    inside_fence = False
+    pending_frontmatter: list[str] | None = None
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            inside_fence = not inside_fence
+
+        if not inside_fence and stripped == "---":
+            if current:
+                slide = "\n".join(current).strip()
+                if slide:
+                    slides.append(slide)
+                current = []
+            frontmatter_block, next_index = _consume_slide_frontmatter(lines, index + 1)
+            if frontmatter_block is not None:
+                pending_frontmatter = frontmatter_block
+                index = next_index
+                continue
+            index += 1
+            continue
+
+        if pending_frontmatter:
+            current.extend(["---", *pending_frontmatter, "---"])
+            pending_frontmatter = None
+        current.append(line)
+        index += 1
+
+    if pending_frontmatter:
+        current.extend(["---", *pending_frontmatter, "---"])
+    slide = "\n".join(current).strip()
+    if slide:
+        slides.append(slide)
+    return slides
 
 
 def _deck_signatures(slides: list[str]) -> list[str]:
@@ -220,6 +293,31 @@ def _has_visual_structure(slide: str) -> bool:
     return any(marker in slide for marker in markers)
 
 
+def _extract_layout_name(slide: str) -> str | None:
+    match = re.search(r"^\s*layout:\s*([A-Za-z0-9_-]+)\s*$", slide, re.MULTILINE)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _observed_patterns(slide: str) -> list[str]:
+    patterns: list[str] = []
+    layout_name = _extract_layout_name(slide)
+    if layout_name:
+        patterns.append(layout_name)
+    if "```mermaid" in slide:
+        patterns.append("mermaid")
+    if re.search(r"^\s*>\s+", slide, re.MULTILINE):
+        patterns.append("quote")
+    if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
+        patterns.append("table")
+    if "<div" in slide and "grid" in slide:
+        patterns.append("div-grid")
+    if "::" in slide:
+        patterns.append("callout")
+    return patterns
+
+
 def _has_repeated_run(signatures: list[str], *, threshold: int) -> bool:
     run = 1
     for index in range(1, len(signatures)):
@@ -233,7 +331,8 @@ def _has_repeated_run(signatures: list[str], *, threshold: int) -> bool:
 
 
 def _looks_like_cover(slide: str) -> bool:
-    lines = [line.strip() for line in slide.splitlines() if line.strip()]
+    body = _strip_slide_frontmatter(slide)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return False
     first = lines[0]
@@ -242,24 +341,57 @@ def _looks_like_cover(slide: str) -> bool:
 
 
 def _looks_like_closing(slide: str) -> bool:
-    lower = slide.lower()
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
     if any(token in lower for token in ("总结", "展望", "下一步", "结论", "next step", "takeaway", "summary")):
         return True
-    return _bullet_count(slide) <= 3 and len([line for line in slide.splitlines() if line.strip()]) <= 6
+    return _bullet_count(body) <= 3 and len([line for line in body.splitlines() if line.strip()]) <= 6
 
 
 def _has_strong_closing_signal(slide: str) -> bool:
-    lower = slide.lower()
+    lower = _strip_slide_frontmatter(slide).lower()
     markers = ("下一步", "结论", "总结", "takeaway", "next step", "summary", "action", "decision")
-    return any(marker in lower for marker in markers) or "layout: end" in lower
+    return any(marker in lower for marker in markers) or "layout: end" in slide.lower()
 
 
 def _looks_comparison_like(slide: str) -> bool:
-    return "|" in slide or "vs" in slide.lower() or "对比" in slide or "before" in slide.lower()
+    body = _strip_slide_frontmatter(slide)
+    return (
+        "|" in body
+        or "vs" in body.lower()
+        or "对比" in body
+        or "before" in body.lower()
+        or _extract_layout_name(slide) == "two-cols"
+        or "::left::" in body
+        or "::right::" in body
+    )
 
 
 def _looks_flat_framework(slide: str) -> bool:
     return _bullet_count(slide) >= 4 and not _has_visual_structure(slide)
+
+
+def _strip_slide_frontmatter(slide: str) -> str:
+    return re.sub(r"^---\s*\n.*?\n---\s*\n?", "", slide, count=1, flags=re.DOTALL)
+
+
+def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
+    index = start_index
+    block: list[str] = []
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "---":
+            return (block if _looks_like_slide_frontmatter(block) else None, index + 1)
+        block.append(lines[index])
+        index += 1
+    return None, start_index
+
+
+def _looks_like_slide_frontmatter(lines: list[str]) -> bool:
+    meaningful = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if not meaningful:
+        return False
+    return all(":" in line and not line.startswith("::") for line in meaningful)
 
 
 if __name__ == "__main__":

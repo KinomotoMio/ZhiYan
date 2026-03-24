@@ -48,6 +48,12 @@ graph TD
 
 ## Useful Patterns
 
+- **Cover**
+  - prefer `layout: cover` or `layout: center`
+  - use one strong title + one short positioning line
+- **Context**
+  - prefer a compact quote, callout, or 2-4 bullets
+  - avoid turning context pages into dense body text
 - **Section divider**
   - one strong heading + one supporting line
   - `layout: section` or `layout: center` works better than a plain body page
@@ -55,8 +61,29 @@ graph TD
   - use `layout: two-cols`, a grid, or a table with explicit contrast labels
 - **Framework**
   - prefer 2x2 grid / numbered stack / Mermaid over long flat bullets
+- **Detail / Evidence / Process**
+  - if there is no stable built-in layout, prefer native structures like Mermaid, tables, `div` grids, or scoped callouts
+  - do not force every structured page into a built-in Slidev layout name
 - **Recommendation**
   - one headline + 2-4 actions / decisions
 - **Closing**
   - avoid ending on a weak bullet dump; make the last slide a takeaway or next-step page
   - `layout: end` is a good default for a deliberate finish
+
+## Native Mapping Hints
+
+- `cover` role
+  - first choice: `layout: cover`
+  - fallback: `layout: center`
+- `comparison` role
+  - first choice: `layout: two-cols`
+  - fallback: explicit markdown table
+- `section-divider` role
+  - first choice: `layout: section`
+  - fallback: `layout: center`
+- `highlight` role
+  - first choice: `layout: quote`
+  - fallback: one strong quoted statement
+- `closing` role
+  - first choice: `layout: end`
+  - fallback: centered takeaway / next-step structure
