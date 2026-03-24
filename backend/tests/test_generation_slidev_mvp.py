@@ -1091,6 +1091,7 @@ Short subtitle
 
     assert deck_review["ok"] is True
     assert {warning["code"] for warning in deck_review["warnings"]} >= {"document_like_cover"}
+    assert "cover_native_layout_missing" not in {warning["code"] for warning in deck_review["warnings"]}
 
 
 def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):

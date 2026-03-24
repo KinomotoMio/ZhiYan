@@ -200,9 +200,10 @@ def _review_slide(
         if not _looks_like_cover(slide):
             add_issue("cover_role_mismatch", f"Slide `{title}` is tagged cover but does not read like a cover slide.")
         elif observed_layout not in {"cover", "center"}:
-            add_warning("cover_native_layout_missing", f"Slide `{title}` reads like cover but does not use `layout: cover` or `layout: center`.")
-        if visual_recipe_status != "matched" and "recipe-class" not in observed_signals and observed_layout not in {"cover", "center"}:
-            add_warning("document_like_cover", f"Slide `{title}` still looks like a document title page instead of a strong presentation cover.")
+            if visual_recipe_status != "matched" and "recipe-class" not in observed_signals:
+                add_warning("document_like_cover", f"Slide `{title}` still looks like a document title page instead of a strong presentation cover.")
+            else:
+                add_warning("cover_native_layout_missing", f"Slide `{title}` reads like cover but does not use `layout: cover` or `layout: center`.")
     elif role == "closing":
         if not _looks_like_closing(slide):
             add_issue(
