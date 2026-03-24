@@ -1076,6 +1076,151 @@ def test_stage_select_layouts_conflicting_content_hints_still_go_through_model(m
     asyncio.run(_case())
 
 
+def test_stage_select_layouts_uses_shadow_signal_when_primary_degrades(monkeypatch, caplog):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+        from app.services.pipeline import graph as graph_mod
+
+        class _ExplodingLayoutSelectorAgent:
+            async def run(self, prompt: str):
+                raise RuntimeError("boom")
+
+        def _fake_infer_content_signals(*args, **kwargs):
+            return {
+                "primary": {
+                    "predicted_type": "unknown",
+                    "confidence": 0.0,
+                    "suggested_sub_group": "",
+                    "strategy": "semantic",
+                    "signal_source": "fallback",
+                },
+                "shadow": {
+                    "predicted_type": "timeline",
+                    "confidence": 0.81,
+                    "suggested_sub_group": "timeline-milestone",
+                    "strategy": "rules",
+                    "signal_source": "rules",
+                },
+            }
+
+        monkeypatch.setattr(
+            layout_selector_mod,
+            "layout_selector_agent",
+            _ExplodingLayoutSelectorAgent(),
+            raising=False,
+        )
+        monkeypatch.setattr(graph_mod, "infer_content_signals", _fake_infer_content_signals)
+
+        state = PipelineState(
+            raw_content="弱文本流程页。",
+            topic="shadow fallback",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "推进计划",
+                        "content_brief": "文本本身不够强，但影子信号识别到时间线。",
+                        "suggested_slide_role": "process",
+                        "key_points": ["阶段A", "阶段B"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        caplog.set_level(logging.INFO, logger="app.services.pipeline.graph")
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "timeline-milestone"
+        assert state.layout_selections[1]["variant_id"] == "timeline-band"
+        assert state.layout_selections[1]["layout_id"] == "timeline"
+
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Layout decision resolved"
+            and getattr(record, "slide_number", None) == 2
+        ]
+        assert len(records) == 1
+        assert records[0].selection_source == "fallback"
+        assert records[0].sub_group_source == "shadow"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_keeps_primary_ahead_of_shadow(monkeypatch, caplog):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+        from app.services.pipeline import graph as graph_mod
+
+        class _ExplodingLayoutSelectorAgent:
+            async def run(self, prompt: str):
+                raise RuntimeError("boom")
+
+        def _fake_infer_content_signals(*args, **kwargs):
+            return {
+                "primary": {
+                    "predicted_type": "chart",
+                    "confidence": 0.88,
+                    "suggested_sub_group": "chart-analysis",
+                    "strategy": "semantic",
+                    "signal_source": "semantic",
+                },
+                "shadow": {
+                    "predicted_type": "table",
+                    "confidence": 0.84,
+                    "suggested_sub_group": "table-matrix",
+                    "strategy": "rules",
+                    "signal_source": "rules",
+                },
+            }
+
+        monkeypatch.setattr(
+            layout_selector_mod,
+            "layout_selector_agent",
+            _ExplodingLayoutSelectorAgent(),
+            raising=False,
+        )
+        monkeypatch.setattr(graph_mod, "infer_content_signals", _fake_infer_content_signals)
+
+        state = PipelineState(
+            raw_content="高置信 primary 不应被 shadow 覆盖。",
+            topic="primary first",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "封面", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "关键数据",
+                        "content_brief": "primary 已识别为图表分析轨道。",
+                        "suggested_slide_role": "evidence",
+                        "key_points": ["指标A", "指标B"],
+                    },
+                    {"slide_number": 3, "title": "结束", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        caplog.set_level(logging.INFO, logger="app.services.pipeline.graph")
+        await stage_select_layouts(state)
+
+        assert state.layout_selections[1]["sub_group"] == "chart-analysis"
+
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Layout decision resolved"
+            and getattr(record, "slide_number", None) == 2
+        ]
+        assert len(records) == 1
+        assert records[0].sub_group_source == "primary"
+
+    asyncio.run(_case())
+
+
 def test_stage_select_layouts_fallback_uses_capability_grid_for_four_capabilities(monkeypatch):
     async def _case():
         from app.services.agents import layout_selector as layout_selector_mod

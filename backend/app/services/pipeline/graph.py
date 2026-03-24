@@ -335,11 +335,12 @@ def _materialize_layout_selection(
 
     primary_signal = content_signal_primary if isinstance(content_signal_primary, Mapping) else {}
     shadow_signal = content_signal_shadow if isinstance(content_signal_shadow, Mapping) else None
-    resolved_sub_group = _resolve_layout_sub_group(
+    resolved_sub_group, sub_group_source = _resolve_layout_sub_group_with_source(
         item,
         role=role,
         requested_sub_group=requested_sub_group,
         content_signal_primary=primary_signal,
+        content_signal_shadow=shadow_signal,
     )
     resolved_variant_id = (
         _group_sub_group_to_default_variant(role, resolved_sub_group)
@@ -409,6 +410,7 @@ def _materialize_layout_selection(
     }
     decision_trace = {
         "selection_source": selection_source,
+        "sub_group_source": sub_group_source,
         "requested_group": requested_group,
         "resolved_group": role,
         "requested_sub_group": requested_sub_group,
@@ -1512,6 +1514,7 @@ def _log_layout_selection_diagnostics(
                 "title": str(item.get("title") or ""),
                 "outline_role": str(item.get("suggested_slide_role") or selection.get("group") or ""),
                 "selection_source": str(trace.get("selection_source") or "unknown"),
+                "sub_group_source": str(trace.get("sub_group_source") or "unknown"),
                 "requested_group": str(trace.get("requested_group") or ""),
                 "resolved_group": str(trace.get("resolved_group") or selection.get("group") or ""),
                 "requested_sub_group": str(trace.get("requested_sub_group") or ""),
@@ -1716,24 +1719,46 @@ def _resolve_layout_sub_group(
     requested_sub_group: str,
     content_signal_primary: Mapping[str, Any] | None = None,
 ) -> str:
+    resolved_sub_group, _ = _resolve_layout_sub_group_with_source(
+        item,
+        role=role,
+        requested_sub_group=requested_sub_group,
+        content_signal_primary=content_signal_primary,
+        content_signal_shadow=None,
+    )
+    return resolved_sub_group
+
+
+def _resolve_layout_sub_group_with_source(
+    item: dict[str, Any],
+    *,
+    role: str,
+    requested_sub_group: str,
+    content_signal_primary: Mapping[str, Any] | None = None,
+    content_signal_shadow: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
     from app.services.pipeline.layout_roles import is_variant_pilot_role
     from app.services.pipeline.layout_taxonomy import get_sub_groups_for_group
 
     allowed_sub_groups = set(get_sub_groups_for_group(role))
     if not is_variant_pilot_role(role) or not allowed_sub_groups:
-        return "default"
+        return "default", "heuristic"
 
     hinted = _hinted_sub_group(item, role)
     if hinted and hinted in allowed_sub_groups:
-        return hinted
+        return hinted, "hint"
     if requested_sub_group in allowed_sub_groups:
-        return requested_sub_group
+        return requested_sub_group, "requested"
     if isinstance(content_signal_primary, Mapping):
         signal_sub_group = str(content_signal_primary.get("suggested_sub_group") or "")
         if signal_sub_group in allowed_sub_groups:
-            return signal_sub_group
+            return signal_sub_group, "primary"
+    if isinstance(content_signal_shadow, Mapping):
+        shadow_sub_group = str(content_signal_shadow.get("suggested_sub_group") or "")
+        if shadow_sub_group in allowed_sub_groups:
+            return shadow_sub_group, "shadow"
 
-    return _suggest_sub_group_for_outline_item(item, role)
+    return _suggest_sub_group_for_outline_item(item, role), "heuristic"
 
 
 def _resolve_layout_variant(
