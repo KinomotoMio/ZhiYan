@@ -69,10 +69,16 @@ def _slidev_markdown() -> str:
     return """---
 theme: default
 title: AI Product Architecture Evolution
+layout: cover
+class: deck-cover
 ---
 
 # AI Product Architecture Evolution
 
+Harness drives Slidev through a layered control plane
+
+---
+class: deck-context
 ---
 
 ## Why This Matters
@@ -81,29 +87,49 @@ title: AI Product Architecture Evolution
 - UX pressure
 
 ---
+class: deck-framework
+---
 
 ## Harness Layers
 
-- loop
-- tools
-- context
+```mermaid
+graph TD
+  A[loop] --> B[tools]
+  B --> C[context]
+```
 
+Core takeaway: structure should stay in the harness, not in ad-hoc prompt glue.
+
+---
+layout: two-cols
+class: deck-comparison
 ---
 
 ## MVP Path
 
-```mermaid
-graph TD
-  A[Input] --> B[Harness]
-  B --> C[Slidev]
-```
+::left::
 
+- markdown artifact
+- local preview
+- fast feedback
+
+::right::
+
+- no UI coupling
+- no job/SSE changes
+- keeps renderer boundary clear
+
+---
+layout: end
+class: deck-closing
 ---
 
 ## Next Step
 
-- Validate locally
-- Decide migration boundary
+1. Validate locally
+2. Decide migration boundary
+
+Ship the contract first, polish the deck second.
 """
 
 
@@ -111,10 +137,17 @@ def _simple_markdown() -> str:
     return """---
 theme: default
 title: Mini Deck
+layout: cover
+class: deck-cover
 ---
 
 # Cover
 
+Short subtitle
+
+---
+layout: end
+class: deck-closing
 ---
 
 ## Closing
@@ -151,16 +184,16 @@ def _native_layout_markdown() -> str:
     return """---
 theme: default
 title: Native Mapping Deck
----
-
----
 layout: cover
+class: deck-cover
 ---
 
 # Native Mapping Deck
 
 Contract-first Slidev output
 
+---
+class: deck-context
 ---
 
 ## Why Native Patterns Matter
@@ -169,6 +202,7 @@ Contract-first Slidev output
 
 ---
 layout: two-cols
+class: deck-comparison
 ---
 
 ## High Fidelity
@@ -185,11 +219,68 @@ layout: two-cols
 
 ---
 layout: end
+class: deck-closing
 ---
 
 # Next Steps
 
 Adopt the stable mappings first.
+"""
+
+
+def _blank_first_slide_markdown() -> str:
+    return """---
+theme: default
+title: Blank Cover Bug
+---
+
+---
+layout: cover
+class: deck-cover
+---
+
+# Blank Cover Bug
+
+This cover should not create an empty slide first.
+
+---
+
+## Closing
+
+- done
+"""
+
+
+def _unfenced_frontmatter_markdown() -> str:
+    return """---
+theme: default
+title: Unfenced Frontmatter
+layout: cover
+class: deck-cover
+---
+
+# Unfenced Frontmatter
+
+Looks fine at first glance
+
+---
+
+layout: two-cols
+class: deck-comparison
+
+## Compare
+
+- left
+- right
+
+---
+
+layout: end
+class: deck-closing
+
+## Closing
+
+- done
 """
 
 
@@ -338,11 +429,15 @@ def test_slidev_mvp_service_generates_artifact_with_visible_harness(monkeypatch,
 
     assert artifact.slides_path.exists()
     assert artifact.validation["ok"] is True
-    assert artifact.validation["native_usage_summary"]["plain_slide_count"] >= 1
+    assert artifact.validation["native_usage_summary"]["plain_slide_count"] == 0
+    assert artifact.validation["native_usage_summary"]["recipe_classes"]["deck-cover"] == 1
     assert artifact.quality["outline_review"]["ok"] is True
     assert artifact.quality["deck_review"]["ok"] is True
     assert artifact.quality["pattern_hints"][0]["slide_role"] == "cover"
+    assert artifact.quality["visual_hints"][0]["recipe_name"] == "cover-hero"
     assert "cover" in artifact.quality["mapping_summary"]["recommended_layouts"]
+    assert artifact.quality["visual_recipe_summary"]["matched_recipe_count"] >= 3
+    assert artifact.quality["blank_first_slide_detected"] is False
     assert artifact.agentic["used_subagent"] is True
     assert artifact.agentic["loaded_skills"] == ["slidev-deck-quality", "slidev-syntax"]
     assert "大纲已生成：5 页 - 封面(cover)；为什么现在要做(context)；Harness 分层(framework)" in artifact.agentic["final_state_summary"]
@@ -524,6 +619,17 @@ def test_slidev_mvp_counts_slides_with_per_slide_frontmatter():
     assert slidev_mvp_mod._count_slidev_slides(_native_layout_markdown()) == 4
 
 
+def test_slidev_mvp_normalizes_blank_first_slide_frontmatter():
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    normalized, metadata = slidev_mvp_mod._normalize_leading_first_slide_frontmatter(_blank_first_slide_markdown())
+
+    assert metadata["blank_first_slide_detected"] is True
+    assert "layout: cover" in normalized.split("---", 2)[1]
+    assert normalized.strip().startswith("---\ntheme: default")
+    assert slidev_mvp_mod._count_slidev_slides(normalized) == 2
+
+
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -544,6 +650,7 @@ def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp
 
     assert valid["ok"] is True
     assert valid["slide_count"] == 2
+    assert valid["blank_first_slide_detected"] is False
     assert invalid["ok"] is False
     assert {issue["code"] for issue in invalid["issues"]} >= {
         "missing_frontmatter",
@@ -615,6 +722,39 @@ def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, t
     assert native_usage["layouts"] == ["cover", "end", "two-cols"]
     assert native_usage["native_slide_count"] == 4
     assert native_usage["plain_slide_count"] == 0
+    assert native_usage["recipe_classes"]["deck-cover"] == 1
+    assert native_usage["visual_recipe_slide_count"] >= 3
+
+
+def test_slidev_syntax_validate_deck_detects_blank_first_slide_pattern(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _blank_first_slide_markdown(), "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["blank_first_slide_detected"] is True
+    assert {warning["code"] for warning in result["warnings"]} >= {"blank_first_slide_normalized"}
+
+
+def test_slidev_syntax_validate_deck_rejects_unfenced_slide_frontmatter(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _unfenced_frontmatter_markdown(), "expected_pages": 3}},
+        )
+    )
+
+    assert result["ok"] is False
+    assert {issue["code"] for issue in result["issues"]} >= {"unfenced_slide_frontmatter"}
 
 
 def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_path):
@@ -728,6 +868,7 @@ def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path
             "content_shape": "title-subtitle",
             "goal": "开场",
             "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+            "slidev_visual_hint": {"name": "cover-hero", "preferred_classes": ["deck-cover"], "required_signals": ["hero-title", "short-subtitle"]},
         },
         {
             "slide_number": 2,
@@ -736,6 +877,7 @@ def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path
             "content_shape": "quote-callout",
             "goal": "背景",
             "slidev_pattern_hint": {"preferred_layouts": [], "preferred_patterns": ["quote", "callout"]},
+            "slidev_visual_hint": {"name": "context-brief", "preferred_classes": ["deck-context"], "required_signals": ["quote-or-callout"]},
         },
         {
             "slide_number": 3,
@@ -744,6 +886,7 @@ def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path
             "content_shape": "compare-grid",
             "goal": "对比路径",
             "slidev_pattern_hint": {"preferred_layouts": ["two-cols"], "preferred_patterns": ["two-cols", "table"]},
+            "slidev_visual_hint": {"name": "comparison-split", "preferred_classes": ["deck-comparison"], "required_signals": ["split-compare", "contrast-labels"]},
         },
         {
             "slide_number": 4,
@@ -752,6 +895,7 @@ def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path
             "content_shape": "next-step",
             "goal": "收束",
             "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+            "slidev_visual_hint": {"name": "closing-takeaway", "preferred_classes": ["deck-closing"], "required_signals": ["next-step-or-takeaway"]},
         },
     ]
     deck_review = asyncio.run(
@@ -767,6 +911,90 @@ def test_slidev_deck_review_observes_native_layout_mapping(monkeypatch, tmp_path
     assert deck_review["slide_reports"][2]["observed_layout"] == "two-cols"
     assert deck_review["slide_reports"][3]["observed_layout"] == "end"
     assert deck_review["slide_reports"][0]["preferred_layouts"] == ["cover", "center"]
+    assert deck_review["slide_reports"][0]["visual_recipe_status"] == "matched"
+    assert deck_review["visual_recipe_summary"]["matched_recipe_count"] >= 3
+
+
+def test_slidev_deck_review_reports_blank_first_slide_normalization(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {
+            "slide_number": 1,
+            "title": "封面",
+            "slide_role": "cover",
+            "content_shape": "title-subtitle",
+            "goal": "开场",
+            "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+            "slidev_visual_hint": {"name": "cover-hero", "preferred_classes": ["deck-cover"], "required_signals": ["hero-title", "short-subtitle"]},
+        },
+        {
+            "slide_number": 2,
+            "title": "收尾",
+            "slide_role": "closing",
+            "content_shape": "next-step",
+            "goal": "收束",
+            "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+            "slidev_visual_hint": {"name": "closing-takeaway", "preferred_classes": ["deck-closing"], "required_signals": ["next-step-or-takeaway"]},
+        },
+    ]
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": _blank_first_slide_markdown(), "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert deck_review["blank_first_slide_detected"] is True
+    assert {warning["code"] for warning in deck_review["warnings"]} >= {"blank_first_slide_normalized"}
+
+
+def test_slidev_deck_review_blocks_unfenced_slide_frontmatter(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {
+            "slide_number": 1,
+            "title": "封面",
+            "slide_role": "cover",
+            "content_shape": "title-subtitle",
+            "goal": "开场",
+            "slidev_pattern_hint": {"preferred_layouts": ["cover", "center"], "preferred_patterns": ["hero-title"]},
+            "slidev_visual_hint": {"name": "cover-hero", "preferred_classes": ["deck-cover"], "required_signals": ["hero-title", "short-subtitle"]},
+        },
+        {
+            "slide_number": 2,
+            "title": "对比",
+            "slide_role": "comparison",
+            "content_shape": "compare-grid",
+            "goal": "对比",
+            "slidev_pattern_hint": {"preferred_layouts": ["two-cols"], "preferred_patterns": ["two-cols", "table"]},
+            "slidev_visual_hint": {"name": "comparison-split", "preferred_classes": ["deck-comparison"], "required_signals": ["split-compare", "contrast-labels"]},
+        },
+        {
+            "slide_number": 3,
+            "title": "收尾",
+            "slide_role": "closing",
+            "content_shape": "next-step",
+            "goal": "收束",
+            "slidev_pattern_hint": {"preferred_layouts": ["end", "center"], "preferred_patterns": ["next-step"]},
+            "slidev_visual_hint": {"name": "closing-takeaway", "preferred_classes": ["deck-closing"], "required_signals": ["next-step-or-takeaway"]},
+        },
+    ]
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": _unfenced_frontmatter_markdown(), "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is False
+    assert {issue["code"] for issue in deck_review["issues"]} >= {"unfenced_slide_frontmatter"}
 
 
 def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp_path):
@@ -860,6 +1088,68 @@ def test_slidev_mvp_service_allows_save_when_only_warnings_remain(monkeypatch, t
     assert runtime.saved_artifact.quality["structure_warnings"]
 
 
+def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.generation.agentic.todo import TodoManager
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    monkeypatch.setattr(slidev_mvp_mod, "session_store", FakeSessionStore())
+    markdown = _blank_first_slide_markdown()
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    state = PipelineState(topic="demo", raw_content="demo", num_pages=2)
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=2,
+    )
+    registry = service._build_registry(state=state, runtime=runtime, todo_manager=TodoManager())
+    asyncio.run(
+        registry.get("set_slidev_outline").handler(
+            {
+                "items": [
+                    {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+                    {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
+                ]
+            }
+        )
+    )
+    runtime.outline_review = {"ok": True, "issues": [], "warnings": [], "roles": ["cover", "closing"], "contract_summary": {"hard_issue_count": 0, "warning_count": 0}}
+    runtime.outline_review_hash = slidev_mvp_mod._outline_hash(state.outline)
+    runtime.deck_review = {
+        "ok": True,
+        "issues": [],
+        "warnings": [{"code": "blank_first_slide_normalized", "message": "warn"}],
+        "signatures": [],
+        "slide_reports": [],
+        "blank_first_slide_detected": True,
+        "visual_recipe_summary": {"matched_recipe_count": 0, "weak_recipe_count": 0, "missing_recipe_count": 0, "expected_recipe_names": []},
+        "contract_summary": {"hard_issue_count": 0, "warning_count": 1},
+    }
+    runtime.deck_review_hash = slidev_mvp_mod._text_hash(markdown)
+    runtime.validation = {
+        "ok": True,
+        "slide_count": 2,
+        "issues": [],
+        "warnings": [{"code": "blank_first_slide_normalized", "message": "warn"}],
+        "blank_first_slide_detected": True,
+        "native_usage_summary": {"layouts": ["cover"], "layout_counts": {"cover": 1}, "pattern_counts": {}, "class_counts": {"deck-cover": 1}, "recipe_classes": {"deck-cover": 1}, "native_slide_count": 2, "plain_slide_count": 0, "visual_recipe_slide_count": 1},
+    }
+    runtime.validation_hash = slidev_mvp_mod._text_hash(markdown)
+
+    asyncio.run(registry.get("save_slidev_artifact").handler({"title": "Blank Cover Bug", "markdown": markdown}))
+
+    assert runtime.saved_artifact is not None
+    assert runtime.saved_artifact.markdown.startswith("---\ntheme: default\ntitle: Blank Cover Bug\nlayout: cover\nclass: deck-cover\n---")
+    assert runtime.saved_artifact.quality["blank_first_slide_detected"] is True
+
+
 def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
     from app.services.generation.agentic.todo import TodoManager
@@ -895,6 +1185,7 @@ def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
     assert runtime.outline_review == outline_review
     assert runtime.deck_review == deck_review
     assert runtime.validation == validation
+    assert state.document_metadata["slidev_visual_hints"][0]["visual_recipe"]["name"] == "cover-hero"
 
 
 def test_slidev_mvp_service_reports_failed_outline_review_reason_after_max_turns(monkeypatch, tmp_path):

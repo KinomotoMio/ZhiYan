@@ -22,11 +22,27 @@ def main() -> int:
 def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
-    text = markdown.strip()
+    normalized_markdown, normalization = _normalize_leading_first_slide_frontmatter(markdown)
+    text = normalized_markdown.strip()
 
     if not text:
         issues.append({"code": "empty_markdown", "message": "Deck markdown is empty."})
-        return _result(False, 0, issues, warnings)
+        return _result(
+            False,
+            0,
+            issues,
+            warnings,
+            native_usage_summary={"layouts": [], "layout_counts": {}, "pattern_counts": {}, "class_counts": {}, "recipe_classes": {}, "native_slide_count": 0, "plain_slide_count": 0, "visual_recipe_slide_count": 0},
+            blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
+        )
+
+    if normalization.get("blank_first_slide_detected"):
+        warnings.append(
+            {
+                "code": "blank_first_slide_normalized",
+                "message": "Detected an empty first-slide pattern; merged the first slide frontmatter into the opening headmatter.",
+            }
+        )
 
     if not _has_frontmatter(text):
         issues.append({"code": "missing_frontmatter", "message": "The first slide is missing global frontmatter."})
@@ -50,10 +66,18 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
 
     fence_issues = _validate_fences(text)
     issues.extend(fence_issues)
+    issues.extend(_validate_slide_frontmatter_blocks(slides))
     native_usage_summary = _native_usage_summary(slides)
     warnings.extend(_structure_warnings(slides, native_usage_summary))
 
-    return _result(not issues, slide_count, issues, warnings, native_usage_summary=native_usage_summary)
+    return _result(
+        not issues,
+        slide_count,
+        issues,
+        warnings,
+        native_usage_summary=native_usage_summary,
+        blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
+    )
 
 
 def _result(
@@ -63,6 +87,7 @@ def _result(
     warnings: list[dict[str, str]],
     *,
     native_usage_summary: dict[str, Any],
+    blank_first_slide_detected: bool,
 ) -> dict[str, Any]:
     return {
         "ok": ok,
@@ -70,6 +95,7 @@ def _result(
         "issues": issues,
         "warnings": warnings,
         "native_usage_summary": native_usage_summary,
+        "blank_first_slide_detected": blank_first_slide_detected,
     }
 
 
@@ -107,6 +133,19 @@ def _validate_fences(text: str) -> list[dict[str, str]]:
     return issues
 
 
+def _validate_slide_frontmatter_blocks(slides: list[str]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for index, slide in enumerate(slides, start=1):
+        if _starts_with_unfenced_slide_frontmatter(slide):
+            issues.append(
+                {
+                    "code": "unfenced_slide_frontmatter",
+                    "message": f"Slide {index} starts with `layout:`/`class:` lines but does not wrap them in a Slidev frontmatter fence.",
+                }
+            )
+    return issues
+
+
 def _count_fence_lines(text: str, marker: str) -> int:
     count = 0
     for line in text.splitlines():
@@ -135,6 +174,14 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
             {
                 "code": "low_slidev_native_usage",
                 "message": "Deck barely uses Slidev-native layouts or richer structures; consider built-in layouts, columns, quotes, tables, or Mermaid.",
+            }
+        )
+
+    if len(slides) >= 4 and int(native_usage_summary.get("visual_recipe_slide_count") or 0) < max(2, len(slides) // 2):
+        warnings.append(
+            {
+                "code": "low_visual_recipe_usage",
+                "message": "Deck uses too few stable visual recipe classes; key pages still look close to plain default-theme output.",
             }
         )
 
@@ -167,6 +214,7 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
 
 
 def _slide_chunks(text: str) -> list[str]:
+    first_slide_frontmatter = _extract_first_slide_frontmatter_from_global(text)
     body = _strip_frontmatter(text).strip()
     if not body:
         return []
@@ -209,6 +257,8 @@ def _slide_chunks(text: str) -> list[str]:
     slide = "\n".join(current).strip()
     if slide:
         slides.append(slide)
+    if slides and first_slide_frontmatter:
+        slides[0] = "\n".join(["---", *first_slide_frontmatter, "---", slides[0]])
     return slides
 
 
@@ -256,7 +306,10 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         "div_grid": 0,
         "class": 0,
     }
+    class_counts: dict[str, int] = {}
+    recipe_classes: dict[str, int] = {}
     native_slide_count = 0
+    visual_recipe_slide_count = 0
 
     for slide in slides:
         native_found = False
@@ -264,6 +317,14 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         if layout_name:
             layout_counts[layout_name] = layout_counts.get(layout_name, 0) + 1
             native_found = True
+        classes = _extract_classes(slide)
+        if classes:
+            pattern_counts["class"] += 1
+            native_found = True
+            for name in classes:
+                class_counts[name] = class_counts.get(name, 0) + 1
+                if name.startswith("deck-"):
+                    recipe_classes[name] = recipe_classes.get(name, 0) + 1
         if "```mermaid" in slide:
             pattern_counts["mermaid"] += 1
             native_found = True
@@ -276,9 +337,8 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         if "<div" in slide and "grid" in slide:
             pattern_counts["div_grid"] += 1
             native_found = True
-        if re.search(r"^\s*class:\s*", slide, re.MULTILINE):
-            pattern_counts["class"] += 1
-            native_found = True
+        if recipe_classes and any(name in recipe_classes for name in classes):
+            visual_recipe_slide_count += 1
         if native_found:
             native_slide_count += 1
 
@@ -286,16 +346,36 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         "layouts": sorted(layout_counts),
         "layout_counts": layout_counts,
         "pattern_counts": pattern_counts,
+        "class_counts": class_counts,
+        "recipe_classes": recipe_classes,
         "native_slide_count": native_slide_count,
         "plain_slide_count": max(0, len(slides) - native_slide_count),
+        "visual_recipe_slide_count": visual_recipe_slide_count,
     }
 
 
 def _extract_layout_name(slide: str) -> str | None:
-    match = re.search(r"^\s*layout:\s*([A-Za-z0-9_-]+)\s*$", slide, re.MULTILINE)
+    frontmatter = _frontmatter_block(slide)
+    if not frontmatter:
+        return None
+    match = re.search(r"^\s*layout:\s*([A-Za-z0-9_-]+)\s*$", frontmatter, re.MULTILINE)
     if not match:
         return None
     return match.group(1).strip()
+
+
+def _extract_classes(slide: str) -> list[str]:
+    classes: set[str] = set()
+    frontmatter = _frontmatter_block(slide)
+    for match in re.finditer(r"^\s*class:\s*(.+?)\s*$", frontmatter, re.MULTILINE):
+        classes.update(_split_classes(match.group(1)))
+    for match in re.finditer(r'class="([^"]+)"', slide):
+        classes.update(_split_classes(match.group(1)))
+    return sorted(classes)
+
+
+def _split_classes(raw: str) -> list[str]:
+    return [token.strip() for token in re.split(r"\s+", raw.strip()) if token.strip()]
 
 
 def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
@@ -349,6 +429,90 @@ def _looks_like_closing(slide: str) -> bool:
 
 def _strip_slide_frontmatter(slide: str) -> str:
     return re.sub(r"^---\s*\n.*?\n---\s*\n?", "", slide, count=1, flags=re.DOTALL)
+
+
+def _frontmatter_block(slide: str) -> str:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", slide, re.DOTALL)
+    if not match:
+        return ""
+    return match.group(1)
+
+
+def _starts_with_unfenced_slide_frontmatter(slide: str) -> bool:
+    stripped = slide.lstrip()
+    if stripped.startswith("---"):
+        return False
+    allowed = {"layout", "class", "transition", "background"}
+    nonempty = [line.strip() for line in slide.splitlines() if line.strip()]
+    if not nonempty:
+        return False
+    candidate_lines = nonempty[:3]
+    keys = [_frontmatter_key(line) for line in candidate_lines]
+    return any(key in allowed for key in keys if key)
+
+
+def _extract_first_slide_frontmatter_from_global(text: str) -> list[str]:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, re.DOTALL)
+    if not match:
+        return []
+    allowed = {"layout", "class", "transition", "background"}
+    lines: list[str] = []
+    for raw_line in match.group(1).splitlines():
+        key = _frontmatter_key(raw_line.rstrip())
+        if key in allowed:
+            lines.append(raw_line.rstrip())
+    return lines
+
+
+def _normalize_leading_first_slide_frontmatter(markdown: str) -> tuple[str, dict[str, bool]]:
+    text = str(markdown or "")
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
+    if not match:
+        return text, {"blank_first_slide_detected": False, "normalized_first_slide_frontmatter": False}
+
+    global_frontmatter = match.group(1)
+    body = match.group(2)
+    body_match = re.match(r"^\s*---\s*\n(.*?)\n---\s*\n?(.*)$", body, re.DOTALL)
+    if not body_match:
+        return text, {"blank_first_slide_detected": False, "normalized_first_slide_frontmatter": False}
+
+    slide_frontmatter = body_match.group(1)
+    if not _looks_like_slide_frontmatter(slide_frontmatter.splitlines()):
+        return text, {"blank_first_slide_detected": False, "normalized_first_slide_frontmatter": False}
+
+    remaining = body_match.group(2)
+    if not remaining.strip():
+        return text, {"blank_first_slide_detected": False, "normalized_first_slide_frontmatter": False}
+
+    merged = _merge_frontmatter_blocks(global_frontmatter, slide_frontmatter)
+    normalized = f"---\n{merged}\n---\n\n{remaining.lstrip()}".rstrip() + "\n"
+    return normalized, {"blank_first_slide_detected": True, "normalized_first_slide_frontmatter": True}
+
+
+def _merge_frontmatter_blocks(base: str, extra: str) -> str:
+    merged: list[str] = []
+    key_positions: dict[str, int] = {}
+
+    def _register(lines: list[str], *, replace_existing: bool) -> None:
+        for raw_line in lines:
+            line = raw_line.rstrip()
+            key = _frontmatter_key(line)
+            if key and key in key_positions and replace_existing:
+                merged[key_positions[key]] = line
+                continue
+            if key:
+                key_positions[key] = len(merged)
+            merged.append(line)
+
+    _register(base.splitlines(), replace_existing=False)
+    _register(extra.splitlines(), replace_existing=True)
+    return "\n".join(merged).strip()
+
+
+def _frontmatter_key(line: str) -> str | None:
+    if not line or line.startswith((" ", "\t", "-", "#")) or ":" not in line:
+        return None
+    return line.split(":", 1)[0].strip() or None
 
 
 if __name__ == "__main__":
