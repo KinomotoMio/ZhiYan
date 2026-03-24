@@ -20,5 +20,16 @@
   ],
   "theme_reason": "Keep the official seriph theme but bias the deck toward structured executive briefing pages.",
   "theme_mode": "official-theme-plus-light-overrides",
-  "description": "Balanced briefing style for strategy, operating review, and framework-heavy topics."
+  "description": "Balanced briefing style for strategy, operating review, and framework-heavy topics.",
+  "deck_scaffold_class": "theme-structured-insight",
+  "theme_config": {
+    "palette": "structured-insight",
+    "density": "briefing",
+    "emphasis": "clean-contrast"
+  },
+  "baseline_constraints": [
+    "prefer compact section framing over long paragraphs",
+    "framework slides must surface one takeaway line",
+    "closing slides should end with a decision or next step"
+  ]
 }

@@ -1,8 +1,22 @@
 {
   "name": "framework-explainer",
-  "applies_to_roles": ["framework"],
-  "recommended_structure": "mermaid/table/grid plus one takeaway",
-  "required_signals": ["visual-structure", "model-takeaway"],
-  "visual_constraints": ["must look modeled", "must include takeaway"],
-  "anti_patterns": ["plain-bullet-dump", "unstyled-document-section"]
+  "applies_to_roles": [
+    "framework"
+  ],
+  "recommended_structure": "section kicker + mermaid/table/grid + takeaway line",
+  "required_signals": [
+    "section-kicker",
+    "visual-structure",
+    "model-takeaway"
+  ],
+  "visual_constraints": [
+    "must look modeled",
+    "must include takeaway",
+    "not bullet-only"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "bullet-only-framework"
+  ]
 }

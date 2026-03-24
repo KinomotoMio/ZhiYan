@@ -1,10 +1,26 @@
 {
   "name": "recommendation-actions",
-  "applies_to_roles": ["recommendation"],
+  "applies_to_roles": [
+    "recommendation"
+  ],
   "preferred_layout": null,
-  "required_patterns": ["decision-headline", "action-list", "callout"],
-  "required_classes": ["deck-recommendation"],
-  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "required_patterns": [
+    "decision-headline",
+    "action-list",
+    "callout"
+  ],
+  "required_classes": [
+    "deck-recommendation"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ],
   "description": "Decision page anchored by one headline and a short action list.",
-  "required_visual_signals": ["decision-headline", "action-list"]
+  "required_visual_signals": [
+    "decision-headline",
+    "action-list",
+    "section-kicker"
+  ]
 }

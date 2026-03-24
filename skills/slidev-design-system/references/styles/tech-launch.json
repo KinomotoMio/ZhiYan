@@ -20,5 +20,16 @@
   ],
   "theme_reason": "Use the official seriph theme as the baseline for a crisp tech-launch deck rhythm.",
   "theme_mode": "official-theme-plus-light-overrides",
-  "description": "Product-launch framing with bold cover rhythm, contrast slides, and decisive closing pages."
+  "description": "Product-launch framing with bold cover rhythm, contrast slides, and decisive closing pages.",
+  "deck_scaffold_class": "theme-tech-launch",
+  "theme_config": {
+    "palette": "tech-launch",
+    "density": "presentation",
+    "emphasis": "launch-contrast"
+  },
+  "baseline_constraints": [
+    "cover should feel like a launch slide, not a report heading",
+    "section slides need one strong visual cue before bullets grow",
+    "comparison and closing slides need a visible verdict or takeaway line"
+  ]
 }

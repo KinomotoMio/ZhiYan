@@ -1131,6 +1131,7 @@ def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
     assert "slidev-design-system" in prompt
     assert "theme: seriph" in prompt
     assert "selected_style / selected_layouts / selected_blocks 当成执行协议" in prompt
+    assert "deck_scaffold_class / themeConfig / baseline_constraints" in prompt
     assert "不要生成“像 markdown 文档章节”的页面" in prompt
 
 
@@ -1147,8 +1148,13 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
     )
 
     assert selection["selected_style"]["name"] == "tech-launch"
+    assert selection["selected_style"]["deck_scaffold_class"] == "theme-tech-launch"
+    assert selection["selected_style"]["theme_config"]["palette"] == "tech-launch"
+    assert selection["selected_style"]["baseline_constraints"]
     assert selection["selected_theme"]["theme"] == "seriph"
+    assert selection["selected_theme"]["theme_config"]["density"] == "presentation"
     assert selection["selection_summary"]["reference_root"].endswith("slidev-design-system/references")
+    assert selection["selection_summary"]["deck_scaffold_class"] == "theme-tech-launch"
     assert selection["selection_summary"]["selected_layout_names"][:3] == [
         "cover-hero",
         "context-brief",
@@ -1263,7 +1269,13 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     from app.services.generation import slidev_mvp as slidev_mvp_mod
 
     _copy_slidev_skills(tmp_path, monkeypatch)
-    outline_items = _quality_outline_items_five()
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "背景", "slide_role": "context", "content_shape": "problem-bullets", "goal": "铺垫背景"},
+        {"slide_number": 3, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "建立模型"},
+        {"slide_number": 4, "title": "对比", "slide_role": "comparison", "content_shape": "compare-grid", "goal": "建立对照"},
+        {"slide_number": 5, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "完成收束"},
+    ]
     selection = slidev_mvp_mod._select_slidev_references(
         outline_items=outline_items,
         topic="AI product architecture evolution",
@@ -1294,6 +1306,49 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     assert result["reference_usage_summary"]["slides"][0]["selected_layout"] == "cover-hero"
     assert result["reference_fidelity_summary"]["matched_slide_count"] == result["reference_usage_summary"]["matched_slide_count"]
     assert result["theme_fidelity_summary"]["selected_theme"] == "seriph"
+    assert result["theme_fidelity_summary"]["observed_theme_markers"]["recipe_class_count"] >= 4
+    assert result["theme_fidelity_summary"]["observed_theme_markers"]["ad_hoc_inline_style_count"] == 0
+
+
+def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=_quality_outline_items_five(),
+        topic="AI future of work",
+        num_pages=5,
+        material_excerpt="Prepare a launch-style deck about how AI changes work.",
+    )
+    markdown = slidev_mvp_mod._apply_style_frontmatter_baseline(
+        markdown=_slidev_markdown(),
+        title="AI Product Architecture Evolution",
+        reference_selection=selection,
+    )
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": markdown,
+                    "expected_pages": 5,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                },
+            },
+        )
+    )
+
+    assert result["ok"] is True
+    markers = result["theme_fidelity_summary"]["observed_theme_markers"]
+    assert markers["deck_scaffold_class_present"] is True
+    assert markers["theme_config_present"] is True
+    assert markers["recipe_class_count"] >= 4
 
 
 def test_slidev_syntax_validate_deck_counts_callout_usage(monkeypatch, tmp_path):
@@ -1663,6 +1718,179 @@ Short subtitle
     assert "cover_native_layout_missing" not in {warning["code"] for warning in deck_review["warnings"]}
 
 
+def test_slidev_deck_review_reports_visual_document_like_warnings(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "背景", "slide_role": "context", "content_shape": "problem-bullets", "goal": "铺垫背景"},
+        {"slide_number": 3, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "建立模型"},
+        {"slide_number": 4, "title": "对比", "slide_role": "comparison", "content_shape": "compare-grid", "goal": "建立对照"},
+        {"slide_number": 5, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "完成收束"},
+    ]
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI future of work",
+        num_pages=5,
+        material_excerpt="Prepare a visual deck about the future of work.",
+    )
+    markdown = """---
+theme: seriph
+title: Visual Warning Deck
+class: theme-tech-launch
+---
+
+Launch Snapshot
+
+# AI 与未来工作
+
+一份偏文档风的开场
+
+---
+class: deck-context
+---
+
+## 为什么现在必须重估工作结构
+
+- 自动化正在进入更多流程
+- 组织效率压力持续上升
+- 角色边界开始变化
+- 协作方式被重写
+
+---
+class: deck-framework
+---
+
+## 一个三层框架
+
+说明一
+
+说明二
+
+说明三
+
+---
+layout: two-cols
+class: deck-comparison
+---
+
+## 人和 AI 的分工变化
+
+::left::
+
+- 执行速度更快
+- 标准任务更容易自动化
+
+::right::
+
+- 人类保留判断
+- 但这一页仍然偏描述性
+
+---
+class: deck-closing
+---
+
+## 最后总结
+
+谢谢观看
+"""
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": markdown,
+                    "outline_items": outline_items,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                },
+            },
+        )
+    )
+
+    warning_codes = {warning["code"] for warning in deck_review["warnings"]}
+    assert warning_codes >= {
+        "document_like_cover",
+        "document_like_context",
+        "document_like_framework",
+        "document_like_comparison",
+        "document_like_closing",
+        "theme_recipe_weak",
+    }
+
+
+def test_slidev_deck_review_warns_on_excessive_inline_style(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = _quality_outline_items_five()
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI future of work",
+        num_pages=5,
+        material_excerpt="Prepare a visual deck about the future of work.",
+    )
+    markdown = slidev_mvp_mod._apply_style_frontmatter_baseline(
+        markdown="""
+# AI 与未来工作
+
+<div style="color:red">one</div>
+
+---
+
+## 背景
+
+<div style="padding:8px">two</div>
+
+---
+
+## 框架
+
+<div style="margin:8px">three</div>
+
+---
+
+## 对比
+
+<div style="border:1px solid #000">four</div>
+
+---
+
+## 下一步
+
+<div style="font-size:18px">five</div>
+""",
+        title="Inline Style Deck",
+        reference_selection=selection,
+    )
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": markdown,
+                    "outline_items": outline_items,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                },
+            },
+        )
+    )
+
+    assert {warning["code"] for warning in deck_review["warnings"]} >= {"too_much_ad_hoc_inline_style"}
+
+
 def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -1917,7 +2145,10 @@ def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_pat
     asyncio.run(registry.get("save_slidev_artifact").handler({"title": "Blank Cover Bug", "markdown": markdown}))
 
     assert runtime.saved_artifact is not None
-    assert runtime.saved_artifact.markdown.startswith("---\ntheme: default\ntitle: Blank Cover Bug\nlayout: cover\nclass: deck-cover\n---")
+    assert runtime.saved_artifact.markdown.startswith("---\ntheme: seriph\ntitle: Blank Cover Bug\n")
+    assert "themeConfig:" in runtime.saved_artifact.markdown
+    assert "class: deck-cover" in runtime.saved_artifact.markdown
+    assert "layout: cover" in runtime.saved_artifact.markdown
     assert runtime.saved_artifact.quality["blank_first_slide_detected"] is True
 
 
@@ -2061,7 +2292,11 @@ def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tm
     assert artifact.quality["selected_blocks"][0]["blocks"][0]["name"] == "hero-title"
     assert "matched_slide_count" in artifact.quality["reference_fidelity_summary"]
     assert artifact.quality["theme_fidelity_summary"]["selected_theme"] == "seriph"
+    persisted_markdown = artifact.slides_path.read_text(encoding="utf-8")
+    assert "class: theme-tech-launch deck-cover" in persisted_markdown
+    assert 'themeConfig: {"palette": "tech-launch", "density": "presentation", "emphasis": "launch-contrast"}' in persisted_markdown
     assert service.last_state is not None
+    assert service.last_state.document_metadata["slidev_theme_reason"]
     assert service.last_state.document_metadata["slidev_selected_layouts"][0]["recipe_name"] == "cover-hero"
     assert service.last_state.document_metadata["slidev_reference_selection"]["reference_root"].endswith(
         "slidev-design-system/references"
@@ -2117,6 +2352,8 @@ def test_slidev_mvp_long_deck_dispatches_selected_reference_chunks(monkeypatch, 
     assert artifact.validation["slide_count"] == 12
     assert len(captured_specs) == 4
     assert all("layout_recipe=cover-hero" in spec.task or "layout_recipe=context-brief" in spec.task or "layout_recipe=framework-visual" in spec.task or "layout_recipe=comparison-split" in spec.task or "layout_recipe=recommendation-actions" in spec.task or "layout_recipe=closing-takeaway" in spec.task for spec in captured_specs)
+    assert "deck scaffold class：theme-tech-launch" in captured_specs[0].task
+    assert '"palette": "tech-launch"' in captured_specs[0].task
     assert "blocks=hero-title" in captured_specs[0].task
     assert "blocks=takeaway-next-steps" in captured_specs[-1].task
 

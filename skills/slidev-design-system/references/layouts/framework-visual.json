@@ -1,10 +1,26 @@
 {
   "name": "framework-visual",
-  "applies_to_roles": ["framework"],
+  "applies_to_roles": [
+    "framework"
+  ],
   "preferred_layout": null,
-  "required_patterns": ["mermaid", "table", "div-grid"],
-  "required_classes": ["deck-framework"],
-  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "required_patterns": [
+    "mermaid",
+    "table",
+    "div-grid"
+  ],
+  "required_classes": [
+    "deck-framework"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "bullet-only-framework"
+  ],
   "description": "Model page carried by grid, diagram, or table plus one takeaway.",
-  "required_visual_signals": ["visual-structure", "model-takeaway"]
+  "required_visual_signals": [
+    "visual-structure",
+    "model-takeaway",
+    "section-kicker"
+  ]
 }

@@ -134,6 +134,27 @@ def review_deck(
             }
         )
 
+    theme_fidelity_summary = _theme_fidelity_summary(
+        markdown=normalized_markdown,
+        slide_reports=slide_reports,
+        selected_style=_mapping(selected_style),
+        selected_theme=_mapping(selected_theme),
+    )
+    if str(theme_fidelity_summary.get("status") or "") == "weak":
+        warnings.append(
+            {
+                "code": "theme_recipe_weak",
+                "message": "Deck stays structurally valid, but the selected theme baseline and recipe scaffold still read weakly.",
+            }
+        )
+    if int((theme_fidelity_summary.get("observed_theme_markers") or {}).get("ad_hoc_inline_style_count") or 0) > 2:
+        warnings.append(
+            {
+                "code": "too_much_ad_hoc_inline_style",
+                "message": "Deck relies on too many ad-hoc inline styles; prefer theme/layout/class-driven presentation structure.",
+            }
+        )
+
     return _result(
         not issues,
         issues,
@@ -294,6 +315,8 @@ def _review_slide(
                 "closing_role_mismatch",
                 f"Slide `{title}` is tagged closing but lacks a takeaway, summary, or next-step structure.",
             )
+        elif "verdict-line" not in observed_signals:
+            add_warning("document_like_closing", f"Slide `{title}` closes semantically, but still reads like a document ending instead of a presentation closing slide.")
         elif not _has_strong_closing_signal(slide):
             add_warning("weak_closing", f"Slide `{title}` closes the deck but the closing signal is still weak.")
         elif observed_layout not in {"end", "center"}:
@@ -309,22 +332,29 @@ def _review_slide(
                 "comparison_native_pattern_missing",
                 f"Slide `{title}` should use `layout: two-cols` or an explicit compare table.",
             )
+        elif "contrast-labels" not in observed_signals or "verdict-line" not in observed_signals:
+            add_warning("document_like_comparison", f"Slide `{title}` compares content, but still lacks the stronger split/contrast cues of a presentation comparison slide.")
     elif role == "framework":
         if _looks_flat_framework(slide):
             add_issue(
                 "framework_role_too_flat",
                 f"Slide `{title}` is tagged framework but reads like a flat bullet dump instead of a structured model.",
             )
+        elif "section-kicker" not in observed_signals or "model-takeaway" not in observed_signals:
+            add_warning("document_like_framework", f"Slide `{title}` is structurally valid, but still reads more like a document section than a framed model slide.")
         elif not {"mermaid", "table", "div-grid"}.intersection(observed_patterns):
             add_warning(
                 "framework_native_pattern_missing",
                 f"Slide `{title}` is a framework page but does not yet use a strong native structure such as Mermaid, table, or grid.",
             )
-    elif role in {"context", "detail"} and _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
-        add_warning(
-            "dense_context_or_detail",
-            f"Slide `{title}` is dense and mostly flat bullets; consider trimming or adding one structural cue.",
-        )
+    elif role in {"context", "detail"}:
+        if role == "context" and not ({"quote-or-callout", "section-kicker"} & set(observed_signals)):
+            add_warning("document_like_context", f"Slide `{title}` sets context semantically, but still reads like a report section instead of a presentation setup slide.")
+        if _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
+            add_warning(
+                "dense_context_or_detail",
+                f"Slide `{title}` is dense and mostly flat bullets; consider trimming or adding one structural cue.",
+            )
 
     if forbidden_hits:
         add_warning(
@@ -485,16 +515,26 @@ def _theme_fidelity_summary(
 ) -> dict[str, Any]:
     selected_theme_name = str(selected_theme.get("theme") or selected_style.get("theme") or "seriph")
     observed_theme = _global_frontmatter_value(markdown, "theme") or None
+    observed_frontmatter = _frontmatter_block(markdown)
     recipe_class_slides = sum(
         1 for report in slide_reports if any(str(name).startswith("deck-") for name in (report.get("observed_classes") or []))
     )
+    recipe_class_count = sum(
+        1 for report in slide_reports for name in (report.get("observed_classes") or []) if str(name).startswith("deck-")
+    )
     inline_style_count = len(re.findall(r'style\s*=\s*"', markdown)) + len(re.findall(r"style\s*=\s*'", markdown))
+    deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "").strip()
+    theme_config_present = "themeconfig:" in observed_frontmatter.lower()
     status = "matched"
     if observed_theme and observed_theme != selected_theme_name:
         status = "weak"
     if inline_style_count > max(2, len(slide_reports) // 2):
         status = "weak"
     if not recipe_class_slides:
+        status = "weak"
+    if deck_scaffold_class and deck_scaffold_class not in markdown:
+        status = "weak"
+    if selected_theme.get("theme_config") and not theme_config_present:
         status = "weak"
     return {
         "selected_style": str(selected_style.get("name") or "") or None,
@@ -504,7 +544,10 @@ def _theme_fidelity_summary(
         "status": status,
         "observed_theme_markers": {
             "recipe_class_slides": recipe_class_slides,
+            "recipe_class_count": recipe_class_count,
             "ad_hoc_inline_style_count": inline_style_count,
+            "deck_scaffold_class_present": bool(deck_scaffold_class and deck_scaffold_class in markdown),
+            "theme_config_present": theme_config_present,
         },
     }
 
@@ -655,11 +698,19 @@ def _observed_signals(
     body = _strip_slide_frontmatter(slide)
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     signals: set[str] = set()
+    first_heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
     if observed_layout in {"cover", "center", "end", "two-cols"}:
         signals.add(observed_layout)
     if re.search(r"^\s*#\s+", body, re.MULTILINE):
         signals.add("hero-title")
         signals.add("short-positioning-line")
+    if first_heading_index is not None and first_heading_index > 0:
+        kicker = lines[first_heading_index - 1]
+        if kicker and len(kicker) <= 48:
+            signals.add("launch-kicker")
+            signals.add("section-kicker")
+    elif lines and not lines[0].startswith("#") and len(lines[0]) <= 48:
+        signals.add("section-kicker")
     non_heading = [line for line in lines if not line.startswith("#")]
     if non_heading and len(non_heading[0]) <= 120:
         signals.add("short-subtitle")
@@ -687,6 +738,8 @@ def _observed_signals(
         signals.add("contrast-labels")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
         signals.add("model-takeaway")
+    if any(token in lower for token in ("结论", "核心判断", "bottom line", "verdict", "takeaway:", "so what")):
+        signals.add("verdict-line")
     return sorted(signals)
 
 
@@ -756,8 +809,14 @@ def _looks_like_cover(slide: str) -> bool:
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return False
-    first = lines[0]
-    return first.startswith("#") and _bullet_count(slide) <= 1 and len(lines) <= 5
+    heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
+    if heading_index is None:
+        return False
+    if heading_index > 1:
+        return False
+    if heading_index == 1 and len(lines[0]) > 48:
+        return False
+    return _bullet_count(slide) <= 1 and len(lines) <= 6
 
 
 def _looks_like_closing(slide: str) -> bool:
