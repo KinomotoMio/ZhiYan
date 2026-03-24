@@ -187,3 +187,26 @@ class CreateJobRequest(BaseModel):
     template_id: str | None = None
     num_pages: int = 5
     mode: GenerationMode = GenerationMode.AUTO
+
+
+class SlidevMvpRequest(BaseModel):
+    topic: str = ""
+    content: str = ""
+    session_id: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    num_pages: int = 5
+    build: bool = False
+
+
+class SlidevMvpResponse(BaseModel):
+    deck_id: str
+    title: str
+    markdown: str
+    artifact_dir: str
+    slides_path: str
+    build_output_dir: str | None = None
+    dev_command: str
+    build_command: str
+    validation: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    agentic: dict[str, Any] = Field(default_factory=dict)

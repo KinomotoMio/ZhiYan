@@ -41,17 +41,31 @@ def summarize_state(state: PipelineState | None) -> str:
 
     outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
     if outline_items:
-        titles = [
-            str(item.get("title") or "").strip()
-            for item in outline_items
-            if isinstance(item, dict) and str(item.get("title") or "").strip()
-        ]
-        preview = "；".join(titles[:5])
+        labels = []
+        for item in outline_items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            role = str(item.get("slide_role") or "").strip()
+            labels.append(f"{title}({role})" if role else title)
+        preview = "；".join(labels[:5])
         line = f"大纲已生成：{len(outline_items)} 页"
         if preview:
-            suffix = "；..." if len(titles) > 5 else ""
+            suffix = "；..." if len(labels) > 5 else ""
             line = f"{line} - {preview}{suffix}"
         parts.append(line)
+
+    outline_review = state.document_metadata.get("slidev_outline_review")
+    deck_review = state.document_metadata.get("slidev_deck_review")
+    review_parts = []
+    if isinstance(outline_review, dict):
+        review_parts.append(_review_label("大纲审查", outline_review))
+    if isinstance(deck_review, dict):
+        review_parts.append(_review_label("结构审查", deck_review))
+    if review_parts:
+        parts.append("；".join(part for part in review_parts if part))
 
     if state.layout_selections:
         layout_ids = [
@@ -217,3 +231,13 @@ def _preview_text(value: str) -> str:
     if len(text) <= _PREVIEW_LIMIT:
         return text
     return f"{text[:_PREVIEW_LIMIT - 3]}..."
+
+
+def _review_label(prefix: str, review: dict[str, object]) -> str:
+    issues = review.get("issues")
+    warnings = review.get("warnings")
+    issue_count = len(issues) if isinstance(issues, list) else 0
+    warning_count = len(warnings) if isinstance(warnings, list) else 0
+    ok = bool(review.get("ok"))
+    suffix = f"（{issue_count} hard / {warning_count} warnings）"
+    return f"{prefix}：{'通过' if ok else '未通过'}{suffix}"
