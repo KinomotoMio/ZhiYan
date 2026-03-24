@@ -1,0 +1,8 @@
+{
+  "name": "takeaway-next-steps",
+  "applies_to_roles": ["recommendation", "closing"],
+  "recommended_structure": "one takeaway line plus 2-4 next steps or actions",
+  "required_signals": ["next-step-or-takeaway"],
+  "visual_constraints": ["clear ending", "max 4 actions"],
+  "anti_patterns": ["generic-thanks", "unstyled-document-section"]
+}

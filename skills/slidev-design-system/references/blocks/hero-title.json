@@ -1,0 +1,8 @@
+{
+  "name": "hero-title",
+  "applies_to_roles": ["cover"],
+  "recommended_structure": "title + short subtitle",
+  "required_signals": ["hero-title", "short-subtitle"],
+  "visual_constraints": ["1 title", "1 short subtitle", "sparse density"],
+  "anti_patterns": ["long-bullet-list", "unstyled-document-section"]
+}

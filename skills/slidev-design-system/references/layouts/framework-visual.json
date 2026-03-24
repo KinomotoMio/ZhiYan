@@ -1,0 +1,10 @@
+{
+  "name": "framework-visual",
+  "applies_to_roles": ["framework"],
+  "preferred_layout": null,
+  "required_patterns": ["mermaid", "table", "div-grid"],
+  "required_classes": ["deck-framework"],
+  "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+  "description": "Model page carried by grid, diagram, or table plus one takeaway.",
+  "required_visual_signals": ["visual-structure", "model-takeaway"]
+}

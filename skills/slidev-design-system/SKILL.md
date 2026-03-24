@@ -1,7 +1,7 @@
 ---
 name: slidev-design-system
-description: Slidev deck visual design guidance for tech-launch style presentations. Use it to make slides feel like presentation pages instead of markdown documents.
-version: 0.1.0
+description: Slidev references layer for deck-level styles plus per-slide layout/block recipes. Use it to turn selected references into executable slide structure instead of free-form markdown aesthetics.
+version: 0.2.0
 command: /slidev-design-system
 ---
 
@@ -9,42 +9,48 @@ command: /slidev-design-system
 
 ## Purpose
 
-Use this skill to keep Slidev decks visually intentional.
-It does not replace `slide_role`; it teaches how each role should look when rendered as a Slidev deck.
+Use this skill to interpret the local Slidev references layer.
+The source of truth lives in `references/styles`, `references/layouts`, and `references/blocks`.
+This skill explains how to apply those assets; it is not the only place where recipe details live.
 
-## Deck-level Direction
+## References Layer
 
-- Default baseline: official `seriph` theme
-- Desired feel: tech product launch / strategy presentation
-- Prefer stable page rhythm over ad-hoc decoration
-- Avoid raw markdown-report aesthetics
+- `references/styles/`
+  - Deck-level baseline.
+  - Defines theme, tone, selection signals, required classes, and anti-patterns.
+- `references/layouts/`
+  - Slide-role skeletons.
+  - Defines which roles a layout applies to, the preferred Slidev layout, required patterns/classes, and forbidden patterns.
+- `references/blocks/`
+  - In-slide information blocks.
+  - Defines recommended structure, required signals, visual constraints, and anti-patterns.
 
-## Visual Rules
+## Execution Order
 
-- Cover
-  - strong title, short subtitle, sparse density
-  - prefer `layout: cover` or `layout: center`
-  - use `deck-cover`
-- Context
-  - use one structural cue beyond bullets
-  - prefer compact bullets plus quote/callout
-  - use `deck-context`
-- Framework
-  - must feel modeled, not listed
-  - prefer Mermaid, table, or grid
-  - use `deck-framework`
-- Comparison
-  - must create left/right contrast
-  - prefer `layout: two-cols` or a strong compare table
-  - use `deck-comparison`
-- Closing
-  - must feel conclusive
-  - prefer `layout: end` or `layout: center`
-  - use `deck-closing`
+Always apply references in this order:
 
-## Anti-Patterns
+1. Select one deck-level style.
+2. For each slide, select one layout recipe.
+3. For each slide, select one or two block recipes.
+4. Generate markdown that explicitly realizes those selected recipes.
+5. Review and validate against the same selected references.
 
-- Do not output pages that look like markdown article sections
-- Do not stack long bullet lists without one visual structure
-- Do not rely on ad-hoc inline `style=` for every page
-- Do not choose a recipe class and then fail to express it in the slide body
+## How To Use The References
+
+- `style`
+  - Sets the deck baseline: official theme, tone, and deck-wide anti-patterns.
+  - Do not switch themes or visual direction after selection.
+- `layout`
+  - Sets the page skeleton.
+  - Prefer the selected native `layout:` when it exists; otherwise realize the recipe with `class:`, grid, table, Mermaid, quote, or callout.
+- `blocks`
+  - Set page-level content shape and density.
+  - Keep within each block's visual constraints; do not exceed the intended information capacity.
+
+## Non-Negotiable Rules
+
+- References outrank free-form visual improvisation.
+- Do not output pages that look like markdown article sections when the selected recipe expects a presentation skeleton.
+- Do not rely on ad-hoc inline `style=` to compensate for missing recipe structure.
+- Do not claim to use a selected layout/block if the resulting slide does not show its required signals.
+- Keep `slide_role` as the control plane; references are the execution layer that makes the role visible in Slidev.

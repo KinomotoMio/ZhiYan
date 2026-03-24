@@ -14,12 +14,31 @@ def main() -> int:
     parameters = payload.get("parameters") or {}
     markdown = str(parameters.get("markdown") or "")
     expected_pages = parameters.get("expected_pages")
-    result = validate_deck(markdown=markdown, expected_pages=expected_pages)
+    selected_style = parameters.get("selected_style") or {}
+    selected_theme = parameters.get("selected_theme") or {}
+    selected_layouts = parameters.get("selected_layouts") or []
+    selected_blocks = parameters.get("selected_blocks") or []
+    result = validate_deck(
+        markdown=markdown,
+        expected_pages=expected_pages,
+        selected_style=selected_style,
+        selected_theme=selected_theme,
+        selected_layouts=selected_layouts,
+        selected_blocks=selected_blocks,
+    )
     json.dump(result, sys.stdout, ensure_ascii=False)
     return 0
 
 
-def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any]:
+def validate_deck(
+    *,
+    markdown: str,
+    expected_pages: Any = None,
+    selected_style: Any = None,
+    selected_theme: Any = None,
+    selected_layouts: Any = None,
+    selected_blocks: Any = None,
+) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     normalized_markdown, normalization = _normalize_slidev_composition(markdown)
@@ -27,12 +46,35 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
 
     if not text:
         issues.append({"code": "empty_markdown", "message": "Deck markdown is empty."})
+        empty_native = {
+            "layouts": [],
+            "layout_counts": {},
+            "pattern_counts": {},
+            "class_counts": {},
+            "recipe_classes": {},
+            "native_slide_count": 0,
+            "plain_slide_count": 0,
+            "visual_recipe_slide_count": 0,
+        }
         return _result(
             False,
             0,
             issues,
             warnings,
-            native_usage_summary={"layouts": [], "layout_counts": {}, "pattern_counts": {}, "class_counts": {}, "recipe_classes": {}, "native_slide_count": 0, "plain_slide_count": 0, "visual_recipe_slide_count": 0},
+            native_usage_summary=empty_native,
+            reference_usage_summary={
+                "matched_slide_count": 0,
+                "weak_slide_count": 0,
+                "missing_slide_count": 0,
+                "forbidden_slide_count": 0,
+                "slides": [],
+            },
+            theme_fidelity_summary={
+                "selected_theme": str((selected_theme or {}).get("theme") or (selected_style or {}).get("theme") or "seriph"),
+                "observed_theme": None,
+                "status": "missing",
+                "observed_theme_markers": {"recipe_class_slides": 0, "ad_hoc_inline_style_count": 0},
+            },
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
         )
 
@@ -71,11 +113,17 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
             }
         )
 
-    fence_issues = _validate_fences(text)
-    issues.extend(fence_issues)
+    issues.extend(_validate_fences(text))
     issues.extend(_validate_slide_frontmatter_blocks(slides))
     native_usage_summary = _native_usage_summary(slides)
-    warnings.extend(_structure_warnings(slides, native_usage_summary))
+    reference_usage_summary = _reference_usage_summary(slides, selected_layouts, selected_blocks)
+    theme_fidelity_summary = _theme_fidelity_summary(
+        markdown=text,
+        selected_style=selected_style,
+        selected_theme=selected_theme,
+        native_usage_summary=native_usage_summary,
+    )
+    warnings.extend(_structure_warnings(slides, native_usage_summary, reference_usage_summary, theme_fidelity_summary))
 
     return _result(
         not issues,
@@ -83,6 +131,8 @@ def validate_deck(*, markdown: str, expected_pages: Any = None) -> dict[str, Any
         issues,
         warnings,
         native_usage_summary=native_usage_summary,
+        reference_usage_summary=reference_usage_summary,
+        theme_fidelity_summary=theme_fidelity_summary,
         blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
     )
 
@@ -94,6 +144,8 @@ def _result(
     warnings: list[dict[str, str]],
     *,
     native_usage_summary: dict[str, Any],
+    reference_usage_summary: dict[str, Any],
+    theme_fidelity_summary: dict[str, Any],
     blank_first_slide_detected: bool,
 ) -> dict[str, Any]:
     return {
@@ -102,6 +154,14 @@ def _result(
         "issues": issues,
         "warnings": warnings,
         "native_usage_summary": native_usage_summary,
+        "reference_usage_summary": reference_usage_summary,
+        "reference_fidelity_summary": {
+            "matched_slide_count": int(reference_usage_summary.get("matched_slide_count") or 0),
+            "weak_slide_count": int(reference_usage_summary.get("weak_slide_count") or 0),
+            "missing_slide_count": int(reference_usage_summary.get("missing_slide_count") or 0),
+            "forbidden_slide_count": int(reference_usage_summary.get("forbidden_slide_count") or 0),
+        },
+        "theme_fidelity_summary": theme_fidelity_summary,
         "blank_first_slide_detected": blank_first_slide_detected,
     }
 
@@ -115,10 +175,6 @@ def _strip_frontmatter(text: str) -> str:
     if match:
         return text[match.end():]
     return text
-
-
-def _count_slides(text: str) -> int:
-    return len(_slide_chunks(text))
 
 
 def _coerce_expected_pages(value: Any) -> int | None:
@@ -161,7 +217,12 @@ def _count_fence_lines(text: str, marker: str) -> int:
     return count
 
 
-def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any]) -> list[dict[str, str]]:
+def _structure_warnings(
+    slides: list[str],
+    native_usage_summary: dict[str, Any],
+    reference_usage_summary: dict[str, Any],
+    theme_fidelity_summary: dict[str, Any],
+) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = []
     if not slides:
         return warnings
@@ -192,6 +253,22 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
             }
         )
 
+    if int(reference_usage_summary.get("missing_slide_count") or 0) + int(reference_usage_summary.get("forbidden_slide_count") or 0) >= max(2, len(slides) // 2):
+        warnings.append(
+            {
+                "code": "low_reference_protocol_usage",
+                "message": "Too many slides still miss their selected layout/block protocol or violate selected anti-patterns.",
+            }
+        )
+
+    if int(reference_usage_summary.get("forbidden_slide_count") or 0) > 0:
+        warnings.append(
+            {
+                "code": "reference_forbidden_patterns_detected",
+                "message": "One or more slides violate selected reference anti-patterns such as plain bullet dumps or unstyled document sections.",
+            }
+        )
+
     signatures = [_slide_signature(slide) for slide in slides]
     if _has_repeated_run(signatures, threshold=3):
         warnings.append(
@@ -217,7 +294,108 @@ def _structure_warnings(slides: list[str], native_usage_summary: dict[str, Any])
             }
         )
 
+    if str(theme_fidelity_summary.get("status") or "") == "weak":
+        warnings.append(
+            {
+                "code": "theme_fidelity_weak",
+                "message": "Observed theme markers do not fully align with the selected theme baseline.",
+            }
+        )
+
     return warnings
+
+
+def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_blocks: Any) -> dict[str, Any]:
+    layout_map = _selected_layout_map(selected_layouts)
+    block_map = _selected_block_map(selected_blocks)
+    slide_reports: list[dict[str, Any]] = []
+    counts = {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0}
+    for index, slide in enumerate(slides, start=1):
+        layout = layout_map.get(index, {})
+        block_payloads = block_map.get(index, [])
+        observed_layout = _extract_layout_name(slide)
+        observed_patterns = _observed_patterns(slide)
+        observed_classes = _extract_classes(slide)
+        observed_signals = _observed_signals(slide, observed_layout, observed_patterns, observed_classes)
+        expected_patterns = _string_list(layout.get("required_patterns"))
+        expected_classes = _string_list(layout.get("required_classes"))
+        expected_block_signals = sorted(
+            {
+                signal
+                for block in block_payloads
+                if isinstance(block, dict)
+                for signal in _string_list(block.get("required_signals"))
+            }
+        )
+        forbidden_hits = _forbidden_pattern_hits(slide=slide, forbidden_patterns=_string_list(layout.get("forbidden_patterns")))
+        matched_layout = bool(layout.get("preferred_layout")) and observed_layout == str(layout.get("preferred_layout") or "")
+        matched_patterns = [pattern for pattern in expected_patterns if pattern in observed_patterns or pattern in observed_signals]
+        matched_classes = [name for name in expected_classes if name in observed_classes]
+        matched_block_signals = [signal for signal in expected_block_signals if signal in observed_signals]
+        if forbidden_hits:
+            status = "forbidden"
+        elif (not layout.get("preferred_layout") or matched_layout) and (matched_patterns or matched_classes or matched_block_signals):
+            status = "matched"
+        elif matched_layout or matched_patterns or matched_classes or matched_block_signals:
+            status = "weak"
+        else:
+            status = "missing"
+        counts[status] += 1
+        slide_reports.append(
+            {
+                "slide_number": index,
+                "selected_layout": str(layout.get("recipe_name") or "") or None,
+                "selected_blocks": [str(block.get("name") or "") for block in block_payloads if isinstance(block, dict)],
+                "observed_layout": observed_layout,
+                "observed_classes": observed_classes,
+                "observed_patterns": observed_patterns,
+                "observed_signals": observed_signals,
+                "status": status,
+                "forbidden_patterns": forbidden_hits,
+                "matched_patterns": matched_patterns,
+                "matched_classes": matched_classes,
+                "matched_block_signals": matched_block_signals,
+            }
+        )
+    return {
+        "matched_slide_count": counts["matched"],
+        "weak_slide_count": counts["weak"],
+        "missing_slide_count": counts["missing"],
+        "forbidden_slide_count": counts["forbidden"],
+        "slides": slide_reports,
+    }
+
+
+def _theme_fidelity_summary(
+    *,
+    markdown: str,
+    selected_style: Any,
+    selected_theme: Any,
+    native_usage_summary: dict[str, Any],
+) -> dict[str, Any]:
+    selected_style = dict(selected_style) if isinstance(selected_style, dict) else {}
+    selected_theme = dict(selected_theme) if isinstance(selected_theme, dict) else {}
+    selected_theme_name = str(selected_theme.get("theme") or selected_style.get("theme") or "seriph")
+    observed_theme = _global_frontmatter_value(markdown, "theme") or None
+    recipe_class_slides = sum(int(value) for key, value in (native_usage_summary.get("recipe_classes") or {}).items() if str(key).startswith("deck-"))
+    inline_style_count = len(re.findall(r'style\s*=\s*"', markdown)) + len(re.findall(r"style\s*=\s*'", markdown))
+    status = "matched"
+    if observed_theme and observed_theme != selected_theme_name:
+        status = "weak"
+    if inline_style_count > max(2, int(native_usage_summary.get("native_slide_count") or 0)):
+        status = "weak"
+    if recipe_class_slides == 0:
+        status = "weak"
+    return {
+        "selected_theme": selected_theme_name,
+        "observed_theme": observed_theme,
+        "status": status,
+        "theme_mode": str(selected_theme.get("theme_mode") or selected_style.get("theme_mode") or "") or None,
+        "observed_theme_markers": {
+            "recipe_class_slides": recipe_class_slides,
+            "ad_hoc_inline_style_count": inline_style_count,
+        },
+    }
 
 
 def _slide_chunks(text: str) -> list[str]:
@@ -284,26 +462,6 @@ def _slide_signature(slide: str) -> str:
     return "|".join(part for part in [header, bullet, mermaid, quote, table, layout, klass] if part)
 
 
-def _native_structure_count(slides: list[str]) -> int:
-    count = 0
-    for slide in slides:
-        if any(
-            marker in slide
-            for marker in (
-                "```mermaid",
-                "layout:",
-                "class:",
-                "> ",
-                "<div",
-            )
-        ):
-            count += 1
-            continue
-        if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
-            count += 1
-    return count
-
-
 def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
     layout_counts: dict[str, int] = {}
     pattern_counts: dict[str, int] = {
@@ -348,7 +506,7 @@ def _native_usage_summary(slides: list[str]) -> dict[str, Any]:
         if "::" in slide:
             pattern_counts["callout"] += 1
             native_found = True
-        if recipe_classes and any(name in recipe_classes for name in classes):
+        if any(name.startswith("deck-") for name in classes):
             visual_recipe_slide_count += 1
         if native_found:
             native_slide_count += 1
@@ -389,6 +547,116 @@ def _split_classes(raw: str) -> list[str]:
     return [token.strip() for token in re.split(r"\s+", raw.strip()) if token.strip()]
 
 
+def _observed_patterns(slide: str) -> list[str]:
+    patterns: list[str] = []
+    layout_name = _extract_layout_name(slide)
+    if layout_name:
+        patterns.append(layout_name)
+    if "```mermaid" in slide:
+        patterns.append("mermaid")
+    if re.search(r"^\s*>\s+", slide, re.MULTILINE):
+        patterns.append("quote")
+    if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
+        patterns.append("table")
+    if "<div" in slide and "grid" in slide:
+        patterns.append("div-grid")
+    if "::" in slide:
+        patterns.append("callout")
+    return patterns
+
+
+def _observed_signals(
+    slide: str,
+    observed_layout: str | None,
+    observed_patterns: list[str],
+    observed_classes: list[str],
+) -> list[str]:
+    body = _strip_slide_frontmatter(slide)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    signals: set[str] = set()
+    if observed_layout in {"cover", "center", "end", "two-cols"}:
+        signals.add(observed_layout)
+    if re.search(r"^\s*#\s+", body, re.MULTILINE):
+        signals.add("hero-title")
+        signals.add("short-positioning-line")
+    non_heading = [line for line in lines if not line.startswith("#")]
+    if non_heading and len(non_heading[0]) <= 120:
+        signals.add("short-subtitle")
+    if any(name.startswith("deck-") for name in observed_classes):
+        signals.add("recipe-class")
+    if "quote" in observed_patterns or "callout" in observed_patterns:
+        signals.add("quote-or-callout")
+    if 2 <= _bullet_count(slide) <= 4:
+        signals.add("compact-bullets")
+    if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
+        signals.add("visual-structure")
+        signals.add("focus-block")
+    lower = body.lower()
+    if any(token in lower for token in ("takeaway", "next step", "next steps", "下一步", "总结", "结论")):
+        signals.add("next-step-or-takeaway")
+        signals.add("closing-line")
+    if any(token in lower for token in ("建议", "recommend", "decision")):
+        signals.add("decision-headline")
+    if _bullet_count(slide) >= 2:
+        signals.add("action-list")
+    if observed_layout == "two-cols" or "table" in observed_patterns or "::left::" in body or "::right::" in body:
+        signals.add("split-compare")
+        signals.add("before-after")
+    if re.search(r"^\s*###?\s+", body, re.MULTILINE) or "::left::" in body or "::right::" in body:
+        signals.add("contrast-labels")
+    if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
+        signals.add("model-takeaway")
+    return sorted(signals)
+
+
+def _selected_layout_map(selected_layouts: Any) -> dict[int, dict[str, Any]]:
+    result: dict[int, dict[str, Any]] = {}
+    if not isinstance(selected_layouts, list):
+        return result
+    for item in selected_layouts:
+        if not isinstance(item, dict):
+            continue
+        result[int(item.get("slide_number") or 0)] = dict(item)
+    return result
+
+
+def _selected_block_map(selected_blocks: Any) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = {}
+    if not isinstance(selected_blocks, list):
+        return result
+    for item in selected_blocks:
+        if not isinstance(item, dict):
+            continue
+        result[int(item.get("slide_number") or 0)] = [
+            dict(block) for block in (item.get("blocks") or []) if isinstance(block, dict)
+        ]
+    return result
+
+
+def _string_list(value: Any) -> list[str]:
+    return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+
+def _has_visual_structure(slide: str) -> bool:
+    markers = ("```mermaid", "layout:", "class:", "> ", "|", "::", "<div")
+    return any(marker in slide for marker in markers)
+
+
+def _forbidden_pattern_hits(*, slide: str, forbidden_patterns: list[str]) -> list[str]:
+    hits: list[str] = []
+    lower = _strip_slide_frontmatter(slide).lower()
+    for pattern in forbidden_patterns:
+        if pattern == "plain-bullet-dump" and _bullet_count(slide) >= 4 and not _has_visual_structure(slide):
+            hits.append(pattern)
+        elif pattern == "unstyled-document-section" and _bullet_count(slide) >= 3 and not _has_visual_structure(slide):
+            hits.append(pattern)
+        elif pattern == "generic-thanks" and any(token in lower for token in ("thank you", "thanks", "q&a", "谢谢")):
+            hits.append(pattern)
+        elif pattern == "too-much-inline-style" and len(re.findall(r"style\s*=", slide)) > 2:
+            hits.append(pattern)
+    return hits
+
+
 def _consume_slide_frontmatter(lines: list[str], start_index: int) -> tuple[list[str] | None, int]:
     index = start_index
     block: list[str] = []
@@ -426,8 +694,7 @@ def _looks_like_cover(slide: str) -> bool:
     if not lines:
         return False
     first = lines[0]
-    heading_like = first.startswith("#")
-    return heading_like and _bullet_count(slide) <= 1 and len(lines) <= 4
+    return first.startswith("#") and _bullet_count(slide) <= 1 and len(lines) <= 4
 
 
 def _looks_like_closing(slide: str) -> bool:
@@ -473,6 +740,17 @@ def _extract_first_slide_frontmatter_from_global(text: str) -> list[str]:
         if key in allowed:
             lines.append(raw_line.rstrip())
     return lines
+
+
+def _global_frontmatter_value(markdown: str, key: str) -> str:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", markdown, re.DOTALL)
+    if not match:
+        return ""
+    frontmatter = match.group(1)
+    key_match = re.search(rf"^\s*{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not key_match:
+        return ""
+    return key_match.group(1).strip()
 
 
 def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, bool | int]]:
