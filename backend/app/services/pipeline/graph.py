@@ -580,6 +580,35 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             structure_signals=structure_signals if isinstance(structure_signals, Mapping) else None,
         )
 
+    decision_traces: dict[int, dict[str, Any]] = {}
+    deterministic_by_slide: dict[int, dict[str, Any]] = {}
+    model_outline_items: list[dict[str, Any]] = []
+    for item in outline_items:
+        slide_number = int(item.get("slide_number") or 0)
+        if slide_number <= 0:
+            continue
+        role = get_outline_item_role(item)
+        effective_usage = slide_usage_tags.get(slide_number, ()) or document_usage_tags
+        signal_bundle = content_signals_by_slide.get(slide_number, {})
+        primary_signal = signal_bundle.get("primary")
+        shadow_signal = signal_bundle.get("shadow")
+        deterministic = _build_deterministic_hint_selection(
+            item=item,
+            role=role,
+            effective_usage=effective_usage,
+            content_signal_primary=primary_signal,
+            content_signal_shadow=shadow_signal,
+            layout_entries=layout_entries,
+            rank_layouts_by_usage_fn=rank_layouts_by_usage,
+            get_layout_fn=get_layout,
+        )
+        if deterministic is None:
+            model_outline_items.append(item)
+            continue
+        selection, trace = deterministic
+        deterministic_by_slide[slide_number] = selection
+        decision_traces[slide_number] = trace
+
     items_text = "\n".join(
         _format_outline_item_for_layout_prompt(
             item,
@@ -589,7 +618,7 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
             format_usage_tags_fn=format_usage_tags,
             rank_layouts_by_usage_fn=rank_layouts_by_usage,
         )
-        for item in outline_items
+        for item in model_outline_items
     )
     document_usage_text = format_usage_tags(document_usage_tags)
     source_hints_section = _format_source_hints_for_prompt(
@@ -620,203 +649,106 @@ async def stage_select_layouts(state: PipelineState, progress: ProgressHook | No
     )
 
     try:
-        from app.services.agents.layout_selector import layout_selector_agent
+        selections = list(deterministic_by_slide.values())
+        if model_outline_items:
+            from app.services.agents.layout_selector import layout_selector_agent
 
-        model = settings.fast_model or settings.default_model
-        provider = model.split(":", 1)[0] if ":" in model else None
-        logger.info(
-            "layout_selection_call_start",
-            extra={
-                "event": "layout_selection_call_start",
-                "job_id": state.job_id,
-                "stage": "layout",
-                "model": model,
-                "provider": provider,
-                "outline_items": len(outline_items),
-                "prompt_chars": len(prompt),
-            },
-        )
-        result = await layout_selector_agent.run(prompt)
-        usage = result.usage()
-        selections = result.output.model_dump()["slides"]
-        decision_traces: dict[int, dict[str, Any]] = {}
+            model = settings.fast_model or settings.default_model
+            provider = model.split(":", 1)[0] if ":" in model else None
+            logger.info(
+                "layout_selection_call_start",
+                extra={
+                    "event": "layout_selection_call_start",
+                    "job_id": state.job_id,
+                    "stage": "layout",
+                    "model": model,
+                    "provider": provider,
+                    "outline_items": len(model_outline_items),
+                    "prompt_chars": len(prompt),
+                },
+            )
+            result = await layout_selector_agent.run(prompt)
+            usage = result.usage()
+            model_selections = result.output.model_dump()["slides"]
 
-        for sel in selections:
-            item = next((it for it in outline_items if it["slide_number"] == sel["slide_number"]), None)
-            role = get_outline_item_role(item or {})
-            slide_number = int(sel.get("slide_number") or 0)
-            effective_usage = slide_usage_tags.get(slide_number, ()) or document_usage_tags
-            signal_bundle = content_signals_by_slide.get(slide_number, {})
-            primary_signal = signal_bundle.get("primary")
-            shadow_signal = signal_bundle.get("shadow")
-            if not isinstance(primary_signal, Mapping):
-                primary_signal = {}
-            if not isinstance(shadow_signal, Mapping):
-                shadow_signal = None
-            requested_group = str(sel.get("group") or "")
-            requested_sub_group = str(sel.get("sub_group") or "default")
-            resolved_sub_group = _resolve_layout_sub_group(
-                item or {},
-                role=role,
-                requested_sub_group=requested_sub_group,
-                content_signal_primary=primary_signal,
-            )
-            requested_layout_id = str(sel.get("layout_id") or "")
-            requested_layout = get_layout(requested_layout_id) if requested_layout_id else None
-            requested_variant_id = str(sel.get("variant_id") or getattr(requested_layout, "variant_id", ""))
-            resolved_variant_id = _resolve_layout_variant(
-                item or {},
-                role=role,
-                sub_group=resolved_sub_group,
-                requested_variant_id=requested_variant_id,
-                usage_tags=effective_usage,
-            )
-            candidate_entries = _rank_group_sub_group_variant_layouts(
-                layout_entries,
-                group=role,
-                sub_group=resolved_sub_group,
-                variant_id=resolved_variant_id,
-                usage_tags=effective_usage,
-                rank_layouts_by_usage_fn=rank_layouts_by_usage,
-            )
-            final_layout_id = (
-                candidate_entries[0].id
-                if candidate_entries
-                else _group_sub_group_variant_to_default_layout(
-                    role,
-                    resolved_sub_group,
-                    resolved_variant_id,
+            for sel in model_selections:
+                item = next(
+                    (it for it in model_outline_items if it["slide_number"] == sel["slide_number"]),
+                    None,
                 )
+                role = get_outline_item_role(item or {})
+                slide_number = int(sel.get("slide_number") or 0)
+                effective_usage = slide_usage_tags.get(slide_number, ()) or document_usage_tags
+                signal_bundle = content_signals_by_slide.get(slide_number, {})
+                primary_signal = signal_bundle.get("primary")
+                shadow_signal = signal_bundle.get("shadow")
+                selection, trace = _build_layout_selection(
+                    item=item or {},
+                    role=role,
+                    requested_group=str(sel.get("group") or ""),
+                    requested_sub_group=str(sel.get("sub_group") or "default"),
+                    requested_variant_id=str(sel.get("variant_id") or ""),
+                    requested_layout_id=str(sel.get("layout_id") or ""),
+                    selection_source="model_selected_path",
+                    reason=str(sel.get("reason") or ""),
+                    effective_usage=effective_usage,
+                    content_signal_primary=primary_signal,
+                    content_signal_shadow=shadow_signal,
+                    layout_entries=layout_entries,
+                    rank_layouts_by_usage_fn=rank_layouts_by_usage,
+                    get_layout_fn=get_layout,
+                )
+                selections.append(selection)
+                if slide_number:
+                    decision_traces[slide_number] = trace
+
+            logger.info(
+                "Layout selection call done",
+                extra={
+                    "job_id": state.job_id,
+                    "stage": "layout",
+                    "model": settings.fast_model or settings.default_model,
+                    "provider": (settings.fast_model or settings.default_model).split(":", 1)[0],
+                    "attempt": usage.requests,
+                    "token_usage": str(usage),
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                },
             )
-
-            final_entry = get_layout(final_layout_id)
-            used_safety_default = False
-            if final_entry is None:
-                final_layout_id = _group_sub_group_variant_to_default_layout(
-                    role,
-                    resolved_sub_group,
-                    resolved_variant_id,
-                )
-                final_entry = get_layout(final_layout_id)
-            if final_entry is None:
-                logger.error(
-                    "Layout selection fallback resolved to unknown layout, using safety default",
-                    extra={
-                        "job_id": state.job_id,
-                        "stage": "layout",
-                        "group": role,
-                        "sub_group": resolved_sub_group,
-                        "requested_variant_id": str(sel.get("variant_id") or ""),
-                        "resolved_variant_id": resolved_variant_id,
-                        "fallback_layout_id": final_layout_id,
-                        "safety_layout_id": "bullet-with-icons",
-                    },
-                )
-                used_safety_default = True
-                final_layout_id = "bullet-with-icons"
-                final_entry = get_layout(final_layout_id)
-                if final_entry is None:
-                    raise KeyError("Safety default layout 'bullet-with-icons' is unavailable")
-
-            sel["layout_id"] = final_layout_id
-            sel["group"] = role
-            sel["sub_group"] = resolved_sub_group
-            sel["variant_id"] = final_entry.variant_id
-            sel["design_traits"] = _serialize_design_traits_from_entry(final_entry)
-            if slide_number:
-                decision_traces[slide_number] = {
-                    "selection_source": "model",
-                    "requested_group": requested_group,
-                    "resolved_group": role,
-                    "requested_sub_group": requested_sub_group,
-                    "resolved_sub_group": resolved_sub_group,
-                    "requested_variant_id": requested_variant_id,
-                    "resolved_variant_id": resolved_variant_id,
-                    "pre_diversity_layout_id": final_layout_id,
-                    "effective_usage_tags": list(effective_usage),
-                    "content_signal_primary": dict(primary_signal),
-                    "content_signal_shadow": dict(shadow_signal) if shadow_signal else None,
-                    "confidence": float(primary_signal.get("confidence") or 0.0),
-                    "signal_source": str(primary_signal.get("signal_source") or "fallback"),
-                    "used_safety_default": used_safety_default,
-                }
-
         state.layout_selections = selections
-        logger.info(
-            "Layout selection call done",
-            extra={
-                "job_id": state.job_id,
-                "stage": "layout",
-                "model": settings.fast_model or settings.default_model,
-                "provider": (settings.fast_model or settings.default_model).split(":", 1)[0],
-                "attempt": usage.requests,
-                "token_usage": str(usage),
-                "elapsed_ms": int((time.monotonic() - t0) * 1000),
-            },
-        )
     except Exception as e:
         logger.warning(
             "Layout selection failed: %s, using role mapping",
             e,
             extra={"job_id": state.job_id, "stage": "layout", "error_type": type(e).__name__},
         )
-        decision_traces = {}
-        state.layout_selections = []
-        for item in outline_items:
-            role = get_outline_item_role(item)
+        state.layout_selections = list(deterministic_by_slide.values())
+        for item in model_outline_items:
+            role = get_outline_item_role(item or {})
             slide_number = int(item.get("slide_number") or 0)
+            effective_usage = slide_usage_tags.get(slide_number, ()) or document_usage_tags
             signal_bundle = content_signals_by_slide.get(slide_number, {})
             primary_signal = signal_bundle.get("primary")
             shadow_signal = signal_bundle.get("shadow")
-            if not isinstance(primary_signal, Mapping):
-                primary_signal = {}
-            if not isinstance(shadow_signal, Mapping):
-                shadow_signal = None
-            resolved_sub_group = _resolve_layout_sub_group(
-                item,
+            selection, trace = _build_layout_selection(
+                item=item,
                 role=role,
+                requested_group="",
                 requested_sub_group="default",
+                requested_variant_id="",
+                requested_layout_id="",
+                selection_source="fallback",
+                reason="fallback",
+                effective_usage=effective_usage,
                 content_signal_primary=primary_signal,
+                content_signal_shadow=shadow_signal,
+                layout_entries=layout_entries,
+                rank_layouts_by_usage_fn=rank_layouts_by_usage,
+                get_layout_fn=get_layout,
+                use_default_variant=True,
             )
-            variant_id = _group_sub_group_to_default_variant(
-                role,
-                resolved_sub_group,
-            )
-            layout_id = _group_sub_group_variant_to_default_layout(
-                role,
-                resolved_sub_group,
-                variant_id,
-            )
-            state.layout_selections.append(
-                {
-                    "slide_number": item["slide_number"],
-                    "group": role,
-                    "sub_group": resolved_sub_group,
-                    "variant_id": variant_id,
-                    "layout_id": layout_id,
-                    "design_traits": _serialize_design_traits_from_entry(get_layout(layout_id)),
-                    "reason": "fallback",
-                }
-            )
+            state.layout_selections.append(selection)
             if slide_number:
-                decision_traces[slide_number] = {
-                    "selection_source": "fallback",
-                    "requested_group": "",
-                    "resolved_group": role,
-                    "requested_sub_group": "default",
-                    "resolved_sub_group": resolved_sub_group,
-                    "requested_variant_id": "",
-                    "resolved_variant_id": variant_id,
-                    "pre_diversity_layout_id": layout_id,
-                    "effective_usage_tags": list(
-                        slide_usage_tags.get(slide_number, ()) or document_usage_tags
-                    ),
-                    "content_signal_primary": dict(primary_signal),
-                    "content_signal_shadow": dict(shadow_signal) if shadow_signal else None,
-                    "confidence": float(primary_signal.get("confidence") or 0.0),
-                    "signal_source": str(primary_signal.get("signal_source") or "fallback"),
-                    "used_safety_default": False,
-                }
+                decision_traces[slide_number] = trace
     state.layout_selections = _finalize_layout_selections(
         selections=state.layout_selections,
         job_id=state.job_id,
@@ -1463,6 +1395,159 @@ def _finalize_layout_selections(
         slide_usage_tags=slide_usage_tags,
     )
     return finalized
+
+
+def _build_layout_selection(
+    *,
+    item: dict[str, Any],
+    role: str,
+    requested_group: str,
+    requested_sub_group: str,
+    requested_variant_id: str,
+    requested_layout_id: str,
+    selection_source: str,
+    reason: str,
+    effective_usage: tuple[str, ...],
+    content_signal_primary: Mapping[str, Any] | None,
+    content_signal_shadow: Mapping[str, Any] | None,
+    layout_entries: list[Any],
+    rank_layouts_by_usage_fn,
+    get_layout_fn,
+    use_default_variant: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    slide_number = int(item.get("slide_number") or 0)
+    primary_signal = (
+        dict(content_signal_primary) if isinstance(content_signal_primary, Mapping) else {}
+    )
+    shadow_signal = (
+        dict(content_signal_shadow) if isinstance(content_signal_shadow, Mapping) else None
+    )
+    resolved_sub_group = _resolve_layout_sub_group(
+        item,
+        role=role,
+        requested_sub_group=requested_sub_group,
+        content_signal_primary=primary_signal,
+    )
+    requested_layout = get_layout_fn(requested_layout_id) if requested_layout_id else None
+    requested_variant = requested_variant_id or getattr(requested_layout, "variant_id", "")
+    if use_default_variant:
+        resolved_variant_id = _group_sub_group_to_default_variant(role, resolved_sub_group)
+    else:
+        resolved_variant_id = _resolve_layout_variant(
+            item,
+            role=role,
+            sub_group=resolved_sub_group,
+            requested_variant_id=requested_variant,
+            usage_tags=effective_usage,
+        )
+    candidate_entries = _rank_group_sub_group_variant_layouts(
+        layout_entries,
+        group=role,
+        sub_group=resolved_sub_group,
+        variant_id=resolved_variant_id,
+        usage_tags=effective_usage,
+        rank_layouts_by_usage_fn=rank_layouts_by_usage_fn,
+    )
+    final_layout_id = (
+        candidate_entries[0].id
+        if candidate_entries
+        else _group_sub_group_variant_to_default_layout(
+            role,
+            resolved_sub_group,
+            resolved_variant_id,
+        )
+    )
+
+    final_entry = get_layout_fn(final_layout_id)
+    used_safety_default = False
+    if final_entry is None:
+        final_layout_id = _group_sub_group_variant_to_default_layout(
+            role,
+            resolved_sub_group,
+            resolved_variant_id,
+        )
+        final_entry = get_layout_fn(final_layout_id)
+    if final_entry is None:
+        logger.error(
+            "Layout selection fallback resolved to unknown layout, using safety default",
+            extra={
+                "job_id": None,
+                "stage": "layout",
+                "group": role,
+                "sub_group": resolved_sub_group,
+                "requested_variant_id": requested_variant,
+                "resolved_variant_id": resolved_variant_id,
+                "fallback_layout_id": final_layout_id,
+                "safety_layout_id": "bullet-with-icons",
+            },
+        )
+        used_safety_default = True
+        final_layout_id = "bullet-with-icons"
+        final_entry = get_layout_fn(final_layout_id)
+        if final_entry is None:
+            raise KeyError("Safety default layout 'bullet-with-icons' is unavailable")
+
+    selection = {
+        "slide_number": slide_number,
+        "group": role,
+        "sub_group": resolved_sub_group,
+        "variant_id": final_entry.variant_id,
+        "layout_id": final_layout_id,
+        "design_traits": _serialize_design_traits_from_entry(final_entry),
+        "reason": reason,
+    }
+    trace = {
+        "selection_source": selection_source,
+        "requested_group": requested_group,
+        "resolved_group": role,
+        "requested_sub_group": requested_sub_group,
+        "resolved_sub_group": resolved_sub_group,
+        "requested_variant_id": requested_variant,
+        "resolved_variant_id": final_entry.variant_id,
+        "pre_diversity_layout_id": final_layout_id,
+        "effective_usage_tags": list(effective_usage),
+        "content_signal_primary": primary_signal,
+        "content_signal_shadow": shadow_signal,
+        "confidence": float(primary_signal.get("confidence") or 0.0),
+        "signal_source": str(primary_signal.get("signal_source") or "fallback"),
+        "used_safety_default": used_safety_default,
+    }
+    return selection, trace
+
+
+def _build_deterministic_hint_selection(
+    *,
+    item: dict[str, Any],
+    role: str,
+    effective_usage: tuple[str, ...],
+    content_signal_primary: Mapping[str, Any] | None,
+    content_signal_shadow: Mapping[str, Any] | None,
+    layout_entries: list[Any],
+    rank_layouts_by_usage_fn,
+    get_layout_fn,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    hinted_sub_group = _hinted_sub_group(item, role)
+    canonical_hints = _normalize_content_hints(item)
+    if len(canonical_hints) != 1 or not hinted_sub_group:
+        return None
+
+    selection, trace = _build_layout_selection(
+        item=item,
+        role=role,
+        requested_group=role,
+        requested_sub_group=hinted_sub_group,
+        requested_variant_id="",
+        requested_layout_id="",
+        selection_source="deterministic_hint_path",
+        reason=f"deterministic content_hints:{canonical_hints[0]}",
+        effective_usage=effective_usage,
+        content_signal_primary=content_signal_primary,
+        content_signal_shadow=content_signal_shadow,
+        layout_entries=layout_entries,
+        rank_layouts_by_usage_fn=rank_layouts_by_usage_fn,
+        get_layout_fn=get_layout_fn,
+    )
+    return selection, trace
 
 
 def _rank_group_sub_group_variant_layouts(

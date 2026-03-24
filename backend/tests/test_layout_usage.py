@@ -929,7 +929,7 @@ def test_stage_select_layouts_logs_layout_decision_trace(monkeypatch, caplog):
         ]
         assert len(records) == 1
         record = records[0]
-        assert record.selection_source == "model"
+        assert record.selection_source == "model_selected_path"
         assert record.outline_role == "narrative"
         assert record.requested_sub_group == "default"
         assert record.resolved_sub_group == "icon-points"
@@ -986,6 +986,138 @@ def test_stage_select_layouts_fallback_uses_capability_grid_for_four_capabilitie
         assert state.layout_selections[1]["sub_group"] == "capability-grid"
         assert state.layout_selections[1]["layout_id"] == "bullet-icons-only"
         assert state.layout_selections[1]["reason"] == "fallback"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_short_circuits_explicit_content_hints(monkeypatch):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "variant_id": "title-centered",
+                    "layout_id": "intro-slide",
+                    "reason": "灏侀潰",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "variant_id": "closing-center",
+                    "layout_id": "thank-you",
+                    "reason": "缁撴潫",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="鏂囨。鍖呭惈灏侀潰銆佷竴椤靛浘琛ㄥ垎鏋愬拰缁撴潫椤点€?",
+            topic="瀹為獙鎬荤粨",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "灏侀潰", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "瀹為獙瓒嬪娍鍥捐〃",
+                        "content_brief": "鐢ㄦ姌绾垮浘瑙ｈ鏍稿績鎸囨爣瓒嬪娍銆?",
+                        "suggested_slide_role": "evidence",
+                        "key_points": ["瓒嬪娍", "鎸囨爣", "鍙樺寲"],
+                        "content_hints": ["chart"],
+                    },
+                    {"slide_number": 3, "title": "缁撴潫", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        await stage_select_layouts(state)
+
+        assert len(agent.prompts) == 1
+        assert "瀹為獙瓒嬪娍鍥捐〃" not in agent.prompts[0]
+
+        chart_selection = next(sel for sel in state.layout_selections if sel["slide_number"] == 2)
+        assert chart_selection["sub_group"] == "chart-analysis"
+        assert chart_selection["variant_id"] == "chart-takeaways"
+        assert chart_selection["layout_id"] == "chart-with-bullets"
+        assert chart_selection["reason"] == "deterministic content_hints:chart"
+
+    asyncio.run(_case())
+
+
+def test_stage_select_layouts_keeps_conflicting_content_hints_on_model_path(monkeypatch, caplog):
+    async def _case():
+        from app.services.agents import layout_selector as layout_selector_mod
+
+        agent = _FakeLayoutSelectorAgent(
+            [
+                {
+                    "slide_number": 1,
+                    "group": "cover",
+                    "sub_group": "default",
+                    "variant_id": "title-centered",
+                    "layout_id": "intro-slide",
+                    "reason": "灏侀潰",
+                },
+                {
+                    "slide_number": 2,
+                    "group": "evidence",
+                    "sub_group": "table-matrix",
+                    "variant_id": "data-matrix",
+                    "layout_id": "table-info",
+                    "reason": "妯″瀷鍐冲畾",
+                },
+                {
+                    "slide_number": 3,
+                    "group": "closing",
+                    "sub_group": "default",
+                    "variant_id": "closing-center",
+                    "layout_id": "thank-you",
+                    "reason": "缁撴潫",
+                },
+            ]
+        )
+        monkeypatch.setattr(layout_selector_mod, "layout_selector_agent", agent, raising=False)
+
+        state = PipelineState(
+            raw_content="鍐呭鏃㈡彁鍒拌〃鏍煎張鎻愬埌鍥捐〃锛屼笉搴旇鐩存帴鐭矾銆?",
+            topic="鍐冲畾杈圭晫",
+            num_pages=3,
+            outline={
+                "items": [
+                    {"slide_number": 1, "title": "灏侀潰", "suggested_slide_role": "cover"},
+                    {
+                        "slide_number": 2,
+                        "title": "杈圭晫椤?",
+                        "content_brief": "鏈〉鏃㈠彲鑳芥槸琛ㄦ牸涔熷彲鑳芥槸鍥捐〃銆?",
+                        "suggested_slide_role": "evidence",
+                        "key_points": ["琛ㄦ牸", "鍥捐〃"],
+                        "content_hints": ["chart", "table"],
+                    },
+                    {"slide_number": 3, "title": "缁撴潫", "suggested_slide_role": "closing"},
+                ]
+            },
+        )
+
+        caplog.set_level(logging.INFO, logger="app.services.pipeline.graph")
+        await stage_select_layouts(state)
+
+        assert len(agent.prompts) == 1
+        assert "杈圭晫椤?" in agent.prompts[0]
+
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Layout decision resolved"
+            and getattr(record, "slide_number", None) == 2
+        ]
+        assert len(records) == 1
+        assert records[0].selection_source == "model_selected_path"
 
     asyncio.run(_case())
 
