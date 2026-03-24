@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.services.document.parser import estimate_tokens, extract_structure_signals
 from app.services.generation.agentic import (
     AgenticLoopResult,
+    SubagentSpec,
     ToolDef,
     ToolExecutionResult,
     ToolRegistry,
@@ -34,6 +35,8 @@ from app.services.generation.agentic import (
     build_skill_summaries,
     build_update_todo_tool,
     dispatch_tool_calls,
+    filter_registry,
+    run_parallel_subagents,
     summarize_state,
 )
 from app.services.generation.agentic.provider_failures import is_malformed_provider_response
@@ -41,11 +44,47 @@ from app.services.generation.agentic.todo import TodoManager
 from app.services.generation.agentic.types import AgenticModelClient
 from app.services.pipeline.graph import PipelineState
 from app.services.sessions import session_store
+from app.services.skill_runtime.executor import SkillExecutionError, execute_skill
 from app.services.skill_runtime.registry import SkillRegistry
 
 SLIDEV_ARTIFACT_ROOT = settings.project_root / "data" / "slidev-mvp"
 SLIDEV_SANDBOX_DIR = settings.project_root / "design" / "slidev-mvp"
 SLIDEV_SLIDES_FILENAME = "slides.md"
+LONG_DECK_TRIGGER_PAGES = 12
+LONG_DECK_CHUNK_SIZE = 3
+LONG_DECK_PLANNING_MAX_TURNS = 16
+LONG_DECK_CHUNK_MAX_TURNS = 10
+LONG_DECK_CHUNK_RETRY_LIMIT = 2
+SLIDEV_SUPPORTED_LAYOUTS = (
+    "404",
+    "center",
+    "cover",
+    "default",
+    "end",
+    "error",
+    "fact",
+    "full",
+    "iframe",
+    "iframe-left",
+    "iframe-right",
+    "image",
+    "image-left",
+    "image-right",
+    "intro",
+    "none",
+    "quote",
+    "section",
+    "statement",
+    "two-cols",
+    "two-cols-header",
+)
+LONG_DECK_PLANNING_TOOLS = (
+    "update_todo",
+    "load_skill",
+    "set_slidev_outline",
+    "review_slidev_outline",
+    "select_slidev_references",
+)
 SLIDEV_OUTLINE_ROLES = (
     "cover",
     "context",
@@ -251,9 +290,36 @@ class _RuntimeContext:
     deck_review_hash: str | None = None
     validation: dict[str, Any] | None = None
     validation_hash: str | None = None
+    reference_selection: dict[str, Any] | None = None
+    reference_selection_hash: str | None = None
     pattern_hints: list[dict[str, Any]] = field(default_factory=list)
+    latest_markdown: str = ""
+    long_deck_mode: bool = False
+    chunk_plan: list[dict[str, Any]] = field(default_factory=list)
+    chunk_reports: list[dict[str, Any]] = field(default_factory=list)
     save_failure: SlidevMvpValidationError | None = None
     saved_artifact: SlidevMvpArtifacts | None = None
+
+
+@dataclass(slots=True)
+class _ChunkSpec:
+    chunk_id: str
+    outline_items: list[dict[str, Any]]
+    selected_layouts: list[dict[str, Any]]
+    selected_blocks: list[dict[str, Any]]
+
+    @property
+    def slide_numbers(self) -> list[int]:
+        return [int(item.get("slide_number") or 0) for item in self.outline_items if isinstance(item, Mapping)]
+
+
+@dataclass(slots=True)
+class _ChunkExecution:
+    spec: _ChunkSpec
+    fragment_markdown: str
+    review: dict[str, Any]
+    validation: dict[str, Any]
+    attempts: int
 
 
 class SlidevMvpService:
@@ -329,32 +395,47 @@ class SlidevMvpService:
         )
         registry = self._build_registry(state=state, runtime=runtime, todo_manager=todo_manager)
 
-        try:
-            loop_result = await agentic_loop(
-                user_prompt=self._build_user_prompt(resolved),
-                model=self.model,
+        if self._should_use_long_deck_mode(resolved.num_pages):
+            loop_result = await self._run_long_deck_generation(
+                resolved=resolved,
                 state=state,
+                runtime=runtime,
                 todo_manager=todo_manager,
-                skill_summaries=build_skill_summaries(self.skill_registry),
-                harness_path=self.harness_path,
-                tool_definitions=registry.to_model_tools(),
-                dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
-                max_turns=24,
+                registry=registry,
             )
-        except UnexpectedModelBehavior as exc:
-            raise _provider_response_error(exc) from exc
+        else:
+            try:
+                loop_result = await agentic_loop(
+                    user_prompt=self._build_user_prompt(resolved),
+                    model=self.model,
+                    state=state,
+                    todo_manager=todo_manager,
+                    skill_summaries=build_skill_summaries(self.skill_registry),
+                    harness_path=self.harness_path,
+                    tool_definitions=registry.to_model_tools(),
+                    dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+                    max_turns=24,
+                )
+            except UnexpectedModelBehavior as exc:
+                raise _provider_response_error(exc) from exc
+            if runtime.saved_artifact is None:
+                runtime.saved_artifact = await self._controller_finalize_deck(
+                    title=resolved.title_hint,
+                    state=state,
+                    runtime=runtime,
+                )
         self.last_loop_result = loop_result
 
-        if runtime.saved_artifact is None:
-            raise _missing_artifact_error(runtime)
-
         artifact = runtime.saved_artifact
+        if artifact is None:
+            raise _missing_artifact_error(runtime)
         agentic_summary = {
             "turns": loop_result.turns,
             "stop_reason": loop_result.stop_reason,
             "max_turns_reached": loop_result.max_turns_reached,
             "used_subagent": runtime.used_subagent,
             "loaded_skills": sorted(runtime.loaded_skills),
+            "long_deck_mode": runtime.long_deck_mode,
             "final_state_summary": summarize_state(state),
         }
         artifact = SlidevMvpArtifacts(
@@ -437,6 +518,534 @@ class SlidevMvpService:
             source_hints=_build_source_hints(source_metas),
         )
 
+    def _should_use_long_deck_mode(self, num_pages: int) -> bool:
+        return int(num_pages) >= LONG_DECK_TRIGGER_PAGES
+
+    async def _run_long_deck_generation(
+        self,
+        *,
+        resolved: _ResolvedInputs,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        todo_manager: TodoManager,
+        registry: ToolRegistry,
+    ) -> AgenticLoopResult:
+        runtime.long_deck_mode = True
+        state.document_metadata["slidev_long_deck_mode"] = True
+
+        planning_registry = filter_registry(registry, LONG_DECK_PLANNING_TOOLS)
+        try:
+            planning_result = await agentic_loop(
+                user_prompt=self._build_long_deck_planning_prompt(resolved),
+                model=self.model,
+                state=state,
+                todo_manager=todo_manager,
+                skill_summaries=build_skill_summaries(self.skill_registry),
+                harness_path=self.harness_path,
+                tool_definitions=planning_registry.to_model_tools(),
+                dispatch_tools=lambda calls: dispatch_tool_calls(calls, planning_registry),
+                max_turns=LONG_DECK_PLANNING_MAX_TURNS,
+            )
+        except UnexpectedModelBehavior as exc:
+            raise _provider_response_error(exc) from exc
+
+        self._ensure_long_deck_planning_ready(runtime=runtime, state=state)
+        chunk_specs = self._build_chunk_specs(state=state, runtime=runtime)
+        runtime.chunk_plan = [_chunk_metadata(spec) for spec in chunk_specs]
+        state.document_metadata["slidev_chunk_plan"] = list(runtime.chunk_plan)
+
+        try:
+            chunk_executions = await self._run_chunk_generation(
+                chunk_specs=chunk_specs,
+                resolved=resolved,
+                runtime=runtime,
+            )
+        except SlidevMvpValidationError:
+            state.document_metadata["slidev_chunk_reports"] = list(runtime.chunk_reports)
+            state.document_metadata["slidev_chunk_summary"] = _build_chunk_summary(
+                runtime.chunk_plan,
+                runtime.chunk_reports,
+            )
+            raise
+
+        runtime.used_subagent = True
+        runtime.chunk_reports = [_chunk_report_payload(execution) for execution in chunk_executions]
+        state.document_metadata["slidev_chunk_reports"] = list(runtime.chunk_reports)
+        state.document_metadata["slidev_chunk_summary"] = _build_chunk_summary(
+            runtime.chunk_plan,
+            runtime.chunk_reports,
+        )
+
+        markdown = self._assemble_chunked_markdown(
+            title=resolved.title_hint,
+            runtime=runtime,
+            chunk_executions=chunk_executions,
+        )
+        runtime.latest_markdown = markdown
+        runtime.saved_artifact = await self._controller_finalize_deck(
+            title=resolved.title_hint,
+            state=state,
+            runtime=runtime,
+            markdown=markdown,
+        )
+        return AgenticLoopResult(
+            output_text="long deck generated via chunk orchestration",
+            messages=planning_result.messages,
+            turns=planning_result.turns,
+            max_turns_reached=planning_result.max_turns_reached,
+            stop_reason="slidev-artifact-saved",
+            last_response=planning_result.last_response,
+        )
+
+    async def _controller_finalize_deck(
+        self,
+        *,
+        title: str,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        markdown: str | None = None,
+    ) -> SlidevMvpArtifacts:
+        current_outline_hash = _outline_hash(state.outline)
+        if runtime.outline_review is None:
+            raise _save_gate_error(
+                reason_code="outline_review_missing",
+                message="还没有完成大纲正式审查，controller 不能 finalization。",
+                next_action="调用 review_slidev_outline()",
+            )
+        if not bool(runtime.outline_review.get("ok")):
+            raise _save_gate_error(
+                reason_code="outline_review_failed",
+                message="Deck 大纲结构审查未通过，controller 不能 finalization。",
+                next_action="修正大纲后重新调用 review_slidev_outline()",
+            )
+        if runtime.outline_review_hash and runtime.outline_review_hash != current_outline_hash:
+            raise _save_gate_error(
+                reason_code="outline_review_stale",
+                message="大纲在审查后发生了变化，controller 不能直接 finalization。",
+                next_action="重新调用 review_slidev_outline()",
+            )
+        if runtime.reference_selection is None:
+            raise _save_gate_error(
+                reason_code="reference_selection_missing",
+                message="还没有完成 Slidev references 选择，controller 不能 finalization。",
+                next_action="调用 select_slidev_references()",
+            )
+        if runtime.reference_selection_hash and runtime.reference_selection_hash != current_outline_hash:
+            raise _save_gate_error(
+                reason_code="reference_selection_stale",
+                message="大纲在选择 references 后发生了变化，controller 不能直接 finalization。",
+                next_action="重新调用 select_slidev_references()",
+            )
+
+        candidate_markdown = str(markdown or runtime.latest_markdown or "").strip()
+        if not candidate_markdown:
+            raise SlidevMvpValidationError(
+                "Controller 没有拿到可 finalization 的 deck markdown。",
+                reason_code="deck_markdown_missing",
+                next_action="先产出完整 deck markdown，并至少完成一次 review_slidev_deck/validate_slidev_deck。",
+            )
+
+        runtime.save_failure = None
+        outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+        runtime.deck_review = await self._review_markdown(
+            markdown=candidate_markdown,
+            outline_items=outline_items,
+            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+            selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
+            selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
+        )
+        runtime.deck_review_hash = _text_hash(candidate_markdown)
+        state.document_metadata["slidev_deck_review"] = runtime.deck_review
+
+        runtime.validation = await self._validate_markdown(
+            markdown=candidate_markdown,
+            expected_pages=int(state.num_pages or runtime.requested_pages or 0),
+            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+            selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
+            selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
+        )
+        runtime.validation_hash = _text_hash(candidate_markdown)
+        state.document_metadata["slidev_validation"] = runtime.validation
+
+        _ensure_save_prerequisites(runtime=runtime, state=state, markdown=candidate_markdown)
+        return await self._persist_artifact(
+            title=title,
+            markdown=candidate_markdown,
+            runtime=runtime,
+            state=state,
+        )
+
+    def _build_long_deck_planning_prompt(self, resolved: _ResolvedInputs) -> str:
+        return (
+            "你正在为长 Deck 做全局规划阶段，只完成规划，不要生成最终 markdown。\n\n"
+            "必须严格按下面顺序执行：\n"
+            "1. update_todo\n"
+            "2. load_skill('slidev-syntax')\n"
+            "3. load_skill('slidev-deck-quality')\n"
+            "4. load_skill('slidev-design-system')\n"
+            "5. set_slidev_outline(...)：为整份 deck 生成完整 outline\n"
+            "6. review_slidev_outline()\n"
+            "7. select_slidev_references()\n"
+            "8. 用简短文本确认规划完成后停止，不要生成最终 markdown，不要调用 review_slidev_deck / validate_slidev_deck / save_slidev_artifact。\n\n"
+            f"目标页数：{resolved.num_pages} 页\n"
+            f"主题：{resolved.topic}\n"
+            "要求：长 deck 需要保持全局 style 一致，并覆盖 cover / context / framework / comparison / closing 等结构型角色。\n\n"
+            "输入材料：\n"
+            f"{resolved.material}"
+        )
+
+    def _ensure_long_deck_planning_ready(self, *, runtime: _RuntimeContext, state: PipelineState) -> None:
+        outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+        if not outline_items:
+            raise SlidevMvpValidationError(
+                "长 Deck 规划未产出 outline。",
+                reason_code="outline_missing",
+                next_action="先完成 set_slidev_outline(...)",
+            )
+        if runtime.outline_review is None or not bool(runtime.outline_review.get("ok")):
+            raise SlidevMvpValidationError(
+                "长 Deck 规划阶段未完成 outline review。",
+                reason_code="outline_review_missing",
+                next_action="完成 review_slidev_outline() 并修正问题。",
+            )
+        if runtime.reference_selection is None:
+            raise SlidevMvpValidationError(
+                "长 Deck 规划阶段未完成 references 选择。",
+                reason_code="reference_selection_missing",
+                next_action="完成 select_slidev_references()。",
+            )
+
+    def _build_chunk_specs(self, *, state: PipelineState, runtime: _RuntimeContext) -> list[_ChunkSpec]:
+        outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+        selected_layouts_by_slide = {
+            int(item.get("slide_number") or 0): dict(item)
+            for item in ((runtime.reference_selection or {}).get("selected_layouts") or [])
+            if isinstance(item, Mapping)
+        }
+        selected_blocks_by_slide = {
+            int(item.get("slide_number") or 0): {
+                **dict(item),
+                "blocks": [dict(block) for block in (item.get("blocks") or []) if isinstance(block, Mapping)],
+            }
+            for item in ((runtime.reference_selection or {}).get("selected_blocks") or [])
+            if isinstance(item, Mapping)
+        }
+        specs: list[_ChunkSpec] = []
+        for index, start in enumerate(range(0, len(outline_items), LONG_DECK_CHUNK_SIZE), start=1):
+            items = [dict(item) for item in outline_items[start : start + LONG_DECK_CHUNK_SIZE] if isinstance(item, Mapping)]
+            specs.append(
+                _ChunkSpec(
+                    chunk_id=f"chunk-{index}",
+                    outline_items=items,
+                    selected_layouts=[
+                        selected_layouts_by_slide.get(int(item.get("slide_number") or 0), {})
+                        for item in items
+                    ],
+                    selected_blocks=[
+                        selected_blocks_by_slide.get(
+                            int(item.get("slide_number") or 0),
+                            {"slide_number": int(item.get("slide_number") or 0), "blocks": []},
+                        )
+                        for item in items
+                    ],
+                )
+            )
+        return specs
+
+    async def _run_chunk_generation(
+        self,
+        *,
+        chunk_specs: Sequence[_ChunkSpec],
+        resolved: _ResolvedInputs,
+        runtime: _RuntimeContext,
+    ) -> list[_ChunkExecution]:
+        pending_specs = list(chunk_specs)
+        executions: dict[str, _ChunkExecution] = {}
+        attempts_by_chunk: dict[str, int] = {spec.chunk_id: 0 for spec in chunk_specs}
+        feedback_by_chunk: dict[str, str] = {}
+        latest_reports: dict[str, dict[str, Any]] = {}
+
+        for _attempt in range(1, LONG_DECK_CHUNK_RETRY_LIMIT + 1):
+            if not pending_specs:
+                break
+            results = await run_parallel_subagents(
+                [
+                    SubagentSpec(
+                        task=self._build_chunk_task(
+                            spec=spec,
+                            resolved=resolved,
+                            runtime=runtime,
+                            retry_feedback=feedback_by_chunk.get(spec.chunk_id, ""),
+                        ),
+                        allowed_tool_names=[],
+                        max_turns=LONG_DECK_CHUNK_MAX_TURNS,
+                        system_prompt=(
+                            "You are a Slidev chunk writer. Output only markdown for the assigned slides. "
+                            "Do not include explanations or wrap the whole answer in code fences. "
+                            "Use only supported Slidev layouts and fix every retry finding when provided."
+                        ),
+                    )
+                    for spec in pending_specs
+                ],
+                registry=None,
+                model=self.model,
+            )
+
+            next_pending: list[_ChunkSpec] = []
+            for spec, result in zip(pending_specs, results, strict=False):
+                attempts_by_chunk[spec.chunk_id] += 1
+                fragment_markdown = _normalize_chunk_fragment(
+                    result.output_text,
+                    max_slides=len(spec.outline_items),
+                )
+                review = await self._review_chunk_fragment(spec=spec, markdown=fragment_markdown, runtime=runtime)
+                validation = await self._validate_chunk_fragment(spec=spec, markdown=fragment_markdown, runtime=runtime)
+                if bool(review.get("ok")) and bool(validation.get("ok")):
+                    latest_reports[spec.chunk_id] = _chunk_attempt_report_payload(
+                        spec=spec,
+                        review=review,
+                        validation=validation,
+                        attempts=attempts_by_chunk[spec.chunk_id],
+                        status="passed",
+                    )
+                    executions[spec.chunk_id] = _ChunkExecution(
+                        spec=spec,
+                        fragment_markdown=fragment_markdown,
+                        review=review,
+                        validation=validation,
+                        attempts=attempts_by_chunk[spec.chunk_id],
+                    )
+                    feedback_by_chunk.pop(spec.chunk_id, None)
+                    continue
+                latest_reports[spec.chunk_id] = _chunk_attempt_report_payload(
+                    spec=spec,
+                    review=review,
+                    validation=validation,
+                    attempts=attempts_by_chunk[spec.chunk_id],
+                    status="failed",
+                )
+                feedback_by_chunk[spec.chunk_id] = _format_chunk_retry_feedback(review=review, validation=validation)
+                next_pending.append(spec)
+
+            pending_specs = next_pending
+
+        if pending_specs:
+            runtime.chunk_reports = [
+                latest_reports[spec.chunk_id]
+                for spec in chunk_specs
+                if spec.chunk_id in latest_reports
+            ]
+            failed_summaries = [
+                _chunk_failure_summary(latest_reports.get(spec.chunk_id, {}))
+                for spec in pending_specs
+            ]
+            raise SlidevMvpValidationError(
+                "长 Deck 分块生成失败：" + "；".join(summary for summary in failed_summaries if summary),
+                reason_code="chunk_generation_failed",
+                next_action="检查 chunk_summary / chunk_reports 后重新生成。",
+            )
+
+        return [executions[spec.chunk_id] for spec in chunk_specs if spec.chunk_id in executions]
+
+    def _build_chunk_task(
+        self,
+        *,
+        spec: _ChunkSpec,
+        resolved: _ResolvedInputs,
+        runtime: _RuntimeContext,
+        retry_feedback: str = "",
+    ) -> str:
+        selected_style = (runtime.reference_selection or {}).get("selected_style") or {}
+        selected_theme = _selected_theme_payload(runtime.reference_selection or {})
+        style_name = str(selected_style.get("name") or "default")
+        style_tone = str(selected_style.get("tone") or "")
+        supported_layouts = ", ".join(SLIDEV_SUPPORTED_LAYOUTS)
+        lines = [
+            f"为长 Deck 生成 {spec.chunk_id} 的 Slidev markdown fragment。",
+            "只输出 fragment markdown，不要输出 JSON，不要输出解释。",
+            "不要输出全局 frontmatter；只输出本 chunk 的连续 slides。",
+            f"这个 chunk 必须输出且只输出 {len(spec.outline_items)} 页。",
+            f"主题：{resolved.topic}",
+            f"全局 style：{style_name} ({style_tone})",
+            f"官方 theme 基底：{selected_theme.get('theme') or 'seriph'}",
+            "必须遵守全局 outline 与 references，不允许修改页顺序、slide_role、页数预算。",
+            f"只能使用这些 Slidev 内置 layout：{supported_layouts}。",
+            "不要发明 layout 名；如果推荐 layout 为空或不适配，请改用普通 markdown + class + table/div/mermaid 等结构。",
+            "",
+            "本 chunk 负责的页面：",
+        ]
+        for item, layout, blocks in zip(spec.outline_items, spec.selected_layouts, spec.selected_blocks, strict=False):
+            block_names = ", ".join(
+                str(block.get("name") or "")
+                for block in (blocks.get("blocks") or [])
+                if isinstance(block, Mapping)
+            ) or "none"
+            block_structures = " | ".join(
+                _block_recipe_prompt(block)
+                for block in (blocks.get("blocks") or [])
+                if isinstance(block, Mapping)
+            ) or "none"
+            lines.append(
+                f"- slide {item.get('slide_number')}: {item.get('title')} "
+                f"[role={item.get('slide_role')}, goal={item.get('goal')}, "
+                f"layout_recipe={layout.get('recipe_name') or 'none'}, layout={layout.get('layout') or 'none'}, "
+                f"container={layout.get('container_classes') or 'none'}, content={layout.get('content_classes') or 'none'}, "
+                f"blocks={block_names}, block_recipe={block_structures}, must={_chunk_role_requirements(str(item.get('slide_role') or ''))}]"
+            )
+        lines.extend(
+            [
+                "",
+                "输出要求：",
+                f"- 本 chunk 必须严格覆盖且仅覆盖这些 slides；页数必须精确等于 {len(spec.outline_items)}。",
+                "- slide 之间用 `---` 分隔。",
+                "- 每一页都要以对应 slide title 的 markdown heading 开头，顺序必须与分配列表一致。",
+                "- 每一页都不要额外生成未分配的过渡页、总结页、封底页。",
+                "- 需要使用对应的 layout/class/frontmatter 时，写成完整 fenced block。",
+                "- comparison 页必须使用 two-cols、table 或 before/after 这种明确对照结构。",
+                "- closing 页必须包含 takeaway、summary、next step 三者之一；不能只写“谢谢/讨论/Q&A”。",
+                "- comparison/framework/closing 不允许退化成普通 bullet dump。",
+            ]
+        )
+        if retry_feedback:
+            lines.extend(
+                [
+                    "",
+                    "上一次生成未通过，请逐条修正这些问题后重新输出完整 fragment：",
+                    retry_feedback,
+                ]
+            )
+        lines.extend(["", "素材：", resolved.material])
+        return "\n".join(lines)
+
+    async def _review_chunk_fragment(
+        self,
+        *,
+        spec: _ChunkSpec,
+        markdown: str,
+        runtime: _RuntimeContext,
+    ) -> dict[str, Any]:
+        return await self._review_markdown(
+            markdown=_wrap_chunk_as_standalone_deck(markdown, title=spec.chunk_id),
+            outline_items=spec.outline_items,
+            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+            selected_layouts=spec.selected_layouts,
+            selected_blocks=spec.selected_blocks,
+        )
+
+    async def _validate_chunk_fragment(
+        self,
+        *,
+        spec: _ChunkSpec,
+        markdown: str,
+        runtime: _RuntimeContext,
+    ) -> dict[str, Any]:
+        return await self._validate_markdown(
+            markdown=_wrap_chunk_as_standalone_deck(markdown, title=spec.chunk_id),
+            expected_pages=len(spec.outline_items),
+            selected_style=(runtime.reference_selection or {}).get("selected_style") or {},
+            selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
+            selected_layouts=spec.selected_layouts,
+            selected_blocks=spec.selected_blocks,
+        )
+
+    async def _review_markdown(
+        self,
+        *,
+        markdown: str,
+        outline_items: Sequence[Mapping[str, Any]],
+        selected_style: Mapping[str, Any],
+        selected_theme: Mapping[str, Any],
+        selected_layouts: Sequence[Mapping[str, Any]],
+        selected_blocks: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        try:
+            result = await execute_skill(
+                "slidev-deck-quality",
+                "review_deck.py",
+                {
+                    "slides": [],
+                    "parameters": {
+                        "markdown": markdown,
+                        "outline_items": list(outline_items),
+                        "selected_style": dict(selected_style),
+                        "selected_theme": dict(selected_theme),
+                        "selected_layouts": list(selected_layouts),
+                        "selected_blocks": list(selected_blocks),
+                    },
+                },
+            )
+        except SkillExecutionError as exc:
+            raise SlidevMvpValidationError(
+                f"slidev-deck-quality review 执行失败：{exc}",
+                reason_code="deck_review_error",
+                next_action="检查 review_deck.py 与 markdown 输入。",
+            ) from exc
+        if not isinstance(result, dict):
+            raise SlidevMvpValidationError(
+                "slidev-deck-quality review 必须返回 JSON 对象。",
+                reason_code="deck_review_invalid",
+                next_action="修正 review_deck.py 输出格式。",
+            )
+        return result
+
+    async def _validate_markdown(
+        self,
+        *,
+        markdown: str,
+        expected_pages: int,
+        selected_style: Mapping[str, Any],
+        selected_theme: Mapping[str, Any],
+        selected_layouts: Sequence[Mapping[str, Any]],
+        selected_blocks: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        try:
+            result = await execute_skill(
+                "slidev-syntax",
+                "validate_deck.py",
+                {
+                    "slides": [],
+                    "parameters": {
+                        "markdown": markdown,
+                        "expected_pages": expected_pages,
+                        "selected_style": dict(selected_style),
+                        "selected_theme": dict(selected_theme),
+                        "selected_layouts": list(selected_layouts),
+                        "selected_blocks": list(selected_blocks),
+                    },
+                },
+            )
+        except SkillExecutionError as exc:
+            raise SlidevMvpValidationError(
+                f"slidev-syntax validate 执行失败：{exc}",
+                reason_code="validation_error",
+                next_action="检查 validate_deck.py 与 markdown 输入。",
+            ) from exc
+        if not isinstance(result, dict):
+            raise SlidevMvpValidationError(
+                "slidev-syntax validate 必须返回 JSON 对象。",
+                reason_code="validation_invalid",
+                next_action="修正 validate_deck.py 输出格式。",
+            )
+        return result
+
+    def _assemble_chunked_markdown(
+        self,
+        *,
+        title: str,
+        runtime: _RuntimeContext,
+        chunk_executions: Sequence[_ChunkExecution],
+    ) -> str:
+        selected_theme = _selected_theme_payload(runtime.reference_selection or {})
+        theme = str(selected_theme.get("theme") or "seriph")
+        all_slides: list[str] = []
+        for execution in chunk_executions:
+            all_slides.extend(_parse_fragment_slides(execution.fragment_markdown))
+        deck_body = "\n\n---\n\n".join(slide.strip() for slide in all_slides if slide.strip())
+        return f"---\ntheme: {theme}\ntitle: {title}\n---\n\n{deck_body}".rstrip() + "\n"
+
     def _build_user_prompt(self, resolved: _ResolvedInputs) -> str:
         source_hint_text = _format_source_hints(resolved.source_hints)
         native_mapping_guide = "\n".join(
@@ -457,11 +1066,12 @@ class SlidevMvpService:
             "4. 再调用 load_skill，name 必须是 'slidev-design-system'。\n"
             "5. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal；这个 outline 是 deck contract，不是随手草稿。\n"
             "6. 调用 review_slidev_outline() 审查大纲结构，不要自己拼 review_outline.py 的参数。\n"
-            "7. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
-            "8. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
-            "9. 在保存前调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
-            "10. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
-            "11. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
+            "7. 调用 select_slidev_references()，先锁定 deck-level style/theme 与每页 layout/block references。\n"
+            "8. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
+            "9. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
+            "10. 在交给 controller finalization 前，先调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
+            "11. 再调用 validate_slidev_deck(markdown=...) 做语法审查，例如 {'markdown': '---\\n...'}。\n"
+            "12. save_slidev_artifact 只作为兼容出口；controller 会对最终 markdown 重新执行 final review -> validate -> save。不要直接在文本里返回整份 deck。\n\n"
             "额外约束：\n"
             "- 不要直接调用 run_skill 来做 review_outline.py / review_deck.py / validate_deck.py。\n"
             "- subagent 的文本意见不能替代正式审查结果。\n"
@@ -469,7 +1079,8 @@ class SlidevMvpService:
             "- 每页先满足 role contract，再兑现对应 visual recipe；不要生成“像 markdown 文档章节”的页面。\n"
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
             "- `cover / context / framework / comparison / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
-            "- 只在 review_slidev_outline / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n\n"
+            "- 只在 review_slidev_outline / select_slidev_references / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n"
+            "- 如果你已经完成 markdown 与中间 review/validate，controller 会接手最终 final gate；不要因为记不清 save 顺序而中断 deck 生成。\n\n"
             "第一页语法约束：\n"
             "- 如果第一页就是 cover / center，请把 `layout`、`class` 直接写进开头的全局 frontmatter，不要先输出一个空 `---` 再开封面页。\n"
             "- 如果后续页面要使用 `layout:` / `class:` frontmatter，必须写成完整 fenced block：`---` / `layout: ...` / `class: ...` / `---`；不要输出裸 `layout:` 行。\n"
@@ -543,14 +1154,16 @@ class SlidevMvpService:
             if skill_name == "slidev-deck-quality" and script_name == "review_deck.py":
                 if not isinstance(result, dict):
                     raise SlidevMvpValidationError("slidev-deck-quality deck review must return a JSON object.")
+                runtime.latest_markdown = str(parameters.get("markdown") or "")
                 runtime.deck_review = result
-                runtime.deck_review_hash = _text_hash(str(parameters.get("markdown") or ""))
+                runtime.deck_review_hash = _text_hash(runtime.latest_markdown)
                 state.document_metadata["slidev_deck_review"] = result
             if skill_name == "slidev-syntax" and script_name == "validate_deck.py":
                 if not isinstance(result, dict):
                     raise SlidevMvpValidationError("slidev-syntax validation must return a JSON object.")
+                runtime.latest_markdown = str(parameters.get("markdown") or "")
                 runtime.validation = result
-                runtime.validation_hash = _text_hash(str(parameters.get("markdown") or ""))
+                runtime.validation_hash = _text_hash(runtime.latest_markdown)
                 state.document_metadata["slidev_validation"] = result
             return result
 
@@ -590,6 +1203,7 @@ class SlidevMvpService:
 
         registry.register(build_set_slidev_outline_tool(state))
         registry.register(self._build_review_slidev_outline_tool(state=state, runtime=runtime, run_skill=_run_skill))
+        registry.register(self._build_select_slidev_references_tool(state=state, runtime=runtime))
         registry.register(self._build_review_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
         registry.register(self._build_validate_slidev_deck_tool(state=state, runtime=runtime, run_skill=_run_skill))
         registry.register(self._build_save_slidev_artifact_tool(state=state, runtime=runtime))
@@ -629,6 +1243,45 @@ class SlidevMvpService:
             handler=_handler,
         )
 
+    def _build_select_slidev_references_tool(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+    ) -> ToolDef:
+        async def _handler(args: dict[str, Any]) -> Any:
+            del args
+            outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+            if not outline_items:
+                raise SlidevMvpValidationError(
+                    "还没有可选的 Slidev references，请先调用 set_slidev_outline。",
+                    reason_code="reference_outline_missing",
+                    next_action="先调用 set_slidev_outline(items)，再调用 select_slidev_references()",
+                )
+
+            result = _select_slidev_references(
+                outline_items=outline_items,
+                topic=str(state.topic or state.document_metadata.get("title") or ""),
+                num_pages=int(state.num_pages or runtime.requested_pages or len(outline_items)),
+                material_excerpt=str(state.raw_content or "")[:1500],
+            )
+
+            runtime.reference_selection = result
+            runtime.reference_selection_hash = _outline_hash(state.outline)
+            state.document_metadata["slidev_selected_style"] = result.get("selected_style") or {}
+            state.document_metadata["slidev_selected_theme"] = result.get("selected_theme") or {}
+            state.document_metadata["slidev_selected_layouts"] = result.get("selected_layouts") or []
+            state.document_metadata["slidev_selected_blocks"] = result.get("selected_blocks") or []
+            state.document_metadata["slidev_reference_selection"] = result.get("selection_summary") or {}
+            return result
+
+        return ToolDef(
+            name="select_slidev_references",
+            description="Select a deck-level style plus per-slide layout/block references from the current outline.",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            handler=_handler,
+        )
+
     def _build_review_slidev_deck_tool(
         self,
         *,
@@ -652,6 +1305,10 @@ class SlidevMvpService:
                     "parameters": {
                         "markdown": markdown,
                         "outline_items": outline_items,
+                        "selected_style": (runtime.reference_selection or {}).get("selected_style") or {},
+                        "selected_theme": (runtime.reference_selection or {}).get("selected_theme") or {},
+                        "selected_layouts": (runtime.reference_selection or {}).get("selected_layouts") or [],
+                        "selected_blocks": (runtime.reference_selection or {}).get("selected_blocks") or [],
                     },
                 }
             )
@@ -690,6 +1347,10 @@ class SlidevMvpService:
                     "parameters": {
                         "markdown": markdown,
                         "expected_pages": int(state.num_pages or runtime.requested_pages or 0),
+                        "selected_style": (runtime.reference_selection or {}).get("selected_style") or {},
+                        "selected_theme": (runtime.reference_selection or {}).get("selected_theme") or {},
+                        "selected_layouts": (runtime.reference_selection or {}).get("selected_layouts") or [],
+                        "selected_blocks": (runtime.reference_selection or {}).get("selected_blocks") or [],
                     },
                 }
             )
@@ -719,6 +1380,7 @@ class SlidevMvpService:
                 raise ValueError("save_slidev_artifact requires a non-empty 'title'")
             if not markdown.strip():
                 raise ValueError("save_slidev_artifact requires non-empty markdown")
+            runtime.latest_markdown = markdown
             try:
                 _ensure_save_prerequisites(runtime=runtime, state=state, markdown=markdown)
             except SlidevMvpValidationError as exc:
@@ -772,6 +1434,12 @@ class SlidevMvpService:
         outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
         pattern_hints = _extract_pattern_hints(outline_items)
         visual_hints = _extract_visual_hints(outline_items)
+        reference_selection = runtime.reference_selection or {}
+        selected_style = dict(reference_selection.get("selected_style") or {})
+        selected_theme = _selected_theme_payload(reference_selection)
+        selected_layouts = list(reference_selection.get("selected_layouts") or [])
+        selected_blocks = list(reference_selection.get("selected_blocks") or [])
+        chunk_summary = _build_chunk_summary(runtime.chunk_plan, runtime.chunk_reports)
         runtime.pattern_hints = pattern_hints
         titles_by_slide_number = {
             int(item.get("slide_number") or index + 1): str(item.get("title") or f"Slide {index + 1}")
@@ -789,12 +1457,17 @@ class SlidevMvpService:
         state.document_metadata.update(
             {
                 "slidev_slide_count": slide_count,
+                "slidev_long_deck_mode": runtime.long_deck_mode,
                 "slidev_validation": runtime.validation or {},
                 "slidev_outline_review": runtime.outline_review or {},
                 "slidev_deck_review": runtime.deck_review or {},
                 "slidev_structure_warnings": structure_warnings,
                 "slidev_pattern_hints": pattern_hints,
                 "slidev_visual_hints": visual_hints,
+                "slidev_selected_style": selected_style,
+                "slidev_selected_theme": selected_theme,
+                "slidev_selected_layouts": selected_layouts,
+                "slidev_selected_blocks": selected_blocks,
                 "slidev_native_usage": (runtime.validation or {}).get("native_usage_summary", {}),
                 "slidev_mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
                 "slidev_visual_recipe_summary": _build_visual_recipe_summary(
@@ -802,6 +1475,9 @@ class SlidevMvpService:
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "slidev_chunk_plan": list(runtime.chunk_plan),
+                "slidev_chunk_reports": list(runtime.chunk_reports),
+                "slidev_chunk_summary": chunk_summary,
                 "slidev_composition_normalization": {
                     "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                     "double_separator_frontmatter_detected": bool(
@@ -833,12 +1509,19 @@ class SlidevMvpService:
                 "structure_warnings": structure_warnings,
                 "pattern_hints": pattern_hints,
                 "visual_hints": visual_hints,
+                "selected_style": selected_style,
+                "selected_theme": str(selected_theme.get("theme") or "seriph"),
+                "theme_reason": str(selected_theme.get("theme_reason") or ""),
+                "selected_layouts": selected_layouts,
+                "selected_blocks": selected_blocks,
                 "mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
                 "visual_recipe_summary": _build_visual_recipe_summary(
                     visual_hints,
                     runtime.deck_review or {},
                     runtime.validation or {},
                 ),
+                "chunk_summary": chunk_summary,
+                "chunk_reports": list(runtime.chunk_reports),
                 "composition_normalization": {
                     "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                     "double_separator_frontmatter_detected": bool(
@@ -1056,6 +1739,456 @@ def _guess_title_from_content(material: str) -> str:
     return ""
 
 
+def _sanitize_markdown_fragment(text: str) -> str:
+    raw = str(text or "").strip()
+    fenced = re.match(r"^```(?:markdown|md)?\s*\n(.*)\n```$", raw, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    return raw
+
+
+def _normalize_chunk_fragment(text: str, *, max_slides: int) -> str:
+    fragment = _sanitize_markdown_fragment(text)
+    fragment = _strip_scaffold_slide_labels(fragment)
+    fragment = _normalize_fake_frontmatter_code_fences(fragment)
+    fragment = _normalize_unfenced_slide_frontmatter(fragment)
+    fragment = _normalize_chunk_heading_boundaries(fragment, max_slides=max_slides)
+    fragment = _normalize_fake_frontmatter_code_fences(fragment)
+    fragment = _normalize_unclosed_code_fences(fragment)
+    slides = [_normalize_chunk_slide(slide) for slide in _parse_fragment_slides(fragment)]
+    if max_slides > 0:
+        slides = slides[:max_slides]
+    if not slides:
+        return fragment
+    return "\n\n---\n\n".join(slide.strip() for slide in slides if slide.strip()).rstrip()
+
+
+def _normalize_fake_frontmatter_code_fences(fragment: str) -> str:
+    pattern = re.compile(r"```(?:ya?ml)?\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+
+    def _replace(match: re.Match[str]) -> str:
+        lines = _extract_frontmatter_lines_from_block(match.group(1))
+        if not lines:
+            return match.group(0)
+        return "\n".join(["---", *lines, "---"])
+
+    return pattern.sub(_replace, str(fragment or ""))
+
+
+def _normalize_unfenced_slide_frontmatter(fragment: str) -> str:
+    lines = str(fragment or "").splitlines()
+    if not lines:
+        return str(fragment or "")
+
+    result: list[str] = []
+    index = 0
+    at_slide_start = True
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+
+        if at_slide_start and stripped == "---":
+            block, next_index = _consume_slide_frontmatter_block(lines, index + 1)
+            if block is not None:
+                result.extend(["---", *block, "---"])
+                index = next_index
+                at_slide_start = False
+                continue
+            index += 1
+            continue
+
+        if at_slide_start:
+            block, next_index = _consume_unfenced_frontmatter_lines(lines, index)
+            if block:
+                result.extend(["---", *block, "---"])
+                index = next_index
+                at_slide_start = False
+                continue
+
+        if stripped == "---":
+            result.append("---")
+            at_slide_start = True
+            index += 1
+            continue
+
+        result.append(line)
+        if stripped:
+            at_slide_start = False
+        index += 1
+
+    return "\n".join(result).strip()
+
+
+def _normalize_chunk_slide(slide: str) -> str:
+    normalized = str(slide or "").strip()
+    if not normalized:
+        return normalized
+    normalized = _strip_scaffold_slide_heading(normalized)
+    normalized = _move_internal_frontmatter_to_top(normalized)
+    normalized = _balance_html_container_tags(normalized)
+    return normalized.strip()
+
+
+def _strip_scaffold_slide_labels(fragment: str) -> str:
+    lines = str(fragment or "").splitlines()
+    if not lines:
+        return str(fragment or "")
+    result: list[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(r"^#\s*slide\s+\d+\s*[:：].+$", stripped, re.IGNORECASE):
+            lookahead = "\n".join(lines[index + 1 : index + 10])
+            if "```yaml" in lookahead or "```yml" in lookahead or re.search(r"^\s*#{1,3}\s+\S+", lookahead, re.MULTILINE):
+                continue
+        result.append(line)
+    return "\n".join(result).strip()
+
+
+def _strip_scaffold_slide_heading(slide: str) -> str:
+    lines = slide.splitlines()
+    if not lines:
+        return slide
+    first_nonempty_index = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first_nonempty_index is None:
+        return slide
+    first_line = lines[first_nonempty_index].strip()
+    if not re.match(r"^#\s*slide\s+\d+\s*[:：].+$", first_line, re.IGNORECASE):
+        return slide
+    next_lines = lines[first_nonempty_index + 1 :]
+    if any(re.match(r"^\s*#{1,3}\s+\S+", line) for line in next_lines) or any("layout:" in line for line in next_lines):
+        del lines[first_nonempty_index]
+        while first_nonempty_index < len(lines) and not lines[first_nonempty_index].strip():
+            del lines[first_nonempty_index]
+        return "\n".join(lines).strip()
+    return slide
+
+
+def _move_internal_frontmatter_to_top(slide: str) -> str:
+    if slide.startswith("---\n"):
+        return slide
+
+    lines = slide.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() == "---":
+            start = index
+            break
+    if start is None:
+        return slide
+
+    end = None
+    for index in range(start + 1, len(lines)):
+        if lines[index].strip() == "---":
+            end = index
+            break
+    if end is None:
+        return slide
+
+    block_lines = _extract_frontmatter_lines_from_block("\n".join(lines[start + 1 : end]))
+    if not block_lines:
+        return slide
+
+    before = "\n".join(lines[:start]).strip()
+    after = "\n".join(lines[end + 1 :]).strip()
+    body_parts = [part for part in (before, after) if part]
+    body = "\n\n".join(body_parts).strip()
+    if not body:
+        return "\n".join(["---", *block_lines, "---"]).strip()
+    return "\n".join(["---", *block_lines, "---", "", body]).strip()
+
+
+def _extract_frontmatter_lines_from_block(block: str) -> list[str]:
+    allowed = {"layout", "class", "transition", "background"}
+    lines: list[str] = []
+    for raw_line in str(block or "").splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped == "---":
+            continue
+        key = _frontmatter_key(stripped)
+        if key not in allowed:
+            return []
+        lines.append(stripped)
+    return lines
+
+
+def _balance_html_container_tags(slide: str) -> str:
+    balanced = slide.rstrip()
+    for tag in ("div", "section", "p"):
+        open_count = len(re.findall(rf"<{tag}(?=[\s>])[^>]*>", balanced))
+        close_count = len(re.findall(rf"</{tag}>", balanced))
+        if open_count > close_count:
+            balanced += "\n" + "\n".join(f"</{tag}>" for _ in range(open_count - close_count))
+    return balanced
+
+
+def _consume_unfenced_frontmatter_lines(lines: Sequence[str], start_index: int) -> tuple[list[str], int]:
+    allowed = {"layout", "class", "transition", "background"}
+    index = start_index
+    block: list[str] = []
+    while index < len(lines):
+        raw_line = lines[index].rstrip()
+        stripped = raw_line.strip()
+        if not stripped:
+            break
+        key = _frontmatter_key(stripped)
+        if key not in allowed:
+            break
+        block.append(raw_line)
+        index += 1
+    return block, index
+
+
+def _normalize_chunk_heading_boundaries(fragment: str, *, max_slides: int) -> str:
+    if max_slides <= 1:
+        return fragment
+    if "\n---\n" in fragment or fragment.strip().startswith("---\n"):
+        parsed = _parse_fragment_slides(fragment)
+        if len(parsed) >= 2:
+            return fragment
+    lines = str(fragment or "").splitlines()
+    if not lines:
+        return fragment
+
+    slides: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if _looks_like_heading_boundary(stripped) and current and not _looks_like_frontmatter_only_chunk(current):
+            slides.append(current)
+            current = []
+        current.append(line)
+    if current:
+        slides.append(current)
+
+    meaningful_slides = ["\n".join(chunk).strip() for chunk in slides if "\n".join(chunk).strip()]
+    if len(meaningful_slides) < 2:
+        return fragment
+    return "\n\n---\n\n".join(meaningful_slides[:max_slides]).rstrip()
+
+
+def _looks_like_heading_boundary(stripped_line: str) -> bool:
+    if not stripped_line.startswith("#"):
+        return False
+    return bool(re.match(r"^#{1,3}\s+\S+", stripped_line))
+
+
+def _looks_like_frontmatter_only_chunk(lines: Sequence[str]) -> bool:
+    meaningful = [line.strip() for line in lines if line.strip()]
+    if not meaningful:
+        return False
+    allowed = {"layout", "class", "transition", "background"}
+    normalized = [line for line in meaningful if line != "---"]
+    if not normalized:
+        return False
+    return all((_frontmatter_key(line) in allowed) for line in normalized)
+
+
+def _normalize_unclosed_code_fences(fragment: str) -> str:
+    lines = str(fragment or "").splitlines()
+    fence_stack: list[str] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            marker = "```"
+        elif stripped.startswith("~~~"):
+            marker = "~~~"
+        else:
+            continue
+        if fence_stack and fence_stack[-1] == marker:
+            fence_stack.pop()
+        else:
+            fence_stack.append(marker)
+    if not fence_stack:
+        return fragment
+    closing_lines = [marker for marker in reversed(fence_stack)]
+    return str(fragment).rstrip() + "\n" + "\n".join(closing_lines)
+
+
+def _chunk_role_requirements(role: str) -> str:
+    normalized = role.strip().lower()
+    requirements = {
+        "cover": "hero title + short subtitle; avoid bullet-heavy body",
+        "context": "brief context with quote/callout or compact bullets",
+        "framework": "use mermaid/table/grid plus one takeaway line",
+        "detail": "one focused point with supporting detail, not a flat dump",
+        "comparison": "must use two-cols, table, or before/after compare structure",
+        "recommendation": "one decision headline plus 2-4 action items",
+        "closing": "must include takeaway, summary, or next step; not just thanks/Q&A",
+    }
+    return requirements.get(normalized, "follow the assigned role and keep the structure explicit")
+
+
+def _wrap_chunk_as_standalone_deck(fragment: str, *, title: str) -> str:
+    normalized = _sanitize_markdown_fragment(fragment)
+    if re.match(r"^---\s*\n.*?\n---\s*(?:\n|$)", normalized, re.DOTALL):
+        return normalized
+    return f"---\ntheme: seriph\ntitle: {title}\n---\n\n{normalized}".rstrip() + "\n"
+
+
+def _parse_fragment_slides(fragment: str) -> list[str]:
+    return _parse_slidev_slides(_wrap_chunk_as_standalone_deck(fragment, title="chunk"))
+
+
+def _format_chunk_retry_feedback(*, review: Mapping[str, Any], validation: Mapping[str, Any]) -> str:
+    lines: list[str] = []
+    seen_codes: set[str] = set()
+    review_issues = review.get("issues") if isinstance(review, Mapping) else []
+    review_warnings = review.get("warnings") if isinstance(review, Mapping) else []
+    validation_issues = validation.get("issues") if isinstance(validation, Mapping) else []
+    validation_warnings = validation.get("warnings") if isinstance(validation, Mapping) else []
+
+    for prefix, items in (
+        ("review issue", review_issues),
+        ("validation issue", validation_issues),
+        ("review warning", review_warnings),
+        ("validation warning", validation_warnings),
+    ):
+        if not isinstance(items, list):
+            continue
+        for item in items[:6]:
+            if not isinstance(item, Mapping):
+                continue
+            code = str(item.get("code") or "unknown")
+            message = str(item.get("message") or "").strip()
+            seen_codes.add(code)
+            lines.append(f"- {prefix} [{code}]: {message}")
+
+    if {"unfenced_slide_frontmatter", "frontmatter_inside_code_fence"} & seen_codes:
+        lines.append("- Rewrite slide frontmatter as real Slidev fences at the start of the slide. Never use ```yaml blocks for layout/class.")
+    if "comparison_native_pattern_missing" in seen_codes:
+        lines.append("- For the comparison slide, use `layout: two-cols` plus `::left::` and `::right::`, or one explicit compare table.")
+    if "closing_role_mismatch" in seen_codes:
+        lines.append("- For the closing slide, use `layout: end` and include one clear takeaway line plus 2-3 next steps.")
+    if "unbalanced_html_tags" in seen_codes:
+        lines.append("- Close every `<div>`, `<section>`, and `<p>` tag before the slide separator.")
+
+    return "\n".join(lines) if lines else "- Fix the previous structural and syntax issues, then regenerate the full fragment."
+
+
+def _chunk_metadata(spec: _ChunkSpec) -> dict[str, Any]:
+    slide_numbers = spec.slide_numbers
+    titles = [str(item.get("title") or "") for item in spec.outline_items]
+    return {
+        "chunk_id": spec.chunk_id,
+        "slide_numbers": slide_numbers,
+        "slide_count": len(slide_numbers),
+        "titles": titles,
+    }
+
+
+def _chunk_report_payload(execution: _ChunkExecution) -> dict[str, Any]:
+    return _chunk_attempt_report_payload(
+        spec=execution.spec,
+        review=execution.review,
+        validation=execution.validation,
+        attempts=execution.attempts,
+        status="passed",
+    )
+
+
+def _chunk_attempt_report_payload(
+    *,
+    spec: _ChunkSpec,
+    review: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    attempts: int,
+    status: str,
+) -> dict[str, Any]:
+    review_warnings = review.get("warnings") if isinstance(review, Mapping) else []
+    review_issues = review.get("issues") if isinstance(review, Mapping) else []
+    validation_warnings = validation.get("warnings") if isinstance(validation, Mapping) else []
+    validation_issues = validation.get("issues") if isinstance(validation, Mapping) else []
+    return {
+        "chunk_id": spec.chunk_id,
+        "slide_numbers": spec.slide_numbers,
+        "titles": [str(item.get("title") or "") for item in spec.outline_items],
+        "attempts": attempts,
+        "status": status,
+        "review_ok": bool(review.get("ok")),
+        "validation_ok": bool(validation.get("ok")),
+        "review_warning_count": len(review_warnings) if isinstance(review_warnings, list) else 0,
+        "review_issue_count": len(review_issues) if isinstance(review_issues, list) else 0,
+        "validation_warning_count": len(validation_warnings) if isinstance(validation_warnings, list) else 0,
+        "validation_issue_count": len(validation_issues) if isinstance(validation_issues, list) else 0,
+        "review_issue_codes": _issue_codes(review_issues),
+        "review_warning_codes": _issue_codes(review_warnings),
+        "validation_issue_codes": _issue_codes(validation_issues),
+        "validation_warning_codes": _issue_codes(validation_warnings),
+        "review_issues": _compact_findings(review_issues),
+        "review_warnings": _compact_findings(review_warnings),
+        "validation_issues": _compact_findings(validation_issues),
+        "validation_warnings": _compact_findings(validation_warnings),
+    }
+
+
+def _issue_codes(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    codes: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        code = str(item.get("code") or "").strip()
+        if code:
+            codes.append(code)
+    return codes
+
+
+def _compact_findings(items: Any, *, limit: int = 3) -> list[dict[str, str]]:
+    if not isinstance(items, list):
+        return []
+    findings: list[dict[str, str]] = []
+    for item in items[:limit]:
+        if not isinstance(item, Mapping):
+            continue
+        findings.append({"code": str(item.get("code") or ""), "message": str(item.get("message") or "")})
+    return findings
+
+
+def _chunk_failure_summary(report: Mapping[str, Any]) -> str:
+    if not isinstance(report, Mapping):
+        return ""
+    chunk_id = str(report.get("chunk_id") or "unknown")
+    review_codes = list(report.get("review_issue_codes") or [])
+    validation_codes = list(report.get("validation_issue_codes") or [])
+    if not review_codes and not validation_codes:
+        return f"{chunk_id} 重试后仍失败"
+    parts: list[str] = []
+    if review_codes:
+        parts.append(f"review={','.join(review_codes)}")
+    if validation_codes:
+        parts.append(f"validation={','.join(validation_codes)}")
+    return f"{chunk_id}({'; '.join(parts)})"
+
+
+def _build_chunk_summary(
+    chunk_plan: Sequence[Mapping[str, Any]],
+    chunk_reports: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    report_by_chunk = {
+        str(report.get("chunk_id") or ""): report
+        for report in chunk_reports
+        if isinstance(report, Mapping) and str(report.get("chunk_id") or "").strip()
+    }
+    completed = 0
+    retried = 0
+    failed_chunks: list[str] = []
+    for report in report_by_chunk.values():
+        completed += 1
+        if int(report.get("attempts") or 0) > 1:
+            retried += 1
+        if str(report.get("status") or "") != "passed":
+            failed_chunks.append(str(report.get("chunk_id") or ""))
+    return {
+        "planned_chunks": len(chunk_plan),
+        "completed_chunks": completed,
+        "retried_chunks": retried,
+        "failed_chunks": failed_chunks,
+        "chunk_ids": [str(item.get("chunk_id") or "") for item in chunk_plan if isinstance(item, Mapping)],
+    }
+
+
 def _count_slidev_slides(markdown: str) -> int:
     return len(_parse_slidev_slides(markdown))
 
@@ -1121,6 +2254,186 @@ def _pattern_hint_preview(pattern_hint: Mapping[str, Any]) -> str:
     layout_text = ",".join(str(name) for name in layouts[:2]) or "none"
     pattern_text = ",".join(str(name) for name in patterns[:2]) or "none"
     return f"layouts={layout_text}; patterns={pattern_text}"
+
+
+def _selected_theme_payload(reference_selection: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(reference_selection, Mapping):
+        return {
+            "theme": "seriph",
+            "theme_reason": "Use the official seriph theme as the default Slidev baseline.",
+            "theme_mode": "official-theme-plus-light-overrides",
+        }
+    payload = dict(reference_selection.get("selected_theme") or {})
+    if not payload:
+        style = dict(reference_selection.get("selected_style") or {})
+        payload = {
+            "theme": str(style.get("theme") or "seriph"),
+            "theme_reason": str(
+                style.get("theme_reason")
+                or "Use the official seriph theme as the default Slidev baseline."
+            ),
+            "theme_mode": str(style.get("theme_mode") or "official-theme-plus-light-overrides"),
+        }
+    payload["theme"] = str(payload.get("theme") or "seriph")
+    payload["theme_reason"] = str(
+        payload.get("theme_reason") or "Use the official seriph theme as the default Slidev baseline."
+    )
+    payload["theme_mode"] = str(payload.get("theme_mode") or "official-theme-plus-light-overrides")
+    return payload
+
+
+def _select_slidev_references(
+    *,
+    outline_items: Sequence[Mapping[str, Any]],
+    topic: str,
+    num_pages: int,
+    material_excerpt: str,
+) -> dict[str, Any]:
+    selected_style = {
+        "name": "controller-baseline",
+        "tone": "structured-slidev",
+        "theme": "seriph",
+        "selection_reason": (
+            f"Use a deterministic controller-side baseline for `{topic or 'untitled'}` "
+            "so finalization can require a stable, non-stale reference selection."
+        ),
+    }
+    selected_theme = _selected_theme_payload({"selected_style": selected_style})
+    selected_layouts: list[dict[str, Any]] = []
+    selected_blocks: list[dict[str, Any]] = []
+    for item in outline_items:
+        if not isinstance(item, Mapping):
+            continue
+        slide_number = int(item.get("slide_number") or 0)
+        title = str(item.get("title") or f"Slide {slide_number}")
+        role = str(item.get("slide_role") or "").strip().lower()
+        content_shape = str(item.get("content_shape") or "")
+        pattern_hint = _build_slidev_pattern_hint(slide_role=role, content_shape=content_shape)
+        visual_hint = _build_slidev_visual_hint(slide_role=role, content_shape=content_shape)
+        selected_layouts.append(
+            {
+                "slide_number": slide_number,
+                "title": title,
+                "slide_role": role,
+                "recipe_name": str(visual_hint.get("name") or role or "default"),
+                "layout": _preferred_layout_for_role(role, pattern_hint),
+                "preferred_layout": _preferred_layout_for_role(role, pattern_hint),
+                "container_classes": " ".join(visual_hint.get("preferred_classes") or []),
+                "content_classes": "",
+                "required_signals": list(pattern_hint.get("preferred_patterns") or []),
+                "required_visual_signals": list(visual_hint.get("required_signals") or []),
+                "anti_patterns": ["plain-bullet-dump"],
+                "forbidden_patterns": ["unstyled-document-section"],
+            }
+        )
+        selected_blocks.append(
+            {
+                "slide_number": slide_number,
+                "title": title,
+                "slide_role": role,
+                "blocks": _block_recipes_for_role(role),
+            }
+        )
+
+    return {
+        "selected_style": selected_style,
+        "selected_theme": selected_theme,
+        "selected_layouts": selected_layouts,
+        "selected_blocks": selected_blocks,
+        "selection_summary": {
+            "style_name": selected_style["name"],
+            "style_reason": selected_style["selection_reason"],
+            "selected_theme": selected_theme["theme"],
+            "theme_reason": selected_theme["theme_reason"],
+            "selected_layout_names": [item.get("recipe_name") for item in selected_layouts],
+            "selected_block_names": [
+                block.get("name")
+                for item in selected_blocks
+                for block in (item.get("blocks") or [])
+                if isinstance(block, Mapping)
+            ],
+            "material_excerpt_used": bool(material_excerpt.strip()),
+            "num_pages": num_pages,
+        },
+    }
+
+
+def _preferred_layout_for_role(role: str, pattern_hint: Mapping[str, Any]) -> str | None:
+    layouts = [str(name).strip() for name in (pattern_hint.get("preferred_layouts") or []) if str(name).strip()]
+    if role in {"cover", "comparison", "closing"}:
+        return layouts[0] if layouts else None
+    return None
+
+
+def _block_recipes_for_role(role: str) -> list[dict[str, Any]]:
+    block_specs = {
+        "cover": [
+            {
+                "name": "hero-title",
+                "recommended_structure": "title + short subtitle",
+                "visual_constraints": ["1 title", "1 short subtitle"],
+            }
+        ],
+        "context": [
+            {
+                "name": "compact-bullets",
+                "recommended_structure": "2-4 compact bullets or one short callout",
+                "visual_constraints": ["max 4 bullets", "needs one structural cue"],
+            }
+        ],
+        "framework": [
+            {
+                "name": "framework-explainer",
+                "recommended_structure": "mermaid/table/grid + takeaway",
+                "visual_constraints": ["must look modeled", "must include takeaway"],
+            }
+        ],
+        "detail": [
+            {
+                "name": "focus-block",
+                "recommended_structure": "single focus area with 1-3 supporting points",
+                "visual_constraints": ["not a flat dump"],
+            }
+        ],
+        "comparison": [
+            {
+                "name": "compare-split",
+                "recommended_structure": "two-cols or explicit compare table",
+                "visual_constraints": ["paired contrast", "labeled sides"],
+            }
+        ],
+        "recommendation": [
+            {
+                "name": "takeaway-next-steps",
+                "recommended_structure": "decision headline + 2-4 actions",
+                "visual_constraints": ["explicit action list"],
+            }
+        ],
+        "closing": [
+            {
+                "name": "takeaway-next-steps",
+                "recommended_structure": "closing line + next steps",
+                "visual_constraints": ["clear takeaway", "strong ending"],
+            }
+        ],
+    }
+    return [dict(item) for item in block_specs.get(role, block_specs["context"])]
+
+
+def _block_recipe_prompt(block: Mapping[str, Any]) -> str:
+    name = str(block.get("name") or "block").strip()
+    structure = str(block.get("recommended_structure") or "").strip()
+    constraints = [
+        str(item).strip()
+        for item in (block.get("visual_constraints") or [])
+        if str(item).strip()
+    ]
+    parts = [name]
+    if structure:
+        parts.append(structure)
+    if constraints:
+        parts.append(" / ".join(constraints[:2]))
+    return " - ".join(parts)
 
 
 def _extract_pattern_hints(outline_items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -1518,6 +2831,18 @@ def _ensure_save_prerequisites(
             message="大纲在审查后发生了变化，不能直接保存 artifact。",
             next_action="重新调用 review_slidev_outline()",
         )
+    if runtime.reference_selection is None:
+        raise _save_gate_error(
+            reason_code="reference_selection_missing",
+            message="还没有完成 Slidev references 选择，不能保存 artifact。",
+            next_action="调用 select_slidev_references()",
+        )
+    if runtime.reference_selection_hash and runtime.reference_selection_hash != _outline_hash(state.outline):
+        raise _save_gate_error(
+            reason_code="reference_selection_stale",
+            message="大纲在选择 references 后发生了变化，不能直接保存 artifact。",
+            next_action="重新调用 select_slidev_references()",
+        )
     if runtime.deck_review is None:
         raise _save_gate_error(
             reason_code="deck_review_missing",
@@ -1570,6 +2895,12 @@ def _missing_artifact_error(runtime: _RuntimeContext) -> SlidevMvpValidationErro
             reason_code="outline_review_failed",
             message="Deck 大纲结构审查未通过，因此没有保存 Slidev artifact。",
             next_action="修正大纲后重新调用 review_slidev_outline()",
+        )
+    if runtime.reference_selection is None:
+        return _save_gate_error(
+            reason_code="reference_selection_missing",
+            message="Agent 未完成 Slidev references 选择，因此没有保存 Slidev artifact。",
+            next_action="调用 select_slidev_references()",
         )
     if runtime.deck_review is None:
         return _save_gate_error(
