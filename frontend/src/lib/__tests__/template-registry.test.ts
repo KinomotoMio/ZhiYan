@@ -8,6 +8,7 @@ import { LayoutCatalogClientPage } from "@/app/dev/layout-catalog/LayoutCatalogC
 import {
   buildLayoutCatalogEntries,
   getLayoutCatalogFixtureIds,
+  svgDataUrl,
 } from "@/app/dev/layout-catalog/catalog-data";
 import { getLayoutVariant } from "@/lib/layout-variant";
 import { getAllLayouts, getLayout } from "@/lib/template-registry";
@@ -138,6 +139,19 @@ test("layout catalog fixtures stay aligned with the runtime registry", () => {
     catalogEntryIds.length,
     "Catalog entries should not contain duplicate layout IDs",
   );
+});
+
+test("layout catalog svg previews escape text labels before encoding", () => {
+  const maliciousLabel = `"><script>alert("xss")</script>`;
+  const decoded = decodeURIComponent(
+    svgDataUrl(["#111111", "#222222"], maliciousLabel).replace(
+      "data:image/svg+xml;utf8,",
+      "",
+    ),
+  );
+
+  assert.match(decoded, /&lt;script&gt;alert\("xss"\)&lt;\/script&gt;/);
+  assert.doesNotMatch(decoded, /<script>alert\("xss"\)<\/script>/);
 });
 
 test("layout catalog renders template directory metadata and taxonomy reference", () => {

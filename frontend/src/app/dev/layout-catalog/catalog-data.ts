@@ -8,7 +8,15 @@ export interface CatalogFixture {
 
 export interface CatalogEntry extends RuntimeLayoutEntry, CatalogFixture {}
 
-function svgDataUrl(stops: string[], label: string): string {
+function escapeSvgTextContent(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export function svgDataUrl(stops: string[], label: string): string {
+  const escapedLabel = escapeSvgTextContent(label);
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
       <defs>
@@ -20,7 +28,7 @@ function svgDataUrl(stops: string[], label: string): string {
       <rect width="1280" height="720" fill="url(#g)"/>
       <circle cx="1040" cy="160" r="140" fill="rgba(255,255,255,0.14)"/>
       <circle cx="180" cy="560" r="180" fill="rgba(255,255,255,0.12)"/>
-      <text x="96" y="602" fill="white" font-family="Arial, sans-serif" font-size="56" font-weight="700">${label}</text>
+      <text x="96" y="602" fill="white" font-family="Arial, sans-serif" font-size="56" font-weight="700">${escapedLabel}</text>
     </svg>
   `;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
