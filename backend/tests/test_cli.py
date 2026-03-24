@@ -202,6 +202,67 @@ def test_cli_watch_treats_waiting_fix_review_as_success_terminal(monkeypatch, ca
     assert output["terminal_event"]["type"] == "job_waiting_fix_review"
 
 
+def test_cli_slidev_mvp_posts_payload_and_prints_next_steps(monkeypatch, capsys):
+    seen_payload: dict | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_payload
+        assert request.method == "POST"
+        assert request.url.path == "/api/v2/generation/slidev-mvp"
+        seen_payload = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "deck_id": "deck-cli-1",
+                "title": "CLI Deck",
+                "markdown": "---\\ntheme: default\\n---\\n\\n# Cover\\n",
+                "artifact_dir": "/tmp/slidev",
+                "slides_path": "/tmp/slidev/slides.md",
+                "build_output_dir": "/tmp/slidev/dist",
+                "dev_command": "cd /tmp/sandbox && pnpm exec slidev /tmp/slidev/slides.md",
+                "build_command": "cd /tmp/sandbox && pnpm exec slidev build /tmp/slidev/slides.md --out /tmp/slidev/dist",
+                "validation": {"ok": True},
+                "agentic": {"turns": 5},
+            },
+            request=request,
+        )
+
+    monkeypatch.setattr(cli, "_make_client", lambda context: _mock_client(context, handler))
+
+    exit_code = cli.main(
+        [
+            "slidev-mvp",
+            "--topic",
+            "CLI Deck",
+            "--content",
+            "offline slidev",
+            "--session-id",
+            "session-cli",
+            "--source-id",
+            "src-1",
+            "--num-pages",
+            "6",
+            "--build",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen_payload == {
+        "topic": "CLI Deck",
+        "content": "offline slidev",
+        "session_id": "session-cli",
+        "source_ids": ["src-1"],
+        "num_pages": 6,
+        "build": True,
+    }
+    output = json.loads(capsys.readouterr().out)
+    assert output["deck_id"] == "deck-cli-1"
+    assert output["next_steps"] == [
+        "Preview locally: cd /tmp/sandbox && pnpm exec slidev /tmp/slidev/slides.md",
+        "Build locally: cd /tmp/sandbox && pnpm exec slidev build /tmp/slidev/slides.md --out /tmp/slidev/dist",
+    ]
+
+
 def test_cli_surfaces_non_2xx_errors(monkeypatch, capsys):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

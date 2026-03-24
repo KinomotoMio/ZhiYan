@@ -1,0 +1,769 @@
+"""Offline Slidev MVP orchestration for issue #178.
+
+This service proves the existing harness can drive a mature external
+presentation runtime without touching the current generation-job/UI pipeline.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from hashlib import sha1
+import json
+from pathlib import Path
+import re
+import shlex
+import subprocess
+from typing import Any
+from uuid import uuid4
+
+from app.core.config import settings
+from app.services.document.parser import estimate_tokens, extract_structure_signals
+from app.services.generation.agentic import (
+    AgenticLoopResult,
+    ToolDef,
+    ToolExecutionResult,
+    ToolRegistry,
+    agentic_loop,
+    build_dispatch_subagent_tool,
+    build_load_skill_tool,
+    build_run_skill_tool,
+    build_skill_summaries,
+    build_update_todo_tool,
+    dispatch_tool_calls,
+    summarize_state,
+)
+from app.services.generation.agentic.todo import TodoManager
+from app.services.generation.agentic.types import AgenticModelClient
+from app.services.pipeline.graph import PipelineState
+from app.services.sessions import session_store
+from app.services.skill_runtime.registry import SkillRegistry
+
+SLIDEV_ARTIFACT_ROOT = settings.project_root / "data" / "slidev-mvp"
+SLIDEV_SANDBOX_DIR = settings.project_root / "design" / "slidev-mvp"
+SLIDEV_SLIDES_FILENAME = "slides.md"
+SLIDEV_OUTLINE_ROLES = (
+    "cover",
+    "context",
+    "framework",
+    "detail",
+    "comparison",
+    "recommendation",
+    "closing",
+)
+_SUBAGENT_DEFAULT_TOOLS = ("load_skill", "run_skill")
+_SUBAGENT_FORBIDDEN_TOOLS = {"dispatch_subagent", "save_slidev_artifact"}
+
+ShellRunner = Callable[[Sequence[str], Path], Awaitable[subprocess.CompletedProcess[str]]]
+
+
+class SlidevMvpError(RuntimeError):
+    """Base error for Slidev MVP generation."""
+
+
+class SlidevMvpNotFoundError(SlidevMvpError):
+    """Raised when a referenced session or source cannot be found."""
+
+
+class SlidevMvpValidationError(SlidevMvpError):
+    """Raised when the request or generated deck is invalid."""
+
+
+class SlidevMvpBuildError(SlidevMvpError):
+    """Raised when the local Slidev build command fails."""
+
+
+@dataclass(slots=True)
+class SlidevMvpArtifacts:
+    deck_id: str
+    title: str
+    markdown: str
+    artifact_dir: Path
+    slides_path: Path
+    build_output_dir: Path | None
+    dev_command: str
+    build_command: str
+    validation: dict[str, Any]
+    quality: dict[str, Any]
+    agentic: dict[str, Any]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "deck_id": self.deck_id,
+            "title": self.title,
+            "markdown": self.markdown,
+            "artifact_dir": str(self.artifact_dir),
+            "slides_path": str(self.slides_path),
+            "build_output_dir": str(self.build_output_dir) if self.build_output_dir else None,
+            "dev_command": self.dev_command,
+            "build_command": self.build_command,
+            "validation": self.validation,
+            "quality": self.quality,
+            "agentic": self.agentic,
+        }
+
+
+@dataclass(slots=True)
+class _ResolvedInputs:
+    topic: str
+    material: str
+    num_pages: int
+    title_hint: str
+    source_hints: dict[str, Any]
+
+
+@dataclass(slots=True)
+class _RuntimeContext:
+    deck_id: str
+    artifact_dir: Path
+    slides_path: Path
+    requested_pages: int
+    loaded_skills: set[str] = field(default_factory=set)
+    used_subagent: bool = False
+    outline_review: dict[str, Any] | None = None
+    outline_review_hash: str | None = None
+    deck_review: dict[str, Any] | None = None
+    deck_review_hash: str | None = None
+    validation: dict[str, Any] | None = None
+    validation_hash: str | None = None
+    saved_artifact: SlidevMvpArtifacts | None = None
+
+
+class SlidevMvpService:
+    """Run one offline Slidev MVP generation loop."""
+
+    def __init__(
+        self,
+        *,
+        workspace_id: str,
+        skill_registry: SkillRegistry | None = None,
+        artifact_root: Path | None = None,
+        sandbox_dir: Path | None = None,
+        harness_path: Path | None = None,
+        shell_runner: ShellRunner | None = None,
+        model: AgenticModelClient | None = None,
+    ) -> None:
+        self.workspace_id = workspace_id
+        self.skill_registry = skill_registry or SkillRegistry()
+        self.artifact_root = artifact_root or SLIDEV_ARTIFACT_ROOT
+        self.sandbox_dir = sandbox_dir or SLIDEV_SANDBOX_DIR
+        self.harness_path = harness_path or (settings.project_root / "harness.yaml")
+        self.shell_runner = shell_runner or _default_shell_runner
+        self.model = model
+        self.last_loop_result: AgenticLoopResult | None = None
+        self.last_state: PipelineState | None = None
+
+    async def generate_deck(
+        self,
+        *,
+        topic: str = "",
+        content: str = "",
+        session_id: str | None = None,
+        source_ids: Sequence[str] | None = None,
+        num_pages: int = 5,
+        build: bool = False,
+    ) -> SlidevMvpArtifacts:
+        normalized_source_ids = [str(source_id).strip() for source_id in (source_ids or []) if str(source_id).strip()]
+        resolved = await self._resolve_inputs(
+            topic=topic,
+            content=content,
+            session_id=session_id,
+            source_ids=normalized_source_ids,
+            num_pages=num_pages,
+        )
+
+        todo_manager = TodoManager()
+        state = PipelineState(
+            raw_content=resolved.material,
+            source_ids=normalized_source_ids,
+            topic=resolved.topic,
+            num_pages=resolved.num_pages,
+            job_id=f"slidev-{uuid4().hex[:8]}",
+        )
+        state.document_metadata.update(
+            {
+                "title": resolved.title_hint,
+                "estimated_tokens": estimate_tokens(resolved.material),
+                "structure_signals": extract_structure_signals(resolved.material),
+                "source_hints": resolved.source_hints,
+                "generation_mode": "slidev-mvp",
+            }
+        )
+        self.last_state = state
+
+        deck_id = f"deck-{uuid4().hex[:12]}"
+        artifact_dir = self.artifact_root / deck_id
+        slides_path = artifact_dir / SLIDEV_SLIDES_FILENAME
+        runtime = _RuntimeContext(
+            deck_id=deck_id,
+            artifact_dir=artifact_dir,
+            slides_path=slides_path,
+            requested_pages=resolved.num_pages,
+        )
+        registry = self._build_registry(state=state, runtime=runtime, todo_manager=todo_manager)
+
+        loop_result = await agentic_loop(
+            user_prompt=self._build_user_prompt(resolved),
+            model=self.model,
+            state=state,
+            todo_manager=todo_manager,
+            skill_summaries=build_skill_summaries(self.skill_registry),
+            harness_path=self.harness_path,
+            tool_definitions=registry.to_model_tools(),
+            dispatch_tools=lambda calls: dispatch_tool_calls(calls, registry),
+            max_turns=24,
+        )
+        self.last_loop_result = loop_result
+
+        if runtime.saved_artifact is None:
+            raise SlidevMvpValidationError(
+                "Agent did not persist a Slidev artifact. It must finish by calling save_slidev_artifact."
+            )
+
+        artifact = runtime.saved_artifact
+        agentic_summary = {
+            "turns": loop_result.turns,
+            "stop_reason": loop_result.stop_reason,
+            "max_turns_reached": loop_result.max_turns_reached,
+            "used_subagent": runtime.used_subagent,
+            "loaded_skills": sorted(runtime.loaded_skills),
+            "final_state_summary": summarize_state(state),
+        }
+        artifact = SlidevMvpArtifacts(
+            deck_id=artifact.deck_id,
+            title=artifact.title,
+            markdown=artifact.markdown,
+            artifact_dir=artifact.artifact_dir,
+            slides_path=artifact.slides_path,
+            build_output_dir=artifact.build_output_dir,
+            dev_command=artifact.dev_command,
+            build_command=artifact.build_command,
+            validation=artifact.validation,
+            quality=artifact.quality,
+            agentic=agentic_summary,
+        )
+
+        if build:
+            build_output_dir = artifact.artifact_dir / "dist"
+            await self._run_slidev_build(slides_path=artifact.slides_path, output_dir=build_output_dir)
+            artifact = SlidevMvpArtifacts(
+                deck_id=artifact.deck_id,
+                title=artifact.title,
+                markdown=artifact.markdown,
+                artifact_dir=artifact.artifact_dir,
+                slides_path=artifact.slides_path,
+                build_output_dir=build_output_dir,
+                dev_command=artifact.dev_command,
+                build_command=self._build_command(artifact.slides_path, build_output_dir),
+                validation=artifact.validation,
+                quality=artifact.quality,
+                agentic=artifact.agentic,
+            )
+
+        return artifact
+
+    async def _resolve_inputs(
+        self,
+        *,
+        topic: str,
+        content: str,
+        session_id: str | None,
+        source_ids: Sequence[str],
+        num_pages: int,
+    ) -> _ResolvedInputs:
+        await session_store.ensure_workspace(self.workspace_id)
+        if session_id:
+            try:
+                await session_store.get_session(self.workspace_id, session_id)
+            except ValueError as exc:
+                raise SlidevMvpNotFoundError(str(exc)) from exc
+
+        source_metas: list[dict[str, Any]] = []
+        source_content = ""
+        if source_ids:
+            source_metas = await session_store.get_workspace_sources_by_ids(self.workspace_id, list(source_ids))
+            if len(source_metas) != len(source_ids):
+                found_ids = {str(meta.get("id")) for meta in source_metas}
+                missing_ids = [source_id for source_id in source_ids if source_id not in found_ids]
+                raise SlidevMvpNotFoundError(f"素材不存在: {', '.join(missing_ids)}")
+            source_content = await session_store.get_combined_source_content(
+                self.workspace_id,
+                session_id or "",
+                list(source_ids),
+            )
+
+        normalized_topic = str(topic or "").strip()
+        normalized_content = str(content or "").strip()
+        material_parts = [part for part in (source_content.strip(), normalized_content) if part]
+        material = "\n\n---\n\n".join(material_parts).strip()
+        if not material and not normalized_topic:
+            raise SlidevMvpValidationError("请提供 topic、content 或 source_ids 之一。")
+
+        title_hint = normalized_topic or _guess_title_from_content(material) or "Slidev MVP Deck"
+        clamped_num_pages = max(2, min(int(num_pages), settings.max_slide_pages))
+        return _ResolvedInputs(
+            topic=normalized_topic or title_hint,
+            material=material or normalized_topic,
+            num_pages=clamped_num_pages,
+            title_hint=title_hint,
+            source_hints=_build_source_hints(source_metas),
+        )
+
+    def _build_user_prompt(self, resolved: _ResolvedInputs) -> str:
+        source_hint_text = _format_source_hints(resolved.source_hints)
+        return (
+            "请生成一份离线 Slidev MVP deck 的 markdown 源文件。\n\n"
+            "必须严格按下面顺序执行，不要跳步：\n"
+            "1. 第一轮先调用 update_todo，给出本次 deck 生成计划；除非计划状态发生明显变化，否则不要重复调用 update_todo。\n"
+            "2. 再调用 load_skill，name 必须是 'slidev-syntax'。\n"
+            "3. 再调用 load_skill，name 必须是 'slidev-deck-quality'。\n"
+            "4. 用 set_slidev_outline 写入页级大纲，每页都必须包含 title / slide_role / content_shape / goal。\n"
+            "5. 调用 run_skill(name='slidev-deck-quality', script='review_outline.py') 审查大纲结构。\n"
+            "6. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
+            "7. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并优先混合使用 layout/frontmatter/class/columns/grid/quote/mermaid 等 Slidev 原生结构，不要让大多数页面都退化成同构 bullet list。\n"
+            "8. 在保存前先调用 run_skill(name='slidev-deck-quality', script='review_deck.py') 做结构审查。\n"
+            "9. 再调用 run_skill(name='slidev-syntax', script='validate_deck.py') 做语法审查。\n"
+            "10. 最后只能通过 save_slidev_artifact(title, markdown) 结束。不要直接在文本里返回整份 deck。\n\n"
+            f"目标页数：约 {resolved.num_pages} 页\n"
+            f"推荐页型集合：{', '.join(SLIDEV_OUTLINE_ROLES)}\n"
+            f"主题：{resolved.topic}\n"
+            f"素材概况：{source_hint_text}\n\n"
+            "输入材料：\n"
+            f"{resolved.material}"
+        )
+
+    def _build_registry(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+        todo_manager: TodoManager,
+    ) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register(build_update_todo_tool(todo_manager))
+
+        load_skill_tool = build_load_skill_tool(self.skill_registry)
+
+        async def _load_skill(args: dict[str, Any]) -> Any:
+            name = str(args.get("name") or "").strip()
+            if name:
+                runtime.loaded_skills.add(name)
+            return await load_skill_tool.handler(args)
+
+        registry.register(
+            ToolDef(
+                name=load_skill_tool.name,
+                description=load_skill_tool.description,
+                input_schema=load_skill_tool.input_schema,
+                handler=_load_skill,
+            )
+        )
+
+        run_skill_tool = build_run_skill_tool(self.skill_registry)
+
+        async def _run_skill(args: dict[str, Any]) -> Any:
+            result = await run_skill_tool.handler(args)
+            skill_name = str(args.get("name") or "").strip()
+            script_name = str(args.get("script") or "").strip()
+            parameters = args.get("parameters") or {}
+            if not isinstance(parameters, dict):
+                parameters = {}
+            if skill_name == "slidev-deck-quality" and script_name == "review_outline.py":
+                if not isinstance(result, dict):
+                    raise SlidevMvpValidationError("slidev-deck-quality outline review must return a JSON object.")
+                runtime.outline_review = result
+                runtime.outline_review_hash = _outline_hash(state.outline)
+                state.document_metadata["slidev_outline_review"] = result
+            if skill_name == "slidev-deck-quality" and script_name == "review_deck.py":
+                if not isinstance(result, dict):
+                    raise SlidevMvpValidationError("slidev-deck-quality deck review must return a JSON object.")
+                runtime.deck_review = result
+                runtime.deck_review_hash = _text_hash(str(parameters.get("markdown") or ""))
+                state.document_metadata["slidev_deck_review"] = result
+            if skill_name == "slidev-syntax" and script_name == "validate_deck.py":
+                if not isinstance(result, dict):
+                    raise SlidevMvpValidationError("slidev-syntax validation must return a JSON object.")
+                runtime.validation = result
+                runtime.validation_hash = _text_hash(str(parameters.get("markdown") or ""))
+                state.document_metadata["slidev_validation"] = result
+            return result
+
+        registry.register(
+            ToolDef(
+                name=run_skill_tool.name,
+                description=run_skill_tool.description,
+                input_schema=run_skill_tool.input_schema,
+                handler=_run_skill,
+            )
+        )
+
+        dispatch_subagent_tool = build_dispatch_subagent_tool(registry, model=self.model)
+
+        async def _dispatch_subagent(args: dict[str, Any]) -> Any:
+            runtime.used_subagent = True
+            normalized_args = dict(args)
+            raw_tools = normalized_args.get("tools")
+            if raw_tools is None:
+                normalized_args["tools"] = list(_SUBAGENT_DEFAULT_TOOLS)
+            elif isinstance(raw_tools, list):
+                normalized_args["tools"] = [
+                    str(name).strip()
+                    for name in raw_tools
+                    if str(name).strip() and str(name).strip() not in _SUBAGENT_FORBIDDEN_TOOLS
+                ]
+            return await dispatch_subagent_tool.handler(normalized_args)
+
+        registry.register(
+            ToolDef(
+                name=dispatch_subagent_tool.name,
+                description=dispatch_subagent_tool.description,
+                input_schema=dispatch_subagent_tool.input_schema,
+                handler=_dispatch_subagent,
+            )
+        )
+
+        registry.register(build_set_slidev_outline_tool(state))
+        registry.register(self._build_save_slidev_artifact_tool(state=state, runtime=runtime))
+        return registry
+
+    def _build_save_slidev_artifact_tool(
+        self,
+        *,
+        state: PipelineState,
+        runtime: _RuntimeContext,
+    ) -> ToolDef:
+        async def _handler(args: dict[str, Any]) -> ToolExecutionResult:
+            title = str(args.get("title") or "").strip()
+            markdown = str(args.get("markdown") or "")
+            if not title:
+                raise ValueError("save_slidev_artifact requires a non-empty 'title'")
+            if not markdown.strip():
+                raise ValueError("save_slidev_artifact requires non-empty markdown")
+            if runtime.outline_review is None:
+                raise SlidevMvpValidationError("先运行 slidev-deck-quality/review_outline.py，再保存 deck。")
+            if not bool(runtime.outline_review.get("ok")):
+                raise SlidevMvpValidationError("Deck 大纲结构审查未通过，不能保存 artifact。")
+            if runtime.outline_review_hash and runtime.outline_review_hash != _outline_hash(state.outline):
+                raise SlidevMvpValidationError("大纲在 outline review 后发生了变化，请重新运行 review_outline.py。")
+            if runtime.deck_review is None:
+                raise SlidevMvpValidationError("先运行 slidev-deck-quality/review_deck.py，再保存 deck。")
+            if not bool(runtime.deck_review.get("ok")):
+                raise SlidevMvpValidationError("Deck 结构审查未通过，不能保存 artifact。")
+            if runtime.deck_review_hash and runtime.deck_review_hash != _text_hash(markdown):
+                raise SlidevMvpValidationError("Markdown 在 deck review 后发生了变化，请重新运行 review_deck.py。")
+            if runtime.validation is None:
+                raise SlidevMvpValidationError("先运行 slidev-syntax/validate_deck.py，再保存 deck。")
+            if not bool(runtime.validation.get("ok")):
+                raise SlidevMvpValidationError("Deck 静态校验未通过，不能保存 artifact。")
+            if runtime.validation_hash and runtime.validation_hash != _text_hash(markdown):
+                raise SlidevMvpValidationError("Markdown 在校验后发生了变化，请重新运行 validate_deck.py。")
+
+            artifact = await self._persist_artifact(title=title, markdown=markdown, runtime=runtime, state=state)
+            runtime.saved_artifact = artifact
+            return ToolExecutionResult(
+                content={
+                    "deck_id": artifact.deck_id,
+                    "artifact_dir": str(artifact.artifact_dir),
+                    "slides_path": str(artifact.slides_path),
+                    "slide_count": artifact.validation.get("slide_count"),
+                    "quality": artifact.quality,
+                },
+                stop_loop=True,
+                metadata={"stop_reason": "slidev-artifact-saved"},
+            )
+
+        return ToolDef(
+            name="save_slidev_artifact",
+            description="Persist the final Slidev markdown artifact after validation passes. This must be the final step.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "markdown": {"type": "string"},
+                },
+                "required": ["title", "markdown"],
+                "additionalProperties": False,
+            },
+            handler=_handler,
+        )
+
+    async def _persist_artifact(
+        self,
+        *,
+        title: str,
+        markdown: str,
+        runtime: _RuntimeContext,
+        state: PipelineState,
+    ) -> SlidevMvpArtifacts:
+        runtime.artifact_dir.mkdir(parents=True, exist_ok=True)
+        runtime.slides_path.write_text(markdown.rstrip() + "\n", encoding="utf-8")
+        self._ensure_runtime_link(runtime.artifact_dir)
+
+        slide_count = _count_slidev_slides(markdown)
+        outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
+        titles_by_slide_number = {
+            int(item.get("slide_number") or index + 1): str(item.get("title") or f"Slide {index + 1}")
+            for index, item in enumerate(outline_items)
+            if isinstance(item, dict)
+        }
+        state.slide_contents = [
+            {
+                "slide_number": slide_number,
+                "title": titles_by_slide_number.get(slide_number, f"Slide {slide_number}"),
+            }
+            for slide_number in range(1, slide_count + 1)
+        ]
+        structure_warnings = _collect_structure_warnings(runtime.outline_review, runtime.deck_review, runtime.validation)
+        state.document_metadata.update(
+            {
+                "slidev_slide_count": slide_count,
+                "slidev_validation": runtime.validation or {},
+                "slidev_outline_review": runtime.outline_review or {},
+                "slidev_deck_review": runtime.deck_review or {},
+                "slidev_structure_warnings": structure_warnings,
+                "slidev_artifact_dir": str(runtime.artifact_dir),
+                "slidev_slides_path": str(runtime.slides_path),
+            }
+        )
+
+        return SlidevMvpArtifacts(
+            deck_id=runtime.deck_id,
+            title=title,
+            markdown=markdown,
+            artifact_dir=runtime.artifact_dir,
+            slides_path=runtime.slides_path,
+            build_output_dir=None,
+            dev_command=self._dev_command(runtime.slides_path),
+            build_command=self._build_command(runtime.slides_path, runtime.artifact_dir / "dist"),
+            validation=runtime.validation or {},
+            quality={
+                "outline_review": runtime.outline_review or {},
+                "deck_review": runtime.deck_review or {},
+                "structure_warnings": structure_warnings,
+            },
+            agentic={},
+        )
+
+    async def _run_slidev_build(self, *, slides_path: Path, output_dir: Path) -> None:
+        package_json = self.sandbox_dir / "package.json"
+        if not package_json.exists():
+            raise SlidevMvpBuildError(f"Slidev sandbox 未初始化: {package_json}")
+
+        self.sandbox_dir.mkdir(parents=True, exist_ok=True)
+        if not (self.sandbox_dir / "node_modules").exists():
+            await self._run_shell(["pnpm", "install"], cwd=self.sandbox_dir, failure_prefix="Slidev sandbox install failed")
+
+        self._ensure_runtime_link(slides_path.parent)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        await self._run_shell(
+            ["./node_modules/.bin/slidev", "build", slides_path.name, "--out", output_dir.name],
+            cwd=slides_path.parent,
+            failure_prefix="Slidev build failed",
+        )
+
+    async def _run_shell(
+        self,
+        command: Sequence[str],
+        *,
+        cwd: Path,
+        failure_prefix: str,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            return await self.shell_runner(command, cwd)
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            details = stderr or stdout or str(exc)
+            raise SlidevMvpBuildError(f"{failure_prefix}: {details[:800]}") from exc
+
+    def _dev_command(self, slides_path: Path) -> str:
+        cmd = ["./node_modules/.bin/slidev", slides_path.name]
+        return f"cd {shlex.quote(str(slides_path.parent))} && {' '.join(shlex.quote(part) for part in cmd)}"
+
+    def _build_command(self, slides_path: Path, output_dir: Path) -> str:
+        cmd = ["./node_modules/.bin/slidev", "build", slides_path.name, "--out", output_dir.name]
+        return f"cd {shlex.quote(str(slides_path.parent))} && {' '.join(shlex.quote(part) for part in cmd)}"
+
+    def _ensure_runtime_link(self, artifact_dir: Path) -> None:
+        runtime_link = artifact_dir / "node_modules"
+        sandbox_node_modules = self.sandbox_dir / "node_modules"
+        if runtime_link.is_symlink() and runtime_link.resolve() == sandbox_node_modules.resolve():
+            return
+        if runtime_link.exists():
+            raise SlidevMvpBuildError(f"artifact runtime path already exists and is not managed by Slidev MVP: {runtime_link}")
+        runtime_link.symlink_to(sandbox_node_modules, target_is_directory=True)
+
+
+def build_set_slidev_outline_tool(state: PipelineState) -> ToolDef:
+    async def _handler(args: dict[str, Any]) -> str:
+        items = args.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("set_slidev_outline requires a non-empty 'items' array")
+
+        outline_items: list[dict[str, Any]] = []
+        for index, raw in enumerate(items, start=1):
+            if not isinstance(raw, dict):
+                raise ValueError("set_slidev_outline items must be objects")
+            title = str(raw.get("title") or "").strip()
+            if not title:
+                raise ValueError("set_slidev_outline items require a non-empty title")
+            slide_role = str(raw.get("slide_role") or "").strip().lower()
+            if slide_role not in SLIDEV_OUTLINE_ROLES:
+                raise ValueError(
+                    f"set_slidev_outline slide_role must be one of {SLIDEV_OUTLINE_ROLES}; got {slide_role!r}"
+                )
+            content_shape = str(raw.get("content_shape") or "").strip()
+            if not content_shape:
+                raise ValueError("set_slidev_outline items require a non-empty content_shape")
+            goal = str(raw.get("goal") or "").strip()
+            if not goal:
+                raise ValueError("set_slidev_outline items require a non-empty goal")
+            raw_slide_number = raw.get("slide_number", index)
+            try:
+                slide_number = int(raw_slide_number)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("set_slidev_outline slide_number must be an integer") from exc
+            if slide_number <= 0:
+                raise ValueError("set_slidev_outline slide_number must be a positive integer")
+            outline_items.append(
+                {
+                    "slide_number": slide_number,
+                    "title": title,
+                    "slide_role": slide_role,
+                    "content_shape": content_shape,
+                    "goal": goal,
+                }
+            )
+
+        slide_numbers = [int(item["slide_number"]) for item in outline_items]
+        if len(slide_numbers) != len(set(slide_numbers)):
+            raise ValueError("set_slidev_outline slide_number values must be unique")
+        expected_numbers = list(range(1, len(outline_items) + 1))
+        if sorted(slide_numbers) != expected_numbers:
+            raise ValueError("set_slidev_outline slide_number values must form a continuous 1..N sequence")
+
+        state.outline = {"items": outline_items}
+        state.num_pages = max(int(state.num_pages or 0), len(outline_items))
+        role_preview = "，".join(f"{item['title']}({item['slide_role']})" for item in outline_items[:4])
+        suffix = "，..." if len(outline_items) > 4 else ""
+        return f"Recorded Slidev outline with {len(outline_items)} planned slides: {role_preview}{suffix}"
+
+    return ToolDef(
+        name="set_slidev_outline",
+        description="Record the planned Slidev slide outline so the harness state reflects the deck plan.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "slide_number": {"type": "integer"},
+                            "title": {"type": "string"},
+                            "slide_role": {"type": "string", "enum": list(SLIDEV_OUTLINE_ROLES)},
+                            "content_shape": {"type": "string"},
+                            "goal": {"type": "string"},
+                        },
+                        "required": ["title", "slide_role", "content_shape", "goal"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        },
+        handler=_handler,
+    )
+
+
+async def _default_shell_runner(command: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    def _run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            list(command),
+            cwd=str(cwd),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    return await asyncio.to_thread(_run)
+
+
+def _build_source_hints(source_metas: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    by_category: dict[str, int] = {}
+    for meta in source_metas:
+        category = str(meta.get("fileCategory") or meta.get("file_category") or "unknown").strip().lower()
+        by_category[category] = by_category.get(category, 0) + 1
+    return {
+        "total_sources": len(source_metas),
+        "by_file_category": by_category,
+    }
+
+
+def _format_source_hints(source_hints: Mapping[str, Any]) -> str:
+    total_sources = int(source_hints.get("total_sources") or 0)
+    by_category = source_hints.get("by_file_category") or {}
+    if not total_sources:
+        return "仅使用 topic/content 文本输入"
+    if not isinstance(by_category, Mapping) or not by_category:
+        return f"{total_sources} 个来源文件"
+    details = ", ".join(f"{name}:{count}" for name, count in sorted(by_category.items()))
+    return f"{total_sources} 个来源文件 ({details})"
+
+
+def _guess_title_from_content(material: str) -> str:
+    for line in material.splitlines():
+        stripped = line.strip().lstrip("#").strip()
+        if stripped:
+            return stripped[:80]
+    return ""
+
+
+def _count_slidev_slides(markdown: str) -> int:
+    text = markdown.strip()
+    if not text:
+        return 0
+
+    body = text
+    if body.startswith("---"):
+        match = re.match(r"^---\s*\n.*?\n---\s*\n?", body, re.DOTALL)
+        if match:
+            body = body[match.end():]
+
+    slides = [chunk for chunk in re.split(r"\n---\n", body) if chunk.strip()]
+    return max(1, len(slides))
+
+
+def _text_hash(text: str) -> str:
+    return sha1(text.encode("utf-8")).hexdigest()
+
+
+def _outline_hash(outline: Mapping[str, Any] | None) -> str:
+    payload = outline if isinstance(outline, Mapping) else {}
+    return sha1(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _collect_structure_warnings(*reports: dict[str, Any] | None) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        entries = report.get("warnings") or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            code = str(entry.get("code") or "").strip()
+            message = str(entry.get("message") or "").strip()
+            if not code or not message:
+                continue
+            key = (code, message)
+            if key in seen:
+                continue
+            seen.add(key)
+            warnings.append({"code": code, "message": message})
+    return warnings

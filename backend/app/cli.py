@@ -17,6 +17,7 @@ from app.services.sessions.workspace import DEFAULT_WORKSPACE_ID, WORKSPACE_HEAD
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+SLIDEV_MVP_TIMEOUT_SECONDS = 600.0
 _TERMINAL_SUCCESS_TYPES = {"job_completed", "job_waiting_fix_review"}
 _TERMINAL_FAILURE_TYPES = {"job_failed", "job_cancelled"}
 _TERMINAL_TYPES = _TERMINAL_SUCCESS_TYPES | _TERMINAL_FAILURE_TYPES
@@ -93,6 +94,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Watch the created job until a terminal or review-waiting state.",
     )
 
+    slidev_parser = subparsers.add_parser("slidev-mvp", help="Generate an offline Slidev MVP deck.")
+    slidev_parser.add_argument("--topic", default="", help="Deck topic.")
+    slidev_parser.add_argument("--content", default="", help="Deck content.")
+    slidev_parser.add_argument("--session-id", default=None, help="Existing session id.")
+    slidev_parser.add_argument(
+        "--source-id",
+        dest="source_ids",
+        action="append",
+        default=[],
+        help="Source id to attach. Can be repeated.",
+    )
+    slidev_parser.add_argument("--num-pages", type=int, default=5, help="Requested page count.")
+    slidev_parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Run a local Slidev build after markdown generation.",
+    )
+
     watch_parser = subparsers.add_parser("watch", help="Watch a generation job SSE stream.")
     watch_parser.add_argument("job_id", help="Generation job id.")
     watch_parser.add_argument(
@@ -124,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _run_config(client, context, args)
             if args.command == "create":
                 return _run_create(client, args)
+            if args.command == "slidev-mvp":
+                return _run_slidev_mvp(client, args)
             if args.command == "watch":
                 return _run_watch(client, args.job_id, args.after_seq)
     except CliError as exc:
@@ -178,6 +199,32 @@ def _run_create(client: httpx.Client, args: argparse.Namespace) -> int:
     summary = _watch_job(client, str(created["job_id"]), after_seq=0)
     _print_json({"created": created, "watch": summary})
     return _watch_exit_code(summary)
+
+
+def _run_slidev_mvp(client: httpx.Client, args: argparse.Namespace) -> int:
+    payload = {
+        "topic": args.topic,
+        "content": args.content,
+        "session_id": args.session_id,
+        "source_ids": args.source_ids,
+        "num_pages": args.num_pages,
+        "build": args.build,
+    }
+    result = _request_json(
+        client,
+        "POST",
+        "/api/v2/generation/slidev-mvp",
+        json_body=payload,
+        timeout_seconds=max(float(args.timeout), SLIDEV_MVP_TIMEOUT_SECONDS),
+    )
+    result.setdefault("next_steps", [])
+    if isinstance(result["next_steps"], list):
+        result["next_steps"] = [
+            f"Preview locally: {result.get('dev_command', '')}",
+            f"Build locally: {result.get('build_command', '')}",
+        ]
+    _print_json(result)
+    return 0
 
 
 def _run_watch(client: httpx.Client, job_id: str, after_seq: int) -> int:
@@ -266,8 +313,9 @@ def _request_json(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    response = client.request(method, path, json=json_body)
+    response = client.request(method, path, json=json_body, timeout=timeout_seconds)
     _raise_for_response(response)
     try:
         payload = response.json()

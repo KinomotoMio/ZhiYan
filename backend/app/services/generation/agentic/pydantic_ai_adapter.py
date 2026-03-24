@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 import logging
 from typing import Any
 
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -31,6 +33,10 @@ from app.services.generation.agentic.types import (
 
 logger = logging.getLogger(__name__)
 
+_RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+_MAX_REQUEST_RETRIES = 3
+_BASE_RETRY_DELAY_SECONDS = 5.0
+
 
 def build_pydantic_ai_model(model_name: Model | str | None = None) -> Model:
     resolved = resolve_model(model_name or settings.strong_model)
@@ -50,19 +56,48 @@ class PydanticAIModelClient(AgenticModelClient):
         messages: Sequence[AgenticMessage],
         tools: Sequence[dict[str, Any]],
     ) -> AssistantMessage:
-        try:
-            response = await self._model.request(
-                self._to_model_messages(messages),
-                None,
-                ModelRequestParameters(
-                    function_tools=[self._to_tool_definition(tool) for tool in tools],
-                    allow_text_output=True,
-                ),
-            )
-        except Exception:
-            logger.exception("agentic model request failed")
-            raise
+        response = await self._request_with_retries(messages, tools)
         return self._from_model_response(response)
+
+    async def _request_with_retries(
+        self,
+        messages: Sequence[AgenticMessage],
+        tools: Sequence[dict[str, Any]],
+    ) -> ModelResponse:
+        converted_messages = self._to_model_messages(messages)
+        request_parameters = ModelRequestParameters(
+            function_tools=[self._to_tool_definition(tool) for tool in tools],
+            allow_text_output=True,
+        )
+
+        attempt = 0
+        while True:
+            try:
+                return await self._model.request(
+                    converted_messages,
+                    None,
+                    request_parameters,
+                )
+            except ModelHTTPError as exc:
+                attempt += 1
+                if attempt >= _MAX_REQUEST_RETRIES or exc.status_code not in _RETRYABLE_STATUS_CODES:
+                    logger.exception("agentic model request failed")
+                    raise
+
+                delay_seconds = _BASE_RETRY_DELAY_SECONDS * attempt
+                logger.warning(
+                    "agentic model request retrying after transient provider error",
+                    extra={
+                        "status_code": exc.status_code,
+                        "model_name": exc.model_name,
+                        "attempt": attempt,
+                        "delay_seconds": delay_seconds,
+                    },
+                )
+                await asyncio.sleep(delay_seconds)
+            except Exception:
+                logger.exception("agentic model request failed")
+                raise
 
     def _to_model_messages(self, messages: Sequence[AgenticMessage]) -> list[ModelMessage]:
         converted: list[ModelMessage] = []

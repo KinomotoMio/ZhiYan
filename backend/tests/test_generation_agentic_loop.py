@@ -124,7 +124,7 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
                 ]
             )
 
-        state = PipelineState(outline={"items": [{"slide_number": 1, "title": "问题定义"}]})
+        state = PipelineState(outline={"items": [{"slide_number": 1, "title": "问题定义", "slide_role": "context"}]})
         model = StubModel(
             responses=[
                 AssistantMessage(parts=[ToolCall(tool_name="generate_outline", args={}, tool_call_id="call-1")]),
@@ -149,7 +149,7 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
         summary_message = result.messages[0]
         assert isinstance(summary_message, UserMessage)
         assert "Condensed earlier context:" in summary_message.parts[0]
-        assert "大纲已生成：1 页 - 问题定义" in summary_message.parts[0]
+        assert "大纲已生成：1 页 - 问题定义(context)" in summary_message.parts[0]
         assert result.messages[1].instructions is not None
         assert "## Available Skills" in result.messages[1].instructions
         assert "质量级别：strict" in result.messages[1].instructions
@@ -157,8 +157,8 @@ def test_agentic_loop_attaches_state_summary_and_compacts_history():
         assert isinstance(tool_message, UserMessage)
         tool_result = tool_message.parts[0]
         assert isinstance(tool_result, ToolResult)
-        assert tool_result.content["state_summary"] == "大纲已生成：1 页 - 问题定义"
-        assert tool_result.metadata["state_summary"] == "大纲已生成：1 页 - 问题定义"
+        assert tool_result.content["state_summary"] == "大纲已生成：1 页 - 问题定义(context)"
+        assert tool_result.metadata["state_summary"] == "大纲已生成：1 页 - 问题定义(context)"
 
     asyncio.run(_case())
 
