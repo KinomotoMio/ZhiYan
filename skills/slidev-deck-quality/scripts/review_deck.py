@@ -169,6 +169,15 @@ def review_deck(
                 "message": "Deck stays structurally valid, but the selected theme baseline and recipe scaffold still read weakly.",
             }
         )
+    if (_mapping(selected_style) or _mapping(deck_chrome)) and not bool(
+        (theme_fidelity_summary.get("observed_theme_markers") or {}).get("shared_visual_scaffold_present")
+    ):
+        warnings.append(
+            {
+                "code": "shared_visual_scaffold_missing",
+                "message": "Deck is missing the shared visual scaffold block, so semantic recipe classes may still render like plain markdown.",
+            }
+        )
     if int((theme_fidelity_summary.get("observed_theme_markers") or {}).get("ad_hoc_inline_style_count") or 0) > 2:
         warnings.append(
             {
@@ -730,6 +739,11 @@ def _theme_fidelity_summary(
     inline_style_count = len(re.findall(r'style\s*=\s*"', markdown)) + len(re.findall(r"style\s*=\s*'", markdown))
     deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "").strip()
     theme_config_present = "themeconfig:" in observed_frontmatter.lower()
+    shared_visual_scaffold_present = "slidev-shared-visual-scaffold" in markdown
+    expects_shared_visual_scaffold = bool(selected_style or deck_chrome)
+    semantic_primitive_count = len(
+        re.findall(r'class="[^"]*(?:metric-card|map-panel|insight-card|compare-side|action-step|verdict-line)[^"]*"', markdown)
+    )
     status = "matched"
     if observed_theme and observed_theme != selected_theme_name:
         status = "weak"
@@ -740,6 +754,8 @@ def _theme_fidelity_summary(
     if deck_scaffold_class and deck_scaffold_class not in markdown:
         status = "weak"
     if selected_theme.get("theme_config") and not theme_config_present:
+        status = "weak"
+    if expects_shared_visual_scaffold and not shared_visual_scaffold_present:
         status = "weak"
     if deck_chrome and not any(
         signal in {"slide-topline", "section-kicker", "slide-footer"}
@@ -759,6 +775,9 @@ def _theme_fidelity_summary(
             "ad_hoc_inline_style_count": inline_style_count,
             "deck_scaffold_class_present": bool(deck_scaffold_class and deck_scaffold_class in markdown),
             "theme_config_present": theme_config_present,
+            "shared_visual_scaffold_expected": expects_shared_visual_scaffold,
+            "shared_visual_scaffold_present": shared_visual_scaffold_present,
+            "semantic_primitive_count": semantic_primitive_count,
             "deck_chrome_detected": any(
                 signal in {"slide-topline", "section-kicker", "slide-footer"}
                 for report in slide_reports
@@ -1094,7 +1113,17 @@ def _looks_flat_framework(slide: str) -> bool:
 
 
 def _strip_slide_frontmatter(slide: str) -> str:
-    return re.sub(r"^---\s*\n.*?\n---\s*\n?", "", slide, count=1, flags=re.DOTALL)
+    body = re.sub(r"^---\s*\n.*?\n---\s*\n?", "", slide, count=1, flags=re.DOTALL)
+    return _strip_shared_visual_scaffold(body)
+
+
+def _strip_shared_visual_scaffold(text: str) -> str:
+    return re.sub(
+        r"<style>\s*/\*\s*slidev-shared-visual-scaffold\s*\*/.*?</style>\s*",
+        "",
+        text,
+        flags=re.DOTALL,
+    ).strip()
 
 
 def _frontmatter_block(slide: str) -> str:

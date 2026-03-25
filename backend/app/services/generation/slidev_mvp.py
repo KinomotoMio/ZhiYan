@@ -58,6 +58,7 @@ LONG_DECK_PLANNING_MAX_TURNS = 16
 LONG_DECK_PLANNING_RETRY_LIMIT = 2
 LONG_DECK_CHUNK_MAX_TURNS = 10
 LONG_DECK_CHUNK_RETRY_LIMIT = 2
+SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER = "slidev-shared-visual-scaffold"
 SLIDEV_SUPPORTED_LAYOUTS = (
     "404",
     "center",
@@ -917,6 +918,11 @@ class SlidevMvpService:
                     reason_code="deck_markdown_missing",
                     next_action="先产出完整 deck markdown，并至少完成一次 review_slidev_deck/validate_slidev_deck。",
                 )
+            candidate_markdown = _apply_style_frontmatter_baseline(
+                markdown=candidate_markdown,
+                title=title,
+                reference_selection=runtime.reference_selection or {},
+            )
 
             runtime.save_failure = None
             outline_items = state.outline.get("items", []) if isinstance(state.outline, dict) else []
@@ -1222,6 +1228,7 @@ class SlidevMvpService:
             f" kicker={', '.join(deck_chrome.get('kicker_classes') or []) or 'none'};"
             f" subtitle={', '.join(deck_chrome.get('subtitle_classes') or []) or 'none'};"
             f" footer={', '.join(deck_chrome.get('footer_classes') or []) or 'none'}",
+            "shared visual scaffold：`hero-cover` / `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 已有统一视觉皮肤；优先输出这些语义 class，不要用长串 utility class 临时拼版。",
             "",
             "本 chunk 负责的页面：",
         ]
@@ -1313,6 +1320,7 @@ class SlidevMvpService:
                 "- 需要使用对应的 layout/class/frontmatter 时，写成完整 fenced block。",
                 "- 如果某页 selected layout 给出了 required_classes，就必须把这些 class 写进该页 frontmatter 的 `class:`。",
                 "- 优先复用 deck chrome：在关键页使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 等 cue，而不是临时发明结构。",
+                "- 对 semantic primitives（`metric-card` / `map-panel` / `insight-card` / `compare-side` / `action-step`）优先直接输出语义 class；不要把这些块写成仅靠 utility class 才成立的结构。",
                 "- metric-stack / map-with-insights / compare-panel / action-path 是高优先级 composition primitives；优先兑现 page brief 指定的 preferred_composition。",
                 "- cover/context/framework/comparison/closing 不允许退化成普通章节页；每页至少兑现一个明确的 recipe cue。",
                 "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
@@ -1505,6 +1513,7 @@ class SlidevMvpService:
             "7.2 selected_style 里的 deck_scaffold_class / themeConfig / baseline_constraints 也属于执行协议：把 deck scaffold 写进全局 frontmatter，并让每页兑现相应的 presentation cue。\n"
             "7.3 tool 还会返回 page_briefs：每页都要把 page_goal / narrative_job / hero_fact_or_claim / preferred_composition 落成单一主张，不要只把 outline 标题扩成 bullets。\n"
             "7.4 tool 还会返回 deck_chrome：优先使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 这些轻量 chrome cue，以及 `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 这些 composition primitives。\n"
+            "7.5 deck 已内置 shared visual scaffold：优先复用语义 class（如 `metric-card` / `map-panel` / `insight-card` / `compare-side` / `action-step`），不要再给这些块附加大串 utility class 充当视觉设计。\n"
             "8. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
             "9. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
             "10. 在交给 controller finalization 前，先调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
@@ -1520,6 +1529,7 @@ class SlidevMvpService:
             "- 对 why-now / urgency / macro-shift 这类 context 页，优先使用 `metric-stack`：主数字或主判断 + 2-3 supporting cards + interpretation line。\n"
             "- 对 exposure / risk-map / task-landscape / axis 这类页面，优先使用 `map-with-insights`：左侧 map/quadrant/table，右侧 2-3 insight cards，再补一句 takeaway。\n"
             "- 对 recommendation / closing 页，优先使用 `action-path`：一条结论 headline + 2-4 条 next steps，不要退化成空泛 bullets。\n"
+            "- shared visual scaffold 已经提供了 `hero-cover` / `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 的基础视觉皮肤；优先复用这些语义结构，不要再把视觉表达建立在长串 utility class 上。\n"
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
             "- 如果 selected layout/block 给出 required_classes / required_visual_signals，就把它们落实成页 frontmatter class、section kicker、verdict/takeaway line、compare labels 等可观察结构。\n"
             "- 关键页应尽量出现 top chrome 或 footer chrome，而不是每页都只有标题开头；cover 之外的页优先给出 `slide-topline` 或 `section-kicker`。\n"
@@ -3031,6 +3041,252 @@ def _merge_class_tokens(*raw_values: str) -> str:
     return " ".join(tokens)
 
 
+def _style_scaffold_tokens(selected_style: Mapping[str, Any] | None) -> dict[str, str]:
+    style = dict(selected_style or {})
+    tokens = {
+        "accent": "#D92D20",
+        "accent_soft": "rgba(217,45,32,0.10)",
+        "surface": "rgba(255,255,255,0.92)",
+        "surface_alt": "rgba(250,250,250,0.88)",
+        "border": "rgba(23,23,23,0.08)",
+        "text": "#171717",
+        "muted": "#5F5F6B",
+        "shadow": "0 18px 42px rgba(15,23,42,0.10)",
+    }
+    for key, value in dict(style.get("scaffold_tokens") or {}).items():
+        key_text = str(key).strip()
+        value_text = str(value).strip()
+        if key_text and value_text:
+            tokens[key_text] = value_text
+    return tokens
+
+
+def _shared_visual_scaffold_payload(reference_selection: Mapping[str, Any] | None) -> dict[str, Any]:
+    selected_style = dict((reference_selection or {}).get("selected_style") or {})
+    deck_chrome = dict((reference_selection or {}).get("deck_chrome") or {})
+    if not selected_style and not deck_chrome:
+        return {}
+    return {
+        "marker": SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER,
+        "style_name": str(selected_style.get("name") or "default"),
+        "root_class": str(selected_style.get("deck_scaffold_class") or "").strip(),
+        "scaffold_tokens": _style_scaffold_tokens(selected_style),
+        "shared_cues": [str(item) for item in (deck_chrome.get("shared_cues") or []) if str(item).strip()],
+        "primitive_names": [
+            str(item.get("name") or "")
+            for item in (deck_chrome.get("composition_primitives") or [])
+            if isinstance(item, Mapping) and str(item.get("name") or "").strip()
+        ],
+    }
+
+
+def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] | None) -> str:
+    scaffold = _shared_visual_scaffold_payload(reference_selection)
+    if not scaffold:
+        return ""
+    tokens = dict(scaffold.get("scaffold_tokens") or {})
+    accent = tokens["accent"]
+    accent_soft = tokens["accent_soft"]
+    surface = tokens["surface"]
+    surface_alt = tokens["surface_alt"]
+    border = tokens["border"]
+    text = tokens["text"]
+    muted = tokens["muted"]
+    shadow = tokens["shadow"]
+    return (
+        "<style>\n"
+        f"/* {SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER} */\n"
+        ":root {\n"
+        f"  --zh-slidev-accent: {accent};\n"
+        f"  --zh-slidev-accent-soft: {accent_soft};\n"
+        f"  --zh-slidev-surface: {surface};\n"
+        f"  --zh-slidev-surface-alt: {surface_alt};\n"
+        f"  --zh-slidev-border: {border};\n"
+        f"  --zh-slidev-ink: {text};\n"
+        f"  --zh-slidev-muted: {muted};\n"
+        f"  --zh-slidev-shadow: {shadow};\n"
+        "}\n"
+        ".slidev-layout {\n"
+        "  color: var(--zh-slidev-ink);\n"
+        "}\n"
+        ".slide-topline,\n"
+        ".section-kicker,\n"
+        ".slide-footer {\n"
+        "  display: flex;\n"
+        "  align-items: center;\n"
+        "  gap: 0.5rem;\n"
+        "  text-transform: uppercase;\n"
+        "  letter-spacing: 0.18em;\n"
+        "  font-size: 0.72rem;\n"
+        "  color: var(--zh-slidev-muted);\n"
+        "}\n"
+        ".slide-topline {\n"
+        "  justify-content: space-between;\n"
+        "  margin-bottom: 1rem;\n"
+        "}\n"
+        ".section-kicker {\n"
+        "  margin-bottom: 0.75rem;\n"
+        "}\n"
+        ".slide-subtitle {\n"
+        "  margin: 0.85rem 0 1.15rem;\n"
+        "  max-width: 48rem;\n"
+        "  font-size: 1.05rem;\n"
+        "  line-height: 1.55;\n"
+        "  color: var(--zh-slidev-muted);\n"
+        "}\n"
+        ".slide-footer {\n"
+        "  margin-top: 1.2rem;\n"
+        "  padding-top: 0.75rem;\n"
+        "  border-top: 1px solid var(--zh-slidev-border);\n"
+        "}\n"
+        ".metric-stack,\n"
+        ".action-path,\n"
+        ".insight-stack {\n"
+        "  display: grid;\n"
+        "  gap: 1rem;\n"
+        "}\n"
+        ".metric-grid,\n"
+        ".supporting-grid {\n"
+        "  display: grid;\n"
+        "  grid-template-columns: repeat(2, minmax(0, 1fr));\n"
+        "  gap: 0.9rem;\n"
+        "}\n"
+        ".metric-card,\n"
+        ".compare-side,\n"
+        ".action-step,\n"
+        ".map-panel,\n"
+        ".interpretation-card {\n"
+        "  border: 1px solid var(--zh-slidev-border);\n"
+        "  border-radius: 1.25rem;\n"
+        "  background: linear-gradient(180deg, var(--zh-slidev-surface), var(--zh-slidev-surface-alt));\n"
+        "  box-shadow: var(--zh-slidev-shadow);\n"
+        "}\n"
+        ".metric-card,\n"
+        ".compare-side,\n"
+        ".action-step,\n"
+        ".interpretation-card {\n"
+        "  padding: 1rem 1.15rem;\n"
+        "}\n"
+        ".metric-card strong,\n"
+        ".verdict-line strong {\n"
+        "  display: block;\n"
+        "  margin-bottom: 0.35rem;\n"
+        "  color: var(--zh-slidev-ink);\n"
+        "  letter-spacing: -0.03em;\n"
+        "}\n"
+        ".metric-card--hero strong,\n"
+        ".metric-stack > .metric-card strong {\n"
+        "  font-size: clamp(2.3rem, 4vw, 3.8rem);\n"
+        "}\n"
+        ".metric-card,\n"
+        ".interpretation-card,\n"
+        ".compare-side,\n"
+        ".action-step,\n"
+        ".map-panel,\n"
+        ".verdict-line {\n"
+        "  line-height: 1.55;\n"
+        "}\n"
+        ".interpretation-card,\n"
+        ".verdict-line {\n"
+        "  border-left: 4px solid var(--zh-slidev-accent);\n"
+        "}\n"
+        ".interpretation-card,\n"
+        ".verdict-line {\n"
+        "  padding: 0.95rem 1.1rem;\n"
+        "}\n"
+        ".verdict-line {\n"
+        "  margin-top: 1rem;\n"
+        "  border-radius: 1rem;\n"
+        "  background: var(--zh-slidev-accent-soft);\n"
+        "}\n"
+        ".map-with-insights {\n"
+        "  display: grid;\n"
+        "  grid-template-columns: minmax(0, 1.15fr) minmax(16rem, 0.85fr);\n"
+        "  gap: 1rem;\n"
+        "  align-items: start;\n"
+        "}\n"
+        ".map-panel {\n"
+        "  min-height: 16rem;\n"
+        "  padding: 1.1rem 1.2rem;\n"
+        "}\n"
+        ".map-panel table {\n"
+        "  width: 100%;\n"
+        "  border-collapse: collapse;\n"
+        "  font-size: 0.92rem;\n"
+        "}\n"
+        ".map-panel th,\n"
+        ".map-panel td {\n"
+        "  padding: 0.5rem 0.35rem;\n"
+        "  border-bottom: 1px solid var(--zh-slidev-border);\n"
+        "  text-align: left;\n"
+        "}\n"
+        ".map-panel blockquote,\n"
+        ".map-panel p {\n"
+        "  margin-top: 0.75rem;\n"
+        "}\n"
+        ".insight-card {\n"
+        "  position: relative;\n"
+        "}\n"
+        ".compare-panel {\n"
+        "  gap: 1rem;\n"
+        "}\n"
+        ".compare-panel .compare-side {\n"
+        "  min-height: 11rem;\n"
+        "}\n"
+        ".action-step {\n"
+        "  display: block;\n"
+        "}\n"
+        ".deck-cover h1,\n"
+        ".deck-cover h2 {\n"
+        "  max-width: 12ch;\n"
+        "  letter-spacing: -0.04em;\n"
+        "}\n"
+        ".deck-cover .slide-subtitle {\n"
+        "  max-width: 42rem;\n"
+        "}\n"
+        ".deck-context,\n"
+        ".deck-framework,\n"
+        ".deck-comparison,\n"
+        ".deck-recommendation,\n"
+        ".deck-closing {\n"
+        "  padding-top: 0.35rem;\n"
+        "}\n"
+        "@media (max-width: 900px) {\n"
+        "  .map-with-insights,\n"
+        "  .metric-grid,\n"
+        "  .supporting-grid {\n"
+        "    grid-template-columns: 1fr;\n"
+        "  }\n"
+        "}\n"
+        "</style>"
+    )
+
+
+def _apply_shared_visual_scaffold(
+    *,
+    markdown: str,
+    reference_selection: Mapping[str, Any] | None,
+) -> str:
+    text = str(markdown or "").strip()
+    if not text or SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER in text:
+        return text
+    style_block = _render_shared_visual_scaffold_block(reference_selection)
+    if not style_block:
+        return text
+    match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
+    if not match:
+        return f"{style_block}\n\n{text}".strip()
+    frontmatter = match.group(1).rstrip()
+    body = match.group(2).lstrip()
+    slide_match = re.match(r"^(---\s*\n(.*?)\n---\s*\n?)(.*)$", body, re.DOTALL)
+    if slide_match and _looks_like_slide_frontmatter(slide_match.group(2).splitlines()):
+        first_slide_frontmatter = slide_match.group(1).rstrip()
+        first_slide_body = slide_match.group(3).lstrip()
+        rebuilt_body = f"{first_slide_frontmatter}\n\n{style_block}\n\n{first_slide_body}".strip()
+        return f"{frontmatter}\n\n{rebuilt_body}".strip()
+    return f"{frontmatter}\n\n{style_block}\n\n{body}".strip()
+
+
 def _style_frontmatter_block(*, title: str, reference_selection: Mapping[str, Any] | None) -> str:
     selected_theme = _selected_theme_payload(reference_selection)
     selected_style = dict((reference_selection or {}).get("selected_style") or {})
@@ -3076,8 +3332,10 @@ def _apply_style_frontmatter_baseline(
         body = text
 
     if not body:
-        return f"---\n{merged_block}\n---\n"
-    return f"---\n{merged_block}\n---\n\n{body.rstrip()}\n"
+        normalized = f"---\n{merged_block}\n---\n"
+    else:
+        normalized = f"---\n{merged_block}\n---\n\n{body.rstrip()}\n"
+    return _apply_shared_visual_scaffold(markdown=normalized, reference_selection=reference_selection) + "\n"
 
 
 def _selected_theme_payload(reference_selection: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -3162,6 +3420,16 @@ def _select_style_reference(*, styles: Sequence[Mapping[str, Any]], topic: str, 
         "description": "Fallback style when no static references are available.",
         "deck_scaffold_class": "theme-tech-launch",
         "theme_config": {"palette": "tech-launch", "density": "presentation", "emphasis": "launch-contrast"},
+        "scaffold_tokens": {
+            "accent": "#D92D20",
+            "accent_soft": "rgba(217,45,32,0.10)",
+            "surface": "rgba(255,255,255,0.92)",
+            "surface_alt": "rgba(250,250,250,0.88)",
+            "border": "rgba(23,23,23,0.08)",
+            "text": "#171717",
+            "muted": "#5F5F6B",
+            "shadow": "0 18px 42px rgba(15,23,42,0.10)",
+        },
         "baseline_constraints": [
             "cover should feel like a launch slide, not a report heading",
             "comparison and closing slides need a visible verdict or takeaway line",
@@ -3180,6 +3448,11 @@ def _select_style_reference(*, styles: Sequence[Mapping[str, Any]], topic: str, 
     selected["theme_mode"] = str(selected.get("theme_mode") or "official-theme-plus-light-overrides")
     selected["deck_scaffold_class"] = str(selected.get("deck_scaffold_class") or "").strip()
     selected["theme_config"] = dict(selected.get("theme_config") or {})
+    selected["scaffold_tokens"] = {
+        str(key): str(value)
+        for key, value in dict(selected.get("scaffold_tokens") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
     selected["baseline_constraints"] = _reference_string_list(selected.get("baseline_constraints"))
     selected["matched_signals"] = matched_signals
     selected["selection_reason"] = (
@@ -3571,6 +3844,7 @@ def _build_slidev_deck_chrome(
     page_briefs: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     deck_label = _slidev_deck_label(topic)
+    scaffold_tokens = _style_scaffold_tokens(selected_style)
     return {
         "deck_label": deck_label,
         "style_name": str(selected_style.get("name") or ""),
@@ -3586,8 +3860,16 @@ def _build_slidev_deck_chrome(
             "slide-footer",
             "metric-card",
             "interpretation-card",
+            "map-panel",
+            "compare-side",
+            "action-step",
         ],
         "composition_primitives": [
+            {
+                "name": "hero-cover",
+                "required_classes": ["deck-cover", "slide-topline", "slide-subtitle"],
+                "description": "launch-style cover with a topline cue, hero title, and a short subtitle",
+            },
             {
                 "name": "metric-stack",
                 "required_classes": ["metric-stack", "metric-card", "interpretation-card"],
@@ -3614,6 +3896,12 @@ def _build_slidev_deck_chrome(
             "metric/map/compare/action compositions should use semantic classes instead of ad-hoc inline style",
             "footer or source line should appear on research-heavy or closing slides",
         ],
+        "shared_visual_scaffold": {
+            "marker": SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER,
+            "root_class": str(selected_style.get("deck_scaffold_class") or "").strip(),
+            "scaffold_tokens": scaffold_tokens,
+            "primitive_names": ["hero-cover", "metric-stack", "map-with-insights", "compare-panel", "action-path"],
+        },
         "briefed_slide_count": len(page_briefs),
     }
 
@@ -3630,6 +3918,22 @@ def _slidev_deck_label(topic: str) -> str:
     return text[:32] or "Deck Brief"
 
 
+def _slide_role_container_class(*, brief: Mapping[str, Any], layout: Mapping[str, Any]) -> str:
+    explicit = str(layout.get("container_classes") or "").strip()
+    if explicit:
+        return explicit
+    role = str(brief.get("slide_role") or "").strip().lower()
+    return {
+        "cover": "deck-cover",
+        "context": "deck-context",
+        "framework": "deck-framework",
+        "detail": "deck-context",
+        "comparison": "deck-comparison",
+        "recommendation": "deck-recommendation",
+        "closing": "deck-closing",
+    }.get(role, "deck-context")
+
+
 def _page_brief_scaffold_lines(
     *,
     brief: Mapping[str, Any],
@@ -3639,19 +3943,38 @@ def _page_brief_scaffold_lines(
     composition = str(brief.get("preferred_composition") or "").strip()
     title = str(brief.get("title") or "Slide").strip()
     deck_label = str(deck_chrome.get("deck_label") or "Deck").strip()
+    container_class = _slide_role_container_class(brief=brief, layout=layout)
     lines = [
         f"  deck chrome cue: add a lightweight `<div class=\"slide-topline\">{deck_label} / {brief.get('slide_number') or ''}</div>` or equivalent section kicker when the page is not cover-only.",
     ]
-    if composition == "metric-stack":
+    if composition == "cover-hero":
+        lines.extend(
+            [
+                "  canonical hero-cover shell:",
+                "  ---",
+                f"  layout: {layout.get('layout') or 'cover'}",
+                f"  class: {container_class}",
+                "  ---",
+                f"  <div class=\"slide-topline\">{deck_label}</div>",
+                "  <div class=\"section-kicker\">launch framing / short cue</div>",
+                f"  # {title}",
+                "  <div class=\"slide-subtitle\">一句短 subtitle / positioning line</div>",
+            ]
+        )
+    elif composition == "metric-stack":
         lines.extend(
             [
                 "  canonical metric-stack shell:",
+                "  ---",
+                f"  class: {container_class}",
+                "  ---",
                 f"  <div class=\"slide-topline\">{deck_label} / why now</div>",
+                "  <div class=\"section-kicker\">why now / urgency cue</div>",
                 f"  ## {title}",
                 "  <div class=\"slide-subtitle\">一句 why-now / urgency 判断</div>",
-                "  <div class=\"metric-stack grid gap-4\">",
-                "    <div class=\"metric-card\"><strong>主数字 / 主判断</strong><div>一句解释</div></div>",
-                "    <div class=\"grid grid-cols-2 gap-4\">",
+                "  <div class=\"metric-stack\">",
+                "    <div class=\"metric-card metric-card--hero\"><strong>主数字 / 主判断</strong><div>一句解释</div></div>",
+                "    <div class=\"metric-grid\">",
                 "      <div class=\"metric-card\">supporting card</div>",
                 "      <div class=\"metric-card\">supporting card</div>",
                 "    </div>",
@@ -3663,12 +3986,15 @@ def _page_brief_scaffold_lines(
         lines.extend(
             [
                 "  canonical map-with-insights shell:",
+                "  ---",
+                f"  class: {container_class}",
+                "  ---",
                 f"  <div class=\"slide-topline\">{deck_label} / exposure map</div>",
                 f"  ## {title}",
                 "  <div class=\"section-kicker\">左侧 map / 右侧 insights</div>",
-                "  <div class=\"map-with-insights grid grid-cols-[1.2fr,0.8fr] gap-5\">",
+                "  <div class=\"map-with-insights\">",
                 "    <div class=\"map-panel\">用 quadrant / table / mermaid / matrix 呈现暴露或风险地图</div>",
-                "    <div class=\"grid gap-4\">",
+                "    <div class=\"insight-stack\">",
                 "      <div class=\"metric-card insight-card\">headline fact</div>",
                 "      <div class=\"metric-card insight-card\">insight</div>",
                 "      <div class=\"interpretation-card\">takeaway / source</div>",
@@ -3696,10 +4022,13 @@ def _page_brief_scaffold_lines(
         lines.extend(
             [
                 "  canonical action-path shell:",
+                "  ---",
+                f"  class: {container_class}",
+                "  ---",
                 f"  <div class=\"slide-topline\">{deck_label} / next move</div>",
                 f"  ## {title}",
                 "  <div class=\"verdict-line\">一句结论 headline / recommendation</div>",
-                "  <div class=\"action-path grid gap-3\">",
+                "  <div class=\"action-path\">",
                 "    <div class=\"action-step\">1. action</div>",
                 "    <div class=\"action-step\">2. action</div>",
                 "    <div class=\"action-step\">3. action</div>",
@@ -3780,6 +4109,9 @@ def _select_slidev_references(
                 if isinstance(brief, Mapping)
             ],
             "deck_chrome_label": str(deck_chrome.get("deck_label") or ""),
+            "shared_visual_scaffold_marker": str(
+                ((deck_chrome.get("shared_visual_scaffold") or {}).get("marker") or "")
+            ),
             "deck_chrome_primitives": [
                 str(item.get("name") or "")
                 for item in (deck_chrome.get("composition_primitives") or [])

@@ -27,6 +27,16 @@
     "density": "briefing",
     "emphasis": "clean-contrast"
   },
+  "scaffold_tokens": {
+    "accent": "#2563EB",
+    "accent_soft": "rgba(37,99,235,0.10)",
+    "surface": "rgba(255,255,255,0.94)",
+    "surface_alt": "rgba(248,250,252,0.90)",
+    "border": "rgba(15,23,42,0.08)",
+    "text": "#0F172A",
+    "muted": "#475569",
+    "shadow": "0 16px 34px rgba(15,23,42,0.08)"
+  },
   "baseline_constraints": [
     "prefer compact section framing over long paragraphs",
     "framework slides must surface one takeaway line",
