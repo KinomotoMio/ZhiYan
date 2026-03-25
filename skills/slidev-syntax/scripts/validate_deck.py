@@ -81,6 +81,17 @@ def validate_deck(
                     "theme_config_present": False,
                 },
             },
+            presentation_feel_summary={
+                "status": "missing",
+                "slide_count": 0,
+                "issue_count": 1,
+                "warning_count": 0,
+                "document_like_warning_count": 0,
+                "crowding_warning_count": 0,
+                "visual_anchor_warning_count": 0,
+                "signal_count": 0,
+                "signal_codes": [],
+            },
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
         )
 
@@ -154,6 +165,11 @@ def _result(
     theme_fidelity_summary: dict[str, Any],
     blank_first_slide_detected: bool,
 ) -> dict[str, Any]:
+    presentation_feel_summary = _presentation_feel_summary(
+        slide_count=slide_count,
+        issues=issues,
+        warnings=warnings,
+    )
     return {
         "ok": ok,
         "slide_count": slide_count,
@@ -168,6 +184,7 @@ def _result(
             "forbidden_slide_count": int(reference_usage_summary.get("forbidden_slide_count") or 0),
         },
         "theme_fidelity_summary": theme_fidelity_summary,
+        "presentation_feel_summary": presentation_feel_summary,
         "blank_first_slide_detected": blank_first_slide_detected,
     }
 
@@ -309,6 +326,43 @@ def _structure_warnings(
         )
 
     return warnings
+
+
+def _presentation_feel_summary(
+    *,
+    slide_count: int,
+    issues: list[dict[str, str]],
+    warnings: list[dict[str, str]],
+) -> dict[str, Any]:
+    warning_codes = [
+        str(warning.get("code") or "").strip()
+        for warning in warnings
+        if str(warning.get("code") or "").strip()
+    ]
+    document_like_codes = [
+        code
+        for code in warning_codes
+        if code in {"low_reference_protocol_usage", "reference_forbidden_patterns_detected"}
+    ]
+    crowding_codes = [code for code in warning_codes if code in {"bullet_dominant_deck"}]
+    visual_anchor_codes = [
+        code
+        for code in warning_codes
+        if code in {"low_slidev_native_usage", "low_visual_recipe_usage"}
+    ]
+    signal_codes = sorted(set(document_like_codes + crowding_codes + visual_anchor_codes))
+    status = "missing" if slide_count == 0 else "weak" if signal_codes or issues else "matched"
+    return {
+        "status": status,
+        "slide_count": slide_count,
+        "issue_count": len(issues),
+        "warning_count": len(warning_codes),
+        "document_like_warning_count": len(document_like_codes),
+        "crowding_warning_count": len(crowding_codes),
+        "visual_anchor_warning_count": len(visual_anchor_codes),
+        "signal_count": len(signal_codes),
+        "signal_codes": signal_codes,
+    }
 
 
 def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_blocks: Any) -> dict[str, Any]:

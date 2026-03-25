@@ -189,6 +189,7 @@ def _result(
     warning_slides = sum(1 for report in slide_reports if report.get("status") == "warning")
     visual_recipe_summary = _visual_recipe_summary(slide_reports)
     reference_fidelity_summary = _reference_fidelity_summary(slide_reports)
+    presentation_feel_summary = _presentation_feel_summary(slide_reports, warnings)
     theme_fidelity_summary = _theme_fidelity_summary(
         markdown=markdown,
         slide_reports=slide_reports,
@@ -203,6 +204,7 @@ def _result(
         "slide_reports": slide_reports,
         "visual_recipe_summary": visual_recipe_summary,
         "reference_fidelity_summary": reference_fidelity_summary,
+        "presentation_feel_summary": presentation_feel_summary,
         "theme_fidelity_summary": theme_fidelity_summary,
         "blank_first_slide_detected": blank_first_slide_detected,
         "contract_summary": {
@@ -218,6 +220,35 @@ def _result(
             "matched_reference_recipes": reference_fidelity_summary["matched_slide_count"],
             "weak_reference_recipes": reference_fidelity_summary["weak_slide_count"],
         },
+    }
+
+
+def _presentation_feel_summary(
+    slide_reports: list[dict[str, Any]],
+    warnings: list[dict[str, str]],
+) -> dict[str, Any]:
+    warning_codes = [
+        str(warning.get("code") or "").strip()
+        for warning in warnings
+        if str(warning.get("code") or "").strip()
+    ]
+    document_like_codes = [code for code in warning_codes if code.startswith("document_like_")]
+    crowding_codes = [code for code in warning_codes if code in {"bullet_dominant_deck", "dense_context_or_detail"}]
+    visual_anchor_codes = [
+        code
+        for code in warning_codes
+        if code in {"selected_reference_recipe_weak", "selected_reference_recipe_missing"}
+    ]
+    signal_codes = sorted(set(document_like_codes + crowding_codes + visual_anchor_codes))
+    status = "weak" if signal_codes else "matched"
+    return {
+        "status": status,
+        "slide_count": len(slide_reports),
+        "document_like_warning_count": len(document_like_codes),
+        "crowding_warning_count": len(crowding_codes),
+        "visual_anchor_warning_count": len(visual_anchor_codes),
+        "signal_count": len(signal_codes),
+        "signal_codes": signal_codes,
     }
 
 
