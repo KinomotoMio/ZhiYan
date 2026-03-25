@@ -326,6 +326,7 @@ class _ChunkExecution:
     review: dict[str, Any]
     validation: dict[str, Any]
     attempts: int
+    normalization_report: dict[str, Any] = field(default_factory=dict)
 
 
 class SlidevMvpService:
@@ -1108,7 +1109,7 @@ class SlidevMvpService:
             next_pending: list[_ChunkSpec] = []
             for spec, result in zip(pending_specs, results, strict=False):
                 attempts_by_chunk[spec.chunk_id] += 1
-                fragment_markdown = _normalize_chunk_fragment(
+                fragment_markdown, normalization_report = _normalize_chunk_fragment_with_report(
                     result.output_text,
                     max_slides=len(spec.outline_items),
                 )
@@ -1121,6 +1122,7 @@ class SlidevMvpService:
                         validation=validation,
                         attempts=attempts_by_chunk[spec.chunk_id],
                         status="passed",
+                        normalization_report=normalization_report,
                     )
                     executions[spec.chunk_id] = _ChunkExecution(
                         spec=spec,
@@ -1128,6 +1130,7 @@ class SlidevMvpService:
                         review=review,
                         validation=validation,
                         attempts=attempts_by_chunk[spec.chunk_id],
+                        normalization_report=normalization_report,
                     )
                     feedback_by_chunk.pop(spec.chunk_id, None)
                     continue
@@ -1137,6 +1140,7 @@ class SlidevMvpService:
                     validation=validation,
                     attempts=attempts_by_chunk[spec.chunk_id],
                     status="failed",
+                    normalization_report=normalization_report,
                 )
                 feedback_by_chunk[spec.chunk_id] = _format_chunk_retry_feedback(review=review, validation=validation)
                 next_pending.append(spec)
@@ -1218,6 +1222,40 @@ class SlidevMvpService:
                 f"forbidden={','.join(layout.get('forbidden_patterns') or []) or 'none'}, "
                 f"blocks={block_names}, block_recipe={block_structures}, must={_chunk_role_requirements(str(item.get('slide_role') or ''))}]"
             )
+            role = str(item.get("slide_role") or "").strip().lower()
+            if role == "comparison":
+                lines.extend(
+                    [
+                        "  canonical comparison shell:",
+                        "  ---",
+                        "  layout: two-cols",
+                        f"  class: {layout.get('container_classes') or 'deck-comparison'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  ::left::",
+                        "  ### 左侧标签",
+                        "  - 2-4 条要点",
+                        "  ::right::",
+                        "  ### 右侧标签",
+                        "  - 2-4 条要点",
+                        "  **Takeaway**: 用一句 verdict / takeaway 收束这页。",
+                    ]
+                )
+            elif role == "closing":
+                lines.extend(
+                    [
+                        "  canonical closing shell:",
+                        "  ---",
+                        f"  layout: {layout.get('layout') or 'end'}",
+                        f"  class: {layout.get('container_classes') or 'deck-closing'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  **Takeaway**: 用一句 closing headline / takeaway 开场。",
+                        "  1. next step / summary",
+                        "  2. next step / summary",
+                        "  3. next step / summary",
+                    ]
+                )
         lines.extend(
             [
                 "",
@@ -1227,7 +1265,8 @@ class SlidevMvpService:
                 "输出要求：",
                 f"- 本 chunk 必须严格覆盖且仅覆盖这些 slides；页数必须精确等于 {len(spec.outline_items)}。",
                 "- slide 之间用 `---` 分隔。",
-                "- 每一页都要以对应 slide title 的 markdown heading 开头，顺序必须与分配列表一致。",
+                "- 每页只能使用一种开头顺序：若该页需要 `layout:`/`class:`/`transition:`/`background:`，先输出 fenced per-slide frontmatter，再输出对应 slide title 的 markdown heading；若不需要 frontmatter，才直接从标题 heading 开始。",
+                "- 不允许把 bare `layout:`/`class:` 放在标题 heading 后面；不允许把 per-slide frontmatter 写进 ```yaml/```md 代码块。",
                 "- 每一页都不要额外生成未分配的过渡页、总结页、封底页。",
                 "- 需要使用对应的 layout/class/frontmatter 时，写成完整 fenced block。",
                 "- 如果某页 selected layout 给出了 required_classes，就必须把这些 class 写进该页 frontmatter 的 `class:`。",
@@ -1238,6 +1277,8 @@ class SlidevMvpService:
                 "- comparison/closing 页必须出现一句明确 verdict / takeaway line。",
                 "- closing 页必须包含 takeaway、summary、next step 三者之一；不能只写“谢谢/讨论/Q&A”。",
                 "- comparison/framework/closing 不允许退化成普通 bullet dump。",
+                "- comparison 页推荐 canonical skeleton：`layout: two-cols` + `::left::`/`::right::`，左右各有标签，并以一句 verdict / takeaway 收束；若不用 two-cols，则必须给出明确 compare table。",
+                "- closing 页推荐 canonical skeleton：`layout: end`（不适配时允许 `center`）+ 一个 closing headline/takeaway line + 2-3 条 next steps 或 summary bullets。",
             ]
         )
         if retry_feedback:
@@ -2116,22 +2157,61 @@ def _sanitize_markdown_fragment(text: str) -> str:
 
 
 def _normalize_chunk_fragment(text: str, *, max_slides: int) -> str:
+    normalized, _report = _normalize_chunk_fragment_with_report(text, max_slides=max_slides)
+    return normalized
+
+
+def _normalize_chunk_fragment_with_report(text: str, *, max_slides: int) -> tuple[str, dict[str, Any]]:
     fragment = _sanitize_markdown_fragment(text)
     fragment = _strip_scaffold_slide_labels(fragment)
+    fragment = _normalize_compact_frontmatter_openers(fragment)
     fragment = _normalize_fake_frontmatter_code_fences(fragment)
     fragment = _normalize_unfenced_slide_frontmatter(fragment)
     fragment = _normalize_chunk_heading_boundaries(fragment, max_slides=max_slides)
+    fragment = _normalize_compact_frontmatter_openers(fragment)
     fragment = _normalize_fake_frontmatter_code_fences(fragment)
     fragment = _normalize_unclosed_code_fences(fragment)
-    slides = [_normalize_chunk_slide(slide) for slide in _parse_fragment_slides(fragment)]
+    slides: list[str] = []
+    promoted_internal_frontmatter = False
+    for slide in _parse_fragment_slides(fragment):
+        normalized_slide, slide_report = _normalize_chunk_slide_with_report(slide)
+        slides.append(normalized_slide)
+        promoted_internal_frontmatter = promoted_internal_frontmatter or bool(
+            slide_report.get("promoted_internal_frontmatter")
+        )
     if max_slides > 0:
         slides = slides[:max_slides]
     if not slides:
-        return fragment
-    return "\n\n---\n\n".join(slide.strip() for slide in slides if slide.strip()).rstrip()
+        return fragment, {
+            "promoted_internal_frontmatter": False,
+            "normalizer_actions": [],
+        }
+    return (
+        "\n\n---\n\n".join(slide.strip() for slide in slides if slide.strip()).rstrip(),
+        {
+            "promoted_internal_frontmatter": promoted_internal_frontmatter,
+            "normalizer_actions": ["promoted_internal_frontmatter"] if promoted_internal_frontmatter else [],
+        },
+    )
 
 
 def _normalize_fake_frontmatter_code_fences(fragment: str) -> str:
+    lines = str(fragment or "").splitlines()
+    if lines:
+        normalized: list[str] = []
+        index = 0
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if re.match(r"^```(?:ya?ml)?\s*$", stripped, re.IGNORECASE):
+                block, next_index = _consume_yaml_frontmatter_opener(lines, index + 1)
+                if block:
+                    normalized.extend(["---", *block, "---"])
+                    index = next_index
+                    continue
+            normalized.append(lines[index])
+            index += 1
+        fragment = "\n".join(normalized)
+
     pattern = re.compile(r"```(?:ya?ml)?\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 
     def _replace(match: re.Match[str]) -> str:
@@ -2141,6 +2221,25 @@ def _normalize_fake_frontmatter_code_fences(fragment: str) -> str:
         return "\n".join(["---", *lines, "---"])
 
     return pattern.sub(_replace, str(fragment or ""))
+
+
+def _normalize_compact_frontmatter_openers(fragment: str) -> str:
+    lines = str(fragment or "").splitlines()
+    if not lines:
+        return str(fragment or "")
+
+    allowed = {"layout", "class", "transition", "background"}
+    normalized: list[str] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("---"):
+            remainder = stripped[3:].lstrip()
+            key = _frontmatter_key(remainder)
+            if key in allowed:
+                normalized.extend(["---", remainder])
+                continue
+        normalized.append(raw_line)
+    return "\n".join(normalized)
 
 
 def _normalize_unfenced_slide_frontmatter(fragment: str) -> str:
@@ -2189,13 +2288,19 @@ def _normalize_unfenced_slide_frontmatter(fragment: str) -> str:
 
 
 def _normalize_chunk_slide(slide: str) -> str:
+    normalized, _report = _normalize_chunk_slide_with_report(slide)
+    return normalized
+
+
+def _normalize_chunk_slide_with_report(slide: str) -> tuple[str, dict[str, Any]]:
     normalized = str(slide or "").strip()
     if not normalized:
-        return normalized
+        return normalized, {"promoted_internal_frontmatter": False}
     normalized = _strip_scaffold_slide_heading(normalized)
+    normalized, promoted_internal_frontmatter = _promote_internal_frontmatter_after_heading(normalized)
     normalized = _move_internal_frontmatter_to_top(normalized)
     normalized = _balance_html_container_tags(normalized)
-    return normalized.strip()
+    return normalized.strip(), {"promoted_internal_frontmatter": promoted_internal_frontmatter}
 
 
 def _strip_scaffold_slide_labels(fragment: str) -> str:
@@ -2266,6 +2371,52 @@ def _move_internal_frontmatter_to_top(slide: str) -> str:
     return "\n".join(["---", *block_lines, "---", "", body]).strip()
 
 
+def _promote_internal_frontmatter_after_heading(slide: str) -> tuple[str, bool]:
+    normalized = str(slide or "").strip()
+    if not normalized or normalized.startswith("---\n"):
+        return normalized, False
+
+    lines = normalized.splitlines()
+    first_nonempty_index = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first_nonempty_index is None:
+        return normalized, False
+    if not _looks_like_heading_boundary(lines[first_nonempty_index].strip()):
+        return normalized, False
+
+    block_start = None
+    plain_text_lines = 0
+    index = first_nonempty_index + 1
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped:
+            index += 1
+            continue
+        key = _frontmatter_key(stripped)
+        if key in {"layout", "class", "transition", "background"}:
+            block_start = index
+            break
+        if (
+            stripped.startswith(("---", "#", "-", "*", ">", "|", "::", "```", "~~~", "<"))
+            or re.match(r"^\d+\.\s", stripped)
+        ):
+            return normalized, False
+        plain_text_lines += 1
+        if plain_text_lines > 2:
+            return normalized, False
+        index += 1
+
+    if block_start is None:
+        return normalized, False
+
+    block, next_index = _consume_unfenced_frontmatter_lines(lines, block_start)
+    if not block or not any(line.strip() for line in lines[next_index:]):
+        return normalized, False
+
+    body_lines = [lines[first_nonempty_index], *lines[first_nonempty_index + 1 : block_start], *lines[next_index:]]
+    promoted = ["---", *block, "---", "", *body_lines]
+    return "\n".join(promoted).strip(), True
+
+
 def _extract_frontmatter_lines_from_block(block: str) -> list[str]:
     allowed = {"layout", "class", "transition", "background"}
     lines: list[str] = []
@@ -2278,6 +2429,34 @@ def _extract_frontmatter_lines_from_block(block: str) -> list[str]:
             return []
         lines.append(stripped)
     return lines
+
+
+def _consume_yaml_frontmatter_opener(lines: Sequence[str], start_index: int) -> tuple[list[str], int]:
+    index = start_index
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+
+    if index >= len(lines):
+        return [], start_index
+
+    saw_inner_fence = lines[index].strip() == "---"
+    if saw_inner_fence:
+        index += 1
+
+    block, next_index = _consume_unfenced_frontmatter_lines(lines, index)
+    if not block:
+        return [], start_index
+
+    index = next_index
+    if saw_inner_fence:
+        if index >= len(lines) or lines[index].strip() != "---":
+            return [], start_index
+        index += 1
+
+    if index < len(lines) and lines[index].strip() == "```":
+        index += 1
+
+    return [line.strip() for line in block], index
 
 
 def _balance_html_container_tags(slide: str) -> str:
@@ -2423,11 +2602,14 @@ def _format_chunk_retry_feedback(*, review: Mapping[str, Any], validation: Mappi
             lines.append(f"- {prefix} [{code}]: {message}")
 
     if {"unfenced_slide_frontmatter", "frontmatter_inside_code_fence"} & seen_codes:
-        lines.append("- Rewrite slide frontmatter as real Slidev fences at the start of the slide. Never use ```yaml blocks for layout/class.")
-    if "comparison_native_pattern_missing" in seen_codes:
+        lines.append("- Rewrite slide frontmatter as real Slidev fences before the slide heading. Never use ```yaml blocks for layout/class.")
+        lines.append("- Canonical opening example: `---` / `layout: two-cols` / `class: deck-comparison` / `---` / `## Slide Title`.")
+    if {"comparison_native_pattern_missing", "comparison_role_mismatch"} & seen_codes:
         lines.append("- For the comparison slide, use `layout: two-cols` plus `::left::` and `::right::`, or one explicit compare table.")
+        lines.append("- Keep explicit left/right labels and end the slide with one verdict / takeaway line.")
     if "closing_role_mismatch" in seen_codes:
-        lines.append("- For the closing slide, use `layout: end` and include one clear takeaway line plus 2-3 next steps.")
+        lines.append("- For the closing slide, use `layout: end` (or `center` if needed) and include one clear takeaway line plus 2-3 next steps.")
+        lines.append("- Do not end with only `谢谢` / `Q&A` / `讨论`; it must read like a real closing slide.")
     if "unbalanced_html_tags" in seen_codes:
         lines.append("- Close every `<div>`, `<section>`, and `<p>` tag before the slide separator.")
 
@@ -2452,6 +2634,7 @@ def _chunk_report_payload(execution: _ChunkExecution) -> dict[str, Any]:
         validation=execution.validation,
         attempts=execution.attempts,
         status="passed",
+        normalization_report=execution.normalization_report,
     )
 
 
@@ -2462,6 +2645,7 @@ def _chunk_attempt_report_payload(
     validation: Mapping[str, Any],
     attempts: int,
     status: str,
+    normalization_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_warnings = review.get("warnings") if isinstance(review, Mapping) else []
     review_issues = review.get("issues") if isinstance(review, Mapping) else []
@@ -2473,6 +2657,10 @@ def _chunk_attempt_report_payload(
         "titles": [str(item.get("title") or "") for item in spec.outline_items],
         "attempts": attempts,
         "status": status,
+        "normalizer_actions": list((normalization_report or {}).get("normalizer_actions") or []),
+        "normalizer_repaired_internal_frontmatter": bool(
+            (normalization_report or {}).get("promoted_internal_frontmatter")
+        ),
         "review_ok": bool(review.get("ok")),
         "validation_ok": bool(validation.get("ok")),
         "review_warning_count": len(review_warnings) if isinstance(review_warnings, list) else 0,
