@@ -56,40 +56,14 @@ def get_outline_synthesizer_agent():
 
         from app.core.config import settings
         from app.core.model_resolver import resolve_model
+        from app.services.harness import compose_outline_instructions
         from app.services.pipeline.layout_roles import format_role_contract_for_prompt
 
         _agent = Agent(
             model=resolve_model(settings.strong_model),
             output_type=PresentationOutline,
-            instructions=(
-                "你是一个演示文稿策划专家。根据提供的文档内容，构建一个连贯的叙事大纲。\n\n"
-                "## 叙事结构指南\n"
-                "采用「问题→分析→方案→结论」四段式叙事弧：\n"
-                "1. **开篇引入**（1-2页）：标题页 + 背景/问题引出\n"
-                "2. **现状分析**（占总页数 30%）：数据、案例、痛点\n"
-                "3. **解决方案**（占总页数 40%）：核心方法、技术细节、优势\n"
-                "4. **总结展望**（1-2页）：核心结论 + 致谢页\n\n"
-                "## 页面角色规划\n"
-                "为每页设置 suggested_slide_role，帮助后续先确定页面角色，再选择具体布局：\n"
-                f"{format_role_contract_for_prompt()}\n\n"
-                "## 可选结构提示字段\n"
-                "- 你可以为每页补充可选字段 `content_hints`（可为空数组），用于提示该页的信息结构偏好。\n"
-                "- 可选值示例：`chart` / `image` / `table` / `timeline`。\n\n"
-                "## 结构规则\n"
-                "- 第 1 页必须是 `cover`\n"
-                "- 最后一页必须是 `closing`\n"
-                "- 当总页数 >= 5 时，前 3 页内应包含 1 页 `agenda`，默认优先第 2 页\n"
-                "- `section-divider` 只能出现在 `agenda` 之后、`closing` 之前，且不能连续出现\n"
-                "- 若生成了 `agenda` 目录页，`section-divider` 数量应与目录 key_points 数量一致，用于作为每章起始页\n\n"
-                "## 内容简述要求\n"
-                "content_brief 应具体说明这一页要展示什么内容（100-200字），\n"
-                "包括要用到的具体数据、案例或论点。这将作为后续内容生成的指导。\n\n"
-                "## 质量要求\n"
-                "- 每页只承载一个核心观点\n"
-                "- 相关内容按逻辑顺序排列\n"
-                "- 避免信息重复\n"
-                "- key_points 每条不超过 20 字\n"
-                "- narrative_arc 一句话概括叙事主线"
+            instructions=compose_outline_instructions(
+                role_contract=format_role_contract_for_prompt(),
             ),
         )
     return _agent
