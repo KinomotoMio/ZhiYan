@@ -336,6 +336,36 @@ Ship the normalized composition only once.
 """
 
 
+def _stray_metadata_slide_markdown() -> str:
+    return """---
+theme: seriph
+title: Stray Metadata
+layout: cover
+class: theme-tech-launch deck-cover
+---
+
+# Stray Metadata
+
+Cover line
+
+---
+layout: none
+class: deck-context
+---
+container: deck-context
+
+---
+
+## 为什么这个话题是“现在”而不是“以后”
+
+<div class="section-kicker">为什么现在必须关注</div>
+
+- AI 已经进入企业部署
+- 个体用户形成使用习惯
+- 教育场景也开始重构
+"""
+
+
 def _short_deck_agentic_responses(
     markdown: str,
     *,
@@ -1114,6 +1144,19 @@ def test_slidev_mvp_normalizes_double_separator_slide_frontmatter():
     assert slidev_mvp_mod._count_slidev_slides(normalized) == 3
 
 
+def test_slidev_mvp_compacts_stray_metadata_slides():
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    normalized, metadata = slidev_mvp_mod._normalize_slidev_composition(_stray_metadata_slide_markdown())
+
+    assert metadata["stray_metadata_repaired_count"] == 1
+    assert metadata["empty_slide_repaired_count"] == 1
+    assert "container: deck-context" not in normalized
+    assert normalized.count("\n---\n") >= 1
+    assert slidev_mvp_mod._count_slidev_slides(normalized) == 2
+    assert "<div class=\"section-kicker\">为什么现在必须关注</div>" in normalized
+
+
 def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
     from app.services.generation.slidev_mvp import SlidevMvpService, _ResolvedInputs
 
@@ -1132,6 +1175,10 @@ def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
     assert "theme: seriph" in prompt
     assert "selected_style / selected_layouts / selected_blocks 当成执行协议" in prompt
     assert "deck_scaffold_class / themeConfig / baseline_constraints" in prompt
+    assert "page_briefs" in prompt
+    assert "deck_chrome" in prompt
+    assert "metric-stack" in prompt
+    assert "map-with-insights" in prompt
     assert "不要生成“像 markdown 文档章节”的页面" in prompt
 
 
@@ -1153,6 +1200,9 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
     assert selection["selected_style"]["baseline_constraints"]
     assert selection["selected_theme"]["theme"] == "seriph"
     assert selection["selected_theme"]["theme_config"]["density"] == "presentation"
+    assert selection["page_briefs"][1]["preferred_composition"] == "metric-stack"
+    assert selection["deck_chrome"]["deck_label"] == "AI x Future Work"
+    assert selection["selection_summary"]["page_brief_compositions"][1]["preferred_composition"] == "metric-stack"
     assert selection["selection_summary"]["reference_root"].endswith("slidev-design-system/references")
     assert selection["selection_summary"]["deck_scaffold_class"] == "theme-tech-launch"
     assert selection["selection_summary"]["selected_layout_names"][:3] == [
@@ -1167,6 +1217,29 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
         "quote-callout",
     ]
     assert selection["selected_blocks"][2]["blocks"][0]["name"] == "framework-explainer"
+
+
+def test_slidev_reference_selection_can_prefer_map_with_insights_for_risk_pages(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "为什么这个话题是现在", "slide_role": "context", "content_shape": "urgency-metrics", "goal": "建立紧迫性"},
+        {"slide_number": 3, "title": "暴露与风险地图", "slide_role": "framework", "content_shape": "quadrant-map", "goal": "解释风险分布"},
+        {"slide_number": 4, "title": "下一步", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="人工智能对未来工作影响",
+        num_pages=4,
+        material_excerpt="准备一个关于人工智能对未来工作影响的12页演示文稿",
+    )
+
+    assert selection["page_briefs"][1]["preferred_composition"] == "metric-stack"
+    assert selection["page_briefs"][2]["preferred_composition"] == "map-with-insights"
+    assert "map / quadrant / table / mermaid" in " ".join(selection["page_briefs"][2]["supporting_points"])
 
 
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
@@ -1296,6 +1369,8 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
                     "selected_theme": selection["selected_theme"],
                     "selected_layouts": selection["selected_layouts"],
                     "selected_blocks": selection["selected_blocks"],
+                    "page_briefs": selection["page_briefs"],
+                    "deck_chrome": selection["deck_chrome"],
                 },
             },
         )
@@ -1305,6 +1380,8 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     assert result["reference_usage_summary"]["matched_slide_count"] >= 3
     assert result["reference_usage_summary"]["slides"][0]["selected_layout"] == "cover-hero"
     assert result["reference_fidelity_summary"]["matched_slide_count"] == result["reference_usage_summary"]["matched_slide_count"]
+    assert "page_brief_fidelity_summary" in result
+    assert result["deck_chrome_usage_summary"]["deck_label"]
     assert result["theme_fidelity_summary"]["selected_theme"] == "seriph"
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["recipe_class_count"] >= 4
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["ad_hoc_inline_style_count"] == 0
@@ -1339,6 +1416,8 @@ def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, t
                     "selected_theme": selection["selected_theme"],
                     "selected_layouts": selection["selected_layouts"],
                     "selected_blocks": selection["selected_blocks"],
+                    "page_briefs": selection["page_briefs"],
+                    "deck_chrome": selection["deck_chrome"],
                 },
             },
         )
@@ -1483,6 +1562,8 @@ def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tm
                     "selected_theme": selection["selected_theme"],
                     "selected_layouts": selection["selected_layouts"],
                     "selected_blocks": selection["selected_blocks"],
+                    "page_briefs": selection["page_briefs"],
+                    "deck_chrome": selection["deck_chrome"],
                 },
             },
         )
@@ -1490,6 +1571,8 @@ def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tm
 
     assert deck_review["ok"] is True
     assert deck_review["reference_fidelity_summary"]["matched_slide_count"] >= 3
+    assert "page_brief_fidelity_summary" in deck_review
+    assert deck_review["deck_chrome_usage_summary"]["deck_label"]
     assert deck_review["theme_fidelity_summary"]["selected_theme"] == "seriph"
     assert deck_review["slide_reports"][0]["selected_layout"]["recipe_name"] == "cover-hero"
     assert "hero-title" in deck_review["slide_reports"][0]["selected_blocks"]
@@ -2290,7 +2373,10 @@ def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tm
     assert artifact.quality["selected_theme"] == "seriph"
     assert artifact.quality["selected_layouts"][0]["recipe_name"] == "cover-hero"
     assert artifact.quality["selected_blocks"][0]["blocks"][0]["name"] == "hero-title"
+    assert artifact.quality["page_briefs"][1]["preferred_composition"] == "metric-stack"
+    assert artifact.quality["deck_chrome"]["deck_label"]
     assert "matched_slide_count" in artifact.quality["reference_fidelity_summary"]
+    assert "matched_slide_count" in artifact.quality["page_brief_fidelity_summary"]
     assert artifact.quality["theme_fidelity_summary"]["selected_theme"] == "seriph"
     persisted_markdown = artifact.slides_path.read_text(encoding="utf-8")
     assert "class: theme-tech-launch deck-cover" in persisted_markdown
@@ -2298,6 +2384,7 @@ def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tm
     assert service.last_state is not None
     assert service.last_state.document_metadata["slidev_theme_reason"]
     assert service.last_state.document_metadata["slidev_selected_layouts"][0]["recipe_name"] == "cover-hero"
+    assert service.last_state.document_metadata["slidev_page_briefs"][1]["preferred_composition"] == "metric-stack"
     assert service.last_state.document_metadata["slidev_reference_selection"]["reference_root"].endswith(
         "slidev-design-system/references"
     )
@@ -2353,8 +2440,10 @@ def test_slidev_mvp_long_deck_dispatches_selected_reference_chunks(monkeypatch, 
     assert len(captured_specs) == 4
     assert all("layout_recipe=cover-hero" in spec.task or "layout_recipe=context-brief" in spec.task or "layout_recipe=framework-visual" in spec.task or "layout_recipe=comparison-split" in spec.task or "layout_recipe=recommendation-actions" in spec.task or "layout_recipe=closing-takeaway" in spec.task for spec in captured_specs)
     assert "deck scaffold class：theme-tech-launch" in captured_specs[0].task
+    assert "deck chrome label：" in captured_specs[0].task
     assert '"palette": "tech-launch"' in captured_specs[0].task
     assert "blocks=hero-title" in captured_specs[0].task
+    assert "preferred_composition=metric-stack" in captured_specs[0].task
     assert "blocks=takeaway-next-steps" in captured_specs[-1].task
 
 
@@ -2412,8 +2501,59 @@ def test_slidev_mvp_long_deck_chunk_prompt_requires_frontmatter_before_heading(m
     assert "先输出 fenced per-slide frontmatter，再输出对应 slide title 的 markdown heading" in prompt
     assert "comparison 页推荐 canonical skeleton" in prompt
     assert "closing 页推荐 canonical skeleton" in prompt
+    assert "deck chrome label：" in prompt
+    assert "preferred_composition=" in prompt
     assert "canonical comparison shell:" in comparison_prompt
     assert "canonical closing shell:" in prompt
+
+
+def test_slidev_mvp_chunk_prompt_injects_metric_and_map_scaffolds(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "为什么这个话题是现在", "slide_role": "context", "content_shape": "urgency-metrics", "goal": "建立紧迫性"},
+        {"slide_number": 3, "title": "暴露与风险地图", "slide_role": "framework", "content_shape": "quadrant-map", "goal": "解释风险分布"},
+    ]
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=3,
+        reference_selection=slidev_mvp_mod._select_slidev_references(
+            outline_items=outline_items,
+            topic="人工智能对未来工作影响",
+            num_pages=3,
+            material_excerpt="准备一个关于人工智能对未来工作影响的12页演示文稿",
+        ),
+    )
+    state = PipelineState(raw_content="", document_metadata={})
+    state.outline = {"items": outline_items}
+    spec = service._build_chunk_specs(state=state, runtime=runtime)[0]
+    prompt = service._build_chunk_task(
+        spec=spec,
+        resolved=slidev_mvp_mod._ResolvedInputs(
+            topic="人工智能对未来工作影响",
+            material="准备一个关于人工智能对未来工作影响的12页演示文稿",
+            num_pages=3,
+            title_hint="人工智能对未来工作影响",
+            source_hints={},
+        ),
+        runtime=runtime,
+    )
+
+    assert "preferred_composition=metric-stack" in prompt
+    assert "preferred_composition=map-with-insights" in prompt
+    assert "canonical metric-stack shell:" in prompt
+    assert "canonical map-with-insights shell:" in prompt
 
 
 def test_slidev_mvp_normalize_chunk_fragment_promotes_internal_frontmatter_after_heading():

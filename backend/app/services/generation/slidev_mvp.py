@@ -313,6 +313,7 @@ class _ChunkSpec:
     outline_items: list[dict[str, Any]]
     selected_layouts: list[dict[str, Any]]
     selected_blocks: list[dict[str, Any]]
+    page_briefs: list[dict[str, Any]]
 
     @property
     def slide_numbers(self) -> list[int]:
@@ -926,6 +927,8 @@ class SlidevMvpService:
                 selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
                 selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
                 selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
+                page_briefs=(runtime.reference_selection or {}).get("page_briefs") or [],
+                deck_chrome=(runtime.reference_selection or {}).get("deck_chrome") or {},
             )
             runtime.deck_review_hash = _text_hash(candidate_markdown)
             state.document_metadata["slidev_deck_review"] = runtime.deck_review
@@ -937,6 +940,8 @@ class SlidevMvpService:
                 selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
                 selected_layouts=(runtime.reference_selection or {}).get("selected_layouts") or [],
                 selected_blocks=(runtime.reference_selection or {}).get("selected_blocks") or [],
+                page_briefs=(runtime.reference_selection or {}).get("page_briefs") or [],
+                deck_chrome=(runtime.reference_selection or {}).get("deck_chrome") or {},
             )
             runtime.validation_hash = _text_hash(candidate_markdown)
             state.document_metadata["slidev_validation"] = runtime.validation
@@ -1015,6 +1020,11 @@ class SlidevMvpService:
             for item in ((runtime.reference_selection or {}).get("selected_blocks") or [])
             if isinstance(item, Mapping)
         }
+        page_briefs_by_slide = {
+            int(item.get("slide_number") or 0): dict(item)
+            for item in ((runtime.reference_selection or {}).get("page_briefs") or [])
+            if isinstance(item, Mapping)
+        }
         specs: list[_ChunkSpec] = []
         for index, start in enumerate(range(0, len(outline_items), LONG_DECK_CHUNK_SIZE), start=1):
             items = [dict(item) for item in outline_items[start : start + LONG_DECK_CHUNK_SIZE] if isinstance(item, Mapping)]
@@ -1030,6 +1040,13 @@ class SlidevMvpService:
                         selected_blocks_by_slide.get(
                             int(item.get("slide_number") or 0),
                             {"slide_number": int(item.get("slide_number") or 0), "blocks": []},
+                        )
+                        for item in items
+                    ],
+                    page_briefs=[
+                        page_briefs_by_slide.get(
+                            int(item.get("slide_number") or 0),
+                            {"slide_number": int(item.get("slide_number") or 0), "slide_role": str(item.get("slide_role") or "")},
                         )
                         for item in items
                     ],
@@ -1179,6 +1196,7 @@ class SlidevMvpService:
         style_tone = str(selected_style.get("tone") or "")
         deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "")
         theme_config = selected_theme.get("theme_config") or {}
+        deck_chrome = dict((runtime.reference_selection or {}).get("deck_chrome") or {})
         baseline_constraints = [
             str(item).strip()
             for item in (selected_style.get("baseline_constraints") or [])
@@ -1198,10 +1216,22 @@ class SlidevMvpService:
             "必须遵守全局 outline 与 references，不允许修改页顺序、slide_role、页数预算。",
             f"只能使用这些 Slidev 内置 layout：{supported_layouts}。",
             "不要发明 layout 名；如果推荐 layout 为空或不适配，请改用普通 markdown + class + table/div/mermaid 等结构。",
+            f"deck chrome label：{deck_chrome.get('deck_label') or 'none'}",
+            "共享 chrome cues："
+            f" topline={', '.join(deck_chrome.get('topline_classes') or []) or 'none'};"
+            f" kicker={', '.join(deck_chrome.get('kicker_classes') or []) or 'none'};"
+            f" subtitle={', '.join(deck_chrome.get('subtitle_classes') or []) or 'none'};"
+            f" footer={', '.join(deck_chrome.get('footer_classes') or []) or 'none'}",
             "",
             "本 chunk 负责的页面：",
         ]
-        for item, layout, blocks in zip(spec.outline_items, spec.selected_layouts, spec.selected_blocks, strict=False):
+        for item, layout, blocks, brief in zip(
+            spec.outline_items,
+            spec.selected_layouts,
+            spec.selected_blocks,
+            spec.page_briefs,
+            strict=False,
+        ):
             block_names = ", ".join(
                 str(block.get("name") or "")
                 for block in (blocks.get("blocks") or [])
@@ -1220,8 +1250,20 @@ class SlidevMvpService:
                 f"required_patterns={','.join(layout.get('required_patterns') or []) or 'none'}, "
                 f"required_visual={','.join(layout.get('required_visual_signals') or []) or 'none'}, "
                 f"forbidden={','.join(layout.get('forbidden_patterns') or []) or 'none'}, "
-                f"blocks={block_names}, block_recipe={block_structures}, must={_chunk_role_requirements(str(item.get('slide_role') or ''))}]"
+                f"blocks={block_names}, block_recipe={block_structures}, must={_chunk_role_requirements(str(item.get('slide_role') or ''))}, "
+                f"page_goal={brief.get('page_goal') or 'none'}, narrative_job={brief.get('narrative_job') or 'none'}, "
+                f"preferred_composition={brief.get('preferred_composition') or 'none'}]"
             )
+            if brief:
+                lines.extend(
+                    [
+                        f"  hero claim: {brief.get('hero_fact_or_claim') or 'none'}",
+                        f"  supporting points: {' | '.join(brief.get('supporting_points') or []) or 'none'}",
+                        f"  must keep: {' | '.join(brief.get('must_keep') or []) or 'none'}",
+                        f"  must avoid: {' | '.join(brief.get('must_avoid') or []) or 'none'}",
+                    ]
+                )
+                lines.extend(_page_brief_scaffold_lines(brief=brief, layout=layout, deck_chrome=deck_chrome))
             role = str(item.get("slide_role") or "").strip().lower()
             if role == "comparison":
                 lines.extend(
@@ -1270,6 +1312,8 @@ class SlidevMvpService:
                 "- 每一页都不要额外生成未分配的过渡页、总结页、封底页。",
                 "- 需要使用对应的 layout/class/frontmatter 时，写成完整 fenced block。",
                 "- 如果某页 selected layout 给出了 required_classes，就必须把这些 class 写进该页 frontmatter 的 `class:`。",
+                "- 优先复用 deck chrome：在关键页使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 等 cue，而不是临时发明结构。",
+                "- metric-stack / map-with-insights / compare-panel / action-path 是高优先级 composition primitives；优先兑现 page brief 指定的 preferred_composition。",
                 "- cover/context/framework/comparison/closing 不允许退化成普通章节页；每页至少兑现一个明确的 recipe cue。",
                 "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
                 "- context/framework 页优先带 section kicker，并控制 bullet 密度。",
@@ -1306,6 +1350,8 @@ class SlidevMvpService:
             selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
             selected_layouts=spec.selected_layouts,
             selected_blocks=spec.selected_blocks,
+            page_briefs=spec.page_briefs,
+            deck_chrome=(runtime.reference_selection or {}).get("deck_chrome") or {},
         )
 
     async def _validate_chunk_fragment(
@@ -1322,6 +1368,8 @@ class SlidevMvpService:
             selected_theme=(runtime.reference_selection or {}).get("selected_theme") or {},
             selected_layouts=spec.selected_layouts,
             selected_blocks=spec.selected_blocks,
+            page_briefs=spec.page_briefs,
+            deck_chrome=(runtime.reference_selection or {}).get("deck_chrome") or {},
         )
 
     async def _review_markdown(
@@ -1333,6 +1381,8 @@ class SlidevMvpService:
         selected_theme: Mapping[str, Any],
         selected_layouts: Sequence[Mapping[str, Any]],
         selected_blocks: Sequence[Mapping[str, Any]],
+        page_briefs: Sequence[Mapping[str, Any]],
+        deck_chrome: Mapping[str, Any],
     ) -> dict[str, Any]:
         try:
             result = await execute_skill(
@@ -1347,6 +1397,8 @@ class SlidevMvpService:
                         "selected_theme": dict(selected_theme),
                         "selected_layouts": list(selected_layouts),
                         "selected_blocks": list(selected_blocks),
+                        "page_briefs": list(page_briefs),
+                        "deck_chrome": dict(deck_chrome),
                     },
                 },
             )
@@ -1373,6 +1425,8 @@ class SlidevMvpService:
         selected_theme: Mapping[str, Any],
         selected_layouts: Sequence[Mapping[str, Any]],
         selected_blocks: Sequence[Mapping[str, Any]],
+        page_briefs: Sequence[Mapping[str, Any]],
+        deck_chrome: Mapping[str, Any],
     ) -> dict[str, Any]:
         try:
             result = await execute_skill(
@@ -1387,6 +1441,8 @@ class SlidevMvpService:
                         "selected_theme": dict(selected_theme),
                         "selected_layouts": list(selected_layouts),
                         "selected_blocks": list(selected_blocks),
+                        "page_briefs": list(page_briefs),
+                        "deck_chrome": dict(deck_chrome),
                     },
                 },
             )
@@ -1416,7 +1472,7 @@ class SlidevMvpService:
         all_slides: list[str] = []
         for execution in chunk_executions:
             all_slides.extend(_parse_fragment_slides(execution.fragment_markdown))
-        deck_body = "\n\n---\n\n".join(slide.strip() for slide in all_slides if slide.strip())
+        deck_body = _serialize_slidev_slides(all_slides)
         markdown = f"---\ntheme: {theme}\ntitle: {title}\n---\n\n{deck_body}".rstrip() + "\n"
         return _apply_style_frontmatter_baseline(
             markdown=markdown,
@@ -1447,6 +1503,8 @@ class SlidevMvpService:
             "7. 调用 select_slidev_references()，先锁定 deck-level style/theme 与每页 layout/block references。\n"
             "7.1 把 tool 返回的 selected_style / selected_layouts / selected_blocks 当成执行协议：style 决定 deck 基底，layout 决定页 skeleton，blocks 决定页内信息密度与禁用项。\n"
             "7.2 selected_style 里的 deck_scaffold_class / themeConfig / baseline_constraints 也属于执行协议：把 deck scaffold 写进全局 frontmatter，并让每页兑现相应的 presentation cue。\n"
+            "7.3 tool 还会返回 page_briefs：每页都要把 page_goal / narrative_job / hero_fact_or_claim / preferred_composition 落成单一主张，不要只把 outline 标题扩成 bullets。\n"
+            "7.4 tool 还会返回 deck_chrome：优先使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 这些轻量 chrome cue，以及 `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 这些 composition primitives。\n"
             "8. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
             "9. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
             "10. 在交给 controller finalization 前，先调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
@@ -1458,8 +1516,13 @@ class SlidevMvpService:
             "- 默认采用官方 `seriph` theme 作为视觉基底，不要回退成 `theme: default`。\n"
             "- 全局 frontmatter 默认应包含 selected style 对应的 deck scaffold class 与 themeConfig，除非 tool 明确没有给出这些字段。\n"
             "- 每页先满足 role contract，再兑现对应 visual recipe；不要生成“像 markdown 文档章节”的页面。\n"
+            "- page brief 是页级导演稿：先回答这一页在叙事中要完成什么，再决定 bullets/table/div；不要为了凑页数写泛泛的“说明性正文”。\n"
+            "- 对 why-now / urgency / macro-shift 这类 context 页，优先使用 `metric-stack`：主数字或主判断 + 2-3 supporting cards + interpretation line。\n"
+            "- 对 exposure / risk-map / task-landscape / axis 这类页面，优先使用 `map-with-insights`：左侧 map/quadrant/table，右侧 2-3 insight cards，再补一句 takeaway。\n"
+            "- 对 recommendation / closing 页，优先使用 `action-path`：一条结论 headline + 2-4 条 next steps，不要退化成空泛 bullets。\n"
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
             "- 如果 selected layout/block 给出 required_classes / required_visual_signals，就把它们落实成页 frontmatter class、section kicker、verdict/takeaway line、compare labels 等可观察结构。\n"
+            "- 关键页应尽量出现 top chrome 或 footer chrome，而不是每页都只有标题开头；cover 之外的页优先给出 `slide-topline` 或 `section-kicker`。\n"
             "- `cover / context / framework / comparison / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
             "- 只在 review_slidev_outline / select_slidev_references / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n"
             "- 如果你已经完成 markdown 与中间 review/validate，controller 会接手最终 final gate；不要因为记不清 save 顺序而中断 deck 生成。\n\n"
@@ -1657,6 +1720,8 @@ class SlidevMvpService:
             state.document_metadata["slidev_theme_reason"] = str((result.get("selected_theme") or {}).get("theme_reason") or "")
             state.document_metadata["slidev_selected_layouts"] = result.get("selected_layouts") or []
             state.document_metadata["slidev_selected_blocks"] = result.get("selected_blocks") or []
+            state.document_metadata["slidev_page_briefs"] = result.get("page_briefs") or []
+            state.document_metadata["slidev_deck_chrome"] = result.get("deck_chrome") or {}
             state.document_metadata["slidev_reference_selection"] = result.get("selection_summary") or {}
             return result
 
@@ -1694,6 +1759,8 @@ class SlidevMvpService:
                         "selected_theme": (runtime.reference_selection or {}).get("selected_theme") or {},
                         "selected_layouts": (runtime.reference_selection or {}).get("selected_layouts") or [],
                         "selected_blocks": (runtime.reference_selection or {}).get("selected_blocks") or [],
+                        "page_briefs": (runtime.reference_selection or {}).get("page_briefs") or [],
+                        "deck_chrome": (runtime.reference_selection or {}).get("deck_chrome") or {},
                     },
                 }
             )
@@ -1736,6 +1803,8 @@ class SlidevMvpService:
                         "selected_theme": (runtime.reference_selection or {}).get("selected_theme") or {},
                         "selected_layouts": (runtime.reference_selection or {}).get("selected_layouts") or [],
                         "selected_blocks": (runtime.reference_selection or {}).get("selected_blocks") or [],
+                        "page_briefs": (runtime.reference_selection or {}).get("page_briefs") or [],
+                        "deck_chrome": (runtime.reference_selection or {}).get("deck_chrome") or {},
                     },
                 }
             )
@@ -1829,6 +1898,8 @@ class SlidevMvpService:
         selected_theme = _selected_theme_payload(reference_selection)
         selected_layouts = list(reference_selection.get("selected_layouts") or [])
         selected_blocks = list(reference_selection.get("selected_blocks") or [])
+        page_briefs = list(reference_selection.get("page_briefs") or [])
+        deck_chrome = dict(reference_selection.get("deck_chrome") or {})
         chunk_summary = _build_chunk_summary(runtime.chunk_plan, runtime.chunk_reports)
         retry_summary = _build_retry_summary(runtime.retry_events)
         provider_error_summary = _build_provider_error_summary(runtime.provider_errors)
@@ -1847,6 +1918,12 @@ class SlidevMvpService:
         ]
         structure_warnings = _collect_structure_warnings(runtime.outline_review, runtime.deck_review, runtime.validation)
         reference_fidelity_summary = (runtime.deck_review or {}).get("reference_fidelity_summary", {})
+        page_brief_fidelity_summary = (runtime.deck_review or {}).get("page_brief_fidelity_summary", {})
+        deck_chrome_usage_summary = (
+            (runtime.deck_review or {}).get("deck_chrome_usage_summary")
+            or (runtime.validation or {}).get("deck_chrome_usage_summary")
+            or {}
+        )
         theme_fidelity_summary = (
             (runtime.deck_review or {}).get("theme_fidelity_summary")
             or (runtime.validation or {}).get("theme_fidelity_summary")
@@ -1867,6 +1944,8 @@ class SlidevMvpService:
                 "slidev_theme_reason": str(selected_theme.get("theme_reason") or ""),
                 "slidev_selected_layouts": selected_layouts,
                 "slidev_selected_blocks": selected_blocks,
+                "slidev_page_briefs": page_briefs,
+                "slidev_deck_chrome": deck_chrome,
                 "slidev_native_usage": (runtime.validation or {}).get("native_usage_summary", {}),
                 "slidev_mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
                 "slidev_visual_recipe_summary": _build_visual_recipe_summary(
@@ -1875,6 +1954,8 @@ class SlidevMvpService:
                     runtime.validation or {},
                 ),
                 "slidev_reference_fidelity": reference_fidelity_summary,
+                "slidev_page_brief_fidelity": page_brief_fidelity_summary,
+                "slidev_deck_chrome_usage": deck_chrome_usage_summary,
                 "slidev_theme_fidelity": theme_fidelity_summary,
                 "slidev_chunk_plan": list(runtime.chunk_plan),
                 "slidev_chunk_reports": list(runtime.chunk_reports),
@@ -1890,6 +1971,9 @@ class SlidevMvpService:
                     "normalized_double_separator_frontmatter_count": int(
                         normalization.get("normalized_double_separator_frontmatter_count") or 0
                     ),
+                    "stray_metadata_repaired_count": int(normalization.get("stray_metadata_repaired_count") or 0),
+                    "empty_slide_repaired_count": int(normalization.get("empty_slide_repaired_count") or 0),
+                    "normalizer_actions": list(normalization.get("normalizer_actions") or []),
                 },
                 "slidev_blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
                 "slidev_artifact_dir": str(runtime.artifact_dir),
@@ -1918,6 +2002,8 @@ class SlidevMvpService:
                 "theme_reason": str(selected_theme.get("theme_reason") or ""),
                 "selected_layouts": selected_layouts,
                 "selected_blocks": selected_blocks,
+                "page_briefs": page_briefs,
+                "deck_chrome": deck_chrome,
                 "mapping_summary": _build_mapping_summary(pattern_hints, runtime.validation or {}),
                 "visual_recipe_summary": _build_visual_recipe_summary(
                     visual_hints,
@@ -1925,6 +2011,8 @@ class SlidevMvpService:
                     runtime.validation or {},
                 ),
                 "reference_fidelity_summary": reference_fidelity_summary,
+                "page_brief_fidelity_summary": page_brief_fidelity_summary,
+                "deck_chrome_usage_summary": deck_chrome_usage_summary,
                 "theme_fidelity_summary": theme_fidelity_summary,
                 "chunk_summary": chunk_summary,
                 "chunk_reports": list(runtime.chunk_reports),
@@ -1939,6 +2027,9 @@ class SlidevMvpService:
                     "normalized_double_separator_frontmatter_count": int(
                         normalization.get("normalized_double_separator_frontmatter_count") or 0
                     ),
+                    "stray_metadata_repaired_count": int(normalization.get("stray_metadata_repaired_count") or 0),
+                    "empty_slide_repaired_count": int(normalization.get("empty_slide_repaired_count") or 0),
+                    "normalizer_actions": list(normalization.get("normalizer_actions") or []),
                 },
                 "blank_first_slide_detected": bool(normalization.get("blank_first_slide_detected")),
             },
@@ -2179,18 +2270,28 @@ def _normalize_chunk_fragment_with_report(text: str, *, max_slides: int) -> tupl
         promoted_internal_frontmatter = promoted_internal_frontmatter or bool(
             slide_report.get("promoted_internal_frontmatter")
         )
+    slides, compaction_report = _compact_stray_metadata_slides(slides)
     if max_slides > 0:
         slides = slides[:max_slides]
     if not slides:
         return fragment, {
             "promoted_internal_frontmatter": False,
             "normalizer_actions": [],
+            "stray_metadata_repaired_count": 0,
+            "empty_slide_repaired_count": 0,
         }
+    normalizer_actions: list[str] = []
+    if promoted_internal_frontmatter:
+        normalizer_actions.append("promoted_internal_frontmatter")
+    if int(compaction_report.get("stray_metadata_repaired_count") or 0) > 0:
+        normalizer_actions.append("stray_metadata_slide_compacted")
     return (
-        "\n\n---\n\n".join(slide.strip() for slide in slides if slide.strip()).rstrip(),
+        _serialize_slidev_slides(slides),
         {
             "promoted_internal_frontmatter": promoted_internal_frontmatter,
-            "normalizer_actions": ["promoted_internal_frontmatter"] if promoted_internal_frontmatter else [],
+            "normalizer_actions": normalizer_actions,
+            "stray_metadata_repaired_count": int(compaction_report.get("stray_metadata_repaired_count") or 0),
+            "empty_slide_repaired_count": int(compaction_report.get("empty_slide_repaired_count") or 0),
         },
     )
 
@@ -2661,6 +2762,8 @@ def _chunk_attempt_report_payload(
         "normalizer_repaired_internal_frontmatter": bool(
             (normalization_report or {}).get("promoted_internal_frontmatter")
         ),
+        "stray_metadata_repaired_count": int((normalization_report or {}).get("stray_metadata_repaired_count") or 0),
+        "empty_slide_repaired_count": int((normalization_report or {}).get("empty_slide_repaired_count") or 0),
         "review_ok": bool(review.get("ok")),
         "validation_ok": bool(validation.get("ok")),
         "review_warning_count": len(review_warnings) if isinstance(review_warnings, list) else 0,
@@ -3193,6 +3296,420 @@ def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mappin
     }
 
 
+def _synthesize_slidev_page_briefs(
+    *,
+    outline_items: Sequence[Mapping[str, Any]],
+    topic: str,
+    material_excerpt: str,
+    selected_layouts: Sequence[Mapping[str, Any]],
+    selected_blocks: Sequence[Mapping[str, Any]],
+    selected_style: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    layout_map = {
+        int(item.get("slide_number") or 0): dict(item)
+        for item in selected_layouts
+        if isinstance(item, Mapping)
+    }
+    block_map = {
+        int(item.get("slide_number") or 0): [dict(block) for block in (item.get("blocks") or []) if isinstance(block, Mapping)]
+        for item in selected_blocks
+        if isinstance(item, Mapping)
+    }
+    thesis = _slidev_deck_thesis(topic=topic, material_excerpt=material_excerpt)
+    briefs: list[dict[str, Any]] = []
+    for item in outline_items:
+        if not isinstance(item, Mapping):
+            continue
+        slide_number = int(item.get("slide_number") or 0)
+        title = str(item.get("title") or f"Slide {slide_number}").strip()
+        role = str(item.get("slide_role") or "").strip().lower()
+        goal = str(item.get("goal") or "").strip()
+        layout = layout_map.get(slide_number, {})
+        blocks = block_map.get(slide_number, [])
+        preferred_composition = _page_brief_composition(
+            item=item,
+            topic=topic,
+            material_excerpt=material_excerpt,
+        )
+        brief = {
+            "slide_number": slide_number,
+            "title": title,
+            "slide_role": role,
+            "page_goal": goal or _default_page_goal(role),
+            "narrative_job": _default_narrative_job(role),
+            "hero_fact_or_claim": _page_brief_claim(
+                title=title,
+                goal=goal,
+                role=role,
+                thesis=thesis,
+            ),
+            "supporting_points": _page_brief_supporting_points(
+                title=title,
+                role=role,
+                preferred_composition=preferred_composition,
+                blocks=blocks,
+            ),
+            "preferred_composition": preferred_composition,
+            "must_keep": _page_brief_must_keep(role=role, preferred_composition=preferred_composition),
+            "must_avoid": _page_brief_must_avoid(role=role, preferred_composition=preferred_composition),
+            "must_keep_signals": _page_brief_keep_signals(role=role, preferred_composition=preferred_composition),
+            "must_avoid_patterns": _page_brief_avoid_patterns(role=role, preferred_composition=preferred_composition),
+            "layout_recipe": str(layout.get("recipe_name") or ""),
+            "layout": str(layout.get("layout") or ""),
+            "block_recipes": [str(block.get("name") or "") for block in blocks if isinstance(block, Mapping)],
+            "style_name": str(selected_style.get("name") or ""),
+        }
+        briefs.append(brief)
+    return briefs
+
+
+def _slidev_deck_thesis(*, topic: str, material_excerpt: str) -> str:
+    topic_text = str(topic or "").strip()
+    material_text = str(material_excerpt or "").strip()
+    if not topic_text and not material_text:
+        return "这份 deck 需要把变化趋势转成清晰的判断与行动。"
+    if any(token in f"{topic_text} {material_text}".lower() for token in ("future of work", "future work", "work", "job")) or any(
+        token in f"{topic_text}{material_text}" for token in ("未来工作", "工作", "就业", "岗位")
+    ):
+        return "AI 对未来工作的影响已经进入现实决策窗口，需要用结构化页面说明 urgency、exposure 与 action path。"
+    return f"{topic_text or material_text[:48]} 需要被收口成一条清晰 thesis，而不是松散的信息堆叠。"
+
+
+def _default_page_goal(role: str) -> str:
+    return {
+        "cover": "建立主题定位并给出开场 framing",
+        "context": "解释为什么这件事现在值得关注",
+        "framework": "给出可复用的结构模型",
+        "detail": "用一页支撑一个关键判断",
+        "comparison": "把两种路径或状态清晰对照",
+        "recommendation": "把判断收口成行动建议",
+        "closing": "用一句结论和下一步完成收束",
+    }.get(role, "让这一页承担单一叙事任务")
+
+
+def _default_narrative_job(role: str) -> str:
+    return {
+        "cover": "set the narrative frame",
+        "context": "establish urgency",
+        "framework": "provide the mental model",
+        "detail": "support one argument with evidence",
+        "comparison": "show contrast and trade-offs",
+        "recommendation": "turn analysis into actions",
+        "closing": "land the takeaway and next move",
+    }.get(role, "move the deck forward with one clear claim")
+
+
+def _page_brief_composition(
+    *,
+    item: Mapping[str, Any],
+    topic: str,
+    material_excerpt: str,
+) -> str:
+    role = str(item.get("slide_role") or "").strip().lower()
+    title = str(item.get("title") or "").strip().lower()
+    goal = str(item.get("goal") or "").strip().lower()
+    content_shape = str(item.get("content_shape") or "").strip().lower()
+    haystack = " ".join(part for part in (title, goal, content_shape, str(topic or "").lower(), str(material_excerpt or "").lower()) if part)
+    urgency_tokens = ("why now", "why-now", "now", "urgency", "trend", "signal", "采用", "现在", "背景", "紧迫", "变化")
+    map_tokens = (
+        "map",
+        "risk",
+        "exposure",
+        "landscape",
+        "matrix",
+        "quadrant",
+        "axis",
+        "task",
+        "风险",
+        "暴露",
+        "象限",
+        "地图",
+        "版图",
+        "岗位",
+        "职业",
+        "工作",
+        "role",
+        "roles",
+        "job",
+        "jobs",
+        "which",
+        "哪些",
+    )
+    if role == "cover":
+        return "cover-hero"
+    if role == "comparison":
+        return "compare-panel"
+    if role in {"recommendation", "closing"}:
+        return "action-path"
+    if role == "context":
+        return "metric-stack" if any(token in haystack for token in urgency_tokens) or int(item.get("slide_number") or 0) <= 2 else "metric-stack"
+    if role in {"framework", "detail", "context"} and any(token in haystack for token in map_tokens):
+        return "map-with-insights"
+    if role == "framework":
+        return "map-with-insights"
+    return "metric-stack"
+
+
+def _page_brief_claim(*, title: str, goal: str, role: str, thesis: str) -> str:
+    if role == "cover":
+        return title
+    if role == "context":
+        return f"{title} 不是远期趋势，而是已经影响组织与个人决策的现实变化。"
+    if role in {"framework", "detail"}:
+        return f"{title} 需要被解释成一个可读的结构，而不是散乱结论。"
+    if role == "comparison":
+        return f"{title} 必须让观众一眼看出两侧差异与最终判断。"
+    if role in {"recommendation", "closing"}:
+        return f"{title} 应把分析转成明确 takeaway 与下一步。"
+    return goal or thesis
+
+
+def _page_brief_supporting_points(
+    *,
+    title: str,
+    role: str,
+    preferred_composition: str,
+    blocks: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    block_names = [str(block.get("name") or "") for block in blocks if isinstance(block, Mapping)]
+    defaults = {
+        "metric-stack": [
+            "1 个 hero fact 或 headline metric",
+            "2-3 个 supporting cards / data cues",
+            "1 句 interpretation / why it matters",
+        ],
+        "map-with-insights": [
+            "左侧 map / quadrant / table / mermaid",
+            "右侧 2-3 个 insight cards",
+            "1 句 takeaway / source line",
+        ],
+        "compare-panel": [
+            "左右标签必须显式出现",
+            "每侧 2-4 条对照点",
+            "1 句 verdict / takeaway",
+        ],
+        "action-path": [
+            "1 句 headline / recommendation",
+            "2-4 条 next steps / actions",
+            "1 句 closing or priority cue",
+        ],
+        "cover-hero": [
+            "1 条短 kicker",
+            "1 个 hero title",
+            "1 条短 subtitle",
+        ],
+    }
+    points = list(defaults.get(preferred_composition, []))
+    if role == "framework" and "framework-explainer" in block_names and "1 个结构化模型" not in points:
+        points.insert(0, "1 个结构化模型 / diagram")
+    if title and points:
+        points[0] = points[0].replace("1 个", f"{title} 这页要先落成 1 个", 1) if points[0].startswith("1 个") else points[0]
+    return points[:4]
+
+
+def _page_brief_must_keep(*, role: str, preferred_composition: str) -> list[str]:
+    by_composition = {
+        "cover-hero": ["短 kicker", "hero title", "短 subtitle"],
+        "metric-stack": ["hero fact / claim", "2-3 supporting cards", "interpretation line"],
+        "map-with-insights": ["map or quadrant panel", "2-3 insight cards", "takeaway or source line"],
+        "compare-panel": ["paired labels", "left/right contrast", "verdict line"],
+        "action-path": ["takeaway headline", "2-4 next steps", "closing cue"],
+    }
+    keep = list(by_composition.get(preferred_composition, []))
+    if role == "framework" and "takeaway or source line" not in keep:
+        keep.append("modeled takeaway")
+    return keep
+
+
+def _page_brief_must_avoid(*, role: str, preferred_composition: str) -> list[str]:
+    by_composition = {
+        "cover-hero": ["文档式封面", "长段说明"],
+        "metric-stack": ["标题 + 大段 bullets", "只有抽象判断没有数据 cue"],
+        "map-with-insights": ["纯 bullets", "没有左右分工的平铺结构"],
+        "compare-panel": ["未标注左右", "没有 verdict 的对照页"],
+        "action-path": ["普通 bullet dump", "谢谢/Q&A 结尾"],
+    }
+    avoid = list(by_composition.get(preferred_composition, []))
+    if role == "closing" and "谢谢/Q&A 结尾" not in avoid:
+        avoid.append("谢谢/Q&A 结尾")
+    return avoid
+
+
+def _page_brief_keep_signals(*, role: str, preferred_composition: str) -> list[str]:
+    mapping = {
+        "cover-hero": ["launch-kicker", "hero-title", "short-subtitle"],
+        "metric-stack": ["metric-stack", "hero-metric", "interpretation-line"],
+        "map-with-insights": ["map-with-insights", "visual-structure", "insight-card", "source-or-takeaway"],
+        "compare-panel": ["compare-panel", "split-compare", "contrast-labels", "verdict-line"],
+        "action-path": ["action-path", "next-step-or-takeaway", "action-list"],
+    }
+    keep = list(mapping.get(preferred_composition, []))
+    if role == "closing" and "closing-line" not in keep:
+        keep.append("closing-line")
+    return keep
+
+
+def _page_brief_avoid_patterns(*, role: str, preferred_composition: str) -> list[str]:
+    patterns = {
+        "metric-stack": ["plain-bullet-dump", "unstyled-document-section"],
+        "map-with-insights": ["plain-bullet-dump", "unstyled-document-section"],
+        "compare-panel": ["unlabeled-compare", "unstyled-document-section"],
+        "action-path": ["plain-bullet-dump", "generic-thanks"],
+        "cover-hero": ["unstyled-document-section", "long-paragraph-cover"],
+    }
+    result = list(patterns.get(preferred_composition, []))
+    if role == "closing" and "generic-thanks" not in result:
+        result.append("generic-thanks")
+    return result
+
+
+def _build_slidev_deck_chrome(
+    *,
+    topic: str,
+    num_pages: int,
+    selected_style: Mapping[str, Any],
+    page_briefs: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    deck_label = _slidev_deck_label(topic)
+    return {
+        "deck_label": deck_label,
+        "style_name": str(selected_style.get("name") or ""),
+        "page_number_format": "two-digit" if num_pages >= 10 else "compact",
+        "topline_classes": ["slide-topline", "uppercase", "tracking-[0.18em]", "text-xs", "opacity-70"],
+        "kicker_classes": ["section-kicker", "uppercase", "tracking-[0.18em]", "text-xs", "opacity-70"],
+        "subtitle_classes": ["slide-subtitle", "text-lg", "opacity-80"],
+        "footer_classes": ["slide-footer", "text-xs", "opacity-65"],
+        "shared_cues": [
+            "slide-topline",
+            "section-kicker",
+            "slide-subtitle",
+            "slide-footer",
+            "metric-card",
+            "interpretation-card",
+        ],
+        "composition_primitives": [
+            {
+                "name": "metric-stack",
+                "required_classes": ["metric-stack", "metric-card", "interpretation-card"],
+                "description": "hero metric or claim plus 2-3 supporting cards and one interpretation line",
+            },
+            {
+                "name": "map-with-insights",
+                "required_classes": ["map-with-insights", "map-panel", "insight-card"],
+                "description": "left map or matrix plus right-side insight cards and a takeaway/source line",
+            },
+            {
+                "name": "compare-panel",
+                "required_classes": ["compare-panel", "compare-side", "verdict-line"],
+                "description": "paired contrast with explicit side labels and one verdict line",
+            },
+            {
+                "name": "action-path",
+                "required_classes": ["action-path", "action-step", "verdict-line"],
+                "description": "takeaway headline plus 2-4 steps or next actions",
+            },
+        ],
+        "chrome_rules": [
+            "non-cover slides should usually expose either a slide-topline or section-kicker",
+            "metric/map/compare/action compositions should use semantic classes instead of ad-hoc inline style",
+            "footer or source line should appear on research-heavy or closing slides",
+        ],
+        "briefed_slide_count": len(page_briefs),
+    }
+
+
+def _slidev_deck_label(topic: str) -> str:
+    text = str(topic or "").strip()
+    lowered = text.lower()
+    if any(token in lowered for token in ("ai", "artificial intelligence")) or "人工智能" in text:
+        if any(token in lowered for token in ("future work", "future of work", "work")) or any(
+            token in text for token in ("未来工作", "工作")
+        ):
+            return "AI x Future Work"
+        return "AI Brief"
+    return text[:32] or "Deck Brief"
+
+
+def _page_brief_scaffold_lines(
+    *,
+    brief: Mapping[str, Any],
+    layout: Mapping[str, Any],
+    deck_chrome: Mapping[str, Any],
+) -> list[str]:
+    composition = str(brief.get("preferred_composition") or "").strip()
+    title = str(brief.get("title") or "Slide").strip()
+    deck_label = str(deck_chrome.get("deck_label") or "Deck").strip()
+    lines = [
+        f"  deck chrome cue: add a lightweight `<div class=\"slide-topline\">{deck_label} / {brief.get('slide_number') or ''}</div>` or equivalent section kicker when the page is not cover-only.",
+    ]
+    if composition == "metric-stack":
+        lines.extend(
+            [
+                "  canonical metric-stack shell:",
+                f"  <div class=\"slide-topline\">{deck_label} / why now</div>",
+                f"  ## {title}",
+                "  <div class=\"slide-subtitle\">一句 why-now / urgency 判断</div>",
+                "  <div class=\"metric-stack grid gap-4\">",
+                "    <div class=\"metric-card\"><strong>主数字 / 主判断</strong><div>一句解释</div></div>",
+                "    <div class=\"grid grid-cols-2 gap-4\">",
+                "      <div class=\"metric-card\">supporting card</div>",
+                "      <div class=\"metric-card\">supporting card</div>",
+                "    </div>",
+                "    <div class=\"interpretation-card\">Interpretation / why it matters</div>",
+                "  </div>",
+            ]
+        )
+    elif composition == "map-with-insights":
+        lines.extend(
+            [
+                "  canonical map-with-insights shell:",
+                f"  <div class=\"slide-topline\">{deck_label} / exposure map</div>",
+                f"  ## {title}",
+                "  <div class=\"section-kicker\">左侧 map / 右侧 insights</div>",
+                "  <div class=\"map-with-insights grid grid-cols-[1.2fr,0.8fr] gap-5\">",
+                "    <div class=\"map-panel\">用 quadrant / table / mermaid / matrix 呈现暴露或风险地图</div>",
+                "    <div class=\"grid gap-4\">",
+                "      <div class=\"metric-card insight-card\">headline fact</div>",
+                "      <div class=\"metric-card insight-card\">insight</div>",
+                "      <div class=\"interpretation-card\">takeaway / source</div>",
+                "    </div>",
+                "  </div>",
+            ]
+        )
+    elif composition == "compare-panel":
+        lines.extend(
+            [
+                "  canonical compare-panel shell:",
+                "  ---",
+                f"  layout: {layout.get('layout') or 'two-cols'}",
+                f"  class: {(layout.get('container_classes') or 'deck-comparison').strip()} compare-panel",
+                "  ---",
+                f"  ## {title}",
+                "  ::left::",
+                "  <div class=\"compare-side\">左侧标签 + 2-4 条要点</div>",
+                "  ::right::",
+                "  <div class=\"compare-side\">右侧标签 + 2-4 条要点</div>",
+                "  <div class=\"verdict-line\">一句 verdict / takeaway</div>",
+            ]
+        )
+    elif composition == "action-path":
+        lines.extend(
+            [
+                "  canonical action-path shell:",
+                f"  <div class=\"slide-topline\">{deck_label} / next move</div>",
+                f"  ## {title}",
+                "  <div class=\"verdict-line\">一句结论 headline / recommendation</div>",
+                "  <div class=\"action-path grid gap-3\">",
+                "    <div class=\"action-step\">1. action</div>",
+                "    <div class=\"action-step\">2. action</div>",
+                "    <div class=\"action-step\">3. action</div>",
+                "  </div>",
+                "  <div class=\"slide-footer\">priority / owner / source</div>",
+            ]
+        )
+    return lines
+
+
 def _select_slidev_references(
     *,
     outline_items: Sequence[Mapping[str, Any]],
@@ -3215,12 +3732,28 @@ def _select_slidev_references(
             continue
         selected_layouts.append(_select_layout_reference(item=item, layouts=assets.get("layouts") or []))
         selected_blocks.append(_select_block_references(item=item, blocks=assets.get("blocks") or []))
+    page_briefs = _synthesize_slidev_page_briefs(
+        outline_items=outline_items,
+        topic=topic,
+        material_excerpt=material_excerpt,
+        selected_layouts=selected_layouts,
+        selected_blocks=selected_blocks,
+        selected_style=selected_style,
+    )
+    deck_chrome = _build_slidev_deck_chrome(
+        topic=topic,
+        num_pages=num_pages,
+        selected_style=selected_style,
+        page_briefs=page_briefs,
+    )
 
     return {
         "selected_style": selected_style,
         "selected_theme": selected_theme,
         "selected_layouts": selected_layouts,
         "selected_blocks": selected_blocks,
+        "page_briefs": page_briefs,
+        "deck_chrome": deck_chrome,
         "selection_summary": {
             "style_name": selected_style["name"],
             "style_reason": selected_style["selection_reason"],
@@ -3236,6 +3769,21 @@ def _select_slidev_references(
                 for item in selected_blocks
                 for block in (item.get("blocks") or [])
                 if isinstance(block, Mapping)
+            ],
+            "page_brief_compositions": [
+                {
+                    "slide_number": int(brief.get("slide_number") or 0),
+                    "slide_role": str(brief.get("slide_role") or ""),
+                    "preferred_composition": str(brief.get("preferred_composition") or ""),
+                }
+                for brief in page_briefs
+                if isinstance(brief, Mapping)
+            ],
+            "deck_chrome_label": str(deck_chrome.get("deck_label") or ""),
+            "deck_chrome_primitives": [
+                str(item.get("name") or "")
+                for item in (deck_chrome.get("composition_primitives") or [])
+                if isinstance(item, Mapping)
             ],
             "slide_recipes": [
                 {
@@ -3390,10 +3938,141 @@ def _build_visual_recipe_summary(
     }
 
 
+def _compact_stray_metadata_deck(markdown: str) -> tuple[str, dict[str, Any]]:
+    prefix, _body = _split_global_frontmatter_block(str(markdown or ""))
+    slides = _parse_slidev_slides(markdown)
+    if not slides:
+        return markdown, {"stray_metadata_repaired_count": 0, "empty_slide_repaired_count": 0}
+    compacted_slides, report = _compact_stray_metadata_slides(slides)
+    if not compacted_slides:
+        return markdown, report
+    if int(report.get("stray_metadata_repaired_count") or 0) == 0:
+        return markdown, report
+    deck_body = _serialize_slidev_slides(compacted_slides)
+    normalized = f"{prefix}{deck_body}\n" if prefix else f"{deck_body}\n"
+    return normalized, report
+
+
+def _compact_stray_metadata_slides(slides: Sequence[str]) -> tuple[list[str], dict[str, Any]]:
+    if not slides:
+        return [], {"stray_metadata_repaired_count": 0, "empty_slide_repaired_count": 0}
+    compacted = [str(slide).strip() for slide in slides if str(slide).strip()]
+    repaired_actions: list[dict[str, Any]] = []
+    index = 0
+    while index < len(compacted):
+        payload = _stray_metadata_payload(compacted[index])
+        if not payload:
+            index += 1
+            continue
+        merged = False
+        if index + 1 < len(compacted):
+            compacted[index + 1] = _merge_stray_metadata_into_slide(compacted[index + 1], payload)
+            repaired_actions.append({"target": index + 1, "source": index, "keys": sorted(payload)})
+            del compacted[index]
+            merged = True
+        elif index > 0:
+            compacted[index - 1] = _merge_stray_metadata_into_slide(compacted[index - 1], payload)
+            repaired_actions.append({"target": index - 1, "source": index, "keys": sorted(payload)})
+            del compacted[index]
+            merged = True
+        if not merged:
+            index += 1
+    return compacted, {
+        "stray_metadata_repaired_count": len(repaired_actions),
+        "empty_slide_repaired_count": len(repaired_actions),
+        "stray_metadata_actions": repaired_actions,
+    }
+
+
+def _stray_metadata_payload(slide: str) -> dict[str, list[str]]:
+    body = _strip_slide_frontmatter(slide)
+    nonempty = [line.strip() for line in body.splitlines() if line.strip()]
+    if not nonempty or len(nonempty) > 2:
+        return {}
+    allowed = {"container", "kicker", "subtitle", "eyebrow", "topline", "footer"}
+    payload: dict[str, list[str]] = {}
+    for line in nonempty:
+        key = _frontmatter_key(line)
+        if key in allowed:
+            payload.setdefault(key, []).append(line.split(":", 1)[1].strip())
+            continue
+        html_match = re.match(r'^<div class="([^"]+)">(.*?)</div>$', line)
+        if not html_match:
+            return {}
+        class_name = html_match.group(1).strip()
+        html_value = html_match.group(2).strip()
+        html_key = {
+            "slide-topline": "topline",
+            "section-kicker": "kicker",
+            "slide-subtitle": "subtitle",
+            "slide-footer": "footer",
+        }.get(class_name)
+        if html_key not in allowed or not html_value:
+            return {}
+        payload.setdefault(html_key, []).append(html_value)
+    return payload
+
+
+def _merge_stray_metadata_into_slide(slide: str, payload: Mapping[str, Sequence[str]]) -> str:
+    merged = str(slide or "").strip()
+    if not merged:
+        return merged
+    container_values = [str(value).strip() for value in (payload.get("container") or []) if str(value).strip()]
+    for value in container_values:
+        merged = _prepend_slide_frontmatter_classes(merged, value)
+    cue_lines: list[str] = []
+    for key, class_name in (
+        ("topline", "slide-topline"),
+        ("eyebrow", "section-kicker"),
+        ("kicker", "section-kicker"),
+        ("subtitle", "slide-subtitle"),
+        ("footer", "slide-footer"),
+    ):
+        for value in payload.get(key) or []:
+            text = str(value).strip()
+            if not text:
+                continue
+            cue_lines.append(f'<div class="{class_name}">{text}</div>')
+    if not cue_lines:
+        return merged
+    frontmatter = _frontmatter_block(merged)
+    body = _strip_slide_frontmatter(merged).strip()
+    parts = ["\n".join(cue_lines).strip(), body] if body else ["\n".join(cue_lines).strip()]
+    rebuilt_body = "\n\n".join(part for part in parts if part).strip()
+    if frontmatter:
+        return "\n".join(["---", frontmatter, "---", "", rebuilt_body]).strip()
+    return rebuilt_body
+
+
+def _prepend_slide_frontmatter_classes(slide: str, class_value: str) -> str:
+    frontmatter = _frontmatter_block(slide)
+    classes = [token.strip() for token in re.split(r"\s+", str(class_value or "").strip()) if token.strip()]
+    body = _strip_slide_frontmatter(slide).strip()
+    if frontmatter:
+        updated = frontmatter
+        existing = _frontmatter_scalar_value(frontmatter, "class")
+        merged_classes = _merge_class_tokens(existing, " ".join(classes))
+        updated = _replace_or_append_frontmatter_scalar(updated, "class", merged_classes)
+        return "\n".join(["---", updated, "---", "", body]).strip()
+    if not classes:
+        return slide
+    return "\n".join(["---", f"class: {' '.join(classes)}", "---", "", body]).strip()
+
+
 def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, Any]]:
     normalized, metadata = _normalize_leading_first_slide_frontmatter(markdown)
     normalized, separator_metadata = _normalize_double_separator_slide_frontmatter(normalized)
     metadata.update(separator_metadata)
+    normalized, compaction_metadata = _compact_stray_metadata_deck(normalized)
+    metadata.update(compaction_metadata)
+    normalizer_actions = list(metadata.get("normalizer_actions") or [])
+    if bool(metadata.get("blank_first_slide_detected")):
+        normalizer_actions.append("blank_first_slide_normalized")
+    if bool(metadata.get("double_separator_frontmatter_detected")):
+        normalizer_actions.append("double_separator_frontmatter_normalized")
+    if int(metadata.get("stray_metadata_repaired_count") or 0) > 0:
+        normalizer_actions.append("stray_metadata_slide_compacted")
+    metadata["normalizer_actions"] = sorted(set(normalizer_actions))
     return normalized, metadata
 
 
@@ -3454,6 +4133,11 @@ def _normalize_double_separator_slide_frontmatter(markdown: str) -> tuple[str, d
         index += 1
 
     normalized_body = "\n".join(normalized_lines).strip()
+    normalized_body = re.sub(
+        r"(?m)^---\s*\n\s*---\s*\n(?=(?:layout|class|transition|background):)",
+        "---\n",
+        normalized_body,
+    )
     normalized = prefix + normalized_body
     if normalized_body:
         normalized = normalized.rstrip() + "\n"
@@ -3543,6 +4227,22 @@ def _parse_slidev_slides(markdown: str) -> list[str]:
     return slides
 
 
+def _serialize_slidev_slides(slides: Sequence[str]) -> str:
+    serialized: list[str] = []
+    for index, raw_slide in enumerate(slides):
+        slide = str(raw_slide or "").strip()
+        if not slide:
+            continue
+        if index == 0:
+            serialized.append(slide)
+            continue
+        if slide.startswith("---\n"):
+            serialized.append(slide)
+        else:
+            serialized.append(f"---\n\n{slide}")
+    return "\n\n".join(serialized).rstrip()
+
+
 def _split_global_frontmatter_block(text: str) -> tuple[str, str]:
     match = re.match(r"^(---\s*\n.*?\n---\s*\n?)(.*)$", text, re.DOTALL)
     if not match:
@@ -3568,6 +4268,15 @@ def _extract_first_slide_frontmatter_from_global(text: str) -> list[str]:
         if key in allowed:
             lines.append(raw_line.rstrip())
     return lines
+
+
+def _strip_slide_frontmatter(slide: str) -> str:
+    return re.sub(r"^---\s*\n.*?\n---\s*\n?", "", str(slide or ""), count=1, flags=re.DOTALL)
+
+
+def _frontmatter_block(slide: str) -> str:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", str(slide or ""), re.DOTALL)
+    return match.group(1) if match else ""
 
 
 def _consume_slide_frontmatter_block(lines: Sequence[str], start_index: int) -> tuple[list[str] | None, int]:
