@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -1504,7 +1505,27 @@ def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tm
     assert "hero-title" in deck_review["slide_reports"][0]["selected_blocks"]
     summary = deck_review["presentation_feel_summary"]
     assert summary["status"] in {"matched", "weak"}
-    assert summary["signal_count"] >= 0
+    assert summary["signal_count"] == len(summary["signal_codes"])
+
+
+def test_slidev_deck_review_presentation_feel_summary_counts_theme_recipe_warning(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    review_script = settings.skills_dir / "slidev-deck-quality" / "scripts" / "review_deck.py"
+    spec = importlib.util.spec_from_file_location("review_deck_module", review_script)
+    assert spec is not None and spec.loader is not None
+    review_deck_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review_deck_module)
+
+    summary = review_deck_module._presentation_feel_summary(
+        [{"status": "ok"}],
+        [{"code": "theme_recipe_weak"}],
+    )
+
+    assert summary["status"] == "weak"
+    assert summary["visual_anchor_warning_count"] == 1
+    assert "theme_recipe_weak" in summary["signal_codes"]
+    assert summary["signal_count"] == 1
 
 
 def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):

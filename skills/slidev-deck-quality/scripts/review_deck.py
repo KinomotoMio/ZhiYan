@@ -237,7 +237,7 @@ def _presentation_feel_summary(
     visual_anchor_codes = [
         code
         for code in warning_codes
-        if code in {"selected_reference_recipe_weak", "selected_reference_recipe_missing"}
+        if code in {"selected_reference_recipe_weak", "selected_reference_recipe_missing", "theme_recipe_weak"}
     ]
     signal_codes = sorted(set(document_like_codes + crowding_codes + visual_anchor_codes))
     status = "weak" if signal_codes else "matched"
