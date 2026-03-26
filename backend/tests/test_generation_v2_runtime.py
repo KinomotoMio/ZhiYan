@@ -242,7 +242,7 @@ def test_should_use_agentic_loop_requires_flag_and_credentials(monkeypatch):
     assert GenerationRunner._should_use_agentic_loop() is True  # noqa: SLF001
 
 
-def test_selected_runtime_falls_back_to_pipeline_until_agentic_runtime_is_wired(monkeypatch, tmp_path):
+def test_selected_runtime_uses_agentic_loop_when_enabled(monkeypatch, tmp_path):
     async def _case():
         store = GenerationJobStore(tmp_path / "jobs")
         bus = GenerationEventBus()
@@ -250,17 +250,22 @@ def test_selected_runtime_falls_back_to_pipeline_until_agentic_runtime_is_wired(
         job = _build_job("job-agentic-flag")
         state = PipelineState(raw_content="x", topic="t", num_pages=3, job_id=job.job_id)
 
-        seen: dict[str, str | None] = {"stage": None}
+        seen: dict[str, bool] = {"agentic": False, "pipeline": False}
 
-        async def fake_pipeline(job_arg, state_arg, *, start_stage, progress_hook, slide_hook):  # noqa: ARG001
+        async def fake_agentic(job_arg, state_arg, *, start_stage, progress_hook, slide_hook):  # noqa: ARG001
             assert job_arg is job
             assert state_arg is state
-            seen["stage"] = start_stage.value
+            seen["agentic"] = True
+            return True
+
+        async def fake_pipeline(*args, **kwargs):  # noqa: ARG001
+            seen["pipeline"] = True
             return True
 
         monkeypatch.setattr(settings, "enable_agentic_loop", True)
         monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
         monkeypatch.setattr(settings, "openai_api_key", "token")
+        monkeypatch.setattr(runner, "_run_agentic_job", fake_agentic)
         monkeypatch.setattr(runner, "_run_pipeline_job", fake_pipeline)
 
         completed = await runner._run_selected_runtime(  # noqa: SLF001
@@ -272,7 +277,50 @@ def test_selected_runtime_falls_back_to_pipeline_until_agentic_runtime_is_wired(
         )
 
         assert completed is True
-        assert seen["stage"] == "layout"
+        assert seen["agentic"] is True
+        assert seen["pipeline"] is False
+
+    asyncio.run(_case())
+
+
+def test_agentic_runtime_falls_back_to_pipeline_when_loop_stops_early(monkeypatch, tmp_path):
+    async def _case():
+        store = GenerationJobStore(tmp_path / "jobs")
+        bus = GenerationEventBus()
+        runner = GenerationRunner(store, bus)
+        job = _build_job("job-agentic-fallback")
+        state = PipelineState(raw_content="x", topic="t", num_pages=3, job_id=job.job_id)
+
+        from app.services.generation import runner as runner_mod
+        from app.services.generation.agentic.loop import AgenticLoopResult
+
+        seen: dict[str, str | None] = {"stage": None, "stop_reason": None}
+
+        async def fake_agentic_loop(*args, **kwargs):  # noqa: ARG001
+            return AgenticLoopResult(output_text="incomplete", messages=[], turns=1, stop_reason="text")
+
+        async def fake_pipeline(job_arg, state_arg, *, start_stage, progress_hook, slide_hook):  # noqa: ARG001
+            assert job_arg is job
+            assert state_arg is state
+            seen["stage"] = start_stage.value
+            return True
+
+        monkeypatch.setattr(settings, "enable_agentic_loop", True)
+        monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+        monkeypatch.setattr(settings, "openai_api_key", "token")
+        monkeypatch.setattr(runner_mod, "agentic_loop", fake_agentic_loop)
+        monkeypatch.setattr(runner, "_run_pipeline_job", fake_pipeline)
+
+        completed = await runner._run_selected_runtime(  # noqa: SLF001
+            job,
+            state,
+            start_stage=StageStatus.OUTLINE,
+            progress_hook=lambda *args, **kwargs: None,
+            slide_hook=lambda *args, **kwargs: None,
+        )
+
+        assert completed is True
+        assert seen["stage"] == "outline"
 
     asyncio.run(_case())
 
