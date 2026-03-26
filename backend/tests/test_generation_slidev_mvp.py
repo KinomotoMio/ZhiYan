@@ -1648,6 +1648,19 @@ def test_slidev_deck_review_presentation_feel_summary_counts_theme_recipe_warnin
     assert summary["signal_count"] == 1
 
 
+def test_slidev_deck_review_parse_css_color_supports_space_separated_rgb(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    review_script = settings.skills_dir / "slidev-deck-quality" / "scripts" / "review_deck.py"
+    spec = importlib.util.spec_from_file_location("review_deck_module", review_script)
+    assert spec is not None and spec.loader is not None
+    review_deck_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review_deck_module)
+
+    assert review_deck_module._parse_css_color("rgb(255 0 0)") == (255, 0, 0)
+    assert review_deck_module._parse_css_color("rgba(255 0 0 / 0.5)") == (255, 0, 0)
+
+
 def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 

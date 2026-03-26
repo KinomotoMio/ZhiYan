@@ -1135,7 +1135,7 @@ def _parse_css_color(value: str) -> tuple[int, int, int] | None:
         return None
     rgb_match = re.fullmatch(r"rgba?\(([^)]+)\)", raw)
     if rgb_match:
-        parts = [part.strip() for part in rgb_match.group(1).split(",")]
+        parts = _split_css_function_args(rgb_match.group(1))
         if len(parts) < 3:
             return None
         channels: list[int] = []
@@ -1179,6 +1179,10 @@ def _parse_css_color(value: str) -> tuple[int, int, int] | None:
         "navy": (0, 0, 128),
     }
     return named_colors.get(raw)
+
+
+def _split_css_function_args(raw_args: str) -> list[str]:
+    return [part for part in re.split(r"[\s,\/]+", raw_args.strip()) if part]
 
 
 def _hsl_to_rgb(hue: float, saturation: float, lightness: float) -> tuple[int, int, int]:
