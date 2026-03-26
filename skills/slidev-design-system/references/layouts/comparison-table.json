@@ -1,0 +1,27 @@
+{
+  "name": "comparison-table",
+  "applies_to_roles": [
+    "comparison"
+  ],
+  "preferred_layout": null,
+  "required_patterns": [
+    "table",
+    "compare-panel",
+    "before-after"
+  ],
+  "required_classes": [
+    "deck-comparison",
+    "compare-panel"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "unlabeled-compare"
+  ],
+  "description": "Table-led comparison page for scenarios that need explicit axis-by-axis contrast.",
+  "required_visual_signals": [
+    "split-compare",
+    "contrast-labels",
+    "verdict-line"
+  ]
+}

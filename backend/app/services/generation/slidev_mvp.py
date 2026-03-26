@@ -177,6 +177,17 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
         "reason": "收尾页优先使用 Slidev 原生结束布局或强收束结构。",
     },
 }
+SLIDEV_MEDIA_TARGET_ROLES = frozenset({"framework", "comparison", "detail"})
+SLIDEV_MEDIA_PATTERN_TOKENS = frozenset(
+    {
+        "mermaid",
+        "table",
+        "div-grid",
+        "map-with-insights",
+        "compare-panel",
+        "image",
+    }
+)
 _SUBAGENT_DEFAULT_TOOLS = ("load_skill", "run_skill")
 _SUBAGENT_FORBIDDEN_TOOLS = {
     "dispatch_subagent",
@@ -1781,6 +1792,7 @@ class SlidevMvpService:
                 topic=str(state.topic or state.document_metadata.get("title") or ""),
                 num_pages=int(state.num_pages or runtime.requested_pages or len(outline_items)),
                 material_excerpt=str(state.raw_content or "")[:1500],
+                source_hints=state.document_metadata.get("source_hints") if isinstance(state.document_metadata, dict) else None,
             )
 
             runtime.reference_selection = result
@@ -2284,9 +2296,11 @@ def _build_source_hints(source_metas: Sequence[Mapping[str, Any]]) -> dict[str, 
     for meta in source_metas:
         category = str(meta.get("fileCategory") or meta.get("file_category") or "unknown").strip().lower()
         by_category[category] = by_category.get(category, 0) + 1
+    media_preferences = _source_media_preferences(by_category)
     return {
         "total_sources": len(source_metas),
         "by_file_category": by_category,
+        "media_preferences": media_preferences,
     }
 
 
@@ -2299,6 +2313,44 @@ def _format_source_hints(source_hints: Mapping[str, Any]) -> str:
         return f"{total_sources} 个来源文件"
     details = ", ".join(f"{name}:{count}" for name, count in sorted(by_category.items()))
     return f"{total_sources} 个来源文件 ({details})"
+
+
+def _source_media_preferences(by_category: Mapping[str, Any] | None) -> dict[str, Any]:
+    categories = {
+        str(name or "").strip().lower(): int(value or 0)
+        for name, value in dict(by_category or {}).items()
+        if str(name or "").strip()
+    }
+    table_tokens = ("xls", "xlsx", "csv", "table", "sheet", "data", "dataset")
+    image_tokens = ("image", "img", "png", "jpg", "jpeg", "svg", "figure", "photo")
+    diagram_tokens = ("diagram", "draw", "flow", "mindmap", "mermaid", "ppt", "slides")
+    table_sources = sum(
+        count for name, count in categories.items() if any(token in name for token in table_tokens)
+    )
+    image_sources = sum(
+        count for name, count in categories.items() if any(token in name for token in image_tokens)
+    )
+    diagram_sources = sum(
+        count for name, count in categories.items() if any(token in name for token in diagram_tokens)
+    )
+    preferred_patterns: list[str] = []
+    if table_sources > 0:
+        preferred_patterns.extend(["table", "compare-panel"])
+    if image_sources > 0:
+        preferred_patterns.extend(["image", "div-grid"])
+    if diagram_sources > 0:
+        preferred_patterns.extend(["mermaid", "map-with-insights"])
+    dedup_patterns: list[str] = []
+    for pattern in preferred_patterns:
+        if pattern not in dedup_patterns:
+            dedup_patterns.append(pattern)
+    return {
+        "table_source_count": table_sources,
+        "image_source_count": image_sources,
+        "diagram_source_count": diagram_sources,
+        "has_media_bias": bool(table_sources or image_sources or diagram_sources),
+        "preferred_patterns": dedup_patterns,
+    }
 
 
 def _guess_title_from_content(material: str) -> str:
@@ -3551,23 +3603,126 @@ def _select_style_reference(*, styles: Sequence[Mapping[str, Any]], topic: str, 
     return selected
 
 
-def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _shape_tokens(content_shape: str) -> set[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(content_shape or "").lower())
+    return {token for token in normalized.split() if token}
+
+
+def _media_profile_for_item(*, item: Mapping[str, Any], source_hints: Mapping[str, Any] | None) -> dict[str, Any]:
+    role = str(item.get("slide_role") or "").strip().lower()
+    tokens = _shape_tokens(str(item.get("content_shape") or ""))
+    source_media = (
+        dict((source_hints or {}).get("media_preferences") or {})
+        if isinstance(source_hints, Mapping)
+        else {}
+    )
+    preferred_patterns: list[str] = []
+    preferred_signals: list[str] = []
+    if role == "framework":
+        preferred_patterns.extend(["mermaid", "table", "div-grid", "map-with-insights"])
+        preferred_signals.extend(["visual-structure", "model-takeaway"])
+    elif role == "comparison":
+        preferred_patterns.extend(["table", "two-cols", "compare-panel", "before-after"])
+        preferred_signals.extend(["split-compare", "contrast-labels", "verdict-line"])
+    elif role == "detail":
+        preferred_patterns.extend(["table", "image", "div-grid", "focus-explainer", "callout"])
+        preferred_signals.extend(["single-claim", "focus-block"])
+
+    if {"table", "compare", "matrix"} & tokens and "table" not in preferred_patterns:
+        preferred_patterns.insert(0, "table")
+    if {"image", "photo", "figure"} & tokens and "image" not in preferred_patterns:
+        preferred_patterns.insert(0, "image")
+    if {"diagram", "flow", "graph"} & tokens and "mermaid" not in preferred_patterns:
+        preferred_patterns.insert(0, "mermaid")
+    if {"map", "quadrant", "grid"} & tokens and "div-grid" not in preferred_patterns:
+        preferred_patterns.insert(0, "div-grid")
+
+    for pattern in _reference_string_list(source_media.get("preferred_patterns")):
+        if pattern not in preferred_patterns:
+            preferred_patterns.append(pattern)
+
+    dedup_patterns: list[str] = []
+    for pattern in preferred_patterns:
+        if pattern not in dedup_patterns:
+            dedup_patterns.append(pattern)
+    dedup_signals: list[str] = []
+    for signal in preferred_signals:
+        if signal not in dedup_signals:
+            dedup_signals.append(signal)
+
+    source_bias: list[str] = []
+    if int(source_media.get("table_source_count") or 0) > 0:
+        source_bias.append("table-source")
+    if int(source_media.get("image_source_count") or 0) > 0:
+        source_bias.append("image-source")
+    if int(source_media.get("diagram_source_count") or 0) > 0:
+        source_bias.append("diagram-source")
+
+    return {
+        "expected": role in SLIDEV_MEDIA_TARGET_ROLES,
+        "preferred_patterns": dedup_patterns,
+        "preferred_signals": dedup_signals,
+        "source_bias": source_bias,
+        "shape_tokens": sorted(tokens),
+    }
+
+
+def _layout_candidate_score(
+    candidate: Mapping[str, Any],
+    *,
+    role: str,
+    visual_recipe_name: str,
+    media_profile: Mapping[str, Any],
+) -> tuple[int, int]:
+    name = str(candidate.get("name") or "").strip()
+    candidate_patterns = set(_reference_string_list(candidate.get("required_patterns")))
+    candidate_signals = set(_reference_string_list(candidate.get("required_visual_signals")))
+    score = 0
+    if name and name == visual_recipe_name:
+        score += 10
+    if role and _reference_string_list(candidate.get("applies_to_roles")) == [role]:
+        score += 2
+    for pattern in _reference_string_list(media_profile.get("preferred_patterns")):
+        if pattern in candidate_patterns:
+            score += 4
+    for signal in _reference_string_list(media_profile.get("preferred_signals")):
+        if signal in candidate_signals:
+            score += 3
+    if bool(media_profile.get("expected")) and candidate_patterns & SLIDEV_MEDIA_PATTERN_TOKENS:
+        score += 2
+    if role == "comparison" and str(candidate.get("preferred_layout") or "").strip() == "two-cols":
+        score += 1
+    return (score, len(candidate_patterns))
+
+
+def _select_layout_reference(
+    *,
+    item: Mapping[str, Any],
+    layouts: Sequence[Mapping[str, Any]],
+    source_hints: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     slide_number = int(item.get("slide_number") or 0)
     title = str(item.get("title") or f"Slide {slide_number}")
     role = str(item.get("slide_role") or "").strip().lower()
     content_shape = str(item.get("content_shape") or "").strip().lower()
     pattern_hint = _build_slidev_pattern_hint(slide_role=role, content_shape=content_shape)
     visual_hint = _build_slidev_visual_hint(slide_role=role, content_shape=content_shape)
+    media_profile = _media_profile_for_item(item=item, source_hints=source_hints)
     candidates = [dict(layout) for layout in layouts if role in _reference_string_list(layout.get("applies_to_roles"))]
     visual_recipe_name = str(visual_hint.get("name") or "").strip()
     if candidates:
-        exact_name = [candidate for candidate in candidates if str(candidate.get("name") or "").strip() == visual_recipe_name]
-        if exact_name:
-            candidates = exact_name
-        else:
-            role_only = [candidate for candidate in candidates if _reference_string_list(candidate.get("applies_to_roles")) == [role]]
-            if role_only:
-                candidates = role_only
+        candidates.sort(
+            key=lambda candidate: (
+                _layout_candidate_score(
+                    candidate,
+                    role=role,
+                    visual_recipe_name=visual_recipe_name,
+                    media_profile=media_profile,
+                ),
+                str(candidate.get("name") or ""),
+            ),
+            reverse=True,
+        )
     selected = candidates[0] if candidates else {
         "name": str(visual_hint.get("name") or role or "default"),
         "preferred_layout": None,
@@ -3587,6 +3742,11 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
         for signal in selected["required_patterns"] + selected["required_visual_signals"]
         if signal.lower().replace("_", "-") in content_shape
     ]
+    media_targets = [
+        pattern
+        for pattern in _reference_string_list(media_profile.get("preferred_patterns"))
+        if pattern in SLIDEV_MEDIA_PATTERN_TOKENS
+    ]
     return {
         "slide_number": slide_number,
         "title": title,
@@ -3603,9 +3763,13 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
         "forbidden_patterns": list(selected["forbidden_patterns"]),
         "description": str(selected.get("description") or ""),
         "matched_shape_signals": matched_shape_signals,
+        "media_expected": bool(media_profile.get("expected")),
+        "media_target_patterns": media_targets,
+        "media_source_bias": _reference_string_list(media_profile.get("source_bias")),
         "selection_reason": (
             f"Use layout recipe `{selected.get('name')}` for role `{role or 'unknown'}` because it matches "
-            f"required patterns {selected['required_patterns']} and visual signals {selected['required_visual_signals']}."
+            f"required patterns {selected['required_patterns']} and visual signals {selected['required_visual_signals']}; "
+            f"media targets={media_targets or ['none']}."
         ),
     }
 
@@ -3615,21 +3779,37 @@ def _preferred_layout_for_hint(pattern_hint: Mapping[str, Any]) -> str | None:
     return layouts[0] if layouts else None
 
 
-def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _select_block_references(
+    *,
+    item: Mapping[str, Any],
+    blocks: Sequence[Mapping[str, Any]],
+    source_hints: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     slide_number = int(item.get("slide_number") or 0)
     title = str(item.get("title") or f"Slide {slide_number}")
     role = str(item.get("slide_role") or "").strip().lower()
     content_shape = str(item.get("content_shape") or "").strip().lower()
+    media_profile = _media_profile_for_item(item=item, source_hints=source_hints)
+    shape_tokens = _shape_tokens(content_shape)
     applicable = [dict(block) for block in blocks if role in _reference_string_list(block.get("applies_to_roles"))]
     preferred_order = {
         "cover": ["hero-title"],
         "context": ["compact-bullets", "quote-callout"],
-        "framework": ["framework-explainer"],
-        "detail": ["focus-explainer", "quote-callout", "compact-bullets"],
-        "comparison": ["compare-split"],
+        "framework": ["framework-media-panel", "framework-explainer"],
+        "detail": ["detail-evidence-table", "detail-image-callout", "focus-explainer", "quote-callout", "compact-bullets"],
+        "comparison": ["compare-table", "compare-split"],
         "recommendation": ["decision-priority", "takeaway-next-steps", "compact-bullets"],
         "closing": ["takeaway-next-steps"],
     }.get(role, ["compact-bullets"])
+    if role == "comparison" and not ({"table", "matrix", "compare"} & shape_tokens):
+        preferred_order = ["compare-split", "compare-table"]
+    if role == "detail":
+        if "image" not in shape_tokens and "figure" not in shape_tokens:
+            preferred_order = [name for name in preferred_order if name != "detail-image-callout"] + ["detail-image-callout"]
+        if not ({"table", "matrix", "grid"} & shape_tokens):
+            preferred_order = [name for name in preferred_order if name != "detail-evidence-table"] + ["detail-evidence-table"]
+    if role == "framework" and "table" not in shape_tokens and "map" not in shape_tokens:
+        preferred_order = ["framework-explainer", "framework-media-panel"]
     order_map = {name: index for index, name in enumerate(preferred_order)}
     applicable.sort(key=lambda block: (order_map.get(str(block.get("name") or ""), 99), str(block.get("name") or "")))
     if role in {"context", "detail", "recommendation"}:
@@ -3653,7 +3833,9 @@ def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mappin
         payload["visual_constraints"] = _reference_string_list(payload.get("visual_constraints"))
         payload["anti_patterns"] = _reference_string_list(payload.get("anti_patterns"))
         payload["selection_reason"] = (
-            f"Use block `{payload.get('name')}` for role `{role or 'unknown'}` to realize structure `{payload.get('recommended_structure')}`."
+            f"Use block `{payload.get('name')}` for role `{role or 'unknown'}` to realize structure "
+            f"`{payload.get('recommended_structure')}` with media bias "
+            f"{_reference_string_list(media_profile.get('source_bias')) or ['none']}."
         )
         payload["matched_shape_signals"] = [
             signal for signal in payload["required_signals"] if signal.lower().replace("_", "-") in content_shape
@@ -3663,6 +3845,8 @@ def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mappin
         "slide_number": slide_number,
         "title": title,
         "slide_role": role,
+        "media_expected": bool(media_profile.get("expected")),
+        "media_source_bias": _reference_string_list(media_profile.get("source_bias")),
         "blocks": normalized_blocks,
     }
 
@@ -4183,12 +4367,81 @@ def _page_brief_scaffold_lines(
     return lines
 
 
+def _selection_media_plan_summary(
+    *,
+    selected_layouts: Sequence[Mapping[str, Any]],
+    selected_blocks: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    block_map = {
+        int(item.get("slide_number") or 0): [dict(block) for block in (item.get("blocks") or []) if isinstance(block, Mapping)]
+        for item in selected_blocks
+        if isinstance(item, Mapping)
+    }
+    per_slide: list[dict[str, Any]] = []
+    expected_count = 0
+    planned_count = 0
+    role_summary: dict[str, dict[str, int]] = {}
+    for layout in selected_layouts:
+        if not isinstance(layout, Mapping):
+            continue
+        slide_number = int(layout.get("slide_number") or 0)
+        role = str(layout.get("slide_role") or "").strip().lower()
+        media_expected = bool(layout.get("media_expected")) or role in SLIDEV_MEDIA_TARGET_ROLES
+        targets = _reference_string_list(layout.get("media_target_patterns"))
+        layout_patterns = [
+            pattern
+            for pattern in _reference_string_list(layout.get("required_patterns"))
+            if pattern in SLIDEV_MEDIA_PATTERN_TOKENS
+        ]
+        block_patterns = sorted(
+            {
+                signal
+                for block in block_map.get(slide_number, [])
+                for signal in _reference_string_list(block.get("required_signals"))
+                if signal in SLIDEV_MEDIA_PATTERN_TOKENS or signal in {"visual-structure", "focus-block"}
+            }
+        )
+        planned_patterns = sorted(set(layout_patterns + block_patterns))
+        status = "matched" if media_expected and planned_patterns else "missing" if media_expected else "n/a"
+        if media_expected:
+            expected_count += 1
+            if planned_patterns:
+                planned_count += 1
+        if role:
+            bucket = role_summary.setdefault(role, {"expected": 0, "planned": 0, "total": 0})
+            bucket["total"] += 1
+            if media_expected:
+                bucket["expected"] += 1
+            if media_expected and planned_patterns:
+                bucket["planned"] += 1
+        per_slide.append(
+            {
+                "slide_number": slide_number,
+                "slide_role": role,
+                "expected": media_expected,
+                "status": status,
+                "target_patterns": targets,
+                "planned_patterns": planned_patterns,
+            }
+        )
+    hit_rate = round(planned_count / expected_count, 4) if expected_count else 1.0
+    return {
+        "expected_slide_count": expected_count,
+        "planned_slide_count": planned_count,
+        "missing_slide_count": max(0, expected_count - planned_count),
+        "hit_rate": hit_rate,
+        "role_summary": role_summary,
+        "slides": per_slide,
+    }
+
+
 def _select_slidev_references(
     *,
     outline_items: Sequence[Mapping[str, Any]],
     topic: str,
     num_pages: int,
     material_excerpt: str,
+    source_hints: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     assets = _load_slidev_reference_assets()
     selected_style = _select_style_reference(
@@ -4203,8 +4456,20 @@ def _select_slidev_references(
     for item in outline_items:
         if not isinstance(item, Mapping):
             continue
-        selected_layouts.append(_select_layout_reference(item=item, layouts=assets.get("layouts") or []))
-        selected_blocks.append(_select_block_references(item=item, blocks=assets.get("blocks") or []))
+        selected_layouts.append(
+            _select_layout_reference(
+                item=item,
+                layouts=assets.get("layouts") or [],
+                source_hints=source_hints,
+            )
+        )
+        selected_blocks.append(
+            _select_block_references(
+                item=item,
+                blocks=assets.get("blocks") or [],
+                source_hints=source_hints,
+            )
+        )
     page_briefs = _synthesize_slidev_page_briefs(
         outline_items=outline_items,
         topic=topic,
@@ -4219,6 +4484,7 @@ def _select_slidev_references(
         selected_style=selected_style,
         page_briefs=page_briefs,
     )
+    media_plan_summary = _selection_media_plan_summary(selected_layouts=selected_layouts, selected_blocks=selected_blocks)
 
     return {
         "selected_style": selected_style,
@@ -4227,6 +4493,7 @@ def _select_slidev_references(
         "selected_blocks": selected_blocks,
         "page_briefs": page_briefs,
         "deck_chrome": deck_chrome,
+        "media_plan_summary": media_plan_summary,
         "selection_summary": {
             "style_name": selected_style["name"],
             "style_reason": selected_style["selection_reason"],
@@ -4277,6 +4544,8 @@ def _select_slidev_references(
             ],
             "material_excerpt_used": bool(material_excerpt.strip()),
             "num_pages": num_pages,
+            "source_hints": dict(source_hints or {}),
+            "media_plan_summary": media_plan_summary,
             "reference_root": str(settings.skills_dir / "slidev-design-system" / "references"),
         },
     }

@@ -227,6 +227,7 @@ def _result(
     visual_recipe_summary = _visual_recipe_summary(slide_reports)
     reference_fidelity_summary = _reference_fidelity_summary(slide_reports)
     page_brief_fidelity_summary = _page_brief_fidelity_summary(slide_reports)
+    media_structure_summary = _media_structure_summary(slide_reports)
     deck_chrome_usage_summary = _deck_chrome_usage_summary(slide_reports, deck_chrome)
     presentation_feel_summary = _presentation_feel_summary(slide_reports, warnings)
     theme_fidelity_summary = _theme_fidelity_summary(
@@ -245,6 +246,7 @@ def _result(
         "visual_recipe_summary": visual_recipe_summary,
         "reference_fidelity_summary": reference_fidelity_summary,
         "page_brief_fidelity_summary": page_brief_fidelity_summary,
+        "media_structure_summary": media_structure_summary,
         "deck_chrome_usage_summary": deck_chrome_usage_summary,
         "presentation_feel_summary": presentation_feel_summary,
         "theme_fidelity_summary": theme_fidelity_summary,
@@ -265,6 +267,9 @@ def _result(
             "weak_reference_recipes": reference_fidelity_summary["weak_slide_count"],
             "matched_page_briefs": page_brief_fidelity_summary["matched_slide_count"],
             "weak_page_briefs": page_brief_fidelity_summary["weak_slide_count"],
+            "expected_media_slides": media_structure_summary["expected_slide_count"],
+            "matched_media_slides": media_structure_summary["matched_slide_count"],
+            "missing_media_slides": media_structure_summary["missing_slide_count"],
         },
     }
 
@@ -283,7 +288,15 @@ def _presentation_feel_summary(
     visual_anchor_codes = [
         code
         for code in warning_codes
-        if code in {"selected_reference_recipe_weak", "selected_reference_recipe_missing", "theme_recipe_weak"}
+        if code
+        in {
+            "selected_reference_recipe_weak",
+            "selected_reference_recipe_missing",
+            "theme_recipe_weak",
+            "framework_media_structure_missing",
+            "comparison_media_structure_missing",
+            "detail_media_structure_missing",
+        }
     ]
     signal_codes = sorted(set(document_like_codes + crowding_codes + visual_anchor_codes))
     status = "weak" if signal_codes else "matched"
@@ -343,6 +356,14 @@ def _review_slide(
             if isinstance(block, dict)
             for signal in _string_list(block.get("required_signals"))
         }
+    )
+    media_structure = _media_structure_expectation(
+        role=role,
+        content_shape=content_shape,
+        expected_patterns=expected_patterns,
+        expected_block_signals=expected_block_signals,
+        observed_patterns=observed_patterns,
+        observed_signals=observed_signals,
     )
     forbidden_patterns = _string_list(selected_layout.get("forbidden_patterns"))
     forbidden_hits = _forbidden_pattern_hits(slide=slide, forbidden_patterns=forbidden_patterns)
@@ -462,6 +483,15 @@ def _review_slide(
         if _looks_plain_recommendation_list(slide):
             add_warning("document_like_recommendation", f"Slide `{title}` still reads like a plain list instead of a decision + action-path page.")
 
+    has_hard_issue = any(finding["severity"] == "issue" for finding in findings)
+    if bool(media_structure.get("expected")) and str(media_structure.get("status") or "") == "missing" and not has_hard_issue:
+        warning_code = f"{role}_media_structure_missing" if role in {"framework", "comparison", "detail"} else "media_structure_missing"
+        required_patterns = ", ".join(_string_list(media_structure.get("required_patterns"))[:4]) or "table / mermaid / grid / image"
+        add_warning(
+            warning_code,
+            f"Slide `{title}` misses expected media structure for role `{role}`; expected one of: {required_patterns}.",
+        )
+
     if forbidden_hits:
         add_warning(
             "selected_reference_forbidden_pattern",
@@ -548,6 +578,7 @@ def _review_slide(
         "visual_recipe_status": visual_recipe_status if expected_recipe_name else "n/a",
         "reference_fidelity": reference_fidelity,
         "page_brief_fidelity": page_brief_fidelity,
+        "media_structure": media_structure,
         "status": status,
         "findings": findings,
     }
@@ -586,6 +617,48 @@ def _page_brief_map(page_briefs: Any) -> dict[int, dict[str, Any]]:
             continue
         result[int(item.get("slide_number") or 0)] = dict(item)
     return result
+
+
+def _media_structure_expectation(
+    *,
+    role: str,
+    content_shape: str,
+    expected_patterns: list[str],
+    expected_block_signals: list[str],
+    observed_patterns: list[str],
+    observed_signals: list[str],
+) -> dict[str, Any]:
+    expected = role in {"framework", "comparison", "detail"}
+    required_patterns: list[str] = []
+    if role == "framework":
+        required_patterns.extend(["mermaid", "table", "div-grid", "map-with-insights", "image"])
+    elif role == "comparison":
+        required_patterns.extend(["table", "compare-panel"])
+    elif role == "detail":
+        required_patterns.extend(["table", "image", "div-grid", "focus-explainer", "mermaid"])
+    shape_tokens = _shape_tokens(content_shape)
+    if {"table", "matrix", "compare"} & shape_tokens and "table" not in required_patterns:
+        required_patterns.insert(0, "table")
+    if {"image", "photo", "figure"} & shape_tokens and "image" not in required_patterns:
+        required_patterns.insert(0, "image")
+    if {"diagram", "flow", "graph"} & shape_tokens and "mermaid" not in required_patterns:
+        required_patterns.insert(0, "mermaid")
+    if {"map", "quadrant", "grid"} & shape_tokens and "div-grid" not in required_patterns:
+        required_patterns.insert(0, "div-grid")
+    for token in expected_patterns + expected_block_signals:
+        if token in {"table", "mermaid", "div-grid", "image", "map-with-insights", "compare-panel", "focus-block"}:
+            if token not in required_patterns:
+                required_patterns.append(token)
+    observed = sorted(set(observed_patterns + observed_signals))
+    matched = [pattern for pattern in required_patterns if pattern in observed]
+    status = "matched" if expected and matched else "missing" if expected else "n/a"
+    return {
+        "expected": expected,
+        "status": status,
+        "required_patterns": required_patterns,
+        "observed_patterns": observed,
+        "matched_patterns": matched,
+    }
 
 
 def _reference_fidelity(
@@ -658,6 +731,54 @@ def _reference_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[str
         "forbidden_slide_count": counts["forbidden"],
         "plain_like_slide_count": plain_like,
         "role_skeleton_summary": role_summary,
+    }
+
+
+def _media_structure_summary(slide_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    expected = 0
+    matched = 0
+    missing = 0
+    role_summary: dict[str, dict[str, int]] = {}
+    slides: list[dict[str, Any]] = []
+    for report in slide_reports:
+        media = report.get("media_structure") or {}
+        role = str(report.get("role") or "").strip()
+        status = str(media.get("status") or "n/a")
+        is_expected = bool(media.get("expected"))
+        if is_expected:
+            expected += 1
+            if status == "matched":
+                matched += 1
+            elif status == "missing":
+                missing += 1
+        if role:
+            bucket = role_summary.setdefault(role, {"expected": 0, "matched": 0, "missing": 0, "total": 0})
+            bucket["total"] += 1
+            if is_expected:
+                bucket["expected"] += 1
+            if status == "matched":
+                bucket["matched"] += 1
+            elif status == "missing":
+                bucket["missing"] += 1
+        slides.append(
+            {
+                "slide_number": int(report.get("slide_number") or 0),
+                "role": role or None,
+                "status": status,
+                "expected": is_expected,
+                "required_patterns": _string_list(media.get("required_patterns")),
+                "observed_patterns": _string_list(media.get("observed_patterns")),
+                "matched_patterns": _string_list(media.get("matched_patterns")),
+            }
+        )
+    hit_rate = round(matched / expected, 4) if expected else 1.0
+    return {
+        "expected_slide_count": expected,
+        "matched_slide_count": matched,
+        "missing_slide_count": missing,
+        "hit_rate": hit_rate,
+        "role_summary": role_summary,
+        "slides": slides,
     }
 
 
@@ -911,7 +1032,9 @@ def _slide_signature(slide: str) -> str:
 
 def _has_visual_structure(slide: str) -> bool:
     markers = ("```mermaid", "layout:", "class:", "> ", "|", "::", "<div")
-    return any(marker in slide for marker in markers)
+    if any(marker in slide for marker in markers):
+        return True
+    return bool(re.search(r"!\[[^\]]*\]\([^)]+\)", slide) or "<img" in slide.lower())
 
 
 def _extract_layout_name(slide: str) -> str | None:
@@ -929,12 +1052,16 @@ def _observed_patterns(slide: str) -> list[str]:
     layout_name = _extract_layout_name(slide)
     if layout_name:
         patterns.append(layout_name)
+        if layout_name in {"image", "image-left", "image-right"}:
+            patterns.append("image")
     if "```mermaid" in slide:
         patterns.append("mermaid")
     if re.search(r"^\s*>\s+", slide, re.MULTILINE):
         patterns.append("quote")
     if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
         patterns.append("table")
+    if re.search(r"!\[[^\]]*\]\([^)]+\)", slide) or "<img" in slide.lower():
+        patterns.append("image")
     if "<div" in slide and "grid" in slide:
         patterns.append("div-grid")
     if "::" in slide:
@@ -958,6 +1085,11 @@ def _extract_classes(slide: str) -> list[str]:
 
 def _split_classes(raw: str) -> list[str]:
     return [token.strip() for token in re.split(r"\s+", raw.strip()) if token.strip()]
+
+
+def _shape_tokens(content_shape: str) -> set[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(content_shape or "").lower())
+    return {token for token in normalized.split() if token}
 
 
 def _observed_signals(
@@ -1002,9 +1134,11 @@ def _observed_signals(
         signals.add("why-now-framing")
     if 2 <= _bullet_count(slide) <= 4:
         signals.add("compact-bullets")
-    if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
+    if any(name in observed_patterns for name in ("mermaid", "table", "div-grid", "image")):
         signals.add("visual-structure")
         signals.add("focus-block")
+    if "image" in observed_patterns:
+        signals.add("image")
     if any(token in lower for token in ("takeaway", "next step", "next steps", "下一步", "总结", "结论")):
         signals.add("next-step-or-takeaway")
         signals.add("closing-line")

@@ -1,0 +1,22 @@
+{
+  "name": "framework-media-panel",
+  "applies_to_roles": [
+    "framework"
+  ],
+  "recommended_structure": "map/table/diagram panel with 2-3 interpretation insights and one takeaway",
+  "required_signals": [
+    "visual-structure",
+    "focus-block",
+    "model-takeaway"
+  ],
+  "visual_constraints": [
+    "must include one structured media panel",
+    "insights should map to media panel",
+    "end with one takeaway line"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "bullet-only-framework"
+  ]
+}

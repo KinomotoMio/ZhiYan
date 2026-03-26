@@ -1,0 +1,22 @@
+{
+  "name": "detail-evidence-table",
+  "applies_to_roles": [
+    "detail"
+  ],
+  "recommended_structure": "single-claim focus block paired with a compact evidence table",
+  "required_signals": [
+    "single-claim",
+    "focus-block",
+    "table"
+  ],
+  "visual_constraints": [
+    "one core claim only",
+    "table has 2-4 rows",
+    "table supports claim instead of replacing narrative"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
+}

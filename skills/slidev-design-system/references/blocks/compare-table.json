@@ -1,0 +1,23 @@
+{
+  "name": "compare-table",
+  "applies_to_roles": [
+    "comparison"
+  ],
+  "recommended_structure": "axis-labeled compare table plus one verdict line",
+  "required_signals": [
+    "split-compare",
+    "contrast-labels",
+    "verdict-line",
+    "table"
+  ],
+  "visual_constraints": [
+    "at least three compare rows",
+    "explicit headers for both sides",
+    "end with one verdict line"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "unlabeled-compare"
+  ]
+}

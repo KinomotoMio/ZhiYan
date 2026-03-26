@@ -1,0 +1,28 @@
+{
+  "name": "detail-visual-evidence",
+  "applies_to_roles": [
+    "detail"
+  ],
+  "preferred_layout": null,
+  "required_patterns": [
+    "focus-explainer",
+    "table",
+    "image",
+    "div-grid"
+  ],
+  "required_classes": [
+    "deck-detail",
+    "focus-explainer"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ],
+  "description": "Single-focus detail page with visual evidence panel (table/image/grid) and concise implication.",
+  "required_visual_signals": [
+    "single-claim",
+    "focus-block",
+    "visual-structure"
+  ]
+}
