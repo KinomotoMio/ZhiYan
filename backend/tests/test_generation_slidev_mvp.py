@@ -1648,6 +1648,32 @@ def test_slidev_deck_review_presentation_feel_summary_counts_theme_recipe_warnin
     assert summary["signal_count"] == 1
 
 
+def test_slidev_deck_review_parse_css_color_supports_space_separated_rgb(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    review_script = settings.skills_dir / "slidev-deck-quality" / "scripts" / "review_deck.py"
+    spec = importlib.util.spec_from_file_location("review_deck_module", review_script)
+    assert spec is not None and spec.loader is not None
+    review_deck_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review_deck_module)
+
+    assert review_deck_module._parse_css_color("rgb(255 0 0)") == (255, 0, 0)
+    assert review_deck_module._parse_css_color("rgba(255 0 0 / 0.5)") == (255, 0, 0)
+
+
+def test_slidev_deck_review_parse_css_color_supports_space_separated_hsl(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    review_script = settings.skills_dir / "slidev-deck-quality" / "scripts" / "review_deck.py"
+    spec = importlib.util.spec_from_file_location("review_deck_module", review_script)
+    assert spec is not None and spec.loader is not None
+    review_deck_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review_deck_module)
+
+    assert review_deck_module._parse_css_color("hsl(120 100% 50%)") == (0, 255, 0)
+    assert review_deck_module._parse_css_color("hsla(240 100% 50% / 0.5)") == (0, 0, 255)
+
+
 def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
@@ -2046,6 +2072,170 @@ def test_slidev_deck_review_warns_on_excessive_inline_style(monkeypatch, tmp_pat
     )
 
     assert {warning["code"] for warning in deck_review["warnings"]} >= {"too_much_ad_hoc_inline_style"}
+
+
+def test_slidev_deck_review_blocks_low_contrast_slides(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    markdown = """---
+theme: seriph
+title: Low Contrast Deck
+---
+
+# Low Contrast Deck
+
+<div style="color:#CFCFCF;background-color:#FFFFFF">This text is hard to read.</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+Takeaway: raise contrast before delivery.
+"""
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is False
+    assert {issue["code"] for issue in deck_review["issues"]} >= {"low_contrast_fail"}
+    summary = deck_review["contrast_summary"]
+    assert summary["status"] == "fail"
+    assert summary["fail_slide_count"] >= 1
+    assert summary["warn_slide_count"] == 0
+
+
+def test_slidev_deck_review_warns_on_borderline_contrast_slides(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    markdown = """---
+theme: seriph
+title: Borderline Contrast Deck
+---
+
+# Borderline Contrast Deck
+
+<div style="color:#8A8A8A;background-color:#FFFFFF">This line is borderline.</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+Takeaway: keep this page readable.
+"""
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert {warning["code"] for warning in deck_review["warnings"]} >= {"low_contrast_warn"}
+    summary = deck_review["contrast_summary"]
+    assert summary["status"] == "warn"
+    assert summary["warn_slide_count"] >= 1
+    assert summary["fail_slide_count"] == 0
+
+
+def test_slidev_deck_review_reports_pass_for_strong_contrast(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    markdown = """---
+theme: seriph
+title: Strong Contrast Deck
+---
+
+# Strong Contrast Deck
+
+<div style="color:#F5F5F5;background-color:#111111">Readable text on dark background.</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+Takeaway: preserve strong contrast.
+"""
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    assert "low_contrast_warn" not in {warning["code"] for warning in deck_review["warnings"]}
+    summary = deck_review["contrast_summary"]
+    assert summary["status"] == "pass"
+    assert summary["pass_slide_count"] >= 1
+    assert summary["fail_slide_count"] == 0
+
+
+def test_slidev_deck_review_does_not_infer_light_theme_from_highlight_class(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    markdown = """---
+theme: seriph
+title: Highlight Class Deck
+---
+
+# Highlight Class Deck
+
+<div class="highlight-card">Only class token, no explicit color pair.</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+Takeaway: class token should not force contrast inference.
+"""
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    summary = deck_review["contrast_summary"]
+    assert summary["status"] == "unknown"
+    assert summary["unknown_slide_count"] >= 1
+    assert summary["fail_slide_count"] == 0
+    assert "low_contrast_warn" not in {warning["code"] for warning in deck_review["warnings"]}
 
 
 def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):
@@ -2452,11 +2642,13 @@ def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tm
     assert "matched_slide_count" in artifact.quality["reference_fidelity_summary"]
     assert "matched_slide_count" in artifact.quality["page_brief_fidelity_summary"]
     assert artifact.quality["theme_fidelity_summary"]["selected_theme"] == "seriph"
+    assert artifact.quality["contrast_summary"]["status"] in {"pass", "warn", "fail", "unknown"}
     persisted_markdown = artifact.slides_path.read_text(encoding="utf-8")
     assert "class: theme-tech-launch deck-cover" in persisted_markdown
     assert 'themeConfig: {"palette": "tech-launch", "density": "presentation", "emphasis": "launch-contrast"}' in persisted_markdown
     assert service.last_state is not None
     assert service.last_state.document_metadata["slidev_theme_reason"]
+    assert service.last_state.document_metadata["slidev_contrast_summary"]["status"] in {"pass", "warn", "fail", "unknown"}
     assert service.last_state.document_metadata["slidev_selected_layouts"][0]["recipe_name"] == "cover-hero"
     assert service.last_state.document_metadata["slidev_page_briefs"][1]["preferred_composition"] == "metric-stack"
     assert service.last_state.document_metadata["slidev_reference_selection"]["reference_root"].endswith(
