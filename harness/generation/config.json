@@ -1,0 +1,26 @@
+{
+  "planner": {
+    "mode": "deterministic",
+    "fallback_mode": "deterministic",
+    "max_iterations": 8
+  },
+  "outline": {
+    "agenda_page_index": 2,
+    "narrative_arc": "问题→分析→方案→结论",
+    "content_brief_range": "100-200字"
+  },
+  "slidev": {
+    "theme": "default",
+    "paginate": true
+  },
+  "skills": {
+    "enabled": [
+      "ppt-health-check",
+      "data-to-chart"
+    ]
+  },
+  "prompts": {
+    "outline_extra_instruction": "",
+    "planner_extra_instruction": ""
+  }
+}
