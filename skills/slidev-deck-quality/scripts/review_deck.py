@@ -437,14 +437,30 @@ def _review_slide(
                 "framework_native_pattern_missing",
                 f"Slide `{title}` is a framework page but does not yet use a strong native structure such as Mermaid, table, or grid.",
             )
-    elif role in {"context", "detail"}:
-        if role == "context" and not ({"quote-or-callout", "section-kicker"} & set(observed_signals)):
+    elif role == "context":
+        if not ({"quote-or-callout", "section-kicker"} & set(observed_signals)):
             add_warning("document_like_context", f"Slide `{title}` sets context semantically, but still reads like a report section instead of a presentation setup slide.")
+        if "why-now-framing" not in observed_signals:
+            add_warning("context_why_now_missing", f"Slide `{title}` lacks a clear why-now framing signal.")
         if _bullet_count(slide) >= 5 and not _has_visual_structure(slide):
             add_warning(
                 "dense_context_or_detail",
                 f"Slide `{title}` is dense and mostly flat bullets; consider trimming or adding one structural cue.",
             )
+    elif role == "detail":
+        if _detail_over_dense(slide):
+            add_warning("detail_over_dense", f"Slide `{title}` is too dense for a detail page; reduce text density and keep one focus block.")
+        if not _looks_detail_single_focus(slide):
+            add_warning("detail_multi_claim_drift", f"Slide `{title}` drifts into multiple claims instead of a single-focus explainer.")
+        if "single-claim" not in observed_signals or "focus-block" not in observed_signals:
+            add_warning("document_like_detail", f"Slide `{title}` is structurally legal but still reads like document prose instead of a focused explainer.")
+    elif role == "recommendation":
+        if "decision-headline" not in observed_signals:
+            add_warning("recommendation_decision_missing", f"Slide `{title}` lacks a clear decision headline before action items.")
+        if "prioritized-actions" not in observed_signals:
+            add_warning("recommendation_prioritization_missing", f"Slide `{title}` lists actions but does not show clear prioritization.")
+        if _looks_plain_recommendation_list(slide):
+            add_warning("document_like_recommendation", f"Slide `{title}` still reads like a plain list instead of a decision + action-path page.")
 
     if forbidden_hits:
         add_warning(
@@ -611,11 +627,18 @@ def _reference_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[str
     layout_names: list[str] = []
     block_names: set[str] = set()
     plain_like = 0
+    role_summary: dict[str, dict[str, int]] = {}
     for report in slide_reports:
         reference = report.get("reference_fidelity") or {}
         status = str(reference.get("status") or "missing")
         if status in counts:
             counts[status] += 1
+        role = str(report.get("role") or "").strip()
+        if role:
+            bucket = role_summary.setdefault(role, {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0, "total": 0})
+            bucket["total"] += 1
+            if status in {"matched", "weak", "missing", "forbidden"}:
+                bucket[status] += 1
         layout = report.get("selected_layout") or {}
         if isinstance(layout, dict):
             name = str(layout.get("recipe_name") or "").strip()
@@ -634,6 +657,7 @@ def _reference_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[str
         "missing_slide_count": counts["missing"],
         "forbidden_slide_count": counts["forbidden"],
         "plain_like_slide_count": plain_like,
+        "role_skeleton_summary": role_summary,
     }
 
 
@@ -672,11 +696,18 @@ def _page_brief_fidelity(
 def _page_brief_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0}
     composition_counts: dict[str, int] = {}
+    role_summary: dict[str, dict[str, int]] = {}
     for report in slide_reports:
         fidelity = report.get("page_brief_fidelity") or {}
         status = str(fidelity.get("status") or "missing")
         if status in counts:
             counts[status] += 1
+        role = str(report.get("role") or "").strip()
+        if role:
+            bucket = role_summary.setdefault(role, {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0, "total": 0})
+            bucket["total"] += 1
+            if status in {"matched", "weak", "missing", "forbidden"}:
+                bucket[status] += 1
         composition = str((report.get("page_brief") or {}).get("preferred_composition") or "")
         if composition:
             composition_counts[composition] = composition_counts.get(composition, 0) + 1
@@ -686,6 +717,7 @@ def _page_brief_fidelity_summary(slide_reports: list[dict[str, Any]]) -> dict[st
         "missing_slide_count": counts["missing"],
         "forbidden_slide_count": counts["forbidden"],
         "composition_counts": composition_counts,
+        "role_skeleton_summary": role_summary,
     }
 
 
@@ -908,7 +940,7 @@ def _observed_patterns(slide: str) -> list[str]:
     if "::" in slide:
         patterns.append("callout")
     lower = slide.lower()
-    for token in ("metric-stack", "map-with-insights", "compare-panel", "action-path"):
+    for token in ("metric-stack", "map-with-insights", "focus-explainer", "compare-panel", "action-path"):
         if token in lower:
             patterns.append(token)
     return patterns
@@ -935,6 +967,7 @@ def _observed_signals(
     observed_classes: list[str],
 ) -> list[str]:
     body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     signals: set[str] = set()
     first_heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
@@ -965,12 +998,13 @@ def _observed_signals(
         signals.add("slide-footer")
     if "quote" in observed_patterns or "callout" in observed_patterns:
         signals.add("quote-or-callout")
+    if any(token in lower for token in ("why now", "why-now", "why it matters now", "为什么现在", "当下", "紧迫")):
+        signals.add("why-now-framing")
     if 2 <= _bullet_count(slide) <= 4:
         signals.add("compact-bullets")
     if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
         signals.add("visual-structure")
         signals.add("focus-block")
-    lower = body.lower()
     if any(token in lower for token in ("takeaway", "next step", "next steps", "下一步", "总结", "结论")):
         signals.add("next-step-or-takeaway")
         signals.add("closing-line")
@@ -992,6 +1026,10 @@ def _observed_signals(
         signals.add("map-with-insights")
     if "action-path" in observed_patterns or "action-step" in observed_classes:
         signals.add("action-path")
+    if "focus-explainer" in observed_patterns or "focus-card" in observed_classes:
+        signals.add("focus-explainer")
+        signals.add("single-claim")
+        signals.add("focus-block")
     if re.search(r"^\s*###?\s+", body, re.MULTILINE) or "::left::" in body or "::right::" in body:
         signals.add("contrast-labels")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
@@ -1002,6 +1040,10 @@ def _observed_signals(
         signals.add("source-or-takeaway")
     if "insight-card" in observed_classes or "metric-card" in observed_classes:
         signals.add("insight-card")
+    if any(token in lower for token in ("p0", "p1", "p2", "priority", "prioritized", "优先级", "先做", "先后")):
+        signals.add("prioritized-actions")
+    if re.search(r"^\s*\d+\.\s+", body, re.MULTILINE) and _bullet_count(slide) <= 4:
+        signals.add("prioritized-actions")
     return sorted(signals)
 
 
@@ -1022,6 +1064,10 @@ def _visual_recipe_status(
     if role == "comparison" and "split-compare" in observed_signals:
         return "weak"
     if role == "closing" and "next-step-or-takeaway" in observed_signals:
+        return "weak"
+    if role == "detail" and {"single-claim", "focus-block"} & set(observed_signals):
+        return "weak"
+    if role == "recommendation" and {"decision-headline", "prioritized-actions"} & set(observed_signals):
         return "weak"
     if matched_classes or matched_signals:
         return "weak"
@@ -1110,6 +1156,36 @@ def _looks_comparison_like(slide: str) -> bool:
 
 def _looks_flat_framework(slide: str) -> bool:
     return _bullet_count(slide) >= 4 and not _has_visual_structure(slide)
+
+
+def _detail_over_dense(slide: str) -> bool:
+    body = _strip_slide_frontmatter(slide)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if len(lines) >= 10 and _bullet_count(slide) >= 5:
+        return True
+    paragraph_lines = [line for line in lines if not line.startswith(("#", "-", "*", ">", "|", "<"))]
+    return len(paragraph_lines) >= 6 and not _has_visual_structure(slide)
+
+
+def _looks_detail_single_focus(slide: str) -> bool:
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
+    heading_count = len(re.findall(r"^\s*##+\s+", body, re.MULTILINE))
+    cue_hits = sum(
+        1
+        for token in ("single-claim", "核心判断", "key claim", "focus-card", "focus-explainer", "so what", "implication")
+        if token in lower
+    )
+    return cue_hits >= 1 and heading_count <= 2 and _bullet_count(slide) <= 4
+
+
+def _looks_plain_recommendation_list(slide: str) -> bool:
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
+    has_decision = any(token in lower for token in ("decision", "建议", "结论", "recommendation", "verdict"))
+    has_priority = any(token in lower for token in ("p0", "p1", "priority", "prioritized", "优先级", "先做", "先后"))
+    has_action_path = any(token in lower for token in ("action-path", "action-step"))
+    return _bullet_count(slide) >= 3 and not has_priority and not has_action_path and not has_decision
 
 
 def _strip_slide_frontmatter(slide: str) -> str:

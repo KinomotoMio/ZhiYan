@@ -1216,11 +1216,14 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
         "framework-visual",
     ]
     assert selection["selected_layouts"][0]["required_classes"] == ["deck-cover"]
+    assert selection["selected_layouts"][3]["recipe_name"] == "detail-focus"
     assert selection["selected_layouts"][4]["layout"] == "two-cols"
     assert [block["name"] for block in selection["selected_blocks"][1]["blocks"]] == [
         "compact-bullets",
         "quote-callout",
     ]
+    assert selection["selected_blocks"][3]["blocks"][0]["name"] == "focus-explainer"
+    assert selection["selected_blocks"][9]["blocks"][0]["name"] == "decision-priority"
     assert selection["selected_blocks"][2]["blocks"][0]["name"] == "framework-explainer"
 
 
