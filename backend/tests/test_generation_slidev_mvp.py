@@ -246,6 +246,54 @@ Adopt the stable mappings first.
 """
 
 
+def _valid_mermaid_markdown() -> str:
+    return """---
+theme: default
+title: Mermaid OK
+layout: cover
+class: deck-cover
+---
+
+# Mermaid OK
+
+---
+class: deck-framework
+---
+
+## Valid Diagram
+
+```mermaid
+graph TD
+  A[Signal] --> B[Decision]
+  B --> C[Action]
+```
+"""
+
+
+def _invalid_mermaid_markdown() -> str:
+    return """---
+theme: default
+title: Mermaid Broken
+layout: cover
+class: deck-cover
+---
+
+# Mermaid Broken
+
+---
+class: deck-framework
+---
+
+## Broken Diagram
+
+```mermaid
+graph TD
+  A[Signal --> B[Decision]
+  - markdown bullet should not be here
+```
+"""
+
+
 def _blank_first_slide_markdown() -> str:
     return """---
 theme: default
@@ -1558,6 +1606,38 @@ def test_slidev_syntax_validate_deck_rejects_unfenced_slide_frontmatter(monkeypa
 
     assert result["ok"] is False
     assert {issue["code"] for issue in result["issues"]} >= {"unfenced_slide_frontmatter"}
+
+
+def test_slidev_syntax_validate_deck_rejects_invalid_mermaid(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _invalid_mermaid_markdown(), "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is False
+    issue_codes = {issue["code"] for issue in result["issues"]}
+    assert "invalid_mermaid_syntax" in issue_codes
+    assert "mermaid block 1" in " ".join(str(issue.get("message") or "") for issue in result["issues"])
+
+
+def test_slidev_syntax_validate_deck_allows_valid_mermaid(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _valid_mermaid_markdown(), "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is True
+    assert {issue["code"] for issue in result["issues"]} == set()
 
 
 def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_path):
