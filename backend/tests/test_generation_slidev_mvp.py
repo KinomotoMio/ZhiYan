@@ -367,6 +367,54 @@ container: deck-context
 """
 
 
+def _raw_markdown_exposed_in_html_markdown() -> str:
+    return """---
+theme: seriph
+title: Raw Markdown Exposure
+layout: cover
+class: deck-cover
+---
+
+# Raw Markdown Exposure
+
+---
+class: deck-framework
+---
+
+## Framework
+
+<div class="map-panel">
+- left signal
+- right signal
+</div>
+"""
+
+
+def _render_safe_html_container_markdown() -> str:
+    return """---
+theme: seriph
+title: Render Safe Container
+layout: cover
+class: deck-cover
+---
+
+# Render Safe Container
+
+---
+class: deck-framework
+---
+
+## Framework
+
+<div class="map-panel">
+  <ul>
+    <li>left signal</li>
+    <li>right signal</li>
+  </ul>
+</div>
+"""
+
+
 def _short_deck_agentic_responses(
     markdown: str,
     *,
@@ -502,18 +550,20 @@ class: deck-detail
 <div class="grid grid-cols-2 gap-4">
 <div>
 
-### 被压缩
-
-- 机械执行
-- 低判断复核
+<h3>被压缩</h3>
+<ul>
+  <li>机械执行</li>
+  <li>低判断复核</li>
+</ul>
 
 </div>
 <div>
 
-### 被放大
-
-- 需求定义
-- 结果判断
+<h3>被放大</h3>
+<ul>
+  <li>需求定义</li>
+  <li>结果判断</li>
+</ul>
 
 </div>
 </div>
@@ -1558,6 +1608,37 @@ def test_slidev_syntax_validate_deck_rejects_unfenced_slide_frontmatter(monkeypa
 
     assert result["ok"] is False
     assert {issue["code"] for issue in result["issues"]} >= {"unfenced_slide_frontmatter"}
+
+
+def test_slidev_syntax_validate_deck_rejects_raw_markdown_exposed_in_html_container(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _raw_markdown_exposed_in_html_markdown(), "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is False
+    issue_codes = {issue["code"] for issue in result["issues"]}
+    assert "raw_markdown_exposed_in_html_container" in issue_codes
+
+
+def test_slidev_syntax_validate_deck_allows_safe_html_container_without_raw_markdown(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {"slides": [], "parameters": {"markdown": _render_safe_html_container_markdown(), "expected_pages": 2}},
+        )
+    )
+
+    assert result["ok"] is True
+    assert "raw_markdown_exposed_in_html_container" not in {issue["code"] for issue in result["issues"]}
 
 
 def test_slidev_deck_quality_scripts_return_structured_results(monkeypatch, tmp_path):
