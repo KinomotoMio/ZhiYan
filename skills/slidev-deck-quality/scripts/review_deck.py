@@ -1055,13 +1055,23 @@ def _class_inferred_contrast_pair(classes: list[str]) -> tuple[tuple[int, int, i
     class_tokens = {str(token).strip().lower() for token in classes if str(token).strip()}
     if not class_tokens:
         return None
-    dark_markers = ("dark", "night", "inverse", "invert")
-    light_markers = ("light", "day", "paper")
-    if any(any(marker in token for marker in dark_markers) for token in class_tokens):
+    dark_markers = {"dark", "night", "inverse", "invert", "inverted", "darkmode"}
+    light_markers = {"light", "day", "paper", "lightmode"}
+    if any(_class_token_has_theme_marker(token, dark_markers) for token in class_tokens):
         return (245, 245, 245), (23, 23, 23)
-    if any(any(marker in token for marker in light_markers) for token in class_tokens):
+    if any(_class_token_has_theme_marker(token, light_markers) for token in class_tokens):
         return (23, 23, 23), (250, 250, 250)
     return None
+
+
+def _class_token_has_theme_marker(token: str, markers: set[str]) -> bool:
+    normalized = re.sub(r"[^a-z0-9_-]", "-", str(token or "").strip().lower()).strip("-")
+    if not normalized:
+        return False
+    if normalized in markers:
+        return True
+    segments = [segment for segment in re.split(r"[-_]+", normalized) if segment]
+    return any(segment in markers for segment in segments)
 
 
 def _contrast_check(*, fg: tuple[int, int, int], bg: tuple[int, int, int], source: str) -> dict[str, Any]:

@@ -2171,6 +2171,47 @@ Takeaway: preserve strong contrast.
     assert summary["fail_slide_count"] == 0
 
 
+def test_slidev_deck_review_does_not_infer_light_theme_from_highlight_class(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    markdown = """---
+theme: seriph
+title: Highlight Class Deck
+---
+
+# Highlight Class Deck
+
+<div class="highlight-card">Only class token, no explicit color pair.</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+Takeaway: class token should not force contrast inference.
+"""
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {"slides": [], "parameters": {"markdown": markdown, "outline_items": outline_items}},
+        )
+    )
+
+    assert deck_review["ok"] is True
+    summary = deck_review["contrast_summary"]
+    assert summary["status"] == "unknown"
+    assert summary["unknown_slide_count"] >= 1
+    assert summary["fail_slide_count"] == 0
+    assert "low_contrast_warn" not in {warning["code"] for warning in deck_review["warnings"]}
+
+
 def test_slidev_deck_review_reports_double_separator_frontmatter_normalization(monkeypatch, tmp_path):
     _copy_slidev_skills(tmp_path, monkeypatch)
 
