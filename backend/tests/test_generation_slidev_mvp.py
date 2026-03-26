@@ -1178,6 +1178,7 @@ def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
     assert "deck_scaffold_class / themeConfig / baseline_constraints" in prompt
     assert "page_briefs" in prompt
     assert "deck_chrome" in prompt
+    assert "shared visual scaffold" in prompt
     assert "metric-stack" in prompt
     assert "map-with-insights" in prompt
     assert "不要生成“像 markdown 文档章节”的页面" in prompt
@@ -1198,14 +1199,17 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
     assert selection["selected_style"]["name"] == "tech-launch"
     assert selection["selected_style"]["deck_scaffold_class"] == "theme-tech-launch"
     assert selection["selected_style"]["theme_config"]["palette"] == "tech-launch"
+    assert selection["selected_style"]["scaffold_tokens"]["accent"] == "#D92D20"
     assert selection["selected_style"]["baseline_constraints"]
     assert selection["selected_theme"]["theme"] == "seriph"
     assert selection["selected_theme"]["theme_config"]["density"] == "presentation"
     assert selection["page_briefs"][1]["preferred_composition"] == "metric-stack"
     assert selection["deck_chrome"]["deck_label"] == "AI x Future Work"
+    assert selection["deck_chrome"]["shared_visual_scaffold"]["marker"] == "slidev-shared-visual-scaffold"
     assert selection["selection_summary"]["page_brief_compositions"][1]["preferred_composition"] == "metric-stack"
     assert selection["selection_summary"]["reference_root"].endswith("slidev-design-system/references")
     assert selection["selection_summary"]["deck_scaffold_class"] == "theme-tech-launch"
+    assert selection["selection_summary"]["shared_visual_scaffold_marker"] == "slidev-shared-visual-scaffold"
     assert selection["selection_summary"]["selected_layout_names"][:3] == [
         "cover-hero",
         "context-brief",
@@ -1241,6 +1245,34 @@ def test_slidev_reference_selection_can_prefer_map_with_insights_for_risk_pages(
     assert selection["page_briefs"][1]["preferred_composition"] == "metric-stack"
     assert selection["page_briefs"][2]["preferred_composition"] == "map-with-insights"
     assert "map / quadrant / table / mermaid" in " ".join(selection["page_briefs"][2]["supporting_points"])
+
+
+def test_slidev_style_frontmatter_injects_shared_visual_scaffold_once(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=_quality_outline_items_five(),
+        topic="AI future of work",
+        num_pages=5,
+        material_excerpt="Prepare a launch-style deck about how AI changes work.",
+    )
+
+    once = slidev_mvp_mod._apply_style_frontmatter_baseline(
+        markdown=_slidev_markdown(),
+        title="AI Product Architecture Evolution",
+        reference_selection=selection,
+    )
+    twice = slidev_mvp_mod._apply_style_frontmatter_baseline(
+        markdown=once,
+        title="AI Product Architecture Evolution",
+        reference_selection=selection,
+    )
+
+    assert once.count("slidev-shared-visual-scaffold") == 1
+    assert twice.count("slidev-shared-visual-scaffold") == 1
+    assert ".metric-card" in once
+    assert ".map-panel" in once
 
 
 def test_slidev_syntax_validate_deck_returns_structured_results(monkeypatch, tmp_path):
@@ -1394,6 +1426,7 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["ad_hoc_inline_style_count"] == 0
     assert result["presentation_feel_summary"]["status"] == "matched"
     assert result["presentation_feel_summary"]["signal_count"] == 0
+    assert result["theme_fidelity_summary"]["observed_theme_markers"]["shared_visual_scaffold_present"] is False
 
 
 def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, tmp_path):
@@ -1436,6 +1469,7 @@ def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, t
     markers = result["theme_fidelity_summary"]["observed_theme_markers"]
     assert markers["deck_scaffold_class_present"] is True
     assert markers["theme_config_present"] is True
+    assert markers["shared_visual_scaffold_present"] is True
     assert markers["recipe_class_count"] >= 4
     assert result["presentation_feel_summary"]["status"] == "matched"
 
@@ -2425,6 +2459,7 @@ def test_slidev_mvp_service_persists_reference_protocol_metadata(monkeypatch, tm
     assert service.last_state.document_metadata["slidev_reference_selection"]["reference_root"].endswith(
         "slidev-design-system/references"
     )
+    assert persisted_markdown.count("slidev-shared-visual-scaffold") == 1
 
 
 def test_slidev_mvp_long_deck_dispatches_selected_reference_chunks(monkeypatch, tmp_path):
@@ -2542,6 +2577,8 @@ def test_slidev_mvp_long_deck_chunk_prompt_requires_frontmatter_before_heading(m
     assert "preferred_composition=" in prompt
     assert "canonical comparison shell:" in comparison_prompt
     assert "canonical closing shell:" in prompt
+    assert "shared visual scaffold" in prompt
+    assert "不要用长串 utility class 临时拼版" in prompt
 
 
 def test_slidev_mvp_chunk_prompt_injects_metric_and_map_scaffolds(monkeypatch, tmp_path):
@@ -2591,6 +2628,10 @@ def test_slidev_mvp_chunk_prompt_injects_metric_and_map_scaffolds(monkeypatch, t
     assert "preferred_composition=map-with-insights" in prompt
     assert "canonical metric-stack shell:" in prompt
     assert "canonical map-with-insights shell:" in prompt
+    assert "class: deck-context" in prompt
+    assert "class: deck-framework" in prompt
+    assert "metric-grid" in prompt
+    assert "insight-stack" in prompt
 
 
 def test_slidev_mvp_normalize_chunk_fragment_promotes_internal_frontmatter_after_heading():

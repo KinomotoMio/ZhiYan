@@ -27,6 +27,16 @@
     "density": "story",
     "emphasis": "narrative-accent"
   },
+  "scaffold_tokens": {
+    "accent": "#B45309",
+    "accent_soft": "rgba(180,83,9,0.10)",
+    "surface": "rgba(255,252,245,0.94)",
+    "surface_alt": "rgba(255,247,237,0.90)",
+    "border": "rgba(120,53,15,0.10)",
+    "text": "#292524",
+    "muted": "#57534E",
+    "shadow": "0 16px 36px rgba(120,53,15,0.08)"
+  },
   "baseline_constraints": [
     "open with one framing line before detail",
     "use rhythm changes across slides instead of repeating report sections",
