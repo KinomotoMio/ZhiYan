@@ -10,6 +10,20 @@
     "section-kicker",
     "compact-bullets"
   ],
+  "recommended_content_shapes": [
+    "problem-bullets",
+    "context-brief"
+  ],
+  "allowed_content_shapes": [
+    "problem-bullets",
+    "context-brief",
+    "detail-callout",
+    "action-list"
+  ],
+  "forbidden_content_shapes": [
+    "table-compare",
+    "quadrant-map"
+  ],
   "visual_constraints": [
     "max 4 bullets",
     "one framing line or cue",

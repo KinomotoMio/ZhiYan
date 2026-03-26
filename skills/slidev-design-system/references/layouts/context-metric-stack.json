@@ -1,41 +1,44 @@
 {
-  "name": "context-brief",
+  "name": "context-metric-stack",
   "applies_to_roles": [
     "context"
   ],
   "preferred_layout": null,
   "required_patterns": [
-    "compact-bullets",
-    "quote-or-callout"
+    "metric-stack",
+    "table",
+    "callout"
   ],
   "required_classes": [
-    "deck-context"
+    "deck-context",
+    "metric-stack"
   ],
   "recommended_content_shapes": [
-    "problem-bullets",
-    "quote-callout"
+    "urgency-metrics",
+    "metric-stack",
+    "trend-metrics"
   ],
   "allowed_content_shapes": [
-    "problem-bullets",
-    "quote-callout",
     "urgency-metrics",
-    "context-brief"
+    "metric-stack",
+    "trend-metrics",
+    "problem-bullets"
   ],
   "forbidden_content_shapes": [
-    "table-compare",
+    "quote-callout",
     "compare-grid",
-    "action-list"
+    "table-compare"
   ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",
     "long-paragraph-context"
   ],
-  "description": "Why-now context page with one judgment line and 2-3 supporting cues.",
+  "description": "Context page led by one urgency metric and 2-3 supporting evidence cues.",
   "required_visual_signals": [
     "why-now-framing",
-    "compact-bullets",
-    "quote-or-callout",
+    "hero-metric",
+    "interpretation-line",
     "section-kicker"
   ]
 }

@@ -1,0 +1,39 @@
+{
+  "name": "map-insight-cards",
+  "applies_to_roles": [
+    "framework"
+  ],
+  "recommended_structure": "left-side map or matrix + right-side 2-3 insight cards + takeaway/source line",
+  "required_signals": [
+    "map-with-insights",
+    "visual-structure",
+    "insight-card",
+    "source-or-takeaway"
+  ],
+  "recommended_content_shapes": [
+    "quadrant-map",
+    "risk-map",
+    "exposure-map"
+  ],
+  "allowed_content_shapes": [
+    "quadrant-map",
+    "risk-map",
+    "exposure-map",
+    "framework-grid"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "next-step",
+    "action-list"
+  ],
+  "visual_constraints": [
+    "must include left/right structure",
+    "max 3 insight cards",
+    "must include one takeaway or source line"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "bullet-only-framework"
+  ]
+}

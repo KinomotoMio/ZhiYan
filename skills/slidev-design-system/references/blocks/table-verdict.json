@@ -1,22 +1,22 @@
 {
-  "name": "compare-split",
+  "name": "table-verdict",
   "applies_to_roles": [
     "comparison"
   ],
-  "recommended_structure": "labeled left/right contrast plus verdict line",
+  "recommended_structure": "comparison table with explicit side labels and one verdict line",
   "required_signals": [
-    "split-compare",
+    "table-structure",
     "contrast-labels",
     "verdict-line"
   ],
   "recommended_content_shapes": [
-    "compare-grid",
-    "before-after"
+    "table-compare",
+    "tradeoff-matrix"
   ],
   "allowed_content_shapes": [
-    "compare-grid",
-    "before-after",
-    "table-compare"
+    "table-compare",
+    "tradeoff-matrix",
+    "compare-grid"
   ],
   "forbidden_content_shapes": [
     "title-subtitle",
@@ -24,9 +24,9 @@
     "next-step"
   ],
   "visual_constraints": [
-    "paired contrast",
-    "labeled sides",
-    "one verdict line"
+    "table must expose side labels",
+    "max 4 rows per side",
+    "must include one verdict line"
   ],
   "anti_patterns": [
     "plain-bullet-dump",

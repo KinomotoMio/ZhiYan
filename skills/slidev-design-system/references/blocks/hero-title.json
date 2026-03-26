@@ -9,6 +9,20 @@
     "hero-title",
     "short-subtitle"
   ],
+  "recommended_content_shapes": [
+    "title-subtitle",
+    "cover-hero"
+  ],
+  "allowed_content_shapes": [
+    "title-subtitle",
+    "cover-hero",
+    "title-only"
+  ],
+  "forbidden_content_shapes": [
+    "compare-grid",
+    "table-compare",
+    "action-list"
+  ],
   "visual_constraints": [
     "1 kicker",
     "1 title",

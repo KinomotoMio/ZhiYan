@@ -1215,13 +1215,18 @@ def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_pat
         "context-brief",
         "framework-visual",
     ]
+    assert selection["selection_summary"]["layout_constraint_summary"]["total"] == 12
+    assert selection["selection_summary"]["layout_constraint_summary"]["counts"]["recommended"] >= 8
+    assert selection["selection_summary"]["block_constraint_summary"]["total"] >= 12
     assert selection["selected_layouts"][0]["required_classes"] == ["deck-cover"]
+    assert selection["selected_layouts"][0]["constraint_status"] == "recommended"
     assert selection["selected_layouts"][3]["recipe_name"] == "detail-focus"
     assert selection["selected_layouts"][4]["layout"] == "two-cols"
     assert [block["name"] for block in selection["selected_blocks"][1]["blocks"]] == [
         "compact-bullets",
-        "quote-callout",
+        "metric-insight-cards",
     ]
+    assert selection["selected_blocks"][1]["blocks"][0]["constraint_status"] == "recommended"
     assert selection["selected_blocks"][3]["blocks"][0]["name"] == "focus-explainer"
     assert selection["selected_blocks"][9]["blocks"][0]["name"] == "decision-priority"
     assert selection["selected_blocks"][2]["blocks"][0]["name"] == "framework-explainer"
@@ -1247,7 +1252,35 @@ def test_slidev_reference_selection_can_prefer_map_with_insights_for_risk_pages(
 
     assert selection["page_briefs"][1]["preferred_composition"] == "metric-stack"
     assert selection["page_briefs"][2]["preferred_composition"] == "map-with-insights"
+    assert selection["selected_layouts"][2]["recipe_name"] == "framework-map-insights"
+    assert selection["selected_layouts"][2]["constraint_status"] == "recommended"
+    assert selection["selected_blocks"][2]["blocks"][0]["name"] == "map-insight-cards"
+    assert selection["selected_blocks"][2]["blocks"][0]["constraint_status"] == "recommended"
     assert "map / quadrant / table / mermaid" in " ".join(selection["page_briefs"][2]["supporting_points"])
+
+
+def test_slidev_reference_selection_exposes_constraint_fallback_when_shape_is_forbidden(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "强行对比", "slide_role": "comparison", "content_shape": "title-subtitle", "goal": "对比"},
+        {"slide_number": 3, "title": "收束", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI adoption",
+        num_pages=3,
+        material_excerpt="A short deck about adoption tradeoffs",
+    )
+
+    comparison_layout = selection["selected_layouts"][1]
+    assert comparison_layout["recipe_name"] == "comparison-split"
+    assert comparison_layout["constraint_status"] == "fallback"
+    assert "fallback" in comparison_layout["constraint_reason"]
+    assert selection["selection_summary"]["layout_constraint_summary"]["counts"]["fallback"] >= 1
 
 
 def test_slidev_style_frontmatter_injects_shared_visual_scaffold_once(monkeypatch, tmp_path):
