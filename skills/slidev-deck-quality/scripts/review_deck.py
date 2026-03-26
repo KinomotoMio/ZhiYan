@@ -8,6 +8,9 @@ import re
 import sys
 from typing import Any
 
+CONTRAST_FAIL_THRESHOLD = 3.0
+CONTRAST_WARN_THRESHOLD = 4.5
+
 
 def main() -> int:
     payload = json.load(sys.stdin)
@@ -86,6 +89,7 @@ def review_deck(
             deck_chrome=_mapping(deck_chrome),
             expected_slide_count=0,
             actual_slide_count=0,
+            contrast_summary=_empty_contrast_summary(),
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
             stray_metadata_repaired_count=int(normalization.get("stray_metadata_repaired_count") or 0),
             empty_slide_repaired_count=int(normalization.get("empty_slide_repaired_count") or 0),
@@ -93,6 +97,12 @@ def review_deck(
 
     if not isinstance(outline_items, list) or not outline_items:
         issues.append({"code": "missing_outline_context", "message": "Deck review requires a valid outline context."})
+        contrast_summary = _contrast_summary(
+            slides=slides,
+            selected_style=_mapping(selected_style),
+            selected_theme=_mapping(selected_theme),
+            slide_reports=[],
+        )
         return _result(
             False,
             issues,
@@ -105,6 +115,7 @@ def review_deck(
             deck_chrome=_mapping(deck_chrome),
             expected_slide_count=0,
             actual_slide_count=len(slides),
+            contrast_summary=contrast_summary,
             blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
             stray_metadata_repaired_count=int(normalization.get("stray_metadata_repaired_count") or 0),
             empty_slide_repaired_count=int(normalization.get("empty_slide_repaired_count") or 0),
@@ -185,6 +196,34 @@ def review_deck(
                 "message": "Deck relies on too many ad-hoc inline styles; prefer theme/layout/class-driven presentation structure.",
             }
         )
+    contrast_summary = _contrast_summary(
+        slides=slides,
+        selected_style=_mapping(selected_style),
+        selected_theme=_mapping(selected_theme),
+        slide_reports=slide_reports,
+    )
+    fail_slides = [entry for entry in (contrast_summary.get("slides") or []) if entry.get("status") == "fail"]
+    warn_slides = [entry for entry in (contrast_summary.get("slides") or []) if entry.get("status") == "warn"]
+    if fail_slides:
+        issues.append(
+            {
+                "code": "low_contrast_fail",
+                "message": (
+                    f"{len(fail_slides)} slide(s) have insufficient text/background contrast "
+                    f"(< {CONTRAST_FAIL_THRESHOLD:.1f}): {_contrast_slide_examples(fail_slides)}."
+                ),
+            }
+        )
+    if warn_slides:
+        warnings.append(
+            {
+                "code": "low_contrast_warn",
+                "message": (
+                    f"{len(warn_slides)} slide(s) have borderline text/background contrast "
+                    f"({CONTRAST_FAIL_THRESHOLD:.1f}-{CONTRAST_WARN_THRESHOLD:.1f}): {_contrast_slide_examples(warn_slides)}."
+                ),
+            }
+        )
 
     return _result(
         not issues,
@@ -198,6 +237,7 @@ def review_deck(
         deck_chrome=_mapping(deck_chrome),
         expected_slide_count=len(outline_items),
         actual_slide_count=len(slides),
+        contrast_summary=contrast_summary,
         blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
         stray_metadata_repaired_count=int(normalization.get("stray_metadata_repaired_count") or 0),
         empty_slide_repaired_count=int(normalization.get("empty_slide_repaired_count") or 0),
@@ -217,6 +257,7 @@ def _result(
     deck_chrome: dict[str, Any],
     expected_slide_count: int,
     actual_slide_count: int,
+    contrast_summary: dict[str, Any],
     blank_first_slide_detected: bool,
     stray_metadata_repaired_count: int,
     empty_slide_repaired_count: int,
@@ -248,6 +289,7 @@ def _result(
         "deck_chrome_usage_summary": deck_chrome_usage_summary,
         "presentation_feel_summary": presentation_feel_summary,
         "theme_fidelity_summary": theme_fidelity_summary,
+        "contrast_summary": contrast_summary,
         "blank_first_slide_detected": blank_first_slide_detected,
         "stray_metadata_repaired_count": stray_metadata_repaired_count,
         "empty_slide_repaired_count": empty_slide_repaired_count,
@@ -265,6 +307,9 @@ def _result(
             "weak_reference_recipes": reference_fidelity_summary["weak_slide_count"],
             "matched_page_briefs": page_brief_fidelity_summary["matched_slide_count"],
             "weak_page_briefs": page_brief_fidelity_summary["weak_slide_count"],
+            "contrast_status": str(contrast_summary.get("status") or "unknown"),
+            "contrast_fail_slides": int(contrast_summary.get("fail_slide_count") or 0),
+            "contrast_warn_slides": int(contrast_summary.get("warn_slide_count") or 0),
         },
     }
 
@@ -816,6 +861,378 @@ def _theme_fidelity_summary(
                 for signal in (report.get("observed_signals") or [])
             ),
         },
+    }
+
+
+def _contrast_summary(
+    *,
+    slides: list[str],
+    selected_style: dict[str, Any],
+    selected_theme: dict[str, Any],
+    slide_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not slides:
+        return _empty_contrast_summary()
+
+    default_pair = _theme_default_contrast_pair(selected_style=selected_style, selected_theme=selected_theme)
+    report_by_number = {
+        int(report.get("slide_number") or 0): report for report in slide_reports if isinstance(report, dict)
+    }
+    summary_slides: list[dict[str, Any]] = []
+    pass_count = 0
+    warn_count = 0
+    fail_count = 0
+    unknown_count = 0
+
+    for slide_number, slide in enumerate(slides, start=1):
+        report = report_by_number.get(slide_number) or {}
+        title = str(report.get("title") or f"Slide {slide_number}")
+        checks = _collect_slide_contrast_checks(slide=slide, default_pair=default_pair)
+        if not checks:
+            summary_slides.append(
+                {
+                    "slide_number": slide_number,
+                    "title": title,
+                    "status": "unknown",
+                    "check_count": 0,
+                    "worst_ratio": None,
+                    "worst_pair": None,
+                }
+            )
+            unknown_count += 1
+            continue
+
+        worst = min(checks, key=lambda item: float(item.get("ratio") or 999.0))
+        worst_ratio = float(worst.get("ratio") or 0.0)
+        status = "pass"
+        if worst_ratio < CONTRAST_FAIL_THRESHOLD:
+            status = "fail"
+            fail_count += 1
+        elif worst_ratio < CONTRAST_WARN_THRESHOLD:
+            status = "warn"
+            warn_count += 1
+        else:
+            pass_count += 1
+        summary_slides.append(
+            {
+                "slide_number": slide_number,
+                "title": title,
+                "status": status,
+                "check_count": len(checks),
+                "worst_ratio": round(worst_ratio, 2),
+                "worst_pair": {
+                    "foreground": str(worst.get("foreground") or ""),
+                    "background": str(worst.get("background") or ""),
+                    "source": str(worst.get("source") or ""),
+                },
+            }
+        )
+
+    status = "unknown"
+    if fail_count > 0:
+        status = "fail"
+    elif warn_count > 0:
+        status = "warn"
+    elif pass_count > 0:
+        status = "pass"
+
+    return {
+        "status": status,
+        "thresholds": {
+            "fail_below": CONTRAST_FAIL_THRESHOLD,
+            "warn_below": CONTRAST_WARN_THRESHOLD,
+        },
+        "slide_count": len(slides),
+        "pass_slide_count": pass_count,
+        "warn_slide_count": warn_count,
+        "fail_slide_count": fail_count,
+        "unknown_slide_count": unknown_count,
+        "slides": summary_slides,
+    }
+
+
+def _collect_slide_contrast_checks(
+    *,
+    slide: str,
+    default_pair: tuple[tuple[int, int, int], tuple[int, int, int], str] | None,
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+
+    if default_pair is not None:
+        fg, bg, source = default_pair
+        checks.append(_contrast_check(fg=fg, bg=bg, source=source))
+
+    frontmatter_fg, frontmatter_bg = _frontmatter_contrast_pair(slide=slide, default_pair=default_pair)
+    if frontmatter_fg is not None and frontmatter_bg is not None:
+        checks.append(_contrast_check(fg=frontmatter_fg, bg=frontmatter_bg, source="slide-frontmatter"))
+
+    for style in re.findall(r"style\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", slide, flags=re.IGNORECASE | re.DOTALL):
+        raw_style = style[0] or style[1]
+        if not raw_style.strip():
+            continue
+        declarations = _parse_css_declarations(raw_style)
+        fg = _extract_css_color(declarations.get("color"))
+        bg = _extract_css_color(declarations.get("background-color")) or _extract_css_color(declarations.get("background"))
+        if fg is None and default_pair is not None:
+            fg = default_pair[0]
+        if bg is None and default_pair is not None:
+            bg = default_pair[1]
+        if fg is None or bg is None:
+            continue
+        checks.append(_contrast_check(fg=fg, bg=bg, source="inline-style"))
+
+    class_pair = _class_inferred_contrast_pair(_extract_classes(slide))
+    if class_pair is not None:
+        checks.append(_contrast_check(fg=class_pair[0], bg=class_pair[1], source="class-inference"))
+
+    unique: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for check in checks:
+        key = (
+            str(check.get("foreground") or ""),
+            str(check.get("background") or ""),
+            str(check.get("source") or ""),
+        )
+        unique[key] = check
+    return list(unique.values())
+
+
+def _frontmatter_contrast_pair(
+    *,
+    slide: str,
+    default_pair: tuple[tuple[int, int, int], tuple[int, int, int], str] | None,
+) -> tuple[tuple[int, int, int] | None, tuple[int, int, int] | None]:
+    frontmatter = _frontmatter_block(slide)
+    if not frontmatter:
+        return None, None
+    color_value = _frontmatter_scalar_value(frontmatter, "color") or _frontmatter_scalar_value(frontmatter, "textColor")
+    bg_value = (
+        _frontmatter_scalar_value(frontmatter, "backgroundColor")
+        or _frontmatter_scalar_value(frontmatter, "background")
+        or _frontmatter_scalar_value(frontmatter, "bg")
+    )
+    fg = _extract_css_color(color_value)
+    bg = _extract_css_color(bg_value)
+    if fg is None and default_pair is not None:
+        fg = default_pair[0]
+    if bg is None and default_pair is not None:
+        bg = default_pair[1]
+    return fg, bg
+
+
+def _theme_default_contrast_pair(
+    *,
+    selected_style: dict[str, Any],
+    selected_theme: dict[str, Any],
+) -> tuple[tuple[int, int, int], tuple[int, int, int], str] | None:
+    scaffold_tokens = selected_style.get("scaffold_tokens") if isinstance(selected_style.get("scaffold_tokens"), dict) else {}
+    if not isinstance(scaffold_tokens, dict):
+        scaffold_tokens = {}
+    fg = _extract_css_color(str(scaffold_tokens.get("text") or ""))
+    bg = _extract_css_color(str(scaffold_tokens.get("surface") or "")) or _extract_css_color(
+        str(scaffold_tokens.get("surface_alt") or "")
+    )
+    if fg is not None and bg is not None:
+        return fg, bg, "style-scaffold-tokens"
+
+    mode_hint = " ".join(
+        str(value or "").strip().lower()
+        for value in (
+            selected_theme.get("theme_mode"),
+            selected_style.get("theme_mode"),
+            selected_theme.get("palette"),
+            selected_style.get("name"),
+        )
+        if str(value or "").strip()
+    )
+    if "dark" in mode_hint:
+        return (245, 245, 245), (23, 23, 23), "theme-mode-inference"
+    if mode_hint:
+        return (23, 23, 23), (250, 250, 250), "theme-mode-inference"
+    return None
+
+
+def _class_inferred_contrast_pair(classes: list[str]) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
+    class_tokens = {str(token).strip().lower() for token in classes if str(token).strip()}
+    if not class_tokens:
+        return None
+    dark_markers = ("dark", "night", "inverse", "invert")
+    light_markers = ("light", "day", "paper")
+    if any(any(marker in token for marker in dark_markers) for token in class_tokens):
+        return (245, 245, 245), (23, 23, 23)
+    if any(any(marker in token for marker in light_markers) for token in class_tokens):
+        return (23, 23, 23), (250, 250, 250)
+    return None
+
+
+def _contrast_check(*, fg: tuple[int, int, int], bg: tuple[int, int, int], source: str) -> dict[str, Any]:
+    return {
+        "foreground": _rgb_to_hex(fg),
+        "background": _rgb_to_hex(bg),
+        "ratio": round(_contrast_ratio(fg, bg), 3),
+        "source": source,
+    }
+
+
+def _contrast_ratio(fg: tuple[int, int, int], bg: tuple[int, int, int]) -> float:
+    fg_luminance = _relative_luminance(fg)
+    bg_luminance = _relative_luminance(bg)
+    lighter = max(fg_luminance, bg_luminance)
+    darker = min(fg_luminance, bg_luminance)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+    channels = []
+    for channel in rgb:
+        normalized = max(0.0, min(255.0, float(channel))) / 255.0
+        channels.append(normalized / 12.92 if normalized <= 0.03928 else ((normalized + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    red, green, blue = [max(0, min(255, int(value))) for value in rgb]
+    return f"#{red:02X}{green:02X}{blue:02X}"
+
+
+def _extract_css_color(raw_value: Any) -> tuple[int, int, int] | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    direct = _parse_css_color(value)
+    if direct is not None:
+        return direct
+    for match in re.findall(
+        r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b|rgba?\([^)]+\)|hsla?\([^)]+\)|\b[a-zA-Z]+\b",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        parsed = _parse_css_color(match)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_css_color(value: str) -> tuple[int, int, int] | None:
+    raw = value.strip().lower()
+    if not raw or raw.startswith("var("):
+        return None
+    if raw.startswith("#"):
+        token = raw[1:]
+        if len(token) == 3 and re.fullmatch(r"[0-9a-f]{3}", token):
+            return tuple(int(char * 2, 16) for char in token)  # type: ignore[return-value]
+        if len(token) == 6 and re.fullmatch(r"[0-9a-f]{6}", token):
+            return (int(token[0:2], 16), int(token[2:4], 16), int(token[4:6], 16))
+        return None
+    rgb_match = re.fullmatch(r"rgba?\(([^)]+)\)", raw)
+    if rgb_match:
+        parts = [part.strip() for part in rgb_match.group(1).split(",")]
+        if len(parts) < 3:
+            return None
+        channels: list[int] = []
+        for part in parts[:3]:
+            if part.endswith("%"):
+                try:
+                    channels.append(int(round(float(part[:-1]) * 2.55)))
+                except ValueError:
+                    return None
+            else:
+                try:
+                    channels.append(int(round(float(part))))
+                except ValueError:
+                    return None
+        return tuple(max(0, min(255, channel)) for channel in channels)  # type: ignore[return-value]
+    hsl_match = re.fullmatch(r"hsla?\(([^)]+)\)", raw)
+    if hsl_match:
+        parts = [part.strip() for part in hsl_match.group(1).split(",")]
+        if len(parts) < 3:
+            return None
+        try:
+            hue = float(parts[0].rstrip("deg")) % 360.0
+            saturation = float(parts[1].rstrip("%")) / 100.0
+            lightness = float(parts[2].rstrip("%")) / 100.0
+        except ValueError:
+            return None
+        return _hsl_to_rgb(hue, saturation, lightness)
+
+    named_colors = {
+        "black": (0, 0, 0),
+        "white": (255, 255, 255),
+        "gray": (128, 128, 128),
+        "grey": (128, 128, 128),
+        "red": (255, 0, 0),
+        "green": (0, 128, 0),
+        "blue": (0, 0, 255),
+        "yellow": (255, 255, 0),
+        "orange": (255, 165, 0),
+        "purple": (128, 0, 128),
+        "teal": (0, 128, 128),
+        "navy": (0, 0, 128),
+    }
+    return named_colors.get(raw)
+
+
+def _hsl_to_rgb(hue: float, saturation: float, lightness: float) -> tuple[int, int, int]:
+    chroma = (1.0 - abs(2.0 * lightness - 1.0)) * saturation
+    hue_section = hue / 60.0
+    secondary = chroma * (1.0 - abs(hue_section % 2.0 - 1.0))
+    red = green = blue = 0.0
+    if 0 <= hue_section < 1:
+        red, green = chroma, secondary
+    elif 1 <= hue_section < 2:
+        red, green = secondary, chroma
+    elif 2 <= hue_section < 3:
+        green, blue = chroma, secondary
+    elif 3 <= hue_section < 4:
+        green, blue = secondary, chroma
+    elif 4 <= hue_section < 5:
+        red, blue = secondary, chroma
+    elif 5 <= hue_section < 6:
+        red, blue = chroma, secondary
+    offset = lightness - chroma / 2.0
+    return (
+        int(round((red + offset) * 255)),
+        int(round((green + offset) * 255)),
+        int(round((blue + offset) * 255)),
+    )
+
+
+def _parse_css_declarations(raw_style: str) -> dict[str, str]:
+    declarations: dict[str, str] = {}
+    for fragment in raw_style.split(";"):
+        if ":" not in fragment:
+            continue
+        key, value = fragment.split(":", 1)
+        name = key.strip().lower()
+        if not name:
+            continue
+        declarations[name] = value.strip()
+    return declarations
+
+
+def _contrast_slide_examples(entries: list[dict[str, Any]], *, limit: int = 3) -> str:
+    samples = []
+    for entry in entries[:limit]:
+        slide_number = int(entry.get("slide_number") or 0)
+        title = str(entry.get("title") or f"Slide {slide_number}")
+        ratio = entry.get("worst_ratio")
+        ratio_text = f"{float(ratio):.2f}" if isinstance(ratio, (int, float)) else "n/a"
+        samples.append(f"#{slide_number} `{title}` ({ratio_text})")
+    return ", ".join(samples)
+
+
+def _empty_contrast_summary() -> dict[str, Any]:
+    return {
+        "status": "unknown",
+        "thresholds": {
+            "fail_below": CONTRAST_FAIL_THRESHOLD,
+            "warn_below": CONTRAST_WARN_THRESHOLD,
+        },
+        "slide_count": 0,
+        "pass_slide_count": 0,
+        "warn_slide_count": 0,
+        "fail_slide_count": 0,
+        "unknown_slide_count": 0,
+        "slides": [],
     }
 
 

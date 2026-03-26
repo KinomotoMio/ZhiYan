@@ -1999,6 +1999,11 @@ class SlidevMvpService:
             or (runtime.validation or {}).get("theme_fidelity_summary")
             or {}
         )
+        contrast_summary = (
+            (runtime.deck_review or {}).get("contrast_summary")
+            or (runtime.validation or {}).get("contrast_summary")
+            or {}
+        )
         state.document_metadata.update(
             {
                 "slidev_slide_count": slide_count,
@@ -2027,6 +2032,7 @@ class SlidevMvpService:
                 "slidev_page_brief_fidelity": page_brief_fidelity_summary,
                 "slidev_deck_chrome_usage": deck_chrome_usage_summary,
                 "slidev_theme_fidelity": theme_fidelity_summary,
+                "slidev_contrast_summary": contrast_summary,
                 "slidev_chunk_plan": list(runtime.chunk_plan),
                 "slidev_chunk_reports": list(runtime.chunk_reports),
                 "slidev_chunk_summary": chunk_summary,
@@ -2084,6 +2090,7 @@ class SlidevMvpService:
                 "page_brief_fidelity_summary": page_brief_fidelity_summary,
                 "deck_chrome_usage_summary": deck_chrome_usage_summary,
                 "theme_fidelity_summary": theme_fidelity_summary,
+                "contrast_summary": contrast_summary,
                 "chunk_summary": chunk_summary,
                 "chunk_reports": list(runtime.chunk_reports),
                 "retry_summary": retry_summary,
