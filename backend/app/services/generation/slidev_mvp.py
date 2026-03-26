@@ -3485,7 +3485,7 @@ def _reference_string_list(value: Any) -> list[str]:
 
 
 def _reference_shape_key(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return re.sub(r"[^a-z0-9*]+", "-", str(value or "").strip().lower()).strip("-")
 
 
 def _reference_shape_list(value: Any) -> list[str]:
