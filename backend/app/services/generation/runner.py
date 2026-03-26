@@ -1160,29 +1160,25 @@ class GenerationRunner:
         for tool in registry.list_tools():
             async def _handler(_args: dict[str, Any], *, generation_tool: GenerationTool = tool) -> Any:
                 await self._ensure_not_cancelled(job)
+                is_verify_stage = generation_tool.stage == StageStatus.VERIFY
+
                 if self._stage_already_completed(job, generation_tool.stage):
                     result: dict[str, Any] = {
                         "stage": generation_tool.stage.value,
                         "status": "skipped",
                         "reason": "stage already completed",
                     }
-                    if generation_tool.stage == StageStatus.VERIFY:
-                        return ToolExecutionResult(
-                            content=result,
-                            stop_loop=True,
-                            metadata={"stop_reason": "verification-complete"},
-                        )
-                    return result
+                else:
+                    await self._run_stage(
+                        job,
+                        state,
+                        stage=generation_tool.stage,
+                        timeout=generation_tool.timeout_seconds(),
+                        stage_coro=generation_tool.runner(state, progress_hook, slide_hook),
+                    )
+                    result = {"stage": generation_tool.stage.value, "status": "completed"}
 
-                await self._run_stage(
-                    job,
-                    state,
-                    stage=generation_tool.stage,
-                    timeout=generation_tool.timeout_seconds(),
-                    stage_coro=generation_tool.runner(state, progress_hook, slide_hook),
-                )
-                result = {"stage": generation_tool.stage.value, "status": "completed"}
-                if generation_tool.stage == StageStatus.VERIFY:
+                if is_verify_stage:
                     return ToolExecutionResult(
                         content=result,
                         stop_loop=True,
