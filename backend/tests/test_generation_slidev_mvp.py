@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -1316,6 +1317,10 @@ title: Flat Deck
     assert result["ok"] is True
     warning_codes = {warning["code"] for warning in result["warnings"]}
     assert "low_slidev_native_usage" in warning_codes
+    summary = result["presentation_feel_summary"]
+    assert summary["status"] == "weak"
+    assert "low_slidev_native_usage" in summary["signal_codes"]
+    assert summary["signal_count"] >= 3
 
 
 def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, tmp_path):
@@ -1336,6 +1341,8 @@ def test_slidev_syntax_validate_deck_reports_native_usage_summary(monkeypatch, t
     assert native_usage["plain_slide_count"] == 0
     assert native_usage["recipe_classes"]["deck-cover"] == 1
     assert native_usage["visual_recipe_slide_count"] >= 3
+    assert result["presentation_feel_summary"]["status"] == "weak"
+    assert result["presentation_feel_summary"]["signal_count"] >= 1
 
 
 def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch, tmp_path):
@@ -1385,6 +1392,8 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     assert result["theme_fidelity_summary"]["selected_theme"] == "seriph"
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["recipe_class_count"] >= 4
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["ad_hoc_inline_style_count"] == 0
+    assert result["presentation_feel_summary"]["status"] == "matched"
+    assert result["presentation_feel_summary"]["signal_count"] == 0
 
 
 def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, tmp_path):
@@ -1428,6 +1437,7 @@ def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, t
     assert markers["deck_scaffold_class_present"] is True
     assert markers["theme_config_present"] is True
     assert markers["recipe_class_count"] >= 4
+    assert result["presentation_feel_summary"]["status"] == "matched"
 
 
 def test_slidev_syntax_validate_deck_counts_callout_usage(monkeypatch, tmp_path):
@@ -1576,6 +1586,29 @@ def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tm
     assert deck_review["theme_fidelity_summary"]["selected_theme"] == "seriph"
     assert deck_review["slide_reports"][0]["selected_layout"]["recipe_name"] == "cover-hero"
     assert "hero-title" in deck_review["slide_reports"][0]["selected_blocks"]
+    summary = deck_review["presentation_feel_summary"]
+    assert summary["status"] in {"matched", "weak"}
+    assert summary["signal_count"] == len(summary["signal_codes"])
+
+
+def test_slidev_deck_review_presentation_feel_summary_counts_theme_recipe_warning(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    review_script = settings.skills_dir / "slidev-deck-quality" / "scripts" / "review_deck.py"
+    spec = importlib.util.spec_from_file_location("review_deck_module", review_script)
+    assert spec is not None and spec.loader is not None
+    review_deck_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review_deck_module)
+
+    summary = review_deck_module._presentation_feel_summary(
+        [{"status": "ok"}],
+        [{"code": "theme_recipe_weak"}],
+    )
+
+    assert summary["status"] == "weak"
+    assert summary["visual_anchor_warning_count"] == 1
+    assert "theme_recipe_weak" in summary["signal_codes"]
+    assert summary["signal_count"] == 1
 
 
 def test_slidev_outline_review_enforces_contract_boundaries(monkeypatch, tmp_path):
@@ -1906,6 +1939,10 @@ class: deck-closing
         "document_like_closing",
         "theme_recipe_weak",
     }
+    summary = deck_review["presentation_feel_summary"]
+    assert summary["status"] == "weak"
+    assert summary["document_like_warning_count"] >= 5
+    assert summary["signal_count"] >= summary["document_like_warning_count"]
 
 
 def test_slidev_deck_review_warns_on_excessive_inline_style(monkeypatch, tmp_path):
