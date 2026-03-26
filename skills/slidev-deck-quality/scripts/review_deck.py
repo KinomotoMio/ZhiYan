@@ -1025,8 +1025,6 @@ def _theme_default_contrast_pair(
     selected_theme: dict[str, Any],
 ) -> tuple[tuple[int, int, int], tuple[int, int, int], str] | None:
     scaffold_tokens = selected_style.get("scaffold_tokens") if isinstance(selected_style.get("scaffold_tokens"), dict) else {}
-    if not isinstance(scaffold_tokens, dict):
-        scaffold_tokens = {}
     fg = _extract_css_color(str(scaffold_tokens.get("text") or ""))
     bg = _extract_css_color(str(scaffold_tokens.get("surface") or "")) or _extract_css_color(
         str(scaffold_tokens.get("surface_alt") or "")
