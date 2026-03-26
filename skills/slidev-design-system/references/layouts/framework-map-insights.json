@@ -1,27 +1,29 @@
 {
-  "name": "framework-visual",
+  "name": "framework-map-insights",
   "applies_to_roles": [
     "framework"
   ],
-  "preferred_layout": null,
+  "preferred_layout": "two-cols",
   "required_patterns": [
+    "quadrant",
+    "map",
     "mermaid",
-    "table",
-    "div-grid"
+    "table"
   ],
   "required_classes": [
-    "deck-framework"
+    "deck-framework",
+    "map-with-insights"
   ],
   "recommended_content_shapes": [
-    "framework-grid",
-    "two-column-framework",
-    "diagram-callout"
+    "quadrant-map",
+    "risk-map",
+    "exposure-map"
   ],
   "allowed_content_shapes": [
-    "framework-grid",
-    "two-column-framework",
-    "diagram-callout",
-    "quadrant-map"
+    "quadrant-map",
+    "risk-map",
+    "exposure-map",
+    "framework-grid"
   ],
   "forbidden_content_shapes": [
     "title-subtitle",
@@ -33,10 +35,12 @@
     "unstyled-document-section",
     "bullet-only-framework"
   ],
-  "description": "Model page carried by grid, diagram, or table plus one takeaway.",
+  "description": "Framework map page with left-side visual model and right-side distilled insights.",
   "required_visual_signals": [
+    "map-with-insights",
     "visual-structure",
+    "insight-card",
     "model-takeaway",
-    "section-kicker"
+    "source-or-takeaway"
   ]
 }

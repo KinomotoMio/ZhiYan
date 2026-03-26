@@ -12,6 +12,22 @@
   "required_classes": [
     "deck-closing"
   ],
+  "recommended_content_shapes": [
+    "next-step",
+    "closing",
+    "takeaway"
+  ],
+  "allowed_content_shapes": [
+    "next-step",
+    "closing",
+    "takeaway",
+    "action-list"
+  ],
+  "forbidden_content_shapes": [
+    "table-compare",
+    "compare-grid",
+    "framework-grid"
+  ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",

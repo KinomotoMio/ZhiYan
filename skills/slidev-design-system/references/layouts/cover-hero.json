@@ -11,6 +11,20 @@
   "required_classes": [
     "deck-cover"
   ],
+  "recommended_content_shapes": [
+    "title-subtitle",
+    "cover-hero"
+  ],
+  "allowed_content_shapes": [
+    "title-subtitle",
+    "cover-hero",
+    "title-only"
+  ],
+  "forbidden_content_shapes": [
+    "compare-grid",
+    "table-compare",
+    "action-list"
+  ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",

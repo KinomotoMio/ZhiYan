@@ -1,27 +1,26 @@
 {
-  "name": "comparison-split",
+  "name": "comparison-table-verdict",
   "applies_to_roles": [
     "comparison"
   ],
   "preferred_layout": "two-cols",
   "required_patterns": [
-    "two-cols",
     "table",
+    "two-cols",
     "before-after"
   ],
   "required_classes": [
-    "deck-comparison"
+    "deck-comparison",
+    "compare-panel"
   ],
   "recommended_content_shapes": [
-    "compare-grid",
     "table-compare",
-    "before-after"
+    "tradeoff-matrix"
   ],
   "allowed_content_shapes": [
-    "compare-grid",
     "table-compare",
-    "before-after",
-    "tradeoff-matrix"
+    "tradeoff-matrix",
+    "compare-grid"
   ],
   "forbidden_content_shapes": [
     "title-subtitle",
@@ -33,10 +32,11 @@
     "unstyled-document-section",
     "unlabeled-compare"
   ],
-  "description": "Strong left-right contrast page using two columns or explicit compare structure.",
+  "description": "Comparison page with table evidence plus explicit verdict line.",
   "required_visual_signals": [
     "split-compare",
     "contrast-labels",
+    "table-structure",
     "verdict-line"
   ]
 }

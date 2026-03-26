@@ -9,6 +9,20 @@
     "prioritized-actions",
     "action-path"
   ],
+  "recommended_content_shapes": [
+    "action-list",
+    "decision"
+  ],
+  "allowed_content_shapes": [
+    "action-list",
+    "decision",
+    "next-step"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "table-compare",
+    "compare-grid"
+  ],
   "visual_constraints": [
     "show priority order",
     "max 4 actions",

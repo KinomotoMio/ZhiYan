@@ -12,6 +12,22 @@
   "required_classes": [
     "deck-detail"
   ],
+  "recommended_content_shapes": [
+    "detail-callout",
+    "diagram-callout",
+    "focus-detail"
+  ],
+  "allowed_content_shapes": [
+    "detail-callout",
+    "diagram-callout",
+    "focus-detail",
+    "case-breakdown"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "next-step",
+    "table-compare"
+  ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",

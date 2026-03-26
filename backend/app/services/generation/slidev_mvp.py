@@ -3484,6 +3484,123 @@ def _reference_string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in (value or []) if str(item).strip()]
 
 
+def _reference_shape_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
+def _reference_shape_list(value: Any) -> list[str]:
+    keys: list[str] = []
+    for item in (value or []):
+        key = _reference_shape_key(item)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _shape_constraint_matches(*, content_shape: str, expected_shape: str) -> bool:
+    shape = _reference_shape_key(content_shape)
+    expected = _reference_shape_key(expected_shape)
+    if not shape or not expected:
+        return False
+    if expected in {"*", "any"}:
+        return True
+    if "*" in expected:
+        pattern = "^" + re.escape(expected).replace("\\*", ".*") + "$"
+        return bool(re.match(pattern, shape))
+    return expected == shape or expected in shape or shape in expected
+
+
+def _evaluate_content_shape_constraints(
+    *,
+    content_shape: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    recommended_shapes = _reference_shape_list(payload.get("recommended_content_shapes"))
+    allowed_shapes = _reference_shape_list(payload.get("allowed_content_shapes"))
+    forbidden_shapes = _reference_shape_list(payload.get("forbidden_content_shapes"))
+    normalized_shape = _reference_shape_key(content_shape)
+
+    recommended_matches = [
+        candidate for candidate in recommended_shapes if _shape_constraint_matches(content_shape=normalized_shape, expected_shape=candidate)
+    ]
+    allowed_matches = [
+        candidate for candidate in allowed_shapes if _shape_constraint_matches(content_shape=normalized_shape, expected_shape=candidate)
+    ]
+    forbidden_matches = [
+        candidate for candidate in forbidden_shapes if _shape_constraint_matches(content_shape=normalized_shape, expected_shape=candidate)
+    ]
+
+    if forbidden_matches:
+        return {
+            "status": "forbidden",
+            "is_allowed": False,
+            "reason": f"content shape `{normalized_shape or 'unknown'}` hits forbidden constraints {forbidden_matches}",
+            "recommended_shapes": recommended_shapes,
+            "allowed_shapes": allowed_shapes,
+            "forbidden_shapes": forbidden_shapes,
+            "recommended_matches": recommended_matches,
+            "allowed_matches": allowed_matches,
+            "forbidden_matches": forbidden_matches,
+        }
+    if recommended_matches:
+        return {
+            "status": "recommended",
+            "is_allowed": True,
+            "reason": f"content shape `{normalized_shape or 'unknown'}` matches recommended constraints {recommended_matches}",
+            "recommended_shapes": recommended_shapes,
+            "allowed_shapes": allowed_shapes,
+            "forbidden_shapes": forbidden_shapes,
+            "recommended_matches": recommended_matches,
+            "allowed_matches": allowed_matches,
+            "forbidden_matches": forbidden_matches,
+        }
+    if allowed_shapes:
+        if allowed_matches:
+            return {
+                "status": "allowed",
+                "is_allowed": True,
+                "reason": f"content shape `{normalized_shape or 'unknown'}` matches allowed constraints {allowed_matches}",
+                "recommended_shapes": recommended_shapes,
+                "allowed_shapes": allowed_shapes,
+                "forbidden_shapes": forbidden_shapes,
+                "recommended_matches": recommended_matches,
+                "allowed_matches": allowed_matches,
+                "forbidden_matches": forbidden_matches,
+            }
+        return {
+            "status": "out-of-scope",
+            "is_allowed": False,
+            "reason": f"content shape `{normalized_shape or 'unknown'}` misses allowed constraints {allowed_shapes}",
+            "recommended_shapes": recommended_shapes,
+            "allowed_shapes": allowed_shapes,
+            "forbidden_shapes": forbidden_shapes,
+            "recommended_matches": recommended_matches,
+            "allowed_matches": allowed_matches,
+            "forbidden_matches": forbidden_matches,
+        }
+    return {
+        "status": "neutral",
+        "is_allowed": True,
+        "reason": f"content shape `{normalized_shape or 'unknown'}` uses neutral fallback constraints",
+        "recommended_shapes": recommended_shapes,
+        "allowed_shapes": allowed_shapes,
+        "forbidden_shapes": forbidden_shapes,
+        "recommended_matches": recommended_matches,
+        "allowed_matches": allowed_matches,
+        "forbidden_matches": forbidden_matches,
+    }
+
+
+def _constraint_status_weight(status: str) -> int:
+    return {
+        "recommended": 4,
+        "allowed": 3,
+        "neutral": 2,
+        "out-of-scope": 1,
+        "forbidden": 0,
+    }.get(status, 0)
+
+
 def _score_style_reference(style: Mapping[str, Any], *, topic: str, material_excerpt: str, num_pages: int) -> tuple[int, int]:
     haystack = f"{topic} {material_excerpt}".lower()
     matched = [signal for signal in _reference_string_list(style.get("selection_signals")) if signal.lower() in haystack]
@@ -3558,39 +3675,105 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
     content_shape = str(item.get("content_shape") or "").strip().lower()
     pattern_hint = _build_slidev_pattern_hint(slide_role=role, content_shape=content_shape)
     visual_hint = _build_slidev_visual_hint(slide_role=role, content_shape=content_shape)
-    candidates = [dict(layout) for layout in layouts if role in _reference_string_list(layout.get("applies_to_roles"))]
+    role_candidates = [dict(layout) for layout in layouts if role in _reference_string_list(layout.get("applies_to_roles"))]
     visual_recipe_name = str(visual_hint.get("name") or "").strip()
-    if candidates:
-        exact_name = [candidate for candidate in candidates if str(candidate.get("name") or "").strip() == visual_recipe_name]
-        if exact_name:
-            candidates = exact_name
-        else:
-            role_only = [candidate for candidate in candidates if _reference_string_list(candidate.get("applies_to_roles")) == [role]]
-            if role_only:
-                candidates = role_only
-    selected = candidates[0] if candidates else {
-        "name": str(visual_hint.get("name") or role or "default"),
-        "preferred_layout": None,
-        "required_patterns": list(pattern_hint.get("preferred_patterns") or []),
-        "required_classes": list(visual_hint.get("preferred_classes") or []),
-        "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
-        "description": str(visual_hint.get("description") or "Fallback layout reference."),
-        "required_visual_signals": list(visual_hint.get("required_signals") or []),
-    }
+    ranked_candidates: list[dict[str, Any]] = []
+    fallback_candidates: list[dict[str, Any]] = []
+    for candidate in role_candidates:
+        constraint = _evaluate_content_shape_constraints(content_shape=content_shape, payload=candidate)
+        required_patterns = _reference_string_list(candidate.get("required_patterns"))
+        required_visual_signals = _reference_string_list(candidate.get("required_visual_signals")) or _reference_string_list(
+            visual_hint.get("required_signals")
+        )
+        matched_shape_signals = [
+            signal
+            for signal in required_patterns + required_visual_signals
+            if signal.lower().replace("_", "-") in content_shape
+        ]
+        payload = {
+            "candidate": candidate,
+            "constraint": constraint,
+            "matched_shape_signals": matched_shape_signals,
+            "is_visual_name_match": str(candidate.get("name") or "").strip() == visual_recipe_name,
+            "is_role_only": _reference_string_list(candidate.get("applies_to_roles")) == [role],
+            "has_explicit_layout": bool(str(candidate.get("preferred_layout") or "").strip()),
+        }
+        if constraint.get("is_allowed"):
+            ranked_candidates.append(payload)
+        elif str(constraint.get("status") or "") != "forbidden":
+            fallback_candidates.append(payload)
+
+    ranked_candidates.sort(
+        key=lambda item: (
+            _constraint_status_weight(str((item.get("constraint") or {}).get("status") or "")),
+            1 if item.get("is_visual_name_match") else 0,
+            1 if item.get("is_role_only") else 0,
+            len(item.get("matched_shape_signals") or []),
+            1 if item.get("has_explicit_layout") else 0,
+            str((item.get("candidate") or {}).get("name") or ""),
+        ),
+        reverse=True,
+    )
+    fallback_candidates.sort(
+        key=lambda item: (
+            _constraint_status_weight(str((item.get("constraint") or {}).get("status") or "")),
+            len(item.get("matched_shape_signals") or []),
+            str((item.get("candidate") or {}).get("name") or ""),
+        ),
+        reverse=True,
+    )
+
+    selected_candidate = ranked_candidates[0] if ranked_candidates else (fallback_candidates[0] if fallback_candidates else None)
+    constraint = dict((selected_candidate or {}).get("constraint") or {})
+    if selected_candidate:
+        selected = dict(selected_candidate.get("candidate") or {})
+        matched_shape_signals = list(selected_candidate.get("matched_shape_signals") or [])
+    else:
+        selected = {
+            "name": str(visual_hint.get("name") or role or "default"),
+            "preferred_layout": None,
+            "required_patterns": list(pattern_hint.get("preferred_patterns") or []),
+            "required_classes": list(visual_hint.get("preferred_classes") or []),
+            "forbidden_patterns": ["plain-bullet-dump", "unstyled-document-section"],
+            "description": str(visual_hint.get("description") or "Fallback layout reference."),
+            "required_visual_signals": list(visual_hint.get("required_signals") or []),
+            "recommended_content_shapes": [],
+            "allowed_content_shapes": [],
+            "forbidden_content_shapes": [],
+        }
+        matched_shape_signals = [
+            signal
+            for signal in _reference_string_list(selected.get("required_patterns")) + _reference_string_list(selected.get("required_visual_signals"))
+            if signal.lower().replace("_", "-") in content_shape
+        ]
+        constraint = {
+            "status": "fallback",
+            "is_allowed": True,
+            "reason": "no role candidate matched explicit constraints; fallback to visual hint",
+            "recommended_shapes": [],
+            "allowed_shapes": [],
+            "forbidden_shapes": [],
+            "recommended_matches": [],
+            "allowed_matches": [],
+            "forbidden_matches": [],
+        }
+
     selected["required_patterns"] = _reference_string_list(selected.get("required_patterns"))
     selected["required_classes"] = _reference_string_list(selected.get("required_classes"))
     selected["forbidden_patterns"] = _reference_string_list(selected.get("forbidden_patterns"))
-    selected["required_visual_signals"] = _reference_string_list(selected.get("required_visual_signals")) or _reference_string_list(visual_hint.get("required_signals"))
+    selected["required_visual_signals"] = _reference_string_list(selected.get("required_visual_signals")) or _reference_string_list(
+        visual_hint.get("required_signals")
+    )
+    selected["recommended_content_shapes"] = _reference_shape_list(selected.get("recommended_content_shapes"))
+    selected["allowed_content_shapes"] = _reference_shape_list(selected.get("allowed_content_shapes"))
+    selected["forbidden_content_shapes"] = _reference_shape_list(selected.get("forbidden_content_shapes"))
     preferred_layout = str(selected.get("preferred_layout") or "").strip() or _preferred_layout_for_hint(pattern_hint)
-    matched_shape_signals = [
-        signal
-        for signal in selected["required_patterns"] + selected["required_visual_signals"]
-        if signal.lower().replace("_", "-") in content_shape
-    ]
+
     return {
         "slide_number": slide_number,
         "title": title,
         "slide_role": role,
+        "content_shape": content_shape,
         "recipe_name": str(selected.get("name") or role or "default"),
         "layout": preferred_layout or None,
         "preferred_layout": preferred_layout or None,
@@ -3601,10 +3784,21 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
         "required_classes": list(selected["required_classes"]),
         "anti_patterns": _reference_string_list(selected.get("anti_patterns")),
         "forbidden_patterns": list(selected["forbidden_patterns"]),
+        "recommended_content_shapes": list(selected["recommended_content_shapes"]),
+        "allowed_content_shapes": list(selected["allowed_content_shapes"]),
+        "forbidden_content_shapes": list(selected["forbidden_content_shapes"]),
         "description": str(selected.get("description") or ""),
         "matched_shape_signals": matched_shape_signals,
+        "constraint_status": str(constraint.get("status") or "unknown"),
+        "constraint_reason": str(constraint.get("reason") or ""),
+        "constraint_matches": {
+            "recommended": list(constraint.get("recommended_matches") or []),
+            "allowed": list(constraint.get("allowed_matches") or []),
+            "forbidden": list(constraint.get("forbidden_matches") or []),
+        },
         "selection_reason": (
-            f"Use layout recipe `{selected.get('name')}` for role `{role or 'unknown'}` because it matches "
+            f"Use layout recipe `{selected.get('name')}` for role `{role or 'unknown'}` under "
+            f"`{constraint.get('status') or 'unknown'}` constraints; "
             f"required patterns {selected['required_patterns']} and visual signals {selected['required_visual_signals']}."
         ),
     }
@@ -3623,47 +3817,157 @@ def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mappin
     applicable = [dict(block) for block in blocks if role in _reference_string_list(block.get("applies_to_roles"))]
     preferred_order = {
         "cover": ["hero-title"],
-        "context": ["compact-bullets", "quote-callout"],
-        "framework": ["framework-explainer"],
-        "detail": ["focus-explainer", "quote-callout", "compact-bullets"],
-        "comparison": ["compare-split"],
+        "context": ["metric-insight-cards", "compact-bullets", "quote-callout"],
+        "framework": ["map-insight-cards", "framework-explainer"],
+        "detail": ["diagram-walkthrough", "focus-explainer", "quote-callout", "compact-bullets"],
+        "comparison": ["table-verdict", "compare-split"],
         "recommendation": ["decision-priority", "takeaway-next-steps", "compact-bullets"],
         "closing": ["takeaway-next-steps"],
     }.get(role, ["compact-bullets"])
     order_map = {name: index for index, name in enumerate(preferred_order)}
-    applicable.sort(key=lambda block: (order_map.get(str(block.get("name") or ""), 99), str(block.get("name") or "")))
-    if role in {"context", "detail", "recommendation"}:
-        selected = applicable[:2]
-    else:
-        selected = applicable[:1]
-    if not selected:
-        selected = [
+    target_count = 2 if role in {"context", "detail", "recommendation"} else 1
+    ranked_candidates: list[dict[str, Any]] = []
+    fallback_candidates: list[dict[str, Any]] = []
+    for block in applicable:
+        constraint = _evaluate_content_shape_constraints(content_shape=content_shape, payload=block)
+        required_signals = _reference_string_list(block.get("required_signals"))
+        matched_shape_signals = [
+            signal for signal in required_signals if signal.lower().replace("_", "-") in content_shape
+        ]
+        payload = {
+            "block": block,
+            "constraint": constraint,
+            "matched_shape_signals": matched_shape_signals,
+            "priority": order_map.get(str(block.get("name") or ""), 99),
+        }
+        if constraint.get("is_allowed"):
+            ranked_candidates.append(payload)
+        elif str(constraint.get("status") or "") != "forbidden":
+            fallback_candidates.append(payload)
+
+    ranked_candidates.sort(
+        key=lambda item: (
+            -_constraint_status_weight(str((item.get("constraint") or {}).get("status") or "")),
+            item.get("priority", 99),
+            -len(item.get("matched_shape_signals") or []),
+            str((item.get("block") or {}).get("name") or ""),
+        )
+    )
+    fallback_candidates.sort(
+        key=lambda item: (
+            -_constraint_status_weight(str((item.get("constraint") or {}).get("status") or "")),
+            item.get("priority", 99),
+            -len(item.get("matched_shape_signals") or []),
+            str((item.get("block") or {}).get("name") or ""),
+        )
+    )
+
+    selected_candidates: list[dict[str, Any]] = list(ranked_candidates[:target_count])
+    if len(selected_candidates) < target_count:
+        seen = {
+            str((item.get("block") or {}).get("name") or "")
+            for item in selected_candidates
+        }
+        for candidate in fallback_candidates:
+            name = str((candidate.get("block") or {}).get("name") or "")
+            if name in seen:
+                continue
+            selected_candidates.append(candidate)
+            seen.add(name)
+            if len(selected_candidates) >= target_count:
+                break
+
+    if not selected_candidates:
+        selected_candidates = [
             {
-                "name": "compact-bullets",
-                "recommended_structure": "2-4 compact bullets with one framing line",
-                "required_signals": ["compact-bullets"],
-                "visual_constraints": ["max 4 bullets"],
-                "anti_patterns": ["unstyled-document-section"],
+                "block": {
+                    "name": "compact-bullets",
+                    "recommended_structure": "2-4 compact bullets with one framing line",
+                    "required_signals": ["compact-bullets"],
+                    "visual_constraints": ["max 4 bullets"],
+                    "anti_patterns": ["unstyled-document-section"],
+                    "recommended_content_shapes": [],
+                    "allowed_content_shapes": [],
+                    "forbidden_content_shapes": [],
+                },
+                "constraint": {
+                    "status": "fallback",
+                    "is_allowed": True,
+                    "reason": "no block candidate matched constraints; fallback to compact-bullets",
+                    "recommended_shapes": [],
+                    "allowed_shapes": [],
+                    "forbidden_shapes": [],
+                    "recommended_matches": [],
+                    "allowed_matches": [],
+                    "forbidden_matches": [],
+                },
+                "matched_shape_signals": [],
+                "priority": 99,
             }
         ]
+
     normalized_blocks: list[dict[str, Any]] = []
-    for block in selected:
-        payload = dict(block)
+    for candidate in selected_candidates:
+        payload = dict(candidate.get("block") or {})
+        constraint = dict(candidate.get("constraint") or {})
         payload["required_signals"] = _reference_string_list(payload.get("required_signals"))
         payload["visual_constraints"] = _reference_string_list(payload.get("visual_constraints"))
         payload["anti_patterns"] = _reference_string_list(payload.get("anti_patterns"))
+        payload["recommended_content_shapes"] = _reference_shape_list(payload.get("recommended_content_shapes"))
+        payload["allowed_content_shapes"] = _reference_shape_list(payload.get("allowed_content_shapes"))
+        payload["forbidden_content_shapes"] = _reference_shape_list(payload.get("forbidden_content_shapes"))
         payload["selection_reason"] = (
-            f"Use block `{payload.get('name')}` for role `{role or 'unknown'}` to realize structure `{payload.get('recommended_structure')}`."
+            f"Use block `{payload.get('name')}` for role `{role or 'unknown'}` under "
+            f"`{constraint.get('status') or 'unknown'}` constraints to realize structure "
+            f"`{payload.get('recommended_structure')}`."
         )
-        payload["matched_shape_signals"] = [
-            signal for signal in payload["required_signals"] if signal.lower().replace("_", "-") in content_shape
-        ]
+        payload["matched_shape_signals"] = list(candidate.get("matched_shape_signals") or [])
+        payload["constraint_status"] = str(constraint.get("status") or "unknown")
+        payload["constraint_reason"] = str(constraint.get("reason") or "")
+        payload["constraint_matches"] = {
+            "recommended": list(constraint.get("recommended_matches") or []),
+            "allowed": list(constraint.get("allowed_matches") or []),
+            "forbidden": list(constraint.get("forbidden_matches") or []),
+        }
         normalized_blocks.append(payload)
+
     return {
         "slide_number": slide_number,
         "title": title,
         "slide_role": role,
+        "content_shape": content_shape,
         "blocks": normalized_blocks,
+    }
+
+
+def _constraint_status_counts(statuses: Sequence[str]) -> dict[str, int]:
+    keys = ("recommended", "allowed", "neutral", "out-of-scope", "fallback", "forbidden", "unknown")
+    counts = {key: 0 for key in keys}
+    for status in statuses:
+        text = str(status or "").strip().lower() or "unknown"
+        counts[text if text in counts else "unknown"] += 1
+    return counts
+
+
+def _layout_constraint_summary(selected_layouts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    statuses = [str(item.get("constraint_status") or "") for item in selected_layouts if isinstance(item, Mapping)]
+    return {
+        "counts": _constraint_status_counts(statuses),
+        "total": len(statuses),
+    }
+
+
+def _block_constraint_summary(selected_blocks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    statuses = [
+        str(block.get("constraint_status") or "")
+        for item in selected_blocks
+        if isinstance(item, Mapping)
+        for block in (item.get("blocks") or [])
+        if isinstance(block, Mapping)
+    ]
+    return {
+        "counts": _constraint_status_counts(statuses),
+        "total": len(statuses),
     }
 
 
@@ -4243,6 +4547,38 @@ def _select_slidev_references(
                 for block in (item.get("blocks") or [])
                 if isinstance(block, Mapping)
             ],
+            "layout_constraint_summary": _layout_constraint_summary(selected_layouts),
+            "block_constraint_summary": _block_constraint_summary(selected_blocks),
+            "layout_constraint_decisions": [
+                {
+                    "slide_number": int(layout.get("slide_number") or 0),
+                    "slide_role": str(layout.get("slide_role") or ""),
+                    "content_shape": str(layout.get("content_shape") or ""),
+                    "layout_recipe": str(layout.get("recipe_name") or ""),
+                    "constraint_status": str(layout.get("constraint_status") or ""),
+                    "constraint_reason": str(layout.get("constraint_reason") or ""),
+                }
+                for layout in selected_layouts
+                if isinstance(layout, Mapping)
+            ],
+            "block_constraint_decisions": [
+                {
+                    "slide_number": int(item.get("slide_number") or 0),
+                    "slide_role": str(item.get("slide_role") or ""),
+                    "content_shape": str(item.get("content_shape") or ""),
+                    "blocks": [
+                        {
+                            "name": str(block.get("name") or ""),
+                            "constraint_status": str(block.get("constraint_status") or ""),
+                            "constraint_reason": str(block.get("constraint_reason") or ""),
+                        }
+                        for block in (item.get("blocks") or [])
+                        if isinstance(block, Mapping)
+                    ],
+                }
+                for item in selected_blocks
+                if isinstance(item, Mapping)
+            ],
             "page_brief_compositions": [
                 {
                     "slide_number": int(brief.get("slide_number") or 0),
@@ -4267,8 +4603,14 @@ def _select_slidev_references(
                     "slide_role": str(layout.get("slide_role") or ""),
                     "layout_recipe": str(layout.get("recipe_name") or ""),
                     "layout_reason": str(layout.get("selection_reason") or ""),
+                    "layout_constraint_status": str(layout.get("constraint_status") or ""),
                     "block_recipes": [
                         str(block.get("name") or "")
+                        for block in ((selected_blocks[index].get("blocks") or []) if index < len(selected_blocks) else [])
+                        if isinstance(block, Mapping)
+                    ],
+                    "block_constraint_statuses": [
+                        str(block.get("constraint_status") or "")
                         for block in ((selected_blocks[index].get("blocks") or []) if index < len(selected_blocks) else [])
                         if isinstance(block, Mapping)
                     ],

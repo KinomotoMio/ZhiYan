@@ -1,0 +1,36 @@
+{
+  "name": "metric-insight-cards",
+  "applies_to_roles": [
+    "context"
+  ],
+  "recommended_structure": "one urgency metric card + 2-3 supporting insight cards + interpretation line",
+  "required_signals": [
+    "hero-metric",
+    "metric-stack",
+    "interpretation-line"
+  ],
+  "recommended_content_shapes": [
+    "urgency-metrics",
+    "metric-stack"
+  ],
+  "allowed_content_shapes": [
+    "urgency-metrics",
+    "metric-stack",
+    "problem-bullets"
+  ],
+  "forbidden_content_shapes": [
+    "quote-callout",
+    "table-compare",
+    "compare-grid"
+  ],
+  "visual_constraints": [
+    "one hero metric",
+    "max 3 supporting cards",
+    "must include interpretation line"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
+}

@@ -13,6 +13,22 @@
   "required_classes": [
     "deck-recommendation"
   ],
+  "recommended_content_shapes": [
+    "action-list",
+    "decision",
+    "action-path"
+  ],
+  "allowed_content_shapes": [
+    "action-list",
+    "decision",
+    "action-path",
+    "next-step"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "table-compare",
+    "compare-grid"
+  ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",

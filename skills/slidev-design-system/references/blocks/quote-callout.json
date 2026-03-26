@@ -9,6 +9,19 @@
     "section-kicker",
     "quote-or-callout"
   ],
+  "recommended_content_shapes": [
+    "quote-callout",
+    "detail-callout"
+  ],
+  "allowed_content_shapes": [
+    "quote-callout",
+    "detail-callout",
+    "problem-bullets"
+  ],
+  "forbidden_content_shapes": [
+    "table-compare",
+    "compare-grid"
+  ],
   "visual_constraints": [
     "single cue",
     "not a paragraph wall",

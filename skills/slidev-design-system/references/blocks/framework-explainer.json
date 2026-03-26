@@ -9,6 +9,20 @@
     "visual-structure",
     "model-takeaway"
   ],
+  "recommended_content_shapes": [
+    "framework-grid",
+    "two-column-framework"
+  ],
+  "allowed_content_shapes": [
+    "framework-grid",
+    "two-column-framework",
+    "quadrant-map"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "next-step",
+    "action-list"
+  ],
   "visual_constraints": [
     "must look modeled",
     "must include takeaway",

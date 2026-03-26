@@ -9,6 +9,22 @@
     "verdict-line",
     "next-step-or-takeaway"
   ],
+  "recommended_content_shapes": [
+    "next-step",
+    "closing",
+    "action-list"
+  ],
+  "allowed_content_shapes": [
+    "next-step",
+    "closing",
+    "action-list",
+    "decision"
+  ],
+  "forbidden_content_shapes": [
+    "title-subtitle",
+    "framework-grid",
+    "table-compare"
+  ],
   "visual_constraints": [
     "clear ending",
     "max 4 actions",

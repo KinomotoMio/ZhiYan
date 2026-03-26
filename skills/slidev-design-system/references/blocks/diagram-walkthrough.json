@@ -1,32 +1,32 @@
 {
-  "name": "focus-explainer",
+  "name": "diagram-walkthrough",
   "applies_to_roles": [
     "detail"
   ],
-  "recommended_structure": "section kicker + one key claim card + 2-3 short supporting cues",
+  "recommended_structure": "single claim line + diagram or mermaid walkthrough + 2 supporting cues",
   "required_signals": [
-    "section-kicker",
+    "diagram-flow",
     "single-claim",
     "focus-block"
   ],
   "recommended_content_shapes": [
-    "detail-callout",
-    "focus-detail"
+    "diagram-callout",
+    "workflow-diagram"
   ],
   "allowed_content_shapes": [
-    "detail-callout",
-    "focus-detail",
-    "diagram-callout"
+    "diagram-callout",
+    "workflow-diagram",
+    "detail-callout"
   ],
   "forbidden_content_shapes": [
     "title-subtitle",
-    "table-compare",
-    "next-step"
+    "next-step",
+    "table-compare"
   ],
   "visual_constraints": [
-    "one key claim only",
-    "max 3 supporting cues",
-    "avoid paragraph wall"
+    "one primary diagram",
+    "single claim headline",
+    "max 2 supporting cues"
   ],
   "anti_patterns": [
     "plain-bullet-dump",
