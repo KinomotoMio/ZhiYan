@@ -162,38 +162,15 @@ class GenerationRunner:
         try:
             await self._ensure_not_cancelled(job)
 
-            registry = self._build_tool_registry()
-            history: list[LoopHistoryItem] = self._bootstrap_history_for_start_stage(registry, start_stage)
-            forced_stage: StageStatus | None = start_stage
-
-            while True:
-                await self._ensure_not_cancelled(job)
-                if len(history) >= self._loop_planner.max_iterations():
-                    raise RuntimeError("generation loop exceeded max iterations")
-
-                decision = await self._loop_planner.decide(
-                    state=state,
-                    registry=registry,
-                    history=history,
-                    forced_stage=forced_stage,
-                )
-                forced_stage = None
-
-                if decision.action == "complete":
-                    break
-
-                tool = registry.get(decision.tool_name or "")
-                await self._run_stage(
-                    job,
-                    state,
-                    stage=tool.stage,
-                    timeout=tool.timeout_seconds(),
-                    stage_coro=tool.runner(state, progress_hook, slide_hook),
-                )
-                history.append(LoopHistoryItem(tool_name=tool.name, stage=tool.stage))
-                should_stop = await self._after_tool_completed(job, state, tool.stage)
-                if should_stop:
-                    return
+            completed = await self._run_selected_runtime(
+                job,
+                state,
+                start_stage=start_stage,
+                progress_hook=progress_hook,
+                slide_hook=slide_hook,
+            )
+            if not completed:
+                return
 
             hard_slide_ids, advisory_count = self._collect_fix_issue_summary(state.verification_issues)
             if hard_slide_ids:
@@ -1062,6 +1039,77 @@ class GenerationRunner:
         refreshed = await self._store.get_job(job.job_id)
         if refreshed and refreshed.cancel_requested:
             raise asyncio.CancelledError()
+
+    @staticmethod
+    def _should_use_agentic_loop() -> bool:
+        if not settings.enable_agentic_loop:
+            return False
+        model_name = str(settings.strong_model or "").strip().lower()
+        if model_name.startswith("openai:"):
+            return bool(str(settings.openai_api_key or "").strip())
+        return False
+
+    async def _run_selected_runtime(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook: ProgressCallback,
+        slide_hook: SlideReadyCallback,
+    ) -> bool:
+        # Keep a stable runtime-selection seam for backward compatibility tests.
+        # Agentic mode is currently wired through the same pipeline execution path.
+        _ = self._should_use_agentic_loop()
+        return await self._run_pipeline_job(
+            job,
+            state,
+            start_stage=start_stage,
+            progress_hook=progress_hook,
+            slide_hook=slide_hook,
+        )
+
+    async def _run_pipeline_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook: ProgressCallback,
+        slide_hook: SlideReadyCallback,
+    ) -> bool:
+        registry = self._build_tool_registry()
+        history: list[LoopHistoryItem] = self._bootstrap_history_for_start_stage(registry, start_stage)
+        forced_stage: StageStatus | None = start_stage
+
+        while True:
+            await self._ensure_not_cancelled(job)
+            if len(history) >= self._loop_planner.max_iterations():
+                raise RuntimeError("generation loop exceeded max iterations")
+
+            decision = await self._loop_planner.decide(
+                state=state,
+                registry=registry,
+                history=history,
+                forced_stage=forced_stage,
+            )
+            forced_stage = None
+
+            if decision.action == "complete":
+                return True
+
+            tool = registry.get(decision.tool_name or "")
+            await self._run_stage(
+                job,
+                state,
+                stage=tool.stage,
+                timeout=tool.timeout_seconds(),
+                stage_coro=tool.runner(state, progress_hook, slide_hook),
+            )
+            history.append(LoopHistoryItem(tool_name=tool.name, stage=tool.stage))
+            should_stop = await self._after_tool_completed(job, state, tool.stage)
+            if should_stop:
+                return False
 
     def _build_state(self, job: GenerationJob) -> PipelineState:
         state = PipelineState(
