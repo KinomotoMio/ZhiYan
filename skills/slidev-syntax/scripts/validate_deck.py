@@ -82,6 +82,14 @@ def validate_deck(
                 "forbidden_slide_count": 0,
                 "composition_counts": {},
             },
+            media_structure_summary={
+                "expected_slide_count": 0,
+                "matched_slide_count": 0,
+                "missing_slide_count": 0,
+                "hit_rate": 1.0,
+                "role_summary": {},
+                "slides": [],
+            },
             deck_chrome_usage_summary={"deck_label": None, "cue_counts": {}, "shared_cues": []},
             theme_fidelity_summary={
                 "selected_theme": str((selected_theme or {}).get("theme") or (selected_style or {}).get("theme") or "seriph"),
@@ -161,6 +169,7 @@ def validate_deck(
     native_usage_summary = _native_usage_summary(slides)
     reference_usage_summary = _reference_usage_summary(slides, selected_layouts, selected_blocks)
     page_brief_fidelity_summary = _page_brief_fidelity_summary(slides, page_briefs)
+    media_structure_summary = _media_structure_summary(reference_usage_summary)
     deck_chrome_usage_summary = _deck_chrome_usage_summary(slides, deck_chrome)
     theme_fidelity_summary = _theme_fidelity_summary(
         markdown=text,
@@ -175,6 +184,7 @@ def validate_deck(
             native_usage_summary,
             reference_usage_summary,
             page_brief_fidelity_summary,
+            media_structure_summary,
             theme_fidelity_summary,
         )
     )
@@ -187,6 +197,7 @@ def validate_deck(
         native_usage_summary=native_usage_summary,
         reference_usage_summary=reference_usage_summary,
         page_brief_fidelity_summary=page_brief_fidelity_summary,
+        media_structure_summary=media_structure_summary,
         deck_chrome_usage_summary=deck_chrome_usage_summary,
         theme_fidelity_summary=theme_fidelity_summary,
         blank_first_slide_detected=bool(normalization.get("blank_first_slide_detected")),
@@ -204,6 +215,7 @@ def _result(
     native_usage_summary: dict[str, Any],
     reference_usage_summary: dict[str, Any],
     page_brief_fidelity_summary: dict[str, Any],
+    media_structure_summary: dict[str, Any],
     deck_chrome_usage_summary: dict[str, Any],
     theme_fidelity_summary: dict[str, Any],
     blank_first_slide_detected: bool,
@@ -229,6 +241,7 @@ def _result(
             "forbidden_slide_count": int(reference_usage_summary.get("forbidden_slide_count") or 0),
         },
         "page_brief_fidelity_summary": page_brief_fidelity_summary,
+        "media_structure_summary": media_structure_summary,
         "deck_chrome_usage_summary": deck_chrome_usage_summary,
         "theme_fidelity_summary": theme_fidelity_summary,
         "presentation_feel_summary": presentation_feel_summary,
@@ -294,6 +307,7 @@ def _structure_warnings(
     native_usage_summary: dict[str, Any],
     reference_usage_summary: dict[str, Any],
     page_brief_fidelity_summary: dict[str, Any],
+    media_structure_summary: dict[str, Any],
     theme_fidelity_summary: dict[str, Any],
 ) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = []
@@ -379,6 +393,15 @@ def _structure_warnings(
                 "message": "Detail pages still miss a single-focus explainer structure.",
             }
         )
+    expected_media = int(media_structure_summary.get("expected_slide_count") or 0)
+    matched_media = int(media_structure_summary.get("matched_slide_count") or 0)
+    if expected_media >= 2 and matched_media < max(1, expected_media // 2):
+        warnings.append(
+            {
+                "code": "low_media_structure_hit_rate",
+                "message": "Framework/comparison/detail pages are missing expected media structures (table/image/diagram/grid) too often.",
+            }
+        )
 
     signatures = [_slide_signature(slide) for slide in slides]
     if _has_repeated_run(signatures, threshold=3):
@@ -445,7 +468,7 @@ def _presentation_feel_summary(
     visual_anchor_codes = [
         code
         for code in warning_codes
-        if code in {"low_slidev_native_usage", "low_visual_recipe_usage"}
+        if code in {"low_slidev_native_usage", "low_visual_recipe_usage", "low_media_structure_hit_rate"}
     ]
     signal_codes = sorted(set(document_like_codes + crowding_codes + visual_anchor_codes))
     status = "missing" if slide_count == 0 else "weak" if signal_codes or issues else "matched"
@@ -491,6 +514,16 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
         matched_patterns = [pattern for pattern in expected_patterns if pattern in observed_patterns or pattern in observed_signals]
         matched_classes = [name for name in expected_classes if name in observed_classes]
         matched_block_signals = [signal for signal in expected_block_signals if signal in observed_signals]
+        media_required_patterns = _media_required_patterns(
+            role=role,
+            content_shape=str(layout.get("content_shape") or ""),
+            expected_patterns=expected_patterns,
+            expected_block_signals=expected_block_signals,
+        )
+        media_observed = sorted(set(observed_patterns + observed_signals))
+        media_matched = [pattern for pattern in media_required_patterns if pattern in media_observed]
+        media_expected = role in {"framework", "comparison", "detail"}
+        media_status = "matched" if media_expected and media_matched else "missing" if media_expected else "n/a"
         if forbidden_hits:
             status = "forbidden"
         elif (not layout.get("preferred_layout") or matched_layout) and (matched_patterns or matched_classes or matched_block_signals):
@@ -508,6 +541,7 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
         slide_reports.append(
             {
                 "slide_number": index,
+                "role": role or None,
                 "selected_layout": str(layout.get("recipe_name") or "") or None,
                 "selected_blocks": [str(block.get("name") or "") for block in block_payloads if isinstance(block, dict)],
                 "observed_layout": observed_layout,
@@ -519,6 +553,10 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
                 "matched_patterns": matched_patterns,
                 "matched_classes": matched_classes,
                 "matched_block_signals": matched_block_signals,
+                "media_expected": media_expected,
+                "media_status": media_status,
+                "media_required_patterns": media_required_patterns,
+                "media_matched_patterns": media_matched,
             }
         )
     return {
@@ -528,6 +566,83 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
         "forbidden_slide_count": counts["forbidden"],
         "slides": slide_reports,
         "role_skeleton_summary": role_summary,
+    }
+
+
+def _media_required_patterns(
+    *,
+    role: str,
+    content_shape: str,
+    expected_patterns: list[str],
+    expected_block_signals: list[str],
+) -> list[str]:
+    patterns: list[str] = []
+    if role == "framework":
+        patterns.extend(["mermaid", "table", "div-grid", "map-with-insights", "image"])
+    elif role == "comparison":
+        patterns.extend(["table", "compare-panel"])
+    elif role == "detail":
+        patterns.extend(["table", "image", "div-grid", "focus-explainer", "mermaid"])
+    tokens = _shape_tokens(content_shape)
+    if {"table", "matrix", "compare"} & tokens and "table" not in patterns:
+        patterns.insert(0, "table")
+    if {"image", "photo", "figure"} & tokens and "image" not in patterns:
+        patterns.insert(0, "image")
+    if {"diagram", "flow", "graph"} & tokens and "mermaid" not in patterns:
+        patterns.insert(0, "mermaid")
+    if {"map", "quadrant", "grid"} & tokens and "div-grid" not in patterns:
+        patterns.insert(0, "div-grid")
+    for token in expected_patterns + expected_block_signals:
+        if token in {"table", "mermaid", "div-grid", "image", "map-with-insights", "compare-panel", "focus-block"}:
+            if token not in patterns:
+                patterns.append(token)
+    return patterns
+
+
+def _media_structure_summary(reference_usage_summary: dict[str, Any]) -> dict[str, Any]:
+    slide_reports = [dict(item) for item in (reference_usage_summary.get("slides") or []) if isinstance(item, dict)]
+    expected = 0
+    matched = 0
+    missing = 0
+    role_summary: dict[str, dict[str, int]] = {}
+    slides: list[dict[str, Any]] = []
+    for report in slide_reports:
+        role = str(report.get("role") or "").strip()
+        is_expected = bool(report.get("media_expected"))
+        status = str(report.get("media_status") or "n/a")
+        if is_expected:
+            expected += 1
+            if status == "matched":
+                matched += 1
+            elif status == "missing":
+                missing += 1
+        if role:
+            bucket = role_summary.setdefault(role, {"expected": 0, "matched": 0, "missing": 0, "total": 0})
+            bucket["total"] += 1
+            if is_expected:
+                bucket["expected"] += 1
+            if status == "matched":
+                bucket["matched"] += 1
+            elif status == "missing":
+                bucket["missing"] += 1
+        slides.append(
+            {
+                "slide_number": int(report.get("slide_number") or 0),
+                "role": role or None,
+                "status": status,
+                "expected": is_expected,
+                "required_patterns": _string_list(report.get("media_required_patterns")),
+                "matched_patterns": _string_list(report.get("media_matched_patterns")),
+            }
+        )
+    hit_rate = round(matched / expected, 4) if expected else 1.0
+    return {
+        "expected_slide_count": expected,
+        "matched_slide_count": matched,
+        "missing_slide_count": missing,
+        "hit_rate": hit_rate,
+        "role_summary": role_summary,
+        "slides": slides,
     }
 
 
@@ -817,17 +932,26 @@ def _split_classes(raw: str) -> list[str]:
     return [token.strip() for token in re.split(r"\s+", raw.strip()) if token.strip()]
 
 
+def _shape_tokens(content_shape: str) -> set[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(content_shape or "").lower())
+    return {token for token in normalized.split() if token}
+
+
 def _observed_patterns(slide: str) -> list[str]:
     patterns: list[str] = []
     layout_name = _extract_layout_name(slide)
     if layout_name:
         patterns.append(layout_name)
+        if layout_name in {"image", "image-left", "image-right"}:
+            patterns.append("image")
     if "```mermaid" in slide:
         patterns.append("mermaid")
     if re.search(r"^\s*>\s+", slide, re.MULTILINE):
         patterns.append("quote")
     if "|" in slide and re.search(r"^\s*\|.*\|\s*$", slide, re.MULTILINE):
         patterns.append("table")
+    if re.search(r"!\[[^\]]*\]\([^)]+\)", slide) or "<img" in slide.lower():
+        patterns.append("image")
     if "<div" in slide and "grid" in slide:
         patterns.append("div-grid")
     if "::" in slide:
@@ -881,9 +1005,11 @@ def _observed_signals(
         signals.add("why-now-framing")
     if 2 <= _bullet_count(slide) <= 4:
         signals.add("compact-bullets")
-    if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
+    if any(name in observed_patterns for name in ("mermaid", "table", "div-grid", "image")):
         signals.add("visual-structure")
         signals.add("focus-block")
+    if "image" in observed_patterns:
+        signals.add("image")
     if any(token in lower for token in ("takeaway", "next step", "next steps", "下一步", "总结", "结论")):
         signals.add("next-step-or-takeaway")
         signals.add("closing-line")
@@ -997,7 +1123,9 @@ def _page_brief_fidelity(
 
 def _has_visual_structure(slide: str) -> bool:
     markers = ("```mermaid", "layout:", "class:", "> ", "|", "::", "<div")
-    return any(marker in slide for marker in markers)
+    if any(marker in slide for marker in markers):
+        return True
+    return bool(re.search(r"!\[[^\]]*\]\([^)]+\)", slide) or "<img" in slide.lower())
 
 
 def _forbidden_pattern_hits(*, slide: str, forbidden_patterns: list[str]) -> list[str]:

@@ -1,0 +1,28 @@
+{
+  "name": "framework-map-insights",
+  "applies_to_roles": [
+    "framework"
+  ],
+  "preferred_layout": null,
+  "required_patterns": [
+    "map-with-insights",
+    "div-grid",
+    "table",
+    "mermaid"
+  ],
+  "required_classes": [
+    "deck-framework",
+    "map-with-insights"
+  ],
+  "forbidden_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "bullet-only-framework"
+  ],
+  "description": "Framework page with map/insights split to keep model and interpretation visible together.",
+  "required_visual_signals": [
+    "visual-structure",
+    "model-takeaway",
+    "focus-block"
+  ]
+}

@@ -246,6 +246,87 @@ Adopt the stable mappings first.
 """
 
 
+def _media_missing_markdown() -> str:
+    return """---
+theme: seriph
+title: Media Gap Deck
+class: theme-tech-launch
+---
+
+# Media Gap Deck
+
+结构有效，但关键页型缺少图/表模块。
+
+---
+class: deck-context
+---
+
+## Why now
+
+- 成本压力
+- 速度压力
+
+---
+class: deck-framework
+---
+
+模型框架
+
+## 三层框架
+
+- 观察层
+- 执行层
+
+Takeaway: 先分层，再改流程。
+
+---
+class: deck-detail
+---
+
+聚焦判断
+
+## 一个关键判断
+
+核心判断：当前瓶颈在协同链路，而不是模型能力。
+
+- 线索一：流程交接点多
+- 线索二：重复校验多
+
+---
+layout: two-cols
+class: deck-comparison
+---
+
+## 方案对照
+
+::left::
+
+### 方案 A
+
+- 先重写流程
+- 再重写岗位
+
+::right::
+
+### 方案 B
+
+- 先买工具
+- 再补流程
+
+结论：先流程后工具。
+
+---
+layout: end
+class: deck-closing
+---
+
+## Next Step
+
+1. 锁定试点范围
+2. 两周内复盘
+"""
+
+
 def _blank_first_slide_markdown() -> str:
     return """---
 theme: default
@@ -1250,6 +1331,45 @@ def test_slidev_reference_selection_can_prefer_map_with_insights_for_risk_pages(
     assert "map / quadrant / table / mermaid" in " ".join(selection["page_briefs"][2]["supporting_points"])
 
 
+def test_slidev_reference_selection_biases_media_blocks_for_key_roles(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "结构地图", "slide_role": "framework", "content_shape": "quadrant-map", "goal": "解释结构"},
+        {"slide_number": 3, "title": "关键证据", "slide_role": "detail", "content_shape": "image-evidence", "goal": "支撑判断"},
+        {"slide_number": 4, "title": "路径对照", "slide_role": "comparison", "content_shape": "table-compare", "goal": "建立对照"},
+        {"slide_number": 5, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI future of work",
+        num_pages=5,
+        material_excerpt="Prepare a visual deck with table and image evidence.",
+        source_hints={
+            "total_sources": 2,
+            "by_file_category": {"xlsx": 1, "image": 1},
+            "media_preferences": {
+                "table_source_count": 1,
+                "image_source_count": 1,
+                "diagram_source_count": 0,
+                "has_media_bias": True,
+                "preferred_patterns": ["table", "image"],
+            },
+        },
+    )
+
+    assert selection["selected_blocks"][1]["blocks"][0]["name"] == "framework-media-panel"
+    assert selection["selected_blocks"][2]["blocks"][0]["name"] == "detail-image-callout"
+    assert selection["selected_blocks"][3]["blocks"][0]["name"] == "compare-table"
+    media_summary = selection["selection_summary"]["media_plan_summary"]
+    assert media_summary["expected_slide_count"] >= 3
+    assert media_summary["planned_slide_count"] >= 3
+    assert media_summary["missing_slide_count"] == 0
+
+
 def test_slidev_style_frontmatter_injects_shared_visual_scaffold_once(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
 
@@ -1430,6 +1550,53 @@ def test_slidev_syntax_validate_deck_reports_reference_usage_summary(monkeypatch
     assert result["presentation_feel_summary"]["status"] == "matched"
     assert result["presentation_feel_summary"]["signal_count"] == 0
     assert result["theme_fidelity_summary"]["observed_theme_markers"]["shared_visual_scaffold_present"] is False
+
+
+def test_slidev_syntax_validate_deck_reports_media_hit_rate(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "背景", "slide_role": "context", "content_shape": "problem-bullets", "goal": "背景"},
+        {"slide_number": 3, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "框架"},
+        {"slide_number": 4, "title": "细节", "slide_role": "detail", "content_shape": "detail-callout", "goal": "细节"},
+        {"slide_number": 5, "title": "对比", "slide_role": "comparison", "content_shape": "table-compare", "goal": "对比"},
+        {"slide_number": 6, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
+    ]
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI strategy",
+        num_pages=6,
+        material_excerpt="Need media-heavy framework/detail/comparison pages.",
+    )
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-syntax",
+            "validate_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": _media_missing_markdown(),
+                    "expected_pages": 6,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                    "page_briefs": selection["page_briefs"],
+                    "deck_chrome": selection["deck_chrome"],
+                },
+            },
+        )
+    )
+
+    warning_codes = {warning["code"] for warning in result["warnings"]}
+    assert warning_codes >= {"low_media_structure_hit_rate"}
+    media_summary = result["media_structure_summary"]
+    assert media_summary["expected_slide_count"] == 3
+    assert media_summary["missing_slide_count"] == 3
+    assert media_summary["hit_rate"] == 0.0
 
 
 def test_slidev_syntax_validate_deck_reports_visual_theme_markers(monkeypatch, tmp_path):
@@ -1980,6 +2147,57 @@ class: deck-closing
     assert summary["status"] == "weak"
     assert summary["document_like_warning_count"] >= 5
     assert summary["signal_count"] >= summary["document_like_warning_count"]
+
+
+def test_slidev_deck_review_tracks_missing_media_structures(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "背景", "slide_role": "context", "content_shape": "problem-bullets", "goal": "背景"},
+        {"slide_number": 3, "title": "框架", "slide_role": "framework", "content_shape": "framework-grid", "goal": "框架"},
+        {"slide_number": 4, "title": "细节", "slide_role": "detail", "content_shape": "detail-callout", "goal": "细节"},
+        {"slide_number": 5, "title": "对比", "slide_role": "comparison", "content_shape": "table-compare", "goal": "对比"},
+        {"slide_number": 6, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收尾"},
+    ]
+    selection = slidev_mvp_mod._select_slidev_references(
+        outline_items=outline_items,
+        topic="AI strategy",
+        num_pages=6,
+        material_excerpt="Need media-heavy framework/detail/comparison pages.",
+    )
+
+    deck_review = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": _media_missing_markdown(),
+                    "outline_items": outline_items,
+                    "selected_style": selection["selected_style"],
+                    "selected_theme": selection["selected_theme"],
+                    "selected_layouts": selection["selected_layouts"],
+                    "selected_blocks": selection["selected_blocks"],
+                    "page_briefs": selection["page_briefs"],
+                    "deck_chrome": selection["deck_chrome"],
+                },
+            },
+        )
+    )
+
+    warning_codes = {warning["code"] for warning in deck_review["warnings"]}
+    assert warning_codes >= {
+        "framework_media_structure_missing",
+        "detail_media_structure_missing",
+        "comparison_media_structure_missing",
+    }
+    media_summary = deck_review["media_structure_summary"]
+    assert media_summary["expected_slide_count"] == 3
+    assert media_summary["missing_slide_count"] == 3
+    assert media_summary["hit_rate"] == 0.0
 
 
 def test_slidev_deck_review_warns_on_excessive_inline_style(monkeypatch, tmp_path):

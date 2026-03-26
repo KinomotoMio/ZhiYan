@@ -1,0 +1,22 @@
+{
+  "name": "detail-image-callout",
+  "applies_to_roles": [
+    "detail"
+  ],
+  "recommended_structure": "single-claim focus block + one image panel + concise interpretation",
+  "required_signals": [
+    "single-claim",
+    "focus-block",
+    "image"
+  ],
+  "visual_constraints": [
+    "one hero image or figure",
+    "caption explains why the image matters",
+    "avoid decorative-only images"
+  ],
+  "anti_patterns": [
+    "unstyled-document-section",
+    "plain-bullet-dump",
+    "long-paragraph-context"
+  ]
+}
