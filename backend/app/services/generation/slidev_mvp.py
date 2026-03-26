@@ -91,7 +91,9 @@ LONG_DECK_PLANNING_TOOLS = (
 )
 SLIDEV_OUTLINE_ROLES = (
     "cover",
+    "agenda",
     "context",
+    "section-divider",
     "framework",
     "detail",
     "comparison",
@@ -110,6 +112,17 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
         },
         "reason": "封面优先使用 Slidev 原生开场布局，突出标题与定位。",
     },
+    "agenda": {
+        "preferred_layouts": ["section", "center"],
+        "preferred_patterns": ["table", "div-grid", "bullet-list"],
+        "visual_recipe": {
+            "name": "agenda-outline",
+            "preferred_classes": ["deck-agenda"],
+            "required_signals": ["agenda-line", "section-map", "chapter-preview"],
+            "description": "目录页使用路由图或精简列表，先给出章节地图，再落一句导航判断。",
+        },
+        "reason": "目录页优先使用章节地图式结构，帮助读者先看到全局路线。",
+    },
     "context": {
         "preferred_layouts": [],
         "preferred_patterns": ["callout", "quote", "compact-bullets"],
@@ -120,6 +133,17 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
             "description": "why-now framing + 一句判断 + 紧凑 supporting cues。",
         },
         "reason": "背景页更适合轻量结构提示，而不是重布局。",
+    },
+    "section-divider": {
+        "preferred_layouts": ["section", "center"],
+        "preferred_patterns": ["section", "hero-title", "short-subtitle"],
+        "visual_recipe": {
+            "name": "section-divider",
+            "preferred_classes": ["deck-section-divider"],
+            "required_signals": ["chapter-title", "section-break", "section-kicker"],
+            "description": "章节分隔页用简短的 chapter title + 一句过渡，明确段落切换。",
+        },
+        "reason": "章节分隔页优先使用原生 section/center 结构，明确切换章节。",
     },
     "framework": {
         "preferred_layouts": [],
@@ -985,7 +1009,7 @@ class SlidevMvpService:
             "8. 用简短文本确认规划完成后停止，不要生成最终 markdown，不要调用 review_slidev_deck / validate_slidev_deck / save_slidev_artifact。\n\n"
             f"目标页数：{resolved.num_pages} 页\n"
             f"主题：{resolved.topic}\n"
-            "要求：长 deck 需要保持全局 style 一致，并覆盖 cover / context / framework / comparison / closing 等结构型角色。\n\n"
+            "要求：长 deck 需要保持全局 style 一致，并覆盖 cover / agenda / context / section-divider / framework / comparison / recommendation / closing 等结构型角色。\n\n"
             "输入材料：\n"
             f"{resolved.material}"
         )
@@ -1593,7 +1617,7 @@ class SlidevMvpService:
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
             "- 如果 selected layout/block 给出 required_classes / required_visual_signals，就把它们落实成页 frontmatter class、section kicker、verdict/takeaway line、compare labels 等可观察结构。\n"
             "- 关键页应尽量出现 top chrome 或 footer chrome，而不是每页都只有标题开头；cover 之外的页优先给出 `slide-topline` 或 `section-kicker`。\n"
-            "- `cover / context / framework / comparison / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
+            "- `cover / agenda / context / section-divider / framework / comparison / recommendation / closing` 都应有明显页型节奏变化，而不是统一 heading + bullets。\n"
             "- 只在 review_slidev_outline / select_slidev_references / review_slidev_deck / validate_slidev_deck 都完成且通过后，才允许 save_slidev_artifact。\n"
             "- 如果你已经完成 markdown 与中间 review/validate，controller 会接手最终 final gate；不要因为记不清 save 顺序而中断 deck 生成。\n\n"
             "第一页语法约束：\n"
@@ -2734,7 +2758,9 @@ def _chunk_role_requirements(role: str) -> str:
     normalized = role.strip().lower()
     requirements = {
         "cover": "hero title + short subtitle; avoid bullet-heavy body",
+        "agenda": "agenda map + chapter preview + clear route cue, not a plain bullet outline",
         "context": "why-now framing + one judgment line + 2-3 supporting cues",
+        "section-divider": "chapter title + short transition + explicit section break cue",
         "framework": "visual model structure (mermaid/table/grid/matrix) + one takeaway line",
         "detail": "single-focus explainer with one claim + 2-3 cues; avoid multi-claim drift",
         "comparison": "must use two-cols or explicit compare table with labels + verdict",
@@ -3035,6 +3061,17 @@ def _build_slidev_pattern_hint(*, slide_role: str, content_shape: str) -> dict[s
     patterns = list(base.get("preferred_patterns") or [])
     lower_shape = content_shape.strip().lower()
 
+    if slide_role == "agenda":
+        if "section" not in layouts:
+            layouts.append("section")
+        if "table" not in patterns:
+            patterns.append("table")
+        if "div-grid" not in patterns:
+            patterns.append("div-grid")
+    if slide_role == "section-divider":
+        for layout_name in ("section", "center"):
+            if layout_name not in layouts:
+                layouts.append(layout_name)
     if "compare" in lower_shape or "response" in lower_shape:
         if "two-cols" not in layouts:
             layouts.append("two-cols")
@@ -3067,6 +3104,14 @@ def _build_slidev_visual_hint(*, slide_role: str, content_shape: str) -> dict[st
     preferred_classes = [str(name).strip() for name in (base.get("preferred_classes") or []) if str(name).strip()]
     required_signals = [str(name).strip() for name in (base.get("required_signals") or []) if str(name).strip()]
 
+    if slide_role == "agenda":
+        for signal in ("agenda-line", "section-map", "chapter-preview"):
+            if signal not in required_signals:
+                required_signals.append(signal)
+    if slide_role == "section-divider":
+        for signal in ("section-kicker", "chapter-title", "section-break"):
+            if signal not in required_signals:
+                required_signals.append(signal)
     if "quote" in lower_shape and "quote-or-callout" not in required_signals:
         required_signals.append("quote-or-callout")
     if "compare" in lower_shape and "split-compare" not in required_signals:
@@ -4060,7 +4105,9 @@ def _slidev_deck_thesis(*, topic: str, material_excerpt: str) -> str:
 def _default_page_goal(role: str) -> str:
     return {
         "cover": "建立主题定位并给出开场 framing",
+        "agenda": "建立目录和章节路线，让观众先看见全局骨架",
         "context": "解释为什么这件事现在值得关注",
+        "section-divider": "明确章节切换并为下一段内容做过渡",
         "framework": "给出可复用的结构模型",
         "detail": "用一页支撑一个关键判断",
         "comparison": "把两种路径或状态清晰对照",
@@ -4072,7 +4119,9 @@ def _default_page_goal(role: str) -> str:
 def _default_narrative_job(role: str) -> str:
     return {
         "cover": "set the narrative frame",
+        "agenda": "map the route ahead",
         "context": "establish urgency",
+        "section-divider": "mark the chapter break",
         "framework": "provide the mental model",
         "detail": "support one argument with evidence",
         "comparison": "show contrast and trade-offs",
@@ -4119,12 +4168,16 @@ def _page_brief_composition(
     )
     if role == "cover":
         return "cover-hero"
+    if role == "agenda":
+        return "agenda-outline"
     if role == "detail":
         return "focus-explainer"
     if role == "comparison":
         return "compare-panel"
     if role in {"recommendation", "closing"}:
         return "action-path"
+    if role == "section-divider":
+        return "section-divider"
     if role == "context":
         return "metric-stack" if any(token in haystack for token in urgency_tokens) or int(item.get("slide_number") or 0) <= 2 else "metric-stack"
     if role in {"framework", "context"} and any(token in haystack for token in map_tokens):
@@ -4137,8 +4190,12 @@ def _page_brief_composition(
 def _page_brief_claim(*, title: str, goal: str, role: str, thesis: str) -> str:
     if role == "cover":
         return title
+    if role == "agenda":
+        return f"{title} 应先把目录和章节路线讲清楚，让观众先看见整份 deck 的骨架。"
     if role == "context":
         return f"{title} 不是远期趋势，而是已经影响组织与个人决策的现实变化。"
+    if role == "section-divider":
+        return f"{title} 只是一个清晰的章节切换页，重点是让观众感知到新的叙事段落开始了。"
     if role == "framework":
         return f"{title} 需要被解释成一个可读的结构，而不是散乱结论。"
     if role == "detail":
@@ -4171,6 +4228,11 @@ def _page_brief_supporting_points(
             "右侧 2-3 个 insight cards",
             "1 句 takeaway / source line",
         ],
+        "agenda-outline": [
+            "1 个章节路线图 / agenda map",
+            "2-4 个 section cards 或章节节点",
+            "1 句 narrative route / chapter preview",
+        ],
         "compare-panel": [
             "左右标签必须显式出现",
             "每侧 2-4 条对照点",
@@ -4180,6 +4242,11 @@ def _page_brief_supporting_points(
             "1 句 headline / recommendation",
             "2-4 条 next steps / actions",
             "1 句 closing or priority cue",
+        ],
+        "section-divider": [
+            "1 个 chapter title",
+            "1 条短 transition / framing line",
+            "1 个明确的 section break cue",
         ],
         "focus-explainer": [
             "1 个核心判断卡片（single-claim）",
@@ -4193,6 +4260,10 @@ def _page_brief_supporting_points(
         ],
     }
     points = list(defaults.get(preferred_composition, []))
+    if role == "agenda" and "1 个章节路线图 / agenda map" not in points:
+        points = list(defaults["agenda-outline"])
+    if role == "section-divider" and "1 个 chapter title" not in points:
+        points = list(defaults["section-divider"])
     if role == "framework" and "framework-explainer" in block_names and "1 个结构化模型" not in points:
         points.insert(0, "1 个结构化模型 / diagram")
     if title and points:
@@ -4205,11 +4276,17 @@ def _page_brief_must_keep(*, role: str, preferred_composition: str) -> list[str]
         "cover-hero": ["短 kicker", "hero title", "短 subtitle"],
         "metric-stack": ["hero fact / claim", "2-3 supporting cards", "interpretation line"],
         "map-with-insights": ["map or quadrant panel", "2-3 insight cards", "takeaway or source line"],
+        "agenda-outline": ["chapter map", "2-4 section cards", "route preview line"],
         "focus-explainer": ["single claim card", "2-3 supporting cues", "implication line"],
         "compare-panel": ["paired labels", "left/right contrast", "verdict line"],
         "action-path": ["takeaway headline", "2-4 next steps", "closing cue"],
+        "section-divider": ["chapter title", "short transition line", "section break cue"],
     }
     keep = list(by_composition.get(preferred_composition, []))
+    if role == "agenda" and "chapter map" not in keep:
+        keep.extend(["chapter map", "2-4 section cards", "route preview line"])
+    if role == "section-divider" and "chapter title" not in keep:
+        keep.extend(["chapter title", "short transition line", "section break cue"])
     if role == "framework" and "takeaway or source line" not in keep:
         keep.append("modeled takeaway")
     return keep
@@ -4220,13 +4297,19 @@ def _page_brief_must_avoid(*, role: str, preferred_composition: str) -> list[str
         "cover-hero": ["文档式封面", "长段说明"],
         "metric-stack": ["标题 + 大段 bullets", "只有抽象判断没有数据 cue"],
         "map-with-insights": ["纯 bullets", "没有左右分工的平铺结构"],
+        "agenda-outline": ["长段说明", "单纯 bullet dump"],
         "focus-explainer": ["多判断并列", "高密度说明文段落"],
         "compare-panel": ["未标注左右", "没有 verdict 的对照页"],
         "action-path": ["普通 bullet dump", "谢谢/Q&A 结尾"],
+        "section-divider": ["长段说明", "普通 bullet dump"],
     }
     avoid = list(by_composition.get(preferred_composition, []))
+    if role == "agenda" and "普通 bullet dump" not in avoid:
+        avoid.append("普通 bullet dump")
     if role == "closing" and "谢谢/Q&A 结尾" not in avoid:
         avoid.append("谢谢/Q&A 结尾")
+    if role == "section-divider" and "普通 bullet dump" not in avoid:
+        avoid.append("普通 bullet dump")
     return avoid
 
 
@@ -4235,11 +4318,17 @@ def _page_brief_keep_signals(*, role: str, preferred_composition: str) -> list[s
         "cover-hero": ["launch-kicker", "hero-title", "short-subtitle"],
         "metric-stack": ["metric-stack", "hero-metric", "interpretation-line"],
         "map-with-insights": ["map-with-insights", "visual-structure", "insight-card", "source-or-takeaway"],
+        "agenda-outline": ["agenda-line", "section-map", "chapter-preview", "slide-topline"],
         "focus-explainer": ["focus-explainer", "single-claim", "focus-block", "section-kicker"],
         "compare-panel": ["compare-panel", "split-compare", "contrast-labels", "verdict-line"],
         "action-path": ["action-path", "next-step-or-takeaway", "action-list", "prioritized-actions"],
+        "section-divider": ["section-kicker", "chapter-title", "section-break", "slide-topline"],
     }
     keep = list(mapping.get(preferred_composition, []))
+    if role == "agenda" and "agenda-line" not in keep:
+        keep.extend(["agenda-line", "section-map", "chapter-preview"])
+    if role == "section-divider" and "section-break" not in keep:
+        keep.extend(["section-kicker", "chapter-title", "section-break"])
     if role == "context" and "why-now-framing" not in keep:
         keep.append("why-now-framing")
     if role == "recommendation" and "decision-headline" not in keep:
@@ -4253,14 +4342,20 @@ def _page_brief_avoid_patterns(*, role: str, preferred_composition: str) -> list
     patterns = {
         "metric-stack": ["plain-bullet-dump", "unstyled-document-section"],
         "map-with-insights": ["plain-bullet-dump", "unstyled-document-section"],
+        "agenda-outline": ["plain-bullet-dump", "unstyled-document-section"],
         "focus-explainer": ["plain-bullet-dump", "unstyled-document-section"],
         "compare-panel": ["unlabeled-compare", "unstyled-document-section"],
         "action-path": ["plain-bullet-dump", "generic-thanks"],
         "cover-hero": ["unstyled-document-section", "long-paragraph-cover"],
+        "section-divider": ["plain-bullet-dump", "unstyled-document-section"],
     }
     result = list(patterns.get(preferred_composition, []))
+    if role == "agenda" and "unstyled-document-section" not in result:
+        result.append("unstyled-document-section")
     if role == "closing" and "generic-thanks" not in result:
         result.append("generic-thanks")
+    if role == "section-divider" and "unstyled-document-section" not in result:
+        result.append("unstyled-document-section")
     return result
 
 
@@ -4360,7 +4455,9 @@ def _slide_role_container_class(*, brief: Mapping[str, Any], layout: Mapping[str
     role = str(brief.get("slide_role") or "").strip().lower()
     return {
         "cover": "deck-cover",
+        "agenda": "deck-agenda",
         "context": "deck-context",
+        "section-divider": "deck-section-divider",
         "framework": "deck-framework",
         "detail": "deck-detail",
         "comparison": "deck-comparison",
@@ -4375,6 +4472,7 @@ def _page_brief_scaffold_lines(
     layout: Mapping[str, Any],
     deck_chrome: Mapping[str, Any],
 ) -> list[str]:
+    role = str(brief.get("slide_role") or "").strip().lower()
     composition = str(brief.get("preferred_composition") or "").strip()
     title = str(brief.get("title") or "Slide").strip()
     deck_label = str(deck_chrome.get("deck_label") or "Deck").strip()
@@ -4382,6 +4480,43 @@ def _page_brief_scaffold_lines(
     lines = [
         f"  deck chrome cue: add a lightweight `<div class=\"slide-topline\">{deck_label} / {brief.get('slide_number') or ''}</div>` or equivalent section kicker when the page is not cover-only.",
     ]
+    if role == "agenda":
+        lines.extend(
+            [
+                "  canonical agenda shell:",
+                "  ---",
+                f"  layout: {layout.get('layout') or 'section'}",
+                f"  class: {container_class}",
+                "  ---",
+                f"  <div class=\"slide-topline\">{deck_label} / agenda</div>",
+                "  <div class=\"section-kicker\">目录 / chapter map</div>",
+                f"  ## {title}",
+                "  <div class=\"slide-subtitle\">one-line route preview</div>",
+                "  <div class=\"map-with-insights\">",
+                "    <div class=\"map-panel\">章节路线图 / table of contents</div>",
+                "    <div class=\"insight-stack\">",
+                "      <div class=\"metric-card insight-card\">Part 1</div>",
+                "      <div class=\"metric-card insight-card\">Part 2</div>",
+                "      <div class=\"metric-card insight-card\">Part 3</div>",
+                "    </div>",
+                "    <div class=\"interpretation-card\">先看全局骨架，再进入章节内容</div>",
+                "  </div>",
+            ]
+        )
+    elif role == "section-divider":
+        lines.extend(
+            [
+                "  canonical section-divider shell:",
+                "  ---",
+                f"  layout: {layout.get('layout') or 'section'}",
+                f"  class: {container_class}",
+                "  ---",
+                f"  <div class=\"slide-topline\">{deck_label} / chapter break</div>",
+                "  <div class=\"section-kicker\">section divider / chapter transition</div>",
+                f"  ## {title}",
+                "  <div class=\"slide-subtitle\">一句 transition / framing line</div>",
+            ]
+        )
     if composition == "cover-hero":
         lines.extend(
             [

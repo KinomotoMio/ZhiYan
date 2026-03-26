@@ -469,6 +469,38 @@ def _review_slide(
             )
         elif "contrast-labels" not in observed_signals or "verdict-line" not in observed_signals:
             add_warning("document_like_comparison", f"Slide `{title}` compares content, but still lacks the stronger split/contrast cues of a presentation comparison slide.")
+    elif role == "agenda":
+        if not _looks_like_agenda(slide):
+            add_issue(
+                "agenda_role_mismatch",
+                f"Slide `{title}` is tagged agenda but does not read like a chapter route / agenda page.",
+            )
+        elif "agenda-line" not in observed_signals or "section-map" not in observed_signals:
+            add_warning(
+                "document_like_agenda",
+                f"Slide `{title}` is semantically an agenda page, but still reads like an ordinary outline section.",
+            )
+        if observed_layout not in {"section", "center"} and "map-with-insights" not in observed_patterns:
+            add_warning(
+                "agenda_native_pattern_missing",
+                f"Slide `{title}` should use a chapter-map style native pattern such as section, center, or an explicit map layout.",
+            )
+    elif role == "section-divider":
+        if not _looks_like_section_divider(slide):
+            add_issue(
+                "section_divider_role_mismatch",
+                f"Slide `{title}` is tagged section-divider but does not read like a chapter transition page.",
+            )
+        elif "section-break" not in observed_signals or "chapter-title" not in observed_signals:
+            add_warning(
+                "document_like_section_divider",
+                f"Slide `{title}` is a section divider semantically, but still lacks a strong transition cue.",
+            )
+        if observed_layout not in {"section", "center"}:
+            add_warning(
+                "section_divider_native_layout_missing",
+                f"Slide `{title}` should use `layout: section` or `layout: center` for the chapter break.",
+            )
     elif role == "framework":
         if _looks_flat_framework(slide):
             add_issue(
@@ -1429,6 +1461,13 @@ def _observed_signals(
         signals.add("quote-or-callout")
     if any(token in lower for token in ("why now", "why-now", "why it matters now", "为什么现在", "当下", "紧迫")):
         signals.add("why-now-framing")
+    if any(token in lower for token in ("agenda", "chapter map", "table of contents", "路线图", "目录")) or "deck-agenda" in observed_classes:
+        signals.add("agenda-line")
+        signals.add("section-map")
+        signals.add("chapter-preview")
+    if any(token in lower for token in ("chapter break", "section break", "section divider", "章节切换", "章节分隔", "transition")) or "deck-section-divider" in observed_classes:
+        signals.add("section-break")
+        signals.add("chapter-title")
     if 2 <= _bullet_count(slide) <= 4:
         signals.add("compact-bullets")
     if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
@@ -1453,6 +1492,8 @@ def _observed_signals(
         signals.add("compare-panel")
     if "map-with-insights" in observed_patterns or "map-panel" in observed_classes:
         signals.add("map-with-insights")
+        if "deck-agenda" in observed_classes:
+            signals.add("section-map")
     if "action-path" in observed_patterns or "action-step" in observed_classes:
         signals.add("action-path")
     if "focus-explainer" in observed_patterns or "focus-card" in observed_classes:
@@ -1461,6 +1502,8 @@ def _observed_signals(
         signals.add("focus-block")
     if re.search(r"^\s*###?\s+", body, re.MULTILINE) or "::left::" in body or "::right::" in body:
         signals.add("contrast-labels")
+    if re.search(r"^\s*##\s+", body, re.MULTILINE):
+        signals.add("chapter-title")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
         signals.add("model-takeaway")
     if any(token in lower for token in ("结论", "核心判断", "bottom line", "verdict", "takeaway:", "so what")):
@@ -1491,6 +1534,10 @@ def _visual_recipe_status(
     if role == "cover" and "hero-title" in observed_signals and "short-subtitle" in observed_signals:
         return "weak"
     if role == "comparison" and "split-compare" in observed_signals:
+        return "weak"
+    if role == "agenda" and {"agenda-line", "section-map", "chapter-preview"} & set(observed_signals):
+        return "weak"
+    if role == "section-divider" and {"section-break", "chapter-title"} & set(observed_signals):
         return "weak"
     if role == "closing" and "next-step-or-takeaway" in observed_signals:
         return "weak"
@@ -1562,6 +1609,22 @@ def _looks_like_closing(slide: str) -> bool:
     if any(token in lower for token in ("总结", "展望", "下一步", "结论", "next step", "takeaway", "summary")):
         return True
     return _bullet_count(body) <= 3 and len([line for line in body.splitlines() if line.strip()]) <= 6
+
+
+def _looks_like_agenda(slide: str) -> bool:
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
+    if any(token in lower for token in ("agenda", "chapter map", "table of contents", "路线图", "目录")):
+        return True
+    return "map-with-insights" in body or "map-panel" in body or "section-map" in body
+
+
+def _looks_like_section_divider(slide: str) -> bool:
+    body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
+    if any(token in lower for token in ("chapter break", "section break", "section divider", "章节切换", "章节分隔")):
+        return True
+    return ("section-kicker" in body or "slide-topline" in body) and _bullet_count(body) <= 2
 
 
 def _has_strong_closing_signal(slide: str) -> bool:

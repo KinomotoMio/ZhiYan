@@ -1184,6 +1184,84 @@ def test_slidev_mvp_user_prompt_requires_design_system_and_seriph_theme():
     assert "不要生成“像 markdown 文档章节”的页面" in prompt
 
 
+def test_slidev_mvp_long_deck_planning_prompt_mentions_agenda_and_section_divider(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+
+    _copy_slidev_skills(tmp_path, monkeypatch)
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=SkillRegistry(),
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    prompt = service._build_long_deck_planning_prompt(
+        slidev_mvp_mod._ResolvedInputs(
+            topic="AI future of work",
+            material="Prepare a long deck about the future of work.",
+            num_pages=12,
+            title_hint="AI future of work",
+            source_hints={},
+        )
+    )
+
+    assert "cover / agenda / context / section-divider / framework / comparison / recommendation / closing" in prompt
+    assert "review_slidev_deck / validate_slidev_deck / save_slidev_artifact" in prompt
+
+
+def test_slidev_mvp_long_deck_chunk_prompt_supports_agenda_and_section_divider_shells(monkeypatch, tmp_path):
+    from app.services.generation import slidev_mvp as slidev_mvp_mod
+    from app.services.pipeline.graph import PipelineState
+
+    skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
+    service = SlidevMvpService(
+        workspace_id="workspace-slidev",
+        skill_registry=skill_registry,
+        artifact_root=tmp_path / "artifacts",
+        sandbox_dir=tmp_path / "sandbox",
+    )
+    outline_items = [
+        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+        {"slide_number": 2, "title": "目录", "slide_role": "agenda", "content_shape": "route-map", "goal": "给出章节路线"},
+        {"slide_number": 3, "title": "章节切换", "slide_role": "section-divider", "content_shape": "transition-card", "goal": "进入新章节"},
+        {"slide_number": 4, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+    ]
+    runtime = slidev_mvp_mod._RuntimeContext(
+        deck_id="deck-test",
+        artifact_dir=tmp_path / "artifacts" / "deck-test",
+        slides_path=tmp_path / "artifacts" / "deck-test" / "slides.md",
+        requested_pages=4,
+        reference_selection=slidev_mvp_mod._select_slidev_references(
+            outline_items=outline_items,
+            topic="AI future of work",
+            num_pages=4,
+            material_excerpt="Prepare a structured deck about the future of work.",
+        ),
+    )
+    state = PipelineState(raw_content="", document_metadata={})
+    state.outline = {"items": outline_items}
+    spec = service._build_chunk_specs(state=state, runtime=runtime)[0]
+    prompt = service._build_chunk_task(
+        spec=spec,
+        resolved=slidev_mvp_mod._ResolvedInputs(
+            topic="AI future of work",
+            material="Prepare a structured deck about the future of work.",
+            num_pages=4,
+            title_hint="AI future of work",
+            source_hints={},
+        ),
+        runtime=runtime,
+    )
+
+    assert slidev_mvp_mod._chunk_role_requirements("agenda") == "agenda map + chapter preview + clear route cue, not a plain bullet outline"
+    assert slidev_mvp_mod._chunk_role_requirements("section-divider") == "chapter title + short transition + explicit section break cue"
+    assert "canonical agenda shell:" in prompt
+    assert "canonical section-divider shell:" in prompt
+    assert "preferred_composition=agenda-outline" in prompt
+    assert "preferred_composition=section-divider" in prompt
+    assert "chapter map" in prompt
+    assert "section break cue" in prompt
+
+
 def test_slidev_reference_selection_loads_structured_assets(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
 
@@ -1659,6 +1737,182 @@ def test_slidev_deck_review_consumes_selected_reference_protocol(monkeypatch, tm
     summary = deck_review["presentation_feel_summary"]
     assert summary["status"] in {"matched", "weak"}
     assert summary["signal_count"] == len(summary["signal_codes"])
+
+
+def test_slidev_deck_review_recognizes_agenda_and_section_divider_roles(monkeypatch, tmp_path):
+    _copy_slidev_skills(tmp_path, monkeypatch)
+
+    markdown = """---
+theme: default
+title: Agenda Skeleton
+---
+
+# Agenda Skeleton
+
+Launching the route for the deck.
+
+---
+layout: section
+class: deck-agenda
+---
+
+<div class="slide-topline">Agenda Skeleton / agenda</div>
+<div class="section-kicker">目录 / chapter map</div>
+## Today
+<div class="slide-subtitle">one-line route preview</div>
+<div class="map-with-insights">
+  <div class="map-panel">章节路线图 / table of contents</div>
+  <div class="insight-stack">
+    <div class="metric-card insight-card">Part 1</div>
+    <div class="metric-card insight-card">Part 2</div>
+  </div>
+  <div class="interpretation-card">先看全局骨架，再进入章节内容</div>
+</div>
+
+---
+layout: section
+class: deck-section-divider
+---
+
+<div class="slide-topline">Agenda Skeleton / chapter break</div>
+<div class="section-kicker">section divider / chapter transition</div>
+## Section Two
+<div class="slide-subtitle">一句 transition / framing line</div>
+
+---
+layout: end
+class: deck-closing
+---
+
+<div class="verdict-line">Next step: continue the route</div>
+<div class="action-path">
+  <div class="action-step"><strong>P0</strong> first action</div>
+  <div class="action-step"><strong>P1</strong> then action</div>
+</div>
+"""
+
+    result = asyncio.run(
+        execute_skill(
+            "slidev-deck-quality",
+            "review_deck.py",
+            {
+                "slides": [],
+                "parameters": {
+                    "markdown": markdown,
+                    "outline_items": [
+                        {"slide_number": 1, "title": "封面", "slide_role": "cover", "content_shape": "title-subtitle", "goal": "开场"},
+                        {"slide_number": 2, "title": "目录", "slide_role": "agenda", "content_shape": "route-map", "goal": "给出章节路线"},
+                        {"slide_number": 3, "title": "章节切换", "slide_role": "section-divider", "content_shape": "transition-card", "goal": "进入新章节"},
+                        {"slide_number": 4, "title": "收尾", "slide_role": "closing", "content_shape": "next-step", "goal": "收束"},
+                    ],
+                    "selected_layouts": [
+                        {
+                            "slide_number": 1,
+                            "recipe_name": "cover-hero",
+                            "preferred_layout": "cover",
+                            "required_patterns": ["cover"],
+                            "required_classes": ["deck-cover"],
+                            "required_visual_signals": ["launch-kicker", "hero-title", "short-subtitle"],
+                            "forbidden_patterns": ["plain-bullet-dump"],
+                        },
+                        {
+                            "slide_number": 2,
+                            "recipe_name": "agenda-outline",
+                            "preferred_layout": "section",
+                            "required_patterns": ["map-with-insights"],
+                            "required_classes": ["deck-agenda"],
+                            "required_visual_signals": ["agenda-line", "section-map", "chapter-preview"],
+                            "forbidden_patterns": ["plain-bullet-dump"],
+                        },
+                        {
+                            "slide_number": 3,
+                            "recipe_name": "section-divider",
+                            "preferred_layout": "section",
+                            "required_patterns": ["section"],
+                            "required_classes": ["deck-section-divider"],
+                            "required_visual_signals": ["section-break", "chapter-title"],
+                            "forbidden_patterns": ["plain-bullet-dump"],
+                        },
+                        {
+                            "slide_number": 4,
+                            "recipe_name": "action-path",
+                            "preferred_layout": "end",
+                            "required_patterns": ["action-path"],
+                            "required_classes": ["deck-closing"],
+                            "required_visual_signals": ["next-step-or-takeaway", "closing-line"],
+                            "forbidden_patterns": ["generic-thanks"],
+                        },
+                    ],
+                    "selected_blocks": [
+                        {"slide_number": 1, "blocks": []},
+                        {"slide_number": 2, "blocks": []},
+                        {"slide_number": 3, "blocks": []},
+                        {"slide_number": 4, "blocks": []},
+                    ],
+                    "page_briefs": [
+                        {
+                            "slide_number": 1,
+                            "slide_role": "cover",
+                            "preferred_composition": "cover-hero",
+                            "page_goal": "开场",
+                            "narrative_job": "set the narrative frame",
+                            "hero_fact_or_claim": "Agenda Skeleton",
+                            "must_keep": ["短 kicker", "hero title", "短 subtitle"],
+                            "must_avoid": ["文档式封面"],
+                            "must_keep_signals": ["launch-kicker", "hero-title", "short-subtitle"],
+                            "must_avoid_patterns": ["unstyled-document-section"],
+                        },
+                        {
+                            "slide_number": 2,
+                            "slide_role": "agenda",
+                            "preferred_composition": "agenda-outline",
+                            "page_goal": "给出章节路线",
+                            "narrative_job": "map the route ahead",
+                            "hero_fact_or_claim": "先看全局骨架，再进入章节内容",
+                            "must_keep": ["chapter map", "2-4 section cards", "route preview line"],
+                            "must_avoid": ["普通 bullet dump"],
+                            "must_keep_signals": ["agenda-line", "section-map", "chapter-preview"],
+                            "must_avoid_patterns": ["plain-bullet-dump"],
+                        },
+                        {
+                            "slide_number": 3,
+                            "slide_role": "section-divider",
+                            "preferred_composition": "section-divider",
+                            "page_goal": "进入新章节",
+                            "narrative_job": "mark the chapter break",
+                            "hero_fact_or_claim": "章节切换",
+                            "must_keep": ["chapter title", "short transition line", "section break cue"],
+                            "must_avoid": ["普通 bullet dump"],
+                            "must_keep_signals": ["section-kicker", "chapter-title", "section-break"],
+                            "must_avoid_patterns": ["plain-bullet-dump"],
+                        },
+                        {
+                            "slide_number": 4,
+                            "slide_role": "closing",
+                            "preferred_composition": "action-path",
+                            "page_goal": "收束",
+                            "narrative_job": "land the takeaway and next move",
+                            "hero_fact_or_claim": "下一步",
+                            "must_keep": ["takeaway headline", "2-4 next steps", "closing cue"],
+                            "must_avoid": ["谢谢/Q&A 结尾"],
+                            "must_keep_signals": ["action-path", "next-step-or-takeaway", "closing-line"],
+                            "must_avoid_patterns": ["generic-thanks"],
+                        },
+                    ],
+                },
+            },
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["slide_reports"][1]["role"] == "agenda"
+    assert {"agenda-line", "section-map", "chapter-preview"} <= set(result["slide_reports"][1]["observed_signals"])
+    assert result["slide_reports"][2]["role"] == "section-divider"
+    assert {"section-break", "chapter-title"} <= set(result["slide_reports"][2]["observed_signals"])
+    assert result["reference_fidelity_summary"]["role_skeleton_summary"]["agenda"]["total"] == 1
+    assert result["reference_fidelity_summary"]["role_skeleton_summary"]["section-divider"]["total"] == 1
+    assert result["page_brief_fidelity_summary"]["role_skeleton_summary"]["agenda"]["total"] == 1
+    assert result["page_brief_fidelity_summary"]["role_skeleton_summary"]["section-divider"]["total"] == 1
 
 
 def test_slidev_deck_review_presentation_feel_summary_counts_theme_recipe_warning(monkeypatch, tmp_path):
