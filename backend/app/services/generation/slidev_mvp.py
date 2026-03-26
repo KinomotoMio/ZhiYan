@@ -3091,15 +3091,6 @@ def _build_slidev_visual_hint(*, slide_role: str, content_shape: str) -> dict[st
     lower_shape = content_shape.strip().lower()
     preferred_classes = [str(name).strip() for name in (base.get("preferred_classes") or []) if str(name).strip()]
     required_signals = [str(name).strip() for name in (base.get("required_signals") or []) if str(name).strip()]
-
-    if slide_role == "agenda":
-        for signal in ("agenda-line", "section-map", "chapter-preview"):
-            if signal not in required_signals:
-                required_signals.append(signal)
-    if slide_role == "section-divider":
-        for signal in ("section-kicker", "chapter-title", "section-break"):
-            if signal not in required_signals:
-                required_signals.append(signal)
     if "quote" in lower_shape and "quote-or-callout" not in required_signals:
         required_signals.append("quote-or-callout")
     if "compare" in lower_shape and "split-compare" not in required_signals:
