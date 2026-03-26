@@ -1153,7 +1153,7 @@ def _parse_css_color(value: str) -> tuple[int, int, int] | None:
         return tuple(max(0, min(255, channel)) for channel in channels)  # type: ignore[return-value]
     hsl_match = re.fullmatch(r"hsla?\(([^)]+)\)", raw)
     if hsl_match:
-        parts = [part.strip() for part in hsl_match.group(1).split(",")]
+        parts = _split_css_function_args(hsl_match.group(1))
         if len(parts) < 3:
             return None
         try:
