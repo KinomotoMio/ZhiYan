@@ -9,12 +9,16 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
+from typing import Any
 
 import httpx
 
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
+from app.services.generation.agentic.context import summarize_state
+from app.services.generation.agentic.loop import agentic_loop
+from app.services.generation.agentic.tools import ToolDef, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.loop_planner import GenerationLoopPlanner, LoopHistoryItem
@@ -1058,9 +1062,14 @@ class GenerationRunner:
         progress_hook,
         slide_hook,
     ) -> bool:
-        # Keep a stable runtime-selection seam for backward compatibility tests.
-        # Agentic mode is currently wired through the same pipeline execution path.
-        _ = self._should_use_agentic_loop()
+        if self._should_use_agentic_loop():
+            return await self._run_agentic_job(
+                job,
+                state,
+                start_stage=start_stage,
+                progress_hook=progress_hook,
+                slide_hook=slide_hook,
+            )
         return await self._run_pipeline_job(
             job,
             state,
@@ -1068,6 +1077,173 @@ class GenerationRunner:
             progress_hook=progress_hook,
             slide_hook=slide_hook,
         )
+
+    async def _run_agentic_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook,
+        slide_hook,
+    ) -> bool:
+        registry = self._build_tool_registry()
+        agentic_registry = self._build_agentic_tool_registry(
+            registry=registry,
+            job=job,
+            state=state,
+            progress_hook=progress_hook,
+            slide_hook=slide_hook,
+        )
+        try:
+            loop_result = await agentic_loop(
+                user_prompt=self._build_agentic_runtime_prompt(
+                    job=job,
+                    state=state,
+                    start_stage=start_stage,
+                    registry=registry,
+                ),
+                state=state,
+                tool_definitions=agentic_registry.to_model_tools(),
+                dispatch_tools=lambda calls: dispatch_tool_calls(calls, agentic_registry),
+                max_turns=settings.agentic_max_turns,
+            )
+        except Exception:
+            logger.warning(
+                "agentic runtime failed; falling back to pipeline",
+                extra={
+                    "job_id": job.job_id,
+                    "start_stage": start_stage.value,
+                },
+                exc_info=True,
+            )
+            return await self._run_pipeline_job(
+                job,
+                state,
+                start_stage=start_stage,
+                progress_hook=progress_hook,
+                slide_hook=slide_hook,
+            )
+
+        if self._agentic_runtime_completed(job):
+            logger.info(
+                "agentic runtime completed",
+                extra={
+                    "job_id": job.job_id,
+                    "turns": loop_result.turns,
+                    "stop_reason": loop_result.stop_reason,
+                },
+            )
+            return True
+
+        logger.warning(
+            "agentic runtime incomplete; falling back to pipeline",
+            extra={
+                "job_id": job.job_id,
+                "start_stage": start_stage.value,
+                "turns": loop_result.turns,
+                "stop_reason": loop_result.stop_reason,
+            },
+        )
+        return await self._run_pipeline_job(
+            job,
+            state,
+            start_stage=start_stage,
+            progress_hook=progress_hook,
+            slide_hook=slide_hook,
+        )
+
+    def _build_agentic_tool_registry(
+        self,
+        *,
+        registry: GenerationToolRegistry,
+        job: GenerationJob,
+        state: PipelineState,
+        progress_hook,
+        slide_hook,
+    ) -> ToolRegistry:
+        tool_registry = ToolRegistry()
+
+        for tool in registry.list_tools():
+            async def _handler(_args: dict[str, Any], *, generation_tool: GenerationTool = tool) -> Any:
+                await self._ensure_not_cancelled(job)
+                if self._stage_already_completed(job, generation_tool.stage):
+                    result: dict[str, Any] = {
+                        "stage": generation_tool.stage.value,
+                        "status": "skipped",
+                        "reason": "stage already completed",
+                    }
+                    if generation_tool.stage == StageStatus.VERIFY:
+                        return ToolExecutionResult(
+                            content=result,
+                            stop_loop=True,
+                            metadata={"stop_reason": "verification-complete"},
+                        )
+                    return result
+
+                await self._run_stage(
+                    job,
+                    state,
+                    stage=generation_tool.stage,
+                    timeout=generation_tool.timeout_seconds(),
+                    stage_coro=generation_tool.runner(state, progress_hook, slide_hook),
+                )
+                result = {"stage": generation_tool.stage.value, "status": "completed"}
+                if generation_tool.stage == StageStatus.VERIFY:
+                    return ToolExecutionResult(
+                        content=result,
+                        stop_loop=True,
+                        metadata={"stop_reason": "verification-complete"},
+                    )
+                return result
+
+            tool_registry.register(
+                ToolDef(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                    handler=_handler,
+                )
+            )
+
+        return tool_registry
+
+    def _build_agentic_runtime_prompt(
+        self,
+        *,
+        job: GenerationJob,
+        state: PipelineState,
+        start_stage: StageStatus,
+        registry: GenerationToolRegistry,
+    ) -> str:
+        completed_stages = [
+            sr.stage.value
+            for sr in job.stage_results
+            if sr.status == "completed"
+        ]
+        tool_order = ", ".join(tool.name for tool in registry.list_tools())
+        return (
+            "你正在控制 generation/jobs 的主运行时，需要尽量直接把当前任务推进到验证完成。\n\n"
+            f"当前 start_stage：{start_stage.value}\n"
+            f"已完成阶段：{', '.join(completed_stages) or 'none'}\n"
+            f"可用工具顺序：{tool_order}\n"
+            f"state summary：{summarize_state(state)}\n\n"
+            "操作原则：\n"
+            "- 优先调用尚未完成的阶段工具，避免重复执行已经完成的阶段。\n"
+            "- 只要 verify_slides 完成，就停止并让控制器接管收尾。\n"
+            "- 如果当前状态不足以继续，仍然尽量推进到下一个合理阶段；系统会在必要时回退到 pipeline。\n"
+        )
+
+    @staticmethod
+    def _stage_already_completed(job: GenerationJob, stage: StageStatus) -> bool:
+        return any(result.stage == stage and result.status == "completed" for result in job.stage_results)
+
+    def _agentic_runtime_completed(self, job: GenerationJob) -> bool:
+        return self._stage_already_completed(job, StageStatus.VERIFY)
 
     async def _run_pipeline_job(
         self,
