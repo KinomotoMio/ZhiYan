@@ -1380,6 +1380,7 @@ class SlidevMvpService:
                 "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
                 "- context 页要有 why-now framing：section kicker + 一句判断 + 2-3 supporting cues。",
                 "- framework 页必须有可读视觉结构（mermaid/table/grid/matrix）+ takeaway。",
+                "- 仅在 Mermaid 语法可确定正确时使用 Mermaid；若有不确定或复杂语法风险，优先降级为 table/div-grid/matrix，避免交付后预览报 Lexical error。",
                 "- detail 页必须是 single-focus explainer：一个核心判断 + 2-3 supporting cues，禁止多判断并列与高密度说明文。",
                 "- comparison 页必须使用 two-cols、table 或 before/after 这种明确对照结构。",
                 "- recommendation 页必须有 decision headline + prioritized actions/action path，不允许退化成普通 action list。",

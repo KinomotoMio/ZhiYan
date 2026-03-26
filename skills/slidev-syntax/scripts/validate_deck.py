@@ -158,6 +158,7 @@ def validate_deck(
 
     issues.extend(_validate_fences(text))
     issues.extend(_validate_slide_frontmatter_blocks(slides))
+    issues.extend(_validate_mermaid_syntax(slides))
     native_usage_summary = _native_usage_summary(slides)
     reference_usage_summary = _reference_usage_summary(slides, selected_layouts, selected_blocks)
     page_brief_fidelity_summary = _page_brief_fidelity_summary(slides, page_briefs)
@@ -279,6 +280,100 @@ def _validate_slide_frontmatter_blocks(slides: list[str]) -> list[dict[str, str]
                 }
             )
     return issues
+
+
+def _validate_mermaid_syntax(slides: list[str]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for slide_index, slide in enumerate(slides, start=1):
+        blocks = _extract_mermaid_blocks(slide)
+        for block_index, block in enumerate(blocks, start=1):
+            error = _validate_mermaid_block(block)
+            if not error:
+                continue
+            issues.append(
+                {
+                    "code": "invalid_mermaid_syntax",
+                    "message": (
+                        f"Slide {slide_index} mermaid block {block_index} appears invalid: {error}. "
+                        "Use a valid mermaid diagram or downgrade to table/div structure."
+                    ),
+                }
+            )
+    return issues
+
+
+def _extract_mermaid_blocks(slide: str) -> list[str]:
+    blocks: list[str] = []
+    for match in re.finditer(r"```mermaid\s*\n(.*?)\n```", slide, re.IGNORECASE | re.DOTALL):
+        body = str(match.group(1) or "").strip()
+        blocks.append(body)
+    return blocks
+
+
+def _validate_mermaid_block(block: str) -> str | None:
+    lines = [line.rstrip() for line in str(block or "").splitlines()]
+    content_lines = [line for line in lines if line.strip()]
+    if not content_lines:
+        return "empty mermaid block"
+
+    index = 0
+    while index < len(content_lines) and content_lines[index].strip().startswith("%%{"):
+        index += 1
+    if index >= len(content_lines):
+        return "missing diagram declaration"
+
+    declaration = content_lines[index].strip()
+    if not re.match(
+        r"^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart|requirementDiagram|gitGraph|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)\b",
+        declaration,
+    ):
+        return f"unsupported or malformed declaration `{declaration[:64]}`"
+
+    for line in content_lines[index + 1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "- ", "* ")) or re.match(r"^\d+\.\s+", stripped):
+            return f"markdown-like line inside mermaid `{stripped[:64]}`"
+        if "```" in stripped:
+            return "nested code fence marker found in mermaid block"
+
+    quote: str | None = None
+    escaped = False
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for char in "\n".join(content_lines):
+        if quote:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == quote:
+                quote = None
+            continue
+        if char in {'"', "'", "`"}:
+            quote = char
+            continue
+        if char in "([{":
+            stack.append(char)
+            continue
+        if char in ")]}":
+            expected = pairs[char]
+            if not stack or stack[-1] != expected:
+                return f"unbalanced delimiter `{char}`"
+            stack.pop()
+    if quote:
+        return "unclosed quote in mermaid block"
+    if stack:
+        return f"unbalanced delimiter `{stack[-1]}`"
+
+    subgraph_count = sum(1 for line in content_lines if re.match(r"^\s*subgraph\b", line, re.IGNORECASE))
+    end_count = sum(1 for line in content_lines if re.match(r"^\s*end\s*$", line, re.IGNORECASE))
+    if subgraph_count > end_count:
+        return "subgraph section is missing matching `end`"
+    return None
 
 
 def _count_fence_lines(text: str, marker: str) -> int:
