@@ -75,7 +75,7 @@ Review 清单：
 验证 recipe：
 1. 运行
    ```bash
-   cd /Users/qizhi_dong/Projects/Zhiyan-harness/backend && uv run pytest tests/test_generation_v2_runtime.py tests/test_generation_v2_stream_protocol.py tests/test_generation_loop_planner.py -q
+   cd backend && uv run pytest tests/test_generation_v2_runtime.py tests/test_generation_v2_stream_protocol.py tests/test_generation_loop_planner.py -q
    ```
 2. 确认失败可归因到具体 tool / stage
 3. 检查是否仍支持 cancel / resume / outline review
