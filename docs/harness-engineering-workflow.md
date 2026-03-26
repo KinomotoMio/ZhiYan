@@ -26,7 +26,7 @@ Review 清单：
 - 是否会影响稳定性或造成工具反复调用
 
 验证 recipe：
-1. 运行 `cd /Users/qizhi_dong/Projects/Zhiyan-harness/backend && uv run pytest tests/test_harness_config.py -q`
+1. 运行 `cd backend && uv run pytest tests/test_harness_config.py -q`
 2. 跑一次 `/api/v2/harness/slidev-mvp`，确认输出仍可渲染
 3. 对比变更前后的大纲差异，确认是预期变化
 
