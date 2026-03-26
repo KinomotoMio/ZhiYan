@@ -1,26 +1,26 @@
 {
-  "name": "context-brief",
+  "name": "detail-focus",
   "applies_to_roles": [
-    "context"
+    "detail"
   ],
   "preferred_layout": null,
   "required_patterns": [
-    "compact-bullets",
-    "quote-or-callout"
+    "focus-explainer",
+    "callout",
+    "div-grid"
   ],
   "required_classes": [
-    "deck-context"
+    "deck-detail"
   ],
   "forbidden_patterns": [
     "plain-bullet-dump",
     "unstyled-document-section",
     "long-paragraph-context"
   ],
-  "description": "Why-now context page with one judgment line and 2-3 supporting cues.",
+  "description": "Single-focus explainer page that supports one claim with compact evidence cues.",
   "required_visual_signals": [
-    "why-now-framing",
-    "compact-bullets",
-    "quote-or-callout",
+    "single-claim",
+    "focus-block",
     "section-kicker"
   ]
 }

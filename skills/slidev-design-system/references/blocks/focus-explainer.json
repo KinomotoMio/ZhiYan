@@ -1,0 +1,22 @@
+{
+  "name": "focus-explainer",
+  "applies_to_roles": [
+    "detail"
+  ],
+  "recommended_structure": "section kicker + one key claim card + 2-3 short supporting cues",
+  "required_signals": [
+    "section-kicker",
+    "single-claim",
+    "focus-block"
+  ],
+  "visual_constraints": [
+    "one key claim only",
+    "max 3 supporting cues",
+    "avoid paragraph wall"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
+}

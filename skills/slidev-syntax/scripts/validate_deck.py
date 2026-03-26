@@ -364,11 +364,19 @@ def _structure_warnings(
                 "message": "Map-with-insights pages still lack a visible map / insights split.",
             }
         )
-    if int(composition_counts.get("action-path") or 0) > 0 and int(native_usage_summary.get("recipe_classes", {}).get("action-path") or 0) == 0:
+    class_counts = native_usage_summary.get("class_counts", {}) or {}
+    if int(composition_counts.get("action-path") or 0) > 0 and int(class_counts.get("action-path") or 0) == 0:
         warnings.append(
             {
                 "code": "document_like_action_page",
                 "message": "Action-path pages still read like plain bullets instead of a recommendation / next-step path.",
+            }
+        )
+    if int(composition_counts.get("focus-explainer") or 0) > 0 and int(class_counts.get("focus-explainer") or 0) == 0:
+        warnings.append(
+            {
+                "code": "document_like_detail_page",
+                "message": "Detail pages still miss a single-focus explainer structure.",
             }
         )
 
@@ -459,9 +467,11 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
     block_map = _selected_block_map(selected_blocks)
     slide_reports: list[dict[str, Any]] = []
     counts = {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0}
+    role_summary: dict[str, dict[str, int]] = {}
     for index, slide in enumerate(slides, start=1):
         layout = layout_map.get(index, {})
         block_payloads = block_map.get(index, [])
+        role = str(layout.get("slide_role") or "").strip() or str(layout.get("role") or "").strip()
         observed_layout = _extract_layout_name(slide)
         observed_patterns = _observed_patterns(slide)
         observed_classes = _extract_classes(slide)
@@ -490,6 +500,11 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
         else:
             status = "missing"
         counts[status] += 1
+        if role:
+            bucket = role_summary.setdefault(role, {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0, "total": 0})
+            bucket["total"] += 1
+            if status in {"matched", "weak", "missing", "forbidden"}:
+                bucket[status] += 1
         slide_reports.append(
             {
                 "slide_number": index,
@@ -512,6 +527,7 @@ def _reference_usage_summary(slides: list[str], selected_layouts: Any, selected_
         "missing_slide_count": counts["missing"],
         "forbidden_slide_count": counts["forbidden"],
         "slides": slide_reports,
+        "role_skeleton_summary": role_summary,
     }
 
 
@@ -519,6 +535,7 @@ def _page_brief_fidelity_summary(slides: list[str], page_briefs: Any) -> dict[st
     brief_map = _page_brief_map(page_briefs)
     counts = {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0}
     composition_counts: dict[str, int] = {}
+    role_summary: dict[str, dict[str, int]] = {}
     for index, slide in enumerate(slides, start=1):
         brief = brief_map.get(index, {})
         composition = str(brief.get("preferred_composition") or "").strip()
@@ -541,12 +558,19 @@ def _page_brief_fidelity_summary(slides: list[str], page_briefs: Any) -> dict[st
         status = str(fidelity.get("status") or "missing")
         if status in counts:
             counts[status] += 1
+        role = str(brief.get("slide_role") or "")
+        if role:
+            bucket = role_summary.setdefault(role, {"matched": 0, "weak": 0, "missing": 0, "forbidden": 0, "total": 0})
+            bucket["total"] += 1
+            if status in {"matched", "weak", "missing", "forbidden"}:
+                bucket[status] += 1
     return {
         "matched_slide_count": counts["matched"],
         "weak_slide_count": counts["weak"],
         "missing_slide_count": counts["missing"],
         "forbidden_slide_count": counts["forbidden"],
         "composition_counts": composition_counts,
+        "role_skeleton_summary": role_summary,
     }
 
 
@@ -809,7 +833,7 @@ def _observed_patterns(slide: str) -> list[str]:
     if "::" in slide:
         patterns.append("callout")
     lower = slide.lower()
-    for token in ("metric-stack", "map-with-insights", "compare-panel", "action-path"):
+    for token in ("metric-stack", "map-with-insights", "focus-explainer", "compare-panel", "action-path"):
         if token in lower:
             patterns.append(token)
     return patterns
@@ -822,6 +846,7 @@ def _observed_signals(
     observed_classes: list[str],
 ) -> list[str]:
     body = _strip_slide_frontmatter(slide)
+    lower = body.lower()
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     signals: set[str] = set()
     first_heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), None)
@@ -852,12 +877,13 @@ def _observed_signals(
         signals.add("slide-footer")
     if "quote" in observed_patterns or "callout" in observed_patterns:
         signals.add("quote-or-callout")
+    if any(token in lower for token in ("why now", "why-now", "why it matters now", "为什么现在", "当下", "紧迫")):
+        signals.add("why-now-framing")
     if 2 <= _bullet_count(slide) <= 4:
         signals.add("compact-bullets")
     if any(name in observed_patterns for name in ("mermaid", "table", "div-grid")):
         signals.add("visual-structure")
         signals.add("focus-block")
-    lower = body.lower()
     if any(token in lower for token in ("takeaway", "next step", "next steps", "下一步", "总结", "结论")):
         signals.add("next-step-or-takeaway")
         signals.add("closing-line")
@@ -879,6 +905,10 @@ def _observed_signals(
         signals.add("map-with-insights")
     if "action-path" in observed_patterns or "action-step" in observed_classes:
         signals.add("action-path")
+    if "focus-explainer" in observed_patterns or "focus-card" in observed_classes:
+        signals.add("focus-explainer")
+        signals.add("single-claim")
+        signals.add("focus-block")
     if re.search(r"^\s*###?\s+", body, re.MULTILINE) or "::left::" in body or "::right::" in body:
         signals.add("contrast-labels")
     if any(token in lower for token in ("要点", "核心", "takeaway", "why it matters")):
@@ -889,6 +919,10 @@ def _observed_signals(
         signals.add("source-or-takeaway")
     if "insight-card" in observed_classes or "metric-card" in observed_classes:
         signals.add("insight-card")
+    if any(token in lower for token in ("p0", "p1", "p2", "priority", "prioritized", "优先级", "先做", "先后")):
+        signals.add("prioritized-actions")
+    if re.search(r"^\s*\d+\.\s+", body, re.MULTILINE) and _bullet_count(slide) <= 4:
+        signals.add("prioritized-actions")
     return sorted(signals)
 
 

@@ -1,0 +1,22 @@
+{
+  "name": "decision-priority",
+  "applies_to_roles": [
+    "recommendation"
+  ],
+  "recommended_structure": "decision headline + prioritized actions with ordering cue",
+  "required_signals": [
+    "decision-headline",
+    "prioritized-actions",
+    "action-path"
+  ],
+  "visual_constraints": [
+    "show priority order",
+    "max 4 actions",
+    "include one closing cue"
+  ],
+  "anti_patterns": [
+    "plain-bullet-dump",
+    "unstyled-document-section",
+    "long-paragraph-context"
+  ]
+}

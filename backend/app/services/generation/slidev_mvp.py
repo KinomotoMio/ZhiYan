@@ -116,8 +116,8 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
         "visual_recipe": {
             "name": "context-brief",
             "preferred_classes": ["deck-context"],
-            "required_signals": ["compact-bullets", "quote-or-callout"],
-            "description": "短背景引导 + quote/callout 或紧凑 bullets。",
+            "required_signals": ["why-now-framing", "compact-bullets", "quote-or-callout"],
+            "description": "why-now framing + 一句判断 + 紧凑 supporting cues。",
         },
         "reason": "背景页更适合轻量结构提示，而不是重布局。",
     },
@@ -134,12 +134,12 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
     },
     "detail": {
         "preferred_layouts": [],
-        "preferred_patterns": ["callout", "quote", "div-grid", "mermaid"],
+        "preferred_patterns": ["focus-explainer", "callout", "quote", "div-grid", "mermaid"],
         "visual_recipe": {
             "name": "detail-focus",
             "preferred_classes": ["deck-detail"],
-            "required_signals": ["focus-block"],
-            "description": "单重点信息块 + 一条解释，不做平铺 bullets。",
+            "required_signals": ["single-claim", "focus-block"],
+            "description": "单重点信息块（single-claim）+ supporting cues，不做平铺 bullets。",
         },
         "reason": "细节页应使用可聚焦的原生结构，而不是纯平铺 bullets。",
     },
@@ -156,12 +156,12 @@ SLIDEV_NATIVE_PATTERN_GUIDE: dict[str, dict[str, Any]] = {
     },
     "recommendation": {
         "preferred_layouts": [],
-        "preferred_patterns": ["decision-headline", "action-list", "callout"],
+        "preferred_patterns": ["decision-headline", "action-list", "action-path", "callout"],
         "visual_recipe": {
             "name": "recommendation-actions",
             "preferred_classes": ["deck-recommendation"],
-            "required_signals": ["decision-headline", "action-list"],
-            "description": "一个决策 headline + 2-4 个动作项。",
+            "required_signals": ["decision-headline", "prioritized-actions", "action-list"],
+            "description": "一个决策 headline + 优先级动作路径（2-4 项）。",
         },
         "reason": "建议页优先使用决策 headline + 行动列表的原生结构表达。",
     },
@@ -1228,7 +1228,7 @@ class SlidevMvpService:
             f" kicker={', '.join(deck_chrome.get('kicker_classes') or []) or 'none'};"
             f" subtitle={', '.join(deck_chrome.get('subtitle_classes') or []) or 'none'};"
             f" footer={', '.join(deck_chrome.get('footer_classes') or []) or 'none'}",
-            "shared visual scaffold：`hero-cover` / `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 已有统一视觉皮肤；优先输出这些语义 class，不要用长串 utility class 临时拼版。",
+            "shared visual scaffold：`hero-cover` / `metric-stack` / `map-with-insights` / `focus-explainer` / `compare-panel` / `action-path` 已有统一视觉皮肤；优先输出这些语义 class，不要用长串 utility class 临时拼版。",
             "",
             "本 chunk 负责的页面：",
         ]
@@ -1290,6 +1290,60 @@ class SlidevMvpService:
                         "  **Takeaway**: 用一句 verdict / takeaway 收束这页。",
                     ]
                 )
+            elif role == "detail":
+                lines.extend(
+                    [
+                        "  canonical detail shell:",
+                        "  ---",
+                        f"  class: {layout.get('container_classes') or 'deck-detail'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  <div class=\"focus-card\"><strong>核心判断（仅 1 条）</strong><div>一句解释</div></div>",
+                        "  <div class=\"support-cue\">支持线索 1</div>",
+                        "  <div class=\"support-cue\">支持线索 2</div>",
+                    ]
+                )
+            elif role == "recommendation":
+                lines.extend(
+                    [
+                        "  canonical recommendation shell:",
+                        "  ---",
+                        f"  class: {layout.get('container_classes') or 'deck-recommendation'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  <div class=\"verdict-line\">Decision: 一句决策 headline</div>",
+                        "  <div class=\"action-path\">",
+                        "    <div class=\"action-step\"><strong>P0</strong> first action</div>",
+                        "    <div class=\"action-step\"><strong>P1</strong> second action</div>",
+                        "    <div class=\"action-step\"><strong>P2</strong> optional action</div>",
+                        "  </div>",
+                    ]
+                )
+            elif role == "framework":
+                lines.extend(
+                    [
+                        "  canonical framework shell:",
+                        "  ---",
+                        f"  class: {layout.get('container_classes') or 'deck-framework'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  使用 mermaid/table/grid/matrix 之一承载结构。",
+                        "  <div class=\"interpretation-card\">一句 modeled takeaway</div>",
+                    ]
+                )
+            elif role == "context":
+                lines.extend(
+                    [
+                        "  canonical context shell:",
+                        "  ---",
+                        f"  class: {layout.get('container_classes') or 'deck-context'}",
+                        "  ---",
+                        f"  ## {item.get('title')}",
+                        "  <div class=\"section-kicker\">why-now framing</div>",
+                        "  <div class=\"slide-subtitle\">一句 urgency / framing 判断</div>",
+                        "  2-3 条 supporting cues（避免高密度段落）",
+                    ]
+                )
             elif role == "closing":
                 lines.extend(
                     [
@@ -1321,15 +1375,20 @@ class SlidevMvpService:
                 "- 如果某页 selected layout 给出了 required_classes，就必须把这些 class 写进该页 frontmatter 的 `class:`。",
                 "- 优先复用 deck chrome：在关键页使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 等 cue，而不是临时发明结构。",
                 "- 对 semantic primitives（`metric-card` / `map-panel` / `insight-card` / `compare-side` / `action-step`）优先直接输出语义 class；不要把这些块写成仅靠 utility class 才成立的结构。",
-                "- metric-stack / map-with-insights / compare-panel / action-path 是高优先级 composition primitives；优先兑现 page brief 指定的 preferred_composition。",
-                "- cover/context/framework/comparison/closing 不允许退化成普通章节页；每页至少兑现一个明确的 recipe cue。",
+                "- metric-stack / map-with-insights / focus-explainer / compare-panel / action-path 是高优先级 composition primitives；优先兑现 page brief 指定的 preferred_composition。",
+                "- cover/context/framework/detail/comparison/recommendation/closing 不允许退化成普通章节页；每页至少兑现一个明确的 recipe cue。",
                 "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
-                "- context/framework 页优先带 section kicker，并控制 bullet 密度。",
+                "- context 页要有 why-now framing：section kicker + 一句判断 + 2-3 supporting cues。",
+                "- framework 页必须有可读视觉结构（mermaid/table/grid/matrix）+ takeaway。",
+                "- detail 页必须是 single-focus explainer：一个核心判断 + 2-3 supporting cues，禁止多判断并列与高密度说明文。",
                 "- comparison 页必须使用 two-cols、table 或 before/after 这种明确对照结构。",
+                "- recommendation 页必须有 decision headline + prioritized actions/action path，不允许退化成普通 action list。",
                 "- comparison/closing 页必须出现一句明确 verdict / takeaway line。",
                 "- closing 页必须包含 takeaway、summary、next step 三者之一；不能只写“谢谢/讨论/Q&A”。",
-                "- comparison/framework/closing 不允许退化成普通 bullet dump。",
+                "- comparison/framework/detail/recommendation/closing 不允许退化成普通 bullet dump。",
                 "- comparison 页推荐 canonical skeleton：`layout: two-cols` + `::left::`/`::right::`，左右各有标签，并以一句 verdict / takeaway 收束；若不用 two-cols，则必须给出明确 compare table。",
+                "- detail 页推荐 canonical skeleton：`class: deck-detail` + `section-kicker` + `focus-card`（单判断）+ 2-3 `support-cue`。",
+                "- recommendation 页推荐 canonical skeleton：`class: deck-recommendation` + decision headline + `action-path`（2-4 条带优先级动作）。",
                 "- closing 页推荐 canonical skeleton：`layout: end`（不适配时允许 `center`）+ 一个 closing headline/takeaway line + 2-3 条 next steps 或 summary bullets。",
             ]
         )
@@ -1512,8 +1571,8 @@ class SlidevMvpService:
             "7.1 把 tool 返回的 selected_style / selected_layouts / selected_blocks 当成执行协议：style 决定 deck 基底，layout 决定页 skeleton，blocks 决定页内信息密度与禁用项。\n"
             "7.2 selected_style 里的 deck_scaffold_class / themeConfig / baseline_constraints 也属于执行协议：把 deck scaffold 写进全局 frontmatter，并让每页兑现相应的 presentation cue。\n"
             "7.3 tool 还会返回 page_briefs：每页都要把 page_goal / narrative_job / hero_fact_or_claim / preferred_composition 落成单一主张，不要只把 outline 标题扩成 bullets。\n"
-            "7.4 tool 还会返回 deck_chrome：优先使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 这些轻量 chrome cue，以及 `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 这些 composition primitives。\n"
-            "7.5 deck 已内置 shared visual scaffold：优先复用语义 class（如 `metric-card` / `map-panel` / `insight-card` / `compare-side` / `action-step`），不要再给这些块附加大串 utility class 充当视觉设计。\n"
+            "7.4 tool 还会返回 deck_chrome：优先使用 `slide-topline` / `section-kicker` / `slide-subtitle` / `slide-footer` 这些轻量 chrome cue，以及 `metric-stack` / `map-with-insights` / `focus-explainer` / `compare-panel` / `action-path` 这些 composition primitives。\n"
+            "7.5 deck 已内置 shared visual scaffold：优先复用语义 class（如 `metric-card` / `map-panel` / `insight-card` / `focus-card` / `support-cue` / `compare-side` / `action-step`），不要再给这些块附加大串 utility class 充当视觉设计。\n"
             "8. dispatch_subagent 是可选能力：只有在中间页需要额外起草且值得增加一次模型往返时才调用；简单 deck 直接在主循环完成即可。\n"
             "9. 产出完整的 Slidev markdown：第一张 slide 含全局 frontmatter，正文用 --- 分隔，并按 outline 顺序兑现每页 role；优先使用当前 role 对应的 Slidev native layout/pattern；framework/comparison/recommendation/closing 不能退化成无差别 bullet dump。\n"
             "10. 在交给 controller finalization 前，先调用 review_slidev_deck(markdown=...) 做结构审查，例如 {'markdown': '---\\n...'}；hard issues 会阻断保存，warnings 只用于提示改进。\n"
@@ -1528,8 +1587,9 @@ class SlidevMvpService:
             "- page brief 是页级导演稿：先回答这一页在叙事中要完成什么，再决定 bullets/table/div；不要为了凑页数写泛泛的“说明性正文”。\n"
             "- 对 why-now / urgency / macro-shift 这类 context 页，优先使用 `metric-stack`：主数字或主判断 + 2-3 supporting cards + interpretation line。\n"
             "- 对 exposure / risk-map / task-landscape / axis 这类页面，优先使用 `map-with-insights`：左侧 map/quadrant/table，右侧 2-3 insight cards，再补一句 takeaway。\n"
-            "- 对 recommendation / closing 页，优先使用 `action-path`：一条结论 headline + 2-4 条 next steps，不要退化成空泛 bullets。\n"
-            "- shared visual scaffold 已经提供了 `hero-cover` / `metric-stack` / `map-with-insights` / `compare-panel` / `action-path` 的基础视觉皮肤；优先复用这些语义结构，不要再把视觉表达建立在长串 utility class 上。\n"
+            "- 对 detail 页，优先使用 `focus-explainer`：一个核心判断卡片 + 2-3 supporting cues + 一句 so-what。\n"
+            "- 对 recommendation / closing 页，优先使用 `action-path`：一条决策 headline + 2-4 条带优先级的 next steps，不要退化成空泛 bullets。\n"
+            "- shared visual scaffold 已经提供了 `hero-cover` / `metric-stack` / `map-with-insights` / `focus-explainer` / `compare-panel` / `action-path` 的基础视觉皮肤；优先复用这些语义结构，不要再把视觉表达建立在长串 utility class 上。\n"
             "- 不要依赖大面积 ad-hoc inline `style=` 去硬拼视觉，优先使用 `layout:`、`class:`、Mermaid、table、quote、grid。\n"
             "- 如果 selected layout/block 给出 required_classes / required_visual_signals，就把它们落实成页 frontmatter class、section kicker、verdict/takeaway line、compare labels 等可观察结构。\n"
             "- 关键页应尽量出现 top chrome 或 footer chrome，而不是每页都只有标题开头；cover 之外的页优先给出 `slide-topline` 或 `section-kicker`。\n"
@@ -2667,12 +2727,12 @@ def _chunk_role_requirements(role: str) -> str:
     normalized = role.strip().lower()
     requirements = {
         "cover": "hero title + short subtitle; avoid bullet-heavy body",
-        "context": "brief context with quote/callout or compact bullets",
-        "framework": "use mermaid/table/grid plus one takeaway line",
-        "detail": "one focused point with supporting detail, not a flat dump",
-        "comparison": "must use two-cols, table, or before/after compare structure",
-        "recommendation": "one decision headline plus 2-4 action items",
-        "closing": "must include takeaway, summary, or next step; not just thanks/Q&A",
+        "context": "why-now framing + one judgment line + 2-3 supporting cues",
+        "framework": "visual model structure (mermaid/table/grid/matrix) + one takeaway line",
+        "detail": "single-focus explainer with one claim + 2-3 cues; avoid multi-claim drift",
+        "comparison": "must use two-cols or explicit compare table with labels + verdict",
+        "recommendation": "decision headline + prioritized action path (2-4 actions), not plain list",
+        "closing": "closing headline + takeaway/summary/next-step; not just thanks/Q&A",
     }
     return requirements.get(normalized, "follow the assigned role and keep the structure explicit")
 
@@ -2721,6 +2781,12 @@ def _format_chunk_retry_feedback(*, review: Mapping[str, Any], validation: Mappi
     if "closing_role_mismatch" in seen_codes:
         lines.append("- For the closing slide, use `layout: end` (or `center` if needed) and include one clear takeaway line plus 2-3 next steps.")
         lines.append("- Do not end with only `谢谢` / `Q&A` / `讨论`; it must read like a real closing slide.")
+    if {"detail_over_dense", "detail_multi_claim_drift", "document_like_detail"} & seen_codes:
+        lines.append("- For the detail slide, keep one core claim only. Use one focus block plus 2-3 supporting cues, not a dense paragraph wall.")
+    if {"recommendation_decision_missing", "recommendation_prioritization_missing", "document_like_recommendation"} & seen_codes:
+        lines.append("- For the recommendation slide, start with one decision headline and show priority order across 2-4 actions.")
+    if {"document_like_context", "document_like_framework", "document_like_comparison", "document_like_closing"} & seen_codes:
+        lines.append("- The page is semantically valid but still document-like. Add explicit role skeleton cues before adding more text.")
     if "unbalanced_html_tags" in seen_codes:
         lines.append("- Close every `<div>`, `<section>`, and `<p>` tag before the slide separator.")
 
@@ -3002,6 +3068,12 @@ def _build_slidev_visual_hint(*, slide_role: str, content_shape: str) -> dict[st
         required_signals.append("visual-structure")
     if "action" in lower_shape and "action-list" not in required_signals:
         required_signals.append("action-list")
+    if slide_role == "context" and "why-now-framing" not in required_signals:
+        required_signals.append("why-now-framing")
+    if slide_role == "detail" and "single-claim" not in required_signals:
+        required_signals.append("single-claim")
+    if slide_role == "recommendation" and "prioritized-actions" not in required_signals:
+        required_signals.append("prioritized-actions")
 
     return {
         "name": str(base.get("name") or f"{slide_role}-visual"),
@@ -3141,7 +3213,9 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         "}\n"
         ".metric-stack,\n"
         ".action-path,\n"
-        ".insight-stack {\n"
+        ".focus-explainer,\n"
+        ".insight-stack,\n"
+        ".supporting-cues {\n"
         "  display: grid;\n"
         "  gap: 1rem;\n"
         "}\n"
@@ -3154,6 +3228,8 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         ".metric-card,\n"
         ".compare-side,\n"
         ".action-step,\n"
+        ".focus-card,\n"
+        ".support-cue,\n"
         ".map-panel,\n"
         ".interpretation-card {\n"
         "  border: 1px solid var(--zh-slidev-border);\n"
@@ -3164,6 +3240,8 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         ".metric-card,\n"
         ".compare-side,\n"
         ".action-step,\n"
+        ".focus-card,\n"
+        ".support-cue,\n"
         ".interpretation-card {\n"
         "  padding: 1rem 1.15rem;\n"
         "}\n"
@@ -3182,6 +3260,8 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         ".interpretation-card,\n"
         ".compare-side,\n"
         ".action-step,\n"
+        ".focus-card,\n"
+        ".support-cue,\n"
         ".map-panel,\n"
         ".verdict-line {\n"
         "  line-height: 1.55;\n"
@@ -3236,6 +3316,14 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         ".action-step {\n"
         "  display: block;\n"
         "}\n"
+        ".focus-card strong,\n"
+        ".support-cue strong {\n"
+        "  display: block;\n"
+        "  margin-bottom: 0.3rem;\n"
+        "}\n"
+        ".focus-card {\n"
+        "  border-left: 4px solid var(--zh-slidev-accent);\n"
+        "}\n"
         ".deck-cover h1,\n"
         ".deck-cover h2 {\n"
         "  max-width: 12ch;\n"
@@ -3246,6 +3334,7 @@ def _render_shared_visual_scaffold_block(reference_selection: Mapping[str, Any] 
         "}\n"
         ".deck-context,\n"
         ".deck-framework,\n"
+        ".deck-detail,\n"
         ".deck-comparison,\n"
         ".deck-recommendation,\n"
         ".deck-closing {\n"
@@ -3470,6 +3559,15 @@ def _select_layout_reference(*, item: Mapping[str, Any], layouts: Sequence[Mappi
     pattern_hint = _build_slidev_pattern_hint(slide_role=role, content_shape=content_shape)
     visual_hint = _build_slidev_visual_hint(slide_role=role, content_shape=content_shape)
     candidates = [dict(layout) for layout in layouts if role in _reference_string_list(layout.get("applies_to_roles"))]
+    visual_recipe_name = str(visual_hint.get("name") or "").strip()
+    if candidates:
+        exact_name = [candidate for candidate in candidates if str(candidate.get("name") or "").strip() == visual_recipe_name]
+        if exact_name:
+            candidates = exact_name
+        else:
+            role_only = [candidate for candidate in candidates if _reference_string_list(candidate.get("applies_to_roles")) == [role]]
+            if role_only:
+                candidates = role_only
     selected = candidates[0] if candidates else {
         "name": str(visual_hint.get("name") or role or "default"),
         "preferred_layout": None,
@@ -3527,9 +3625,9 @@ def _select_block_references(*, item: Mapping[str, Any], blocks: Sequence[Mappin
         "cover": ["hero-title"],
         "context": ["compact-bullets", "quote-callout"],
         "framework": ["framework-explainer"],
-        "detail": ["compact-bullets", "quote-callout"],
+        "detail": ["focus-explainer", "quote-callout", "compact-bullets"],
         "comparison": ["compare-split"],
-        "recommendation": ["takeaway-next-steps", "compact-bullets"],
+        "recommendation": ["decision-priority", "takeaway-next-steps", "compact-bullets"],
         "closing": ["takeaway-next-steps"],
     }.get(role, ["compact-bullets"])
     order_map = {name: index for index, name in enumerate(preferred_order)}
@@ -3710,13 +3808,15 @@ def _page_brief_composition(
     )
     if role == "cover":
         return "cover-hero"
+    if role == "detail":
+        return "focus-explainer"
     if role == "comparison":
         return "compare-panel"
     if role in {"recommendation", "closing"}:
         return "action-path"
     if role == "context":
         return "metric-stack" if any(token in haystack for token in urgency_tokens) or int(item.get("slide_number") or 0) <= 2 else "metric-stack"
-    if role in {"framework", "detail", "context"} and any(token in haystack for token in map_tokens):
+    if role in {"framework", "context"} and any(token in haystack for token in map_tokens):
         return "map-with-insights"
     if role == "framework":
         return "map-with-insights"
@@ -3728,11 +3828,15 @@ def _page_brief_claim(*, title: str, goal: str, role: str, thesis: str) -> str:
         return title
     if role == "context":
         return f"{title} 不是远期趋势，而是已经影响组织与个人决策的现实变化。"
-    if role in {"framework", "detail"}:
+    if role == "framework":
         return f"{title} 需要被解释成一个可读的结构，而不是散乱结论。"
+    if role == "detail":
+        return f"{title} 这一页只服务一个核心判断，避免并列多个结论。"
     if role == "comparison":
         return f"{title} 必须让观众一眼看出两侧差异与最终判断。"
-    if role in {"recommendation", "closing"}:
+    if role == "recommendation":
+        return f"{title} 需要先给出决策 headline，再展开优先级动作。"
+    if role == "closing":
         return f"{title} 应把分析转成明确 takeaway 与下一步。"
     return goal or thesis
 
@@ -3766,6 +3870,11 @@ def _page_brief_supporting_points(
             "2-4 条 next steps / actions",
             "1 句 closing or priority cue",
         ],
+        "focus-explainer": [
+            "1 个核心判断卡片（single-claim）",
+            "2-3 个 supporting cues",
+            "1 句 so-what / implication",
+        ],
         "cover-hero": [
             "1 条短 kicker",
             "1 个 hero title",
@@ -3785,6 +3894,7 @@ def _page_brief_must_keep(*, role: str, preferred_composition: str) -> list[str]
         "cover-hero": ["短 kicker", "hero title", "短 subtitle"],
         "metric-stack": ["hero fact / claim", "2-3 supporting cards", "interpretation line"],
         "map-with-insights": ["map or quadrant panel", "2-3 insight cards", "takeaway or source line"],
+        "focus-explainer": ["single claim card", "2-3 supporting cues", "implication line"],
         "compare-panel": ["paired labels", "left/right contrast", "verdict line"],
         "action-path": ["takeaway headline", "2-4 next steps", "closing cue"],
     }
@@ -3799,6 +3909,7 @@ def _page_brief_must_avoid(*, role: str, preferred_composition: str) -> list[str
         "cover-hero": ["文档式封面", "长段说明"],
         "metric-stack": ["标题 + 大段 bullets", "只有抽象判断没有数据 cue"],
         "map-with-insights": ["纯 bullets", "没有左右分工的平铺结构"],
+        "focus-explainer": ["多判断并列", "高密度说明文段落"],
         "compare-panel": ["未标注左右", "没有 verdict 的对照页"],
         "action-path": ["普通 bullet dump", "谢谢/Q&A 结尾"],
     }
@@ -3813,10 +3924,15 @@ def _page_brief_keep_signals(*, role: str, preferred_composition: str) -> list[s
         "cover-hero": ["launch-kicker", "hero-title", "short-subtitle"],
         "metric-stack": ["metric-stack", "hero-metric", "interpretation-line"],
         "map-with-insights": ["map-with-insights", "visual-structure", "insight-card", "source-or-takeaway"],
+        "focus-explainer": ["focus-explainer", "single-claim", "focus-block", "section-kicker"],
         "compare-panel": ["compare-panel", "split-compare", "contrast-labels", "verdict-line"],
-        "action-path": ["action-path", "next-step-or-takeaway", "action-list"],
+        "action-path": ["action-path", "next-step-or-takeaway", "action-list", "prioritized-actions"],
     }
     keep = list(mapping.get(preferred_composition, []))
+    if role == "context" and "why-now-framing" not in keep:
+        keep.append("why-now-framing")
+    if role == "recommendation" and "decision-headline" not in keep:
+        keep.append("decision-headline")
     if role == "closing" and "closing-line" not in keep:
         keep.append("closing-line")
     return keep
@@ -3826,6 +3942,7 @@ def _page_brief_avoid_patterns(*, role: str, preferred_composition: str) -> list
     patterns = {
         "metric-stack": ["plain-bullet-dump", "unstyled-document-section"],
         "map-with-insights": ["plain-bullet-dump", "unstyled-document-section"],
+        "focus-explainer": ["plain-bullet-dump", "unstyled-document-section"],
         "compare-panel": ["unlabeled-compare", "unstyled-document-section"],
         "action-path": ["plain-bullet-dump", "generic-thanks"],
         "cover-hero": ["unstyled-document-section", "long-paragraph-cover"],
@@ -3861,6 +3978,8 @@ def _build_slidev_deck_chrome(
             "metric-card",
             "interpretation-card",
             "map-panel",
+            "focus-card",
+            "support-cue",
             "compare-side",
             "action-step",
         ],
@@ -3879,6 +3998,11 @@ def _build_slidev_deck_chrome(
                 "name": "map-with-insights",
                 "required_classes": ["map-with-insights", "map-panel", "insight-card"],
                 "description": "left map or matrix plus right-side insight cards and a takeaway/source line",
+            },
+            {
+                "name": "focus-explainer",
+                "required_classes": ["focus-explainer", "focus-card", "support-cue"],
+                "description": "single-focus detail page with one core claim and compact supporting cues",
             },
             {
                 "name": "compare-panel",
@@ -3900,7 +4024,7 @@ def _build_slidev_deck_chrome(
             "marker": SLIDEV_SHARED_VISUAL_SCAFFOLD_MARKER,
             "root_class": str(selected_style.get("deck_scaffold_class") or "").strip(),
             "scaffold_tokens": scaffold_tokens,
-            "primitive_names": ["hero-cover", "metric-stack", "map-with-insights", "compare-panel", "action-path"],
+            "primitive_names": ["hero-cover", "metric-stack", "map-with-insights", "focus-explainer", "compare-panel", "action-path"],
         },
         "briefed_slide_count": len(page_briefs),
     }
@@ -3927,7 +4051,7 @@ def _slide_role_container_class(*, brief: Mapping[str, Any], layout: Mapping[str
         "cover": "deck-cover",
         "context": "deck-context",
         "framework": "deck-framework",
-        "detail": "deck-context",
+        "detail": "deck-detail",
         "comparison": "deck-comparison",
         "recommendation": "deck-recommendation",
         "closing": "deck-closing",
@@ -4029,11 +4153,31 @@ def _page_brief_scaffold_lines(
                 f"  ## {title}",
                 "  <div class=\"verdict-line\">一句结论 headline / recommendation</div>",
                 "  <div class=\"action-path\">",
-                "    <div class=\"action-step\">1. action</div>",
-                "    <div class=\"action-step\">2. action</div>",
-                "    <div class=\"action-step\">3. action</div>",
+                "    <div class=\"action-step\"><strong>P0 / first</strong> action</div>",
+                "    <div class=\"action-step\"><strong>P1 / then</strong> action</div>",
+                "    <div class=\"action-step\"><strong>P2 / next</strong> action</div>",
                 "  </div>",
                 "  <div class=\"slide-footer\">priority / owner / source</div>",
+            ]
+        )
+    elif composition == "focus-explainer":
+        lines.extend(
+            [
+                "  canonical focus-explainer shell:",
+                "  ---",
+                f"  class: {container_class}",
+                "  ---",
+                f"  <div class=\"slide-topline\">{deck_label} / focused detail</div>",
+                "  <div class=\"section-kicker\">single-claim explainer</div>",
+                f"  ## {title}",
+                "  <div class=\"focus-explainer\">",
+                "    <div class=\"focus-card\"><strong>核心判断（仅 1 条）</strong><div>一句解释</div></div>",
+                "    <div class=\"supporting-cues\">",
+                "      <div class=\"support-cue\"><strong>cue 1</strong> supporting evidence</div>",
+                "      <div class=\"support-cue\"><strong>cue 2</strong> supporting evidence</div>",
+                "      <div class=\"support-cue\"><strong>cue 3（可选）</strong> implication / so-what</div>",
+                "    </div>",
+                "  </div>",
             ]
         )
     return lines
