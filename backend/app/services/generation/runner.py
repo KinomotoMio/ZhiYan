@@ -1117,34 +1117,27 @@ class GenerationRunner:
                 },
                 exc_info=True,
             )
-            return await self._run_pipeline_job(
-                job,
-                state,
-                start_stage=start_stage,
-                progress_hook=progress_hook,
-                slide_hook=slide_hook,
-            )
+        else:
+            if self._agentic_runtime_completed(job):
+                logger.info(
+                    "agentic runtime completed",
+                    extra={
+                        "job_id": job.job_id,
+                        "turns": loop_result.turns,
+                        "stop_reason": loop_result.stop_reason,
+                    },
+                )
+                return True
 
-        if self._agentic_runtime_completed(job):
-            logger.info(
-                "agentic runtime completed",
+            logger.warning(
+                "agentic runtime incomplete; falling back to pipeline",
                 extra={
                     "job_id": job.job_id,
+                    "start_stage": start_stage.value,
                     "turns": loop_result.turns,
                     "stop_reason": loop_result.stop_reason,
                 },
             )
-            return True
-
-        logger.warning(
-            "agentic runtime incomplete; falling back to pipeline",
-            extra={
-                "job_id": job.job_id,
-                "start_stage": start_stage.value,
-                "turns": loop_result.turns,
-                "stop_reason": loop_result.stop_reason,
-            },
-        )
         return await self._run_pipeline_job(
             job,
             state,
