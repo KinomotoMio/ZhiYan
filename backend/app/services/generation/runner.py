@@ -1055,8 +1055,8 @@ class GenerationRunner:
         state: PipelineState,
         *,
         start_stage: StageStatus,
-        progress_hook: ProgressCallback,
-        slide_hook: SlideReadyCallback,
+        progress_hook,
+        slide_hook,
     ) -> bool:
         # Keep a stable runtime-selection seam for backward compatibility tests.
         # Agentic mode is currently wired through the same pipeline execution path.
@@ -1075,8 +1075,8 @@ class GenerationRunner:
         state: PipelineState,
         *,
         start_stage: StageStatus,
-        progress_hook: ProgressCallback,
-        slide_hook: SlideReadyCallback,
+        progress_hook,
+        slide_hook,
     ) -> bool:
         registry = self._build_tool_registry()
         history: list[LoopHistoryItem] = self._bootstrap_history_for_start_stage(registry, start_stage)
