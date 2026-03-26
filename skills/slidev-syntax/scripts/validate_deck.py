@@ -158,6 +158,7 @@ def validate_deck(
 
     issues.extend(_validate_fences(text))
     issues.extend(_validate_slide_frontmatter_blocks(slides))
+    issues.extend(_validate_raw_markdown_exposure(slides))
     native_usage_summary = _native_usage_summary(slides)
     reference_usage_summary = _reference_usage_summary(slides, selected_layouts, selected_blocks)
     page_brief_fidelity_summary = _page_brief_fidelity_summary(slides, page_briefs)
@@ -279,6 +280,65 @@ def _validate_slide_frontmatter_blocks(slides: list[str]) -> list[dict[str, str]
                 }
             )
     return issues
+
+
+def _validate_raw_markdown_exposure(slides: list[str]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for index, slide in enumerate(slides, start=1):
+        body = _strip_slide_frontmatter(slide)
+        hits = _raw_markdown_lines_inside_html_containers(body)
+        if not hits:
+            continue
+        sample = ", ".join(hits[:3])
+        issues.append(
+            {
+                "code": "raw_markdown_exposed_in_html_container",
+                "message": (
+                    f"Slide {index} contains markdown primitives inside HTML containers (sample: {sample}). "
+                    "Move markdown structure outside the container or render it as pure HTML."
+                ),
+            }
+        )
+    return issues
+
+
+def _raw_markdown_lines_inside_html_containers(body: str) -> list[str]:
+    if not body.strip():
+        return []
+    containers = re.finditer(
+        r"<(div|section|article|aside|main)\b[^>]*>(.*?)</\1>",
+        body,
+        re.IGNORECASE | re.DOTALL,
+    )
+    hits: list[str] = []
+    for container in containers:
+        inner = str(container.group(2) or "")
+        for raw_line in inner.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if re.match(r"^#{1,6}\s+\S", line):
+                hits.append(f"heading `{line[:48]}`")
+                continue
+            if re.match(r"^[-*+]\s+\S", line):
+                hits.append(f"list `{line[:48]}`")
+                continue
+            if re.match(r"^\d+\.\s+\S", line):
+                hits.append(f"ordered-list `{line[:48]}`")
+                continue
+            if re.match(r"^>\s+\S", line):
+                hits.append(f"quote `{line[:48]}`")
+                continue
+            if re.match(r"^(?:```|~~~)", line):
+                hits.append(f"fence `{line[:48]}`")
+                continue
+            if re.match(r"^::[A-Za-z0-9_-]+::\s*$", line):
+                hits.append(f"callout `{line[:48]}`")
+                continue
+            if re.match(r"^\|.+\|\s*$", line):
+                hits.append(f"table-row `{line[:48]}`")
+                continue
+    return hits
 
 
 def _count_fence_lines(text: str, marker: str) -> int:

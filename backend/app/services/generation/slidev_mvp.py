@@ -1380,6 +1380,7 @@ class SlidevMvpService:
                 "- cover 页优先使用短 kicker + 标题 + 短副标题；不要写成长段说明。",
                 "- context 页要有 why-now framing：section kicker + 一句判断 + 2-3 supporting cues。",
                 "- framework 页必须有可读视觉结构（mermaid/table/grid/matrix）+ takeaway。",
+                "- 不要把 markdown 标题/列表/表格/围栏代码写进 `<div>/<section>` 容器内部；这会导致 raw markdown 外露。容器内请用纯 HTML 结构，或把 markdown 结构移到容器外。",
                 "- detail 页必须是 single-focus explainer：一个核心判断 + 2-3 supporting cues，禁止多判断并列与高密度说明文。",
                 "- comparison 页必须使用 two-cols、table 或 before/after 这种明确对照结构。",
                 "- recommendation 页必须有 decision headline + prioritized actions/action path，不允许退化成普通 action list。",
@@ -2775,6 +2776,9 @@ def _format_chunk_retry_feedback(*, review: Mapping[str, Any], validation: Mappi
     if {"unfenced_slide_frontmatter", "frontmatter_inside_code_fence"} & seen_codes:
         lines.append("- Rewrite slide frontmatter as real Slidev fences before the slide heading. Never use ```yaml blocks for layout/class.")
         lines.append("- Canonical opening example: `---` / `layout: two-cols` / `class: deck-comparison` / `---` / `## Slide Title`.")
+    if "raw_markdown_exposed_in_html_container" in seen_codes:
+        lines.append("- Do not place markdown headings/lists/tables/fenced code inside `<div>/<section>` containers.")
+        lines.append("- Either keep markdown structure outside the container, or rewrite that block as pure HTML (`<h3>`, `<ul><li>`, `<table>`, etc.).")
     if {"comparison_native_pattern_missing", "comparison_role_mismatch"} & seen_codes:
         lines.append("- For the comparison slide, use `layout: two-cols` plus `::left::` and `::right::`, or one explicit compare table.")
         lines.append("- Keep explicit left/right labels and end the slide with one verdict / takeaway line.")
