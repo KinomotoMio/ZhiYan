@@ -3060,18 +3060,6 @@ def _build_slidev_pattern_hint(*, slide_role: str, content_shape: str) -> dict[s
     layouts = list(base.get("preferred_layouts") or [])
     patterns = list(base.get("preferred_patterns") or [])
     lower_shape = content_shape.strip().lower()
-
-    if slide_role == "agenda":
-        if "section" not in layouts:
-            layouts.append("section")
-        if "table" not in patterns:
-            patterns.append("table")
-        if "div-grid" not in patterns:
-            patterns.append("div-grid")
-    if slide_role == "section-divider":
-        for layout_name in ("section", "center"):
-            if layout_name not in layouts:
-                layouts.append(layout_name)
     if "compare" in lower_shape or "response" in lower_shape:
         if "two-cols" not in layouts:
             layouts.append("two-cols")
