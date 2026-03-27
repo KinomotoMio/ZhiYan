@@ -1790,6 +1790,7 @@ class GenerationRunner:
             normalized_html, meta, presentation = normalize_html_deck(
                 html=args.html,
                 fallback_title=args.title,
+                existing_slides=None,
             )
             payload = {
                 "title": meta["title"],

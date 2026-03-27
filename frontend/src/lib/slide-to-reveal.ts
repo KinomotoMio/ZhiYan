@@ -1056,6 +1056,11 @@ export function presentationToRevealHTML(pres: Presentation): string {
       display: block;
       max-width: 100%;
     }
+    html[data-preview-mode="thumbnail"] .reveal .controls,
+    html[data-preview-mode="thumbnail"] .reveal .progress,
+    html[data-preview-mode="thumbnail"] .reveal .slide-number {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
@@ -1068,8 +1073,15 @@ ${sections}
   <script>
     const revealElement = document.querySelector('.reveal');
     const deck = new Reveal(revealElement);
+    const query = new URLSearchParams(window.location.search);
+    const requestedSlide = Number.parseInt(query.get('slide') || '0', 10);
+    const initialSlide = Number.isFinite(requestedSlide) ? Math.max(0, requestedSlide) : 0;
+    const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';
+    const isInteractive = previewMode === 'interactive';
+    document.documentElement.dataset.previewMode = previewMode;
 
     const focusRevealSurface = () => {
+      if (!isInteractive) return;
       try {
         window.focus();
       } catch {
@@ -1088,6 +1100,7 @@ ${sections}
     };
 
     const notifySlideChange = () => {
+      if (!isInteractive) return;
       const { h } = deck.getIndices();
       window.parent.postMessage(
         { type: 'reveal-preview-slidechange', slideIndex: h },
@@ -1096,13 +1109,21 @@ ${sections}
     };
 
     deck.on('ready', () => {
-      notifySlideChange();
-      window.requestAnimationFrame(focusRevealSurface);
+      if (initialSlide > 0) {
+        deck.slide(initialSlide);
+      } else {
+        notifySlideChange();
+      }
+      if (isInteractive) {
+        window.requestAnimationFrame(focusRevealSurface);
+      }
     });
-    deck.on('slidechanged', notifySlideChange);
+    if (isInteractive) {
+      deck.on('slidechanged', notifySlideChange);
+    }
 
     deck.initialize({
-      hash: true,
+      hash: false,
       width: 1280,
       height: 720,
       margin: 0,
