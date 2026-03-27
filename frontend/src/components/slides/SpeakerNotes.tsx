@@ -191,7 +191,7 @@ export default function SpeakerNotes({
           }`}
         >
           {isSaving ? <span>正在保存...</span> : null}
-          <span>{hasNotes ? `${value.trim().length} 字` : "当前页还没有演讲者注解"}</span>
+          {hasNotes ? <span>{`${value.trim().length} 字`}</span> : null}
         </div>
       </div>
     </div>
