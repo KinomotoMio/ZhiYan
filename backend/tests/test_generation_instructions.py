@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.services.harness.config import (
+from app.services.generation.instructions import (
     compose_outline_instructions,
     compose_planner_instructions,
     load_generation_harness_config,
