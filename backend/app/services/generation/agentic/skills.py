@@ -1,132 +1,180 @@
-"""Skill discovery and tool helpers for generation agentic mode."""
-
 from __future__ import annotations
 
+from html import escape
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from app.services.generation.agentic.tools import ToolDef
-from app.services.skill_runtime.executor import execute_skill
-from app.services.skill_runtime.registry import SkillRegistry
+import yaml
 
 
-def build_skill_summaries(registry: SkillRegistry | None = None) -> str:
-    """Build the layer-1 skill summary block shown to the model."""
-
-    skill_registry = registry or SkillRegistry()
-    skills = skill_registry.discover()
-    if not skills:
-        return ""
-
-    lines = ["## Available Skills", ""]
-    for skill in skills:
-        name = str(skill.get("name") or "").strip()
-        if not name:
-            continue
-        description = str(skill.get("description") or "无描述").strip()
-        lines.append(f"- {name}: {description}")
-
-    lines.extend(["", "Use `load_skill` to inspect a skill in detail before relying on it."])
-    return "\n".join(lines)
+@dataclass(slots=True)
+class SkillDiagnostic:
+    level: str
+    message: str
 
 
-def build_load_skill_tool(registry: SkillRegistry | None = None) -> ToolDef:
-    """Create a tool that loads a skill's full SKILL.md content."""
-
-    skill_registry = registry or SkillRegistry()
-
-    async def _handler(args: dict[str, Any]) -> str:
-        name = str(args.get("name") or "").strip()
-        if not name:
-            raise ValueError("load_skill requires a non-empty 'name'")
-
-        content = skill_registry.load_skill(name)
-        if content is None:
-            return f"Skill '{name}' not found."
-        return content
-
-    return ToolDef(
-        name="load_skill",
-        description="Load the full SKILL.md content for a named skill.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The skill name to inspect.",
-                }
-            },
-            "required": ["name"],
-            "additionalProperties": False,
-        },
-        handler=_handler,
-    )
+@dataclass(slots=True)
+class SkillRecord:
+    name: str
+    description: str
+    location: Path
+    skill_dir: Path
+    body: str
+    argument_hint: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    allowed_tools: str | None = None
+    diagnostics: list[SkillDiagnostic] = field(default_factory=list)
 
 
-def build_run_skill_tool(registry: SkillRegistry | None = None) -> ToolDef:
-    """Create a tool that executes a script exposed by a registered skill."""
+@dataclass(slots=True)
+class SkillCatalog:
+    records: dict[str, SkillRecord] = field(default_factory=dict)
+    diagnostics: list[SkillDiagnostic] = field(default_factory=list)
 
-    skill_registry = registry or SkillRegistry()
+    def render_catalog(self) -> str:
+        if not self.records:
+            return ""
+        lines = [
+            "Available skills are listed below.",
+            "When a task matches a skill, use the load_skill tool to load the full instructions before proceeding.",
+            "",
+            "<available_skills>",
+        ]
+        for skill in sorted(self.records.values(), key=lambda item: item.name):
+            lines.extend(
+                [
+                    "  <skill>",
+                    f"    <name>{skill.name}</name>",
+                    f"    <description>{skill.description}</description>",
+                    *(
+                        [f"    <argument_hint>{escape(skill.argument_hint)}</argument_hint>"]
+                        if skill.argument_hint
+                        else []
+                    ),
+                    "  </skill>",
+                ]
+            )
+        lines.append("</available_skills>")
+        return "\n".join(lines)
 
-    async def _handler(args: dict[str, Any]) -> dict[str, Any] | str:
-        name = str(args.get("name") or "").strip()
-        if not name:
-            raise ValueError("run_skill requires a non-empty 'name'")
-        discovered_names = {
-            str(skill.get("name") or "").strip()
-            for skill in skill_registry.discover()
-            if str(skill.get("name") or "").strip()
-        }
-        if name not in discovered_names:
-            return f"Skill '{name}' not found."
-
-        script = str(args.get("script") or "").strip()
-        if not script:
-            raise ValueError("run_skill requires a non-empty 'script'")
-
-        parameters = args.get("parameters") or {}
-        if not isinstance(parameters, dict):
-            raise ValueError("run_skill 'parameters' must be an object")
-
-        slides = args.get("slides") or []
-        if not isinstance(slides, list):
-            raise ValueError("run_skill 'slides' must be an array")
-
-        return await execute_skill(
-            skill_name=name,
-            script_name=script,
-            input_data={
-                "slides": slides,
-                "parameters": parameters,
-            },
+    def render_skill_content(self, name: str) -> str:
+        record = self.records[name]
+        resource_lines = sorted(
+            str(path.relative_to(record.skill_dir))
+            for folder in ("scripts", "references", "assets")
+            for path in (record.skill_dir / folder).rglob("*")
+            if (record.skill_dir / folder).exists() and path.is_file()
         )
+        lines = [
+            f'<skill_content name="{record.name}">',
+            record.body,
+            "",
+            f"Skill directory: {record.skill_dir}",
+            "Relative paths in this skill are relative to the skill directory.",
+        ]
+        if resource_lines:
+            lines.append("<skill_resources>")
+            lines.extend(f"<file>{resource}</file>" for resource in resource_lines)
+            lines.append("</skill_resources>")
+        lines.append("</skill_content>")
+        return "\n".join(lines)
 
-    return ToolDef(
-        name="run_skill",
-        description="Execute a script from a named skill after inspecting its instructions.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The skill name to execute.",
-                },
-                "script": {
-                    "type": "string",
-                    "description": "The script file inside the skill's scripts directory.",
-                },
-                "slides": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "Optional slide payloads to pass through.",
-                },
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": True,
-                    "description": "Additional JSON parameters for the script.",
-                },
-            },
-            "required": ["name", "script"],
-            "additionalProperties": False,
-        },
-        handler=_handler,
+
+@dataclass(slots=True)
+class SkillDiscovery:
+    project_root: Path
+    relative_skill_dir: Path = Path(".agents/skills")
+
+    def discover(self) -> SkillCatalog:
+        catalog = SkillCatalog()
+        skills_root = (self.project_root / self.relative_skill_dir).resolve()
+        if not skills_root.exists():
+            return catalog
+        for skill_md in sorted(skills_root.rglob("SKILL.md")):
+            record, diagnostics = parse_skill_file(skill_md)
+            if record is None:
+                catalog.diagnostics.extend(diagnostics)
+                continue
+            existing = catalog.records.get(record.name)
+            if existing is not None:
+                diagnostic = SkillDiagnostic(
+                    level="warning",
+                    message=f"Skill '{record.name}' at {record.location} shadows {existing.location}.",
+                )
+                record.diagnostics.append(diagnostic)
+                catalog.diagnostics.append(diagnostic)
+            catalog.records[record.name] = record
+            catalog.diagnostics.extend(diagnostics)
+        return catalog
+
+
+def parse_skill_file(path: Path) -> tuple[SkillRecord | None, list[SkillDiagnostic]]:
+    diagnostics: list[SkillDiagnostic] = []
+    text = path.read_text(encoding="utf-8")
+    frontmatter, body = _split_frontmatter(text)
+    if frontmatter is None:
+        diagnostics.append(SkillDiagnostic(level="error", message=f"Missing frontmatter in {path}."))
+        return None, diagnostics
+    try:
+        data = yaml.safe_load(frontmatter) or {}
+    except yaml.YAMLError:
+        try:
+            data = yaml.safe_load(_repair_frontmatter(frontmatter)) or {}
+            diagnostics.append(
+                SkillDiagnostic(level="warning", message=f"Recovered malformed YAML in {path}.")
+            )
+        except yaml.YAMLError as exc:
+            diagnostics.append(SkillDiagnostic(level="error", message=f"Invalid YAML in {path}: {exc}"))
+            return None, diagnostics
+
+    name = str(data.get("name", "")).strip()
+    description = str(data.get("description", "")).strip()
+    argument_hint = str(data.get("argument-hint", "")).strip() or None
+    if not description:
+        diagnostics.append(SkillDiagnostic(level="error", message=f"Skill at {path} is missing description."))
+        return None, diagnostics
+    parent_name = path.parent.name
+    if name != parent_name:
+        diagnostics.append(
+            SkillDiagnostic(
+                level="warning",
+                message=f"Skill name '{name}' does not match directory '{parent_name}'.",
+            )
+        )
+    record = SkillRecord(
+        name=name or parent_name,
+        description=description,
+        location=path.resolve(),
+        skill_dir=path.parent.resolve(),
+        body=body.strip(),
+        argument_hint=argument_hint,
+        metadata=data.get("metadata", {}) or {},
+        allowed_tools=data.get("allowed-tools"),
+        diagnostics=list(diagnostics),
     )
+    return record, diagnostics
+
+
+def _split_frontmatter(text: str) -> tuple[str | None, str]:
+    if not text.startswith("---"):
+        return None, text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None, text
+    _, frontmatter, remainder = parts
+    return frontmatter.strip(), remainder.strip()
+
+
+def _repair_frontmatter(frontmatter: str) -> str:
+    repaired_lines: list[str] = []
+    for line in frontmatter.splitlines():
+        if ":" in line and not line.lstrip().startswith(("-", "#")):
+            key, value = line.split(":", 1)
+            stripped = value.strip()
+            if stripped and ": " in stripped and not stripped.startswith(("'", '"', "|", ">")):
+                escaped = stripped.replace('"', '\\"')
+                repaired_lines.append(f'{key}: "{escaped}"')
+                continue
+        repaired_lines.append(line)
+    return "\n".join(repaired_lines)

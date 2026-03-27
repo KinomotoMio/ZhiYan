@@ -1,134 +1,79 @@
-"""Planning helpers for generation agentic mode."""
-
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
-from app.services.generation.agentic.tools import ToolDef
 
-TODO_STATUSES = ("pending", "in_progress", "done")
 TodoStatus = Literal["pending", "in_progress", "done"]
-
-_STATUS_ICONS: dict[TodoStatus, str] = {
-    "pending": "⬜",
-    "in_progress": "🔄",
-    "done": "✅",
-}
 
 
 @dataclass(slots=True)
 class TodoItem:
     id: int
-    task: str
-    status: TodoStatus
+    text: str
+    status: TodoStatus = "pending"
 
 
 @dataclass(slots=True)
 class TodoManager:
     items: list[TodoItem] = field(default_factory=list)
 
-    def update(self, items: Iterable[Mapping[str, Any]]) -> str:
-        normalized = [_normalize_item(item) for item in items]
-        _validate_unique_ids(normalized)
-        _validate_in_progress(normalized)
+    def update(self, items: list[dict[str, object]]) -> dict[str, object]:
+        validated: list[TodoItem] = []
+        in_progress_count = 0
+        for raw in items:
+            status = str(raw.get("status", "pending"))
+            if status not in {"pending", "in_progress", "done"}:
+                raise ValueError(f"Invalid todo status: {status}")
+            if status == "in_progress":
+                in_progress_count += 1
+            text = str(raw.get("text", "")).strip()
+            if not text:
+                raise ValueError("Todo items require non-empty text.")
+            validated.append(
+                TodoItem(
+                    id=int(raw["id"]),
+                    text=text,
+                    status=status,
+                )
+            )
+        if in_progress_count > 1:
+            raise ValueError("Only one todo item can be in_progress.")
+        self.items = validated
+        return self.snapshot()
 
-        by_id = {item.id: item for item in self.items}
-        existing_order = [item.id for item in self.items]
+    def reset(self) -> None:
+        self.items = []
 
-        for item in normalized:
-            if item.id in by_id:
-                by_id[item.id].task = item.task
-                by_id[item.id].status = item.status
-            else:
-                by_id[item.id] = TodoItem(id=item.id, task=item.task, status=item.status)
-                existing_order.append(item.id)
-
-        self.items = [by_id[item_id] for item_id in existing_order]
-        _validate_in_progress(self.items)
-        return self.format()
-
-    def format(self) -> str:
-        if not self.items:
-            return ""
-        return "\n".join(f"{_STATUS_ICONS[item.status]} {item.id}. {item.task}" for item in self.items)
-
-    @property
-    def has_pending(self) -> bool:
-        return any(item.status != "done" for item in self.items)
-
-
-def build_todo_nag(manager: TodoManager) -> str | None:
-    if not manager.items:
-        return "你还没有创建任务计划。请先调用 update_todo 创建计划，再执行其他工具。"
-
-    if manager.has_pending:
-        return "当前计划状态：\n" + manager.format() + "\n\n请按计划继续执行。"
-
-    return None
-
-
-def build_update_todo_tool(manager: TodoManager) -> ToolDef:
-    async def _handler(args: dict[str, Any]) -> str:
-        items = args.get("items")
-        if not isinstance(items, list):
-            raise ValueError("update_todo requires an 'items' list")
-        return manager.update(items)
-
-    return ToolDef(
-        name="update_todo",
-        description="创建或更新任务计划。在执行其他生成工具前先用它记录计划。",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "integer"},
-                            "task": {"type": "string"},
-                            "status": {"type": "string", "enum": list(TODO_STATUSES)},
-                        },
-                        "required": ["id", "task", "status"],
-                        "additionalProperties": False,
-                    },
-                }
+    def snapshot(self) -> dict[str, object]:
+        done = sum(item.status == "done" for item in self.items)
+        in_progress = sum(item.status == "in_progress" for item in self.items)
+        pending = sum(item.status == "pending" for item in self.items)
+        return {
+            "items": [self._serialize_item(item) for item in self.items],
+            "summary": self.render(),
+            "counts": {
+                "pending": pending,
+                "in_progress": in_progress,
+                "done": done,
+                "total": len(self.items),
             },
-            "required": ["items"],
-            "additionalProperties": False,
-        },
-        handler=_handler,
-    )
+        }
 
+    def render(self) -> str:
+        if not self.items:
+            return "Current plan:\n- (empty)"
+        lines = ["Current plan:"]
+        for item in self.items:
+            marker = {
+                "pending": "[ ]",
+                "in_progress": "[>]",
+                "done": "[x]",
+            }[item.status]
+            lines.append(f"{marker} #{item.id} {item.text}")
+        done = sum(item.status == "done" for item in self.items)
+        lines.append(f"Progress: {done}/{len(self.items)} complete")
+        return "\n".join(lines)
 
-def _normalize_item(raw: Mapping[str, Any]) -> TodoItem:
-    try:
-        item_id = int(raw["id"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("todo item id must be an integer") from exc
-
-    task = str(raw["task"]).strip()
-    if not task:
-        raise ValueError("todo item task must not be empty")
-
-    status = str(raw["status"]).strip()
-    if status not in TODO_STATUSES:
-        raise ValueError(f"invalid todo status: {status}; expected one of {TODO_STATUSES}")
-
-    return TodoItem(id=item_id, task=task, status=status)
-
-
-def _validate_unique_ids(items: Iterable[TodoItem]) -> None:
-    seen: set[int] = set()
-    for item in items:
-        if item.id in seen:
-            raise ValueError("duplicate todo item id in update payload")
-        seen.add(item.id)
-
-
-def _validate_in_progress(items: Iterable[TodoItem]) -> None:
-    in_progress = [item.id for item in items if item.status == "in_progress"]
-    if len(in_progress) > 1:
-        raise ValueError("only one todo item can be in_progress at a time")
+    def _serialize_item(self, item: TodoItem) -> dict[str, object]:
+        return {"id": item.id, "text": item.text, "status": item.status}

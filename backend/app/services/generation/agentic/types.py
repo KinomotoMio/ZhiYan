@@ -1,50 +1,52 @@
-"""Internal types for generation agentic mode.
-
-Keep the execution core independent from any specific LLM SDK.
-"""
-
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal
+
+
+JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
 
 
 @dataclass(slots=True)
 class ToolCall:
     tool_name: str
-    args: dict[str, Any] = field(default_factory=dict)
-    tool_call_id: str = ""
+    args: dict[str, Any]
+    tool_call_id: str
 
 
 @dataclass(slots=True)
 class ToolResult:
     tool_name: str
-    content: Any
     tool_call_id: str
+    content: JsonValue
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
+class SystemMessage:
+    content: str
+    role: Literal["system"] = "system"
+
+
+@dataclass(slots=True)
 class UserMessage:
-    parts: list[str | ToolResult]
-    instructions: str | None = None
+    content: str
+    role: Literal["user"] = "user"
 
 
 @dataclass(slots=True)
 class AssistantMessage:
-    parts: list[str | ToolCall]
-    provider_name: str | None = None
-    model_name: str | None = None
+    content: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    role: Literal["assistant"] = "assistant"
 
 
-AgenticMessage = UserMessage | AssistantMessage
+@dataclass(slots=True)
+class ToolMessage:
+    results: list[ToolResult]
+    role: Literal["tool"] = "tool"
 
 
-class AgenticModelClient(Protocol):
-    async def complete(
-        self,
-        messages: Sequence[AgenticMessage],
-        tools: Sequence[dict[str, Any]],
-    ) -> AssistantMessage: ...
+Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage
+

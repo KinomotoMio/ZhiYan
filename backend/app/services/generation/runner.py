@@ -16,9 +16,14 @@ import httpx
 from app.core.config import settings
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
-from app.services.generation.agentic.context import summarize_state
-from app.services.generation.agentic.loop import agentic_loop
-from app.services.generation.agentic.tools import ToolDef, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
+from app.services.generation.agentic import (
+    ToolDef,
+    ToolExecutionResult,
+    ToolRegistry,
+    agentic_loop,
+    dispatch_tool_calls,
+    summarize_state,
+)
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.loop_planner import GenerationLoopPlanner, LoopHistoryItem

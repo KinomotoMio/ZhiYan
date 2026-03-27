@@ -25,10 +25,12 @@ from app.core.config import settings
 from app.services.document.parser import estimate_tokens, extract_structure_signals
 from app.services.generation.agentic import (
     AgenticLoopResult,
+    AgenticModelClient,
     SubagentSpec,
     ToolDef,
     ToolExecutionResult,
     ToolRegistry,
+    TodoManager,
     agentic_loop,
     build_dispatch_subagent_tool,
     build_load_skill_tool,
@@ -41,8 +43,6 @@ from app.services.generation.agentic import (
     summarize_state,
 )
 from app.services.generation.agentic.provider_failures import is_malformed_provider_response
-from app.services.generation.agentic.todo import TodoManager
-from app.services.generation.agentic.types import AgenticModelClient
 from app.services.pipeline.graph import PipelineState
 from app.services.sessions import session_store
 from app.services.skill_runtime.executor import SkillExecutionError, execute_skill

@@ -1,73 +1,127 @@
-"""Generation-scoped agentic primitives."""
+"""Project-native agentic runtime plus generation compatibility exports."""
 
-from app.services.generation.agentic.context import (
-    attach_state_summary,
-    compact_context,
-    estimate_message_tokens,
-    summarize_state,
+from app.services.generation.agentic.agent import Agent, AgentResult, AgentSession, CompactResult
+from app.services.generation.agentic.background import BackgroundManager
+from app.services.generation.agentic.builder import AgentBuilder
+from app.services.generation.agentic.context_policy import ContextPolicy, ContextRetentionClass
+from app.services.generation.agentic.mcp import MCPConfig, MCPConfigLoader
+from app.services.generation.agentic.models import LiteLLMModelClient, ModelClient, ModelResponse, ModelUsage
+from app.services.generation.agentic.skills import SkillCatalog, SkillDiscovery
+from app.services.generation.agentic.subagents import SubagentManager
+from app.services.generation.agentic.tasks import TaskIndex, TaskManager, TaskRecord, TaskStatus
+from app.services.generation.agentic.todo import TodoItem as RuntimeTodoItem
+from app.services.generation.agentic.todo import TodoManager as RuntimeTodoManager
+from app.services.generation.agentic.tools import (
+    Tool,
+    ToolContext,
+    ToolRegistry as RuntimeToolRegistry,
+    create_builtin_registry,
+    default_tool_context,
+    tool,
 )
-from app.services.generation.agentic.loop import AgenticLoopResult, agentic_loop
-from app.services.generation.agentic.prompt import (
-    build_error_recovery_section,
-    build_identity_section,
-    build_quality_gates_section,
-    build_system_prompt,
-    build_task_section,
-    build_tool_rules_section,
-    load_harness_config,
-)
-from app.services.generation.agentic.skills import build_load_skill_tool, build_run_skill_tool, build_skill_summaries
-from app.services.generation.agentic.subagent import (
-    SubagentSpec,
-    build_dispatch_subagent_tool,
-    filter_registry,
-    run_parallel_subagents,
-    run_subagent,
-)
-from app.services.generation.agentic.todo import TodoItem, TodoManager, build_todo_nag, build_update_todo_tool
-from app.services.generation.agentic.tools import ToolDef, ToolDispatchResult, ToolExecutionResult, ToolRegistry, dispatch_tool_calls
-from app.services.generation.agentic.types import (
+from app.services.generation.agentic_legacy import (
+    AgenticLoopResult,
     AgenticMessage,
     AssistantMessage,
+    SubagentSpec,
     ToolCall,
+    ToolDef,
+    ToolDispatchResult,
+    ToolExecutionResult,
+    ToolRegistry,
     ToolResult,
+    TodoItem,
+    TodoManager,
     UserMessage,
+    agentic_loop,
+    attach_state_summary,
+    build_dispatch_subagent_tool,
+    build_error_recovery_section,
+    build_identity_section,
+    build_load_skill_tool,
+    build_quality_gates_section,
+    build_run_skill_tool,
+    build_skill_summaries,
+    build_system_prompt,
+    build_task_section,
+    build_todo_nag,
+    build_tool_rules_section,
+    build_update_todo_tool,
+    compact_context,
+    dispatch_tool_calls,
+    estimate_message_tokens,
+    filter_registry,
+    load_harness_config,
+    run_parallel_subagents,
+    run_subagent,
+    summarize_state,
 )
+from app.services.generation.agentic_legacy.types import AgenticModelClient
 
 __all__ = [
+    "Agent",
+    "AgentBuilder",
+    "AgentResult",
+    "AgentSession",
     "AgenticLoopResult",
     "AgenticMessage",
+    "AgenticModelClient",
     "AssistantMessage",
+    "BackgroundManager",
+    "CompactResult",
+    "ContextPolicy",
+    "ContextRetentionClass",
+    "LiteLLMModelClient",
+    "MCPConfig",
+    "MCPConfigLoader",
+    "ModelClient",
+    "ModelResponse",
+    "ModelUsage",
+    "RuntimeTodoItem",
+    "RuntimeTodoManager",
+    "RuntimeToolRegistry",
+    "SkillCatalog",
+    "SkillDiscovery",
+    "SubagentManager",
     "SubagentSpec",
-    "ToolCall",
-    "ToolDef",
-    "attach_state_summary",
-    "compact_context",
-    "estimate_message_tokens",
-    "summarize_state",
+    "TaskIndex",
+    "TaskManager",
+    "TaskRecord",
+    "TaskStatus",
     "TodoItem",
     "TodoManager",
+    "Tool",
+    "ToolCall",
+    "ToolContext",
+    "ToolDef",
     "ToolDispatchResult",
     "ToolExecutionResult",
     "ToolRegistry",
     "ToolResult",
     "UserMessage",
     "agentic_loop",
+    "attach_state_summary",
     "build_dispatch_subagent_tool",
-    "build_todo_nag",
-    "build_update_todo_tool",
-    "build_load_skill_tool",
     "build_error_recovery_section",
     "build_identity_section",
+    "build_load_skill_tool",
     "build_quality_gates_section",
     "build_run_skill_tool",
     "build_skill_summaries",
     "build_system_prompt",
     "build_task_section",
+    "build_todo_nag",
     "build_tool_rules_section",
+    "build_update_todo_tool",
+    "compact_context",
+    "create_builtin_registry",
+    "default_tool_context",
     "dispatch_tool_calls",
+    "estimate_message_tokens",
     "filter_registry",
     "load_harness_config",
     "run_parallel_subagents",
     "run_subagent",
+    "summarize_state",
+    "tool",
 ]

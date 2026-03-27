@@ -5,10 +5,12 @@ description = "知演 ZhiYan — AI PPT 生成智能体后端"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.128.8",
+    "litellm>=1.79.0",
     "markitdown[all]>=0.1.2",
     "pydantic>=2.12.5",
     "pydantic-ai[anthropic,google,openai]>=1.58.0",
     "pydantic-settings>=2.12.0",
+    "python-dotenv>=1.1.1",
     "python-multipart>=0.0.22",
     "python-pptx>=1.0.2",
     "uvicorn>=0.40.0",
@@ -28,5 +30,6 @@ packages = ["app"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.2.0",
     "ruff>=0.15.0",
 ]
