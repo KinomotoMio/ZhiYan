@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.model_status import parse_provider
-from app.models.generation import CreateJobRequest, JobStatus, StageStatus
+from app.models.generation import CreateJobRequest
 from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
 from app.services.planning_legacy import normalize_planning_outline
 
