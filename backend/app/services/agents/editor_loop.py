@@ -1013,7 +1013,6 @@ class EditorLoopService:
                     "submitted_html": runtime.submitted_html or "",
                     "normalized_presentation": runtime.normalized_presentation,
                     "normalized_html_meta": runtime.normalized_html_meta,
-                    "normalized_html_meta": runtime.normalized_html_meta,
                     "slidev_markdown": runtime.slidev_markdown or "",
                     "slidev_meta": runtime.slidev_meta or {},
                     "slidev_preview_url": runtime.slidev_preview_url,
