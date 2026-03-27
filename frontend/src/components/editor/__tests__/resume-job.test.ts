@@ -6,9 +6,9 @@ import { resumeGenerationJob } from "@/components/editor/resume-job";
 test("resumeGenerationJob calls getJob before runJob and returns normalized payload", async () => {
   const order: string[] = [];
 
-  const result = await resumeGenerationJob("job-1", {
-    getJobFn: async () => {
-      order.push("getJob");
+  const result = await resumeGenerationJob("session-1", "job-1", {
+    getJobFn: async (sessionId, jobId) => {
+      order.push(`getJob:${sessionId}:${jobId}`);
       return {
         job_id: "job-1",
         status: "failed",
@@ -25,8 +25,8 @@ test("resumeGenerationJob calls getJob before runJob and returns normalized payl
         error: null,
       };
     },
-    runJobFn: async () => {
-      order.push("runJob");
+    runJobFn: async (sessionId, jobId) => {
+      order.push(`runJob:${sessionId}:${jobId}`);
       return {
         job_id: "job-1",
         status: "running",
@@ -35,7 +35,7 @@ test("resumeGenerationJob calls getJob before runJob and returns normalized payl
     },
   });
 
-  assert.deepEqual(order, ["getJob", "runJob"]);
+  assert.deepEqual(order, ["getJob:session-1:job-1", "runJob:session-1:job-1"]);
   assert.equal(result.eventsSeq, 42);
   assert.equal(result.resumedStatus, "running");
   assert.equal(result.resumedStage, "verify");
@@ -45,7 +45,7 @@ test("resumeGenerationJob calls getJob before runJob and returns normalized payl
 });
 
 test("resumeGenerationJob keeps running flow when shell already exists (events_seq fallback)", async () => {
-  const result = await resumeGenerationJob("job-2", {
+  const result = await resumeGenerationJob("session-2", "job-2", {
     getJobFn: async () => ({
       job_id: "job-2",
       status: "failed",

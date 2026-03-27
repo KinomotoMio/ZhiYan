@@ -137,7 +137,8 @@ export default function EditorWorkspace({
     if (!jobId || resuming) return;
     setResuming(true);
     try {
-      const resumed = await resumeGenerationJob(jobId);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      const resumed = await resumeGenerationJob(currentSessionId, jobId);
       updateJobState({
         lastJobEventSeq: resumed.eventsSeq,
       });
