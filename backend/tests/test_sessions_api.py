@@ -15,6 +15,7 @@ from app.services.planning import PlanningTurnOutcome
 def _install_temp_session_store(monkeypatch, tmp_path):
     import app.services.sessions as sessions_pkg
     from app.api.v1 import chat as chat_api
+    from app.api.v1 import public_shares as public_shares_api
     from app.api.v1 import sessions as sessions_api
     from app.api.v1 import workspaces as workspaces_api
     from app.api.v1 import workspace_sources as workspace_sources_api
@@ -26,6 +27,7 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions_pkg, "session_store", store)
     monkeypatch.setattr(sessions_api, "session_store", store)
     monkeypatch.setattr(chat_api, "session_store", store)
+    monkeypatch.setattr(public_shares_api, "session_store", store)
     monkeypatch.setattr(workspace_sources_api, "session_store", store)
     monkeypatch.setattr(workspaces_api, "session_store", store)
     return store
@@ -651,13 +653,15 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
                 "layoutType": "blank",
                 "layoutId": "blank",
                 "contentData": {"title": "封面", "_htmlDeck": True},
+                "speakerNotes": "这是封面页注解",
                 "components": [],
             }
         ],
     }
     html_deck = (
         "<!DOCTYPE html><html><head><title>HTML 最新稿</title></head><body>"
-        '<section data-slide-id="slide-1" data-slide-title="封面">'
+        '<section class="slide-cover" id="slide-cover-1" style="background:#111827" '
+        'data-slide-id="slide-1" data-slide-title="封面">'
         "<div><h1>封面</h1><p>支持预览与播放。</p></div>"
         "</section>"
         "</body></html>"
@@ -684,7 +688,14 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     html_resp = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/html", headers=headers)
     assert html_resp.status_code == 200
     assert html_resp.headers["content-type"].startswith("text/html")
-    assert "<section data-slide-id=\"slide-1\"" in html_resp.text
+    assert 'data-slide-id="slide-1"' in html_resp.text
+    assert 'data-slide-title="封面"' in html_resp.text
+    assert 'class="slide-cover"' in html_resp.text
+    assert 'id="slide-cover-1"' in html_resp.text
+    assert 'style="background:#111827"' in html_resp.text
+    assert '<aside class="notes">这是封面页注解</aside>' in html_resp.text
+    assert "hash: false" in html_resp.text
+    assert "const query = new URLSearchParams(window.location.search);" in html_resp.text
 
     meta_resp = client.get(
         f"/api/v1/sessions/{session_id}/presentations/latest/html/meta",
@@ -692,6 +703,7 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     )
     assert meta_resp.status_code == 200
     assert meta_resp.json()["slide_count"] == 1
+    assert meta_resp.json()["slides"][0]["speaker_notes"] == "这是封面页注解"
 
 
 def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):
@@ -886,7 +898,6 @@ def test_workspaces_current_and_owner_unique_index(monkeypatch, tmp_path):
                 ("ws-other", "user", "u-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
             )
 
-
 def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
@@ -1026,3 +1037,220 @@ def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
     )
     assert build_asset.status_code == 200
     assert "console.log('slidev')" in build_asset.text
+
+
+def test_session_share_link_is_stable_and_public_structured_playback_updates(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-share"}
+
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "分享测试"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation_v1 = {
+        "presentationId": "pres-share",
+        "title": "公开演示 V1",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "第一页"},
+                "components": [],
+            }
+        ],
+    }
+    save_v1 = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={"presentation": presentation_v1, "source": "editor"},
+    )
+    assert save_v1.status_code == 200
+
+    first_share = client.post(f"/api/v1/sessions/{session_id}/share-link", headers=headers)
+    assert first_share.status_code == 200
+    first_payload = first_share.json()
+    assert first_payload["share_path"].startswith("/share/")
+    assert first_payload["share_url"].endswith(first_payload["share_path"])
+
+    second_share = client.post(f"/api/v1/sessions/{session_id}/share-link", headers=headers)
+    assert second_share.status_code == 200
+    assert second_share.json()["token"] == first_payload["token"]
+
+    public_v1 = client.get(f"/api/v1/public/shares/{first_payload['token']}")
+    assert public_v1.status_code == 200
+    body_v1 = public_v1.json()
+    assert body_v1["title"] == "公开演示 V1"
+    assert body_v1["outputMode"] == "structured"
+    assert body_v1["presentation"]["title"] == "公开演示 V1"
+    assert "workspace_id" not in body_v1
+    assert "session_id" not in body_v1
+
+    presentation_v2 = {
+        "presentationId": "pres-share",
+        "title": "公开演示 V2",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "更新第一页"},
+                "components": [],
+            }
+        ],
+    }
+    save_v2 = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={"presentation": presentation_v2, "source": "editor"},
+    )
+    assert save_v2.status_code == 200
+
+    public_v2 = client.get(f"/api/v1/public/shares/{first_payload['token']}")
+    assert public_v2.status_code == 200
+    assert public_v2.json()["title"] == "公开演示 V2"
+    assert public_v2.headers["cache-control"] == "no-store"
+
+    invalid = client.get("/api/v1/public/shares/not-found-token")
+    assert invalid.status_code == 404
+
+
+def test_session_share_link_supports_public_html_playback(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-share-html"}
+
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "HTML 分享"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-html-share",
+        "title": "HTML 公开演示",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "HTML 封面", "_htmlDeck": True},
+                "components": [],
+            }
+        ],
+    }
+    html_deck = (
+        "<!DOCTYPE html><html><head><title>HTML 公开演示</title></head><body>"
+        '<section data-slide-id="slide-1" data-slide-title="HTML 封面"><h1>HTML 封面</h1></section>'
+        "</body></html>"
+    )
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={
+            "presentation": presentation,
+            "source": "editor",
+            "output_mode": "html",
+            "html_deck": {"html": html_deck},
+        },
+    )
+    assert saved.status_code == 200
+
+    share = client.post(f"/api/v1/sessions/{session_id}/share-link", headers=headers)
+    assert share.status_code == 200
+    token = share.json()["token"]
+
+    public_meta = client.get(f"/api/v1/public/shares/{token}")
+    assert public_meta.status_code == 200
+    assert public_meta.json()["outputMode"] == "html"
+    assert public_meta.json()["presentation"] is None
+
+    public_html = client.get(f"/api/v1/public/shares/{token}/html")
+    assert public_html.status_code == 200
+    assert public_html.headers["content-type"].startswith("text/html")
+    assert public_html.headers["cache-control"] == "no-store"
+    assert "data-slide-id=\"slide-1\"" in public_html.text
+
+
+def test_session_share_link_rejects_slidev(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import sessions as sessions_api
+
+    async def _fake_finalize_slidev_deck(**kwargs):  # noqa: ANN003
+        build_out_dir = Path(kwargs["build_out_dir"])
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+        (build_out_dir / "index.html").write_text("<html><body>slidev deck</body></html>", encoding="utf-8")
+        return {
+            "title": "Slidev 分享限制",
+            "markdown": "---\ntitle: Slidev 分享限制\n---\n\n# 封面\n",
+            "meta": {
+                "title": "Slidev 分享限制",
+                "slide_count": 1,
+                "slides": [
+                    {"index": 0, "slide_id": "slide-1", "title": "封面", "role": "cover", "layout": "cover"},
+                ],
+                "selected_style_id": "tech-launch",
+                "validation": {"ok": True, "issues": []},
+                "review": {"issues": []},
+            },
+            "presentation": {
+                "presentationId": "pres-slidev-share",
+                "title": "Slidev 分享限制",
+                "slides": [
+                    {
+                        "slideId": "slide-1",
+                        "layoutType": "blank",
+                        "layoutId": "blank",
+                        "contentData": {"title": "封面"},
+                        "components": [],
+                    }
+                ],
+            },
+            "selected_style_id": "tech-launch",
+            "selected_style": {"name": "tech-launch", "theme": "seriph"},
+            "selected_theme": {"theme": "seriph"},
+            "build_root": str(build_out_dir.resolve()),
+            "entry_path": str((build_out_dir / "index.html").resolve()),
+        }
+
+    monkeypatch.setattr(sessions_api, "finalize_slidev_deck", _fake_finalize_slidev_deck)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-slidev-share"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "Slidev 分享"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-slidev-share",
+        "title": "Slidev 分享限制",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "封面"},
+                "components": [],
+            }
+        ],
+    }
+
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={
+            "presentation": presentation,
+            "source": "chat",
+            "output_mode": "slidev",
+            "slidev_deck": {
+                "markdown": "# placeholder",
+                "selected_style_id": "tech-launch",
+                "meta": {"slides": [{"title": "封面"}]},
+            },
+        },
+    )
+    assert saved.status_code == 200
+
+    share = client.post(f"/api/v1/sessions/{session_id}/share-link", headers=headers)
+    assert share.status_code == 422
+    assert "Slidev" in share.json()["detail"]

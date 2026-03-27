@@ -28,3 +28,12 @@ test("renders github-flavored markdown as semantic html", () => {
   assert.doesNotMatch(html, /\| 页 \| 标题 \|/);
   assert.doesNotMatch(html, /node="\[object Object\]"/);
 });
+
+test("strips think tags before rendering assistant markdown", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownMessage content={`<think>内部思考</think>\n\n这是给用户的结果。`} />
+  );
+
+  assert.doesNotMatch(html, /内部思考/);
+  assert.match(html, /这是给用户的结果/);
+});

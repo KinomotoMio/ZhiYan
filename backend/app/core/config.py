@@ -84,6 +84,7 @@ class Settings(BaseSettings):
         "http://[::1]:3000",
     ]
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+    public_app_url: str = "http://localhost:3000"
 
     model_config = {
         "env_file": PROJECT_ROOT / ".env",

@@ -15,10 +15,12 @@ import {
   createSession,
   getCurrentWorkspace,
   getLatestSessionPresentation,
+  getLatestSessionPresentationHtml,
   listSessions,
   listWorkspaceSources,
   removeSession,
   updateSession,
+  type PresentationOutputMode,
   type SessionSummary,
 } from "@/lib/api";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
@@ -126,6 +128,9 @@ export default function HomeView() {
   const [workspaceSourceCount, setWorkspaceSourceCount] = useState(0);
   const [latestResultPresentation, setLatestResultPresentation] =
     useState<PresentationModel | null>(null);
+  const [latestResultOutputMode, setLatestResultOutputMode] =
+    useState<PresentationOutputMode>("structured");
+  const [latestResultHtml, setLatestResultHtml] = useState<string | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
   const [isPreviewHovered, setIsPreviewHovered] = useState(false);
   const [resultPreviewCount, setResultPreviewCount] =
@@ -308,6 +313,8 @@ export default function HomeView() {
 
     if (!latestResultSession) {
       setLatestResultPresentation(null);
+      setLatestResultOutputMode("structured");
+      setLatestResultHtml(null);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
       return () => {
@@ -316,13 +323,22 @@ export default function HomeView() {
     }
 
     setLatestResultPresentation(null);
+    setLatestResultOutputMode("structured");
+    setLatestResultHtml(null);
     setPreviewSlideIndex(0);
     setIsPreviewHovered(false);
 
     const run = async () => {
       const latest = await getLatestSessionPresentation(latestResultSession.id);
+      const outputMode = latest?.output_mode ?? "structured";
+      const html =
+        outputMode === "html"
+          ? await getLatestSessionPresentationHtml(latestResultSession.id)
+          : null;
       if (cancelled) return;
       setLatestResultPresentation(latest?.presentation ?? null);
+      setLatestResultOutputMode(outputMode);
+      setLatestResultHtml(html);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
     };
@@ -631,6 +647,8 @@ export default function HomeView() {
                   <div className="min-h-0 flex-1">
                     <RecentResultCarousel
                       presentation={latestResultPresentation}
+                      outputMode={latestResultOutputMode}
+                      htmlContent={latestResultHtml}
                       previewSlideIndex={previewSlideIndex}
                       setPreviewSlideIndex={setPreviewSlideIndex}
                       isPreviewHovered={isPreviewHovered}

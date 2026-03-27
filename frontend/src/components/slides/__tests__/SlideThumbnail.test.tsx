@@ -24,3 +24,19 @@ test("thumbnail row uses shrink-safe width classes inside the sidebar rail", () 
   assert.match(html, /class="flex w-full min-w-0 gap-2 items-start"/);
   assert.match(html, /class="relative min-w-0 flex-1"/);
 });
+
+test("html mode renders a real reveal thumbnail iframe instead of the structured slide preview", () => {
+  const html = renderToStaticMarkup(
+    <SlideThumbnail
+      slide={baseSlide}
+      index={1}
+      isActive={true}
+      onClick={() => {}}
+      htmlContent="<!DOCTYPE html><html><head></head><body><section>HTML</section></body></html>"
+      forceVisible
+    />
+  );
+
+  assert.match(html, /data-preview-mode="thumbnail"/);
+  assert.match(html, /class="w-full h-full border-0 pointer-events-none"/);
+});

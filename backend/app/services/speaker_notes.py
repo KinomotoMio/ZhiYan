@@ -227,6 +227,11 @@ async def generate_speaker_notes_for_session(
 ) -> SpeakerNotesGenerationResult:
     from app.services.sessions import session_store
 
+    latest = await session_store.get_latest_presentation(workspace_id, session_id)
+    output_mode = str((latest or {}).get("output_mode") or "").strip()
+    artifacts = dict((latest or {}).get("artifacts") or {}) if isinstance((latest or {}).get("artifacts"), dict) else {}
+    latest_html = await session_store.get_latest_html_deck(workspace_id, session_id) if output_mode == "html" else None
+
     normalized = Presentation.model_validate(presentation_payload).model_dump(
         mode="json",
         by_alias=True,
@@ -304,12 +309,25 @@ async def generate_speaker_notes_for_session(
             slide.pop("speakerAudio", None)
         slide["speakerNotes"] = next_notes
 
-    await session_store.save_presentation(
-        session_id=session_id,
-        payload=updated_presentation,
-        is_snapshot=False,
-        snapshot_label=None,
-    )
+    if output_mode == "html":
+        updated_presentation["outputMode"] = "html"
+        if artifacts:
+            updated_presentation["artifacts"] = artifacts
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=updated_presentation,
+            is_snapshot=False,
+            snapshot_label=None,
+            output_mode="html",
+            html_deck={"html": latest_html[0]} if latest_html is not None else None,
+        )
+    else:
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=updated_presentation,
+            is_snapshot=False,
+            snapshot_label=None,
+        )
 
     (artifacts_dir / "run-summary.json").write_text(
         json.dumps(

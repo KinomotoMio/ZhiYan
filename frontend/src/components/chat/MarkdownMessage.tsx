@@ -4,10 +4,12 @@ import type { ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { sanitizeAssistantText } from "@/lib/chat-sanitize";
 import { cn } from "@/lib/utils";
 
 function omitNodeProp<T extends object>(props: T): Omit<T, "node"> {
-  const { node: _node, ...rest } = props as T & { node?: unknown };
+  const rest = { ...(props as T & { node?: unknown }) };
+  delete rest.node;
   return rest as Omit<T, "node">;
 }
 
@@ -154,10 +156,11 @@ export default function MarkdownMessage({
   content: string;
   className?: string;
 }) {
+  const safeContent = sanitizeAssistantText(content);
   return (
     <div className={cn("min-w-0 text-[15px] leading-8 text-slate-700", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {content}
+        {safeContent}
       </ReactMarkdown>
     </div>
   );

@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 import json
 import logging
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,6 +185,13 @@ class SessionStore:
                     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
                     FOREIGN KEY(source_id) REFERENCES workspace_sources(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS session_share_links (
+                    session_id TEXT PRIMARY KEY,
+                    token TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
                 """
             )
 
@@ -230,6 +238,12 @@ class SessionStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_wsources_workspace_content_hash_ready
                 ON workspace_sources(workspace_id, content_hash)
                 WHERE status='ready' AND content_hash IS NOT NULL
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_session_share_links_token
+                ON session_share_links(token)
                 """
             )
 
@@ -1354,6 +1368,7 @@ class SessionStore:
                     presentation_id=presentation_id,
                     version_no=version_no,
                     html_deck=html_deck,
+                    presentation_payload=stored_payload,
                     fallback_title=normalized_title or "新演示文稿",
                     now=now,
                 )
@@ -1427,6 +1442,91 @@ class SessionStore:
             "snapshot_label": snapshot_label,
             "created_at": now,
             "presentation": stored_payload,
+        }
+
+    async def create_or_get_share_link(self, workspace_id: str, session_id: str) -> dict:
+        now = _now_iso()
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._create_or_get_share_link_sync,
+                workspace_id,
+                session_id,
+                now,
+            )
+
+    def _create_or_get_share_link_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+        now: str,
+    ) -> dict:
+        with self._connect() as conn:
+            session_row = conn.execute(
+                """
+                SELECT id
+                FROM sessions
+                WHERE id=? AND workspace_id=? AND archived_at IS NULL
+                """,
+                (session_id, workspace_id),
+            ).fetchone()
+            if not session_row:
+                raise ValueError("会话不存在")
+
+            existing = conn.execute(
+                """
+                SELECT token, created_at
+                FROM session_share_links
+                WHERE session_id=?
+                """,
+                (session_id,),
+            ).fetchone()
+            if existing:
+                return {
+                    "session_id": session_id,
+                    "token": str(existing["token"]),
+                    "created_at": str(existing["created_at"]),
+                }
+
+            while True:
+                token = secrets.token_urlsafe(24)
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO session_share_links(session_id, token, created_at)
+                        VALUES(?, ?, ?)
+                        """,
+                        (session_id, token, now),
+                    )
+                    conn.commit()
+                    return {
+                        "session_id": session_id,
+                        "token": token,
+                        "created_at": now,
+                    }
+                except sqlite3.IntegrityError:
+                    continue
+
+    async def get_share_link_by_token(self, token: str) -> dict | None:
+        return await asyncio.to_thread(self._get_share_link_by_token_sync, token)
+
+    def _get_share_link_by_token_sync(self, token: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT ssl.session_id, ssl.token, ssl.created_at, s.workspace_id
+                FROM session_share_links ssl
+                JOIN sessions s ON s.id = ssl.session_id
+                WHERE ssl.token=? AND s.archived_at IS NULL
+                """,
+                (token,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": str(row["session_id"]),
+            "workspace_id": str(row["workspace_id"]),
+            "token": str(row["token"]),
+            "created_at": str(row["created_at"]),
         }
 
     async def get_latest_presentation(
@@ -1690,6 +1790,7 @@ class SessionStore:
         presentation_id: str,
         version_no: int,
         html_deck: dict,
+        presentation_payload: dict | None,
         fallback_title: str,
         now: str,
     ) -> dict[str, Any]:
@@ -1701,6 +1802,11 @@ class SessionStore:
             html=raw_html,
             fallback_title=fallback_title,
             expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
+            existing_slides=(
+                list((presentation_payload or {}).get("slides") or [])
+                if isinstance(presentation_payload, dict)
+                else None
+            ),
         )
         artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id
         artifact_dir.mkdir(parents=True, exist_ok=True)

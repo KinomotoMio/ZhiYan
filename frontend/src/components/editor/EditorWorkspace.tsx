@@ -11,6 +11,7 @@ import {
   LayoutPanelLeft,
   Loader2,
   Play,
+  Share2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
@@ -25,7 +26,11 @@ import {
   fixPreview,
   fixSkip,
   generateSpeakerNotes,
+  createOrGetSessionShareLink,
+  getLatestSessionPresentation,
+  getLatestSessionPresentationHtml,
   saveLatestSessionPresentation,
+  saveLatestSessionHtmlPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -41,9 +46,11 @@ import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
 import SlidevPreview from "@/components/slides/SlidevPreview";
+import HtmlPreviewSurface from "@/components/slides/HtmlPreviewSurface";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
+import ShareLinkDialog from "@/components/editor/ShareLinkDialog";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
 import {
@@ -113,6 +120,7 @@ export default function EditorWorkspace({
     presentationHtml,
     presentationSlidevBuildUrl,
     presentationSlidevMeta,
+    presentationHtmlArtifact,
     currentSessionId,
     currentSlideIndex,
     setCurrentSlideIndex,
@@ -136,12 +144,16 @@ export default function EditorWorkspace({
     issuePanelSlideId,
     issueDecisionBySlideId,
     setPresentation,
+    setPresentationHtmlState,
     updateSlides,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [revealSlideIndex, setRevealSlideIndex] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [creatingShareLink, setCreatingShareLink] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
   const [previewingFix, setPreviewingFix] = useState(false);
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
@@ -157,6 +169,25 @@ export default function EditorWorkspace({
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
+  const canShare = Boolean(
+    currentSessionId &&
+      !isGenerating &&
+      !isSlidevMode &&
+      (isHtmlMode ? presentationHtml : presentation && presentation.slides.length > 0)
+  );
+
+  const refreshHtmlPreviewState = async () => {
+    if (!currentSessionId) return;
+    const [latestPresentation, latestHtml] = await Promise.all([
+      getLatestSessionPresentation(currentSessionId),
+      getLatestSessionPresentationHtml(currentSessionId),
+    ]);
+    setPresentationHtmlState(
+      "html",
+      latestHtml,
+      latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
+    );
+  };
 
   const handleResume = async () => {
     if (!jobId || resuming) return;
@@ -218,6 +249,30 @@ export default function EditorWorkspace({
       toast.error(err instanceof Error ? err.message : "确认大纲失败");
     } finally {
       setAcceptingOutline(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!currentSessionId || creatingShareLink) return;
+    setCreatingShareLink(true);
+    try {
+      const result = await createOrGetSessionShareLink(currentSessionId);
+      setShareUrl(result.share_url);
+      setShareDialogOpen(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成分享链接失败");
+    } finally {
+      setCreatingShareLink(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("已复制分享链接");
+    } catch {
+      toast.error("复制失败，请手动复制链接");
     }
   };
 
@@ -535,7 +590,20 @@ export default function EditorWorkspace({
     setSavingSpeakerNotes(true);
 
     try {
-      await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      if (isHtmlMode) {
+        if (!presentationHtml) {
+          throw new Error("HTML 演示稿尚未加载完成，暂时无法保存演讲者注解");
+        }
+        await saveLatestSessionHtmlPresentation(
+          currentSessionId,
+          nextPresentation,
+          presentationHtml,
+          "editor"
+        );
+        await refreshHtmlPreviewState();
+      } else {
+        await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      }
       setSpeakerNotesDrafts((current) => ({
         ...current,
         [currentSlide.slideId]: nextSlides[currentSlideIndex]?.speakerNotes ?? "",
@@ -573,6 +641,9 @@ export default function EditorWorkspace({
       });
       setPresentation(response.presentation);
       setSpeakerNotesDrafts(buildSpeakerNotesDraftMap(response.presentation.slides));
+      if (isHtmlMode) {
+        await refreshHtmlPreviewState();
+      }
       toast.success(
         scope === "current"
           ? "已生成并覆盖当前页演讲者注解"
@@ -692,6 +763,22 @@ export default function EditorWorkspace({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <button
+              type="button"
+              onClick={() => {
+                void handleShare();
+              }}
+              disabled={!canShare || creatingShareLink}
+              title={canShare ? "生成并查看分享链接" : "当前暂无可分享的演示稿"}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50"
+            >
+              {creatingShareLink ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Share2 className="h-3.5 w-3.5" />
+              )}
+              {creatingShareLink ? "生成中..." : "分享"}
+            </button>
             {canResume && (
               <button
                 onClick={() => {
@@ -784,7 +871,7 @@ export default function EditorWorkspace({
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             <div className="space-y-2">
-              {presentation.slides.map((slide, i) => (
+              {presentation.slides.map((slide, i) =>
                 isSlidevMode ? (
                   <button
                     key={slide.slideId}
@@ -822,6 +909,8 @@ export default function EditorWorkspace({
                       index={i}
                       isActive={i === currentSlideIndex}
                       onClick={() => setCurrentSlideIndex(i)}
+                      htmlContent={isHtmlMode ? presentationHtml : null}
+                      htmlStartSlide={i}
                       issueMeta={
                         groupedIssues.has(slide.slideId)
                           ? {
@@ -843,7 +932,7 @@ export default function EditorWorkspace({
                     />
                   </div>
                 )
-              ))}
+              )}
             </div>
           </div>
         </aside>
@@ -863,26 +952,25 @@ export default function EditorWorkspace({
             </div>
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
-                <div className="w-full max-w-4xl">
-                  {currentSlide ? (
-                    isHtmlMode ? (
-                      presentationHtml ? (
-                        <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
-                          <RevealPreview
-                            presentation={presentation}
-                            htmlContent={presentationHtml}
-                            startSlide={currentSlideIndex}
-                            onSlideChange={setCurrentSlideIndex}
-                            className="rounded-[20px]"
-                          />
-                        </div>
-                      ) : (
-                        <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
-                          HTML 演示稿还在生成中，完成后会自动切换到真实预览。
-                        </div>
-                      )
-                    ) : isSlidevMode ? (
-                      presentationSlidevBuildUrl ? (
+                {currentSlide ? (
+                  isHtmlMode ? (
+                    presentationHtml ? (
+                      <HtmlPreviewSurface
+                        presentation={presentation}
+                        htmlContent={presentationHtml}
+                        startSlide={currentSlideIndex}
+                        onSlideChange={setCurrentSlideIndex}
+                        className="h-full min-h-0 w-full"
+                        frameClassName="border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
+                      />
+                    ) : (
+                      <div className="flex aspect-[16/9] w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
+                        HTML 演示稿还在生成中，完成后会自动切换到真实预览。
+                      </div>
+                    )
+                  ) : isSlidevMode ? (
+                    presentationSlidevBuildUrl ? (
+                      <div className="w-full max-w-5xl">
                         <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
                           <SlidevPreview
                             src={presentationSlidevBuildUrl}
@@ -891,51 +979,53 @@ export default function EditorWorkspace({
                             className="rounded-[20px]"
                           />
                         </div>
-                      ) : (
-                        <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
-                          Slidev 演示稿还在生成中，完成后会自动切换到真实预览。
-                        </div>
-                      )
+                      </div>
                     ) : (
+                      <div className="flex aspect-[16/9] w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
+                        Slidev 演示稿还在生成中，完成后会自动切换到真实预览。
+                      </div>
+                    )
+                  ) : (
+                    <div className="w-full max-w-4xl">
                       <SlidePreview
                         slide={currentSlide}
                         className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
                       />
-                    )
-                  ) : (
+                    </div>
+                  )
+                ) : (
+                  <div className="w-full max-w-4xl">
                     <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
                       当前没有可预览的页面
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
-            {!isHtmlMode && (
-              <SpeakerNotes
-                value={speakerNotesDraft}
-                onChange={(nextValue) => {
-                  if (!currentSlide) return;
-                  setSpeakerNotesDrafts((current) => ({
-                    ...current,
-                    [currentSlide.slideId]: nextValue,
-                  }));
-                }}
-                onSave={() => {
-                  void handleSaveSpeakerNotes();
-                }}
-                onGenerateCurrent={() => {
-                  void handleGenerateSpeakerNotes("current");
-                }}
-                onGenerateAll={() => {
-                  void handleGenerateSpeakerNotes("all");
-                }}
-                onPlayAudio={handlePlaySpeakerAudio}
-                isSaving={savingSpeakerNotes}
-                generatingScope={generatingSpeakerNotesScope}
-                canGenerate={Boolean(currentSlide)}
-                canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
-              />
-            )}
+            <SpeakerNotes
+              value={speakerNotesDraft}
+              onChange={(nextValue) => {
+                if (!currentSlide) return;
+                setSpeakerNotesDrafts((current) => ({
+                  ...current,
+                  [currentSlide.slideId]: nextValue,
+                }));
+              }}
+              onSave={() => {
+                void handleSaveSpeakerNotes();
+              }}
+              onGenerateCurrent={() => {
+                void handleGenerateSpeakerNotes("current");
+              }}
+              onGenerateAll={() => {
+                void handleGenerateSpeakerNotes("all");
+              }}
+              onPlayAudio={handlePlaySpeakerAudio}
+              isSaving={savingSpeakerNotes}
+              generatingScope={generatingSpeakerNotesScope}
+              canGenerate={Boolean(currentSlide)}
+              canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
+            />
           </section>
         </main>
       </div>
@@ -972,6 +1062,15 @@ export default function EditorWorkspace({
         }}
         onDiscardPreview={handleDiscardFixPreview}
         onMarkHandled={handleMarkSlideHandled}
+      />
+      <ShareLinkDialog
+        open={shareDialogOpen}
+        shareUrl={shareUrl}
+        loading={creatingShareLink}
+        onCopy={() => {
+          void handleCopyShareLink();
+        }}
+        onClose={() => setShareDialogOpen(false)}
       />
 
       <FloatingChatPanel />

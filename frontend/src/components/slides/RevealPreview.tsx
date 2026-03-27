@@ -10,15 +10,25 @@ interface RevealPreviewProps {
   startSlide?: number;
   className?: string;
   onSlideChange?: (slideIndex: number) => void;
+  thumbnailMode?: boolean;
+  autoFocusOnLoad?: boolean;
+  listenForSlideChange?: boolean;
 }
 
-export function buildRevealPreviewSrc(blobUrl: string, startSlide = 0): string {
+export function buildRevealPreviewSrc(
+  blobUrl: string,
+  options?: { startSlide?: number; thumbnailMode?: boolean }
+): string {
   const safeStartSlide =
-    typeof startSlide === "number" && Number.isFinite(startSlide)
-      ? Math.max(0, Math.trunc(startSlide))
+    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
+      ? Math.max(0, Math.trunc(options.startSlide))
       : 0;
+  const search = new URLSearchParams({
+    slide: String(safeStartSlide),
+    mode: options?.thumbnailMode ? "thumbnail" : "interactive",
+  });
 
-  return safeStartSlide > 0 ? `${blobUrl}#/${safeStartSlide}` : blobUrl;
+  return `${blobUrl}?${search.toString()}`;
 }
 
 export function getRevealPreviewSlideIndex(data: unknown): number | null {
@@ -31,6 +41,29 @@ export function getRevealPreviewSlideIndex(data: unknown): number | null {
   }
 
   return Math.max(0, Math.trunc(payload.slideIndex));
+}
+
+export function buildRevealPreviewHtml(
+  htmlContent: string,
+  options?: { thumbnailMode?: boolean }
+): string {
+  return String(htmlContent || "");
+}
+
+export function resolveRevealPreviewBehavior(options?: {
+  thumbnailMode?: boolean;
+  autoFocusOnLoad?: boolean;
+  listenForSlideChange?: boolean;
+  hasSlideChangeHandler?: boolean;
+}): { autoFocusOnLoad: boolean; listenForSlideChange: boolean } {
+  const thumbnailMode = options?.thumbnailMode ?? false;
+  return {
+    autoFocusOnLoad: (options?.autoFocusOnLoad ?? true) && !thumbnailMode,
+    listenForSlideChange:
+      (options?.listenForSlideChange ?? true) &&
+      !thumbnailMode &&
+      Boolean(options?.hasSlideChangeHandler),
+  };
 }
 
 type FocusableRevealFrame = {
@@ -66,24 +99,34 @@ export default function RevealPreview({
   startSlide = 0,
   className = "",
   onSlideChange,
+  thumbnailMode = false,
+  autoFocusOnLoad = true,
+  listenForSlideChange = true,
 }: RevealPreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const behavior = resolveRevealPreviewBehavior({
+    thumbnailMode,
+    autoFocusOnLoad,
+    listenForSlideChange,
+    hasSlideChangeHandler: Boolean(onSlideChange),
+  });
 
   useEffect(() => {
     if (!iframeRef.current) return;
-    const html = htmlContent ?? (presentation ? presentationToRevealHTML(presentation) : "");
+    const rawHtml = htmlContent ?? (presentation ? presentationToRevealHTML(presentation) : "");
+    const html = buildRevealPreviewHtml(rawHtml, { thumbnailMode });
     if (!html) {
       iframeRef.current.removeAttribute("src");
       return;
     }
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
-    iframeRef.current.src = buildRevealPreviewSrc(url, startSlide);
+    iframeRef.current.src = buildRevealPreviewSrc(url, { startSlide, thumbnailMode });
     return () => URL.revokeObjectURL(url);
-  }, [htmlContent, presentation, startSlide]);
+  }, [htmlContent, presentation, startSlide, thumbnailMode]);
 
   useEffect(() => {
-    if (!onSlideChange) return;
+    if (!behavior.listenForSlideChange || !onSlideChange) return;
 
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
@@ -97,16 +140,21 @@ export default function RevealPreview({
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onSlideChange]);
+  }, [behavior.listenForSlideChange, onSlideChange]);
 
   return (
     <iframe
       ref={iframeRef}
       className={`w-full h-full border-0 ${className}`}
+      data-preview-mode={thumbnailMode ? "thumbnail" : "interactive"}
       title="Presentation preview"
       sandbox="allow-scripts allow-same-origin"
+      loading={thumbnailMode ? "lazy" : undefined}
       tabIndex={-1}
-      onLoad={() => focusRevealPreviewFrame(iframeRef.current)}
+      onLoad={() => {
+        if (!behavior.autoFocusOnLoad) return;
+        focusRevealPreviewFrame(iframeRef.current);
+      }}
     />
   );
 }

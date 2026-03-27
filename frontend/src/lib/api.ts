@@ -1,5 +1,6 @@
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
+import { getSharePlaybackPath } from "@/lib/routes";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WORKSPACE_STORAGE_KEY = "zhiyan-workspace-id";
@@ -210,6 +211,19 @@ export interface SessionDetail {
   planning_state: PlanningState | null;
 }
 
+export interface SessionShareLink {
+  token: string;
+  share_path: string;
+  share_url: string;
+  created_at: string;
+}
+
+export interface PublicSharePlayback {
+  title: string;
+  outputMode: PresentationOutputMode;
+  presentation: Presentation | null;
+}
+
 export async function createSession(title?: string): Promise<SessionSummary> {
   const res = await fetch(`${API_BASE}/api/v1/sessions`, {
     method: "POST",
@@ -403,6 +417,48 @@ export async function getLatestSessionPresentationSlidev(
 
 export function buildLatestSessionPresentationSlidevUrl(sessionId: string): string {
   return `${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/slidev/build`;
+}
+
+export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/share-link`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `生成分享链接失败: ${res.statusText}`);
+  }
+  const payload = (await res.json()) as SessionShareLink;
+  const sharePath = payload.share_path || getSharePlaybackPath(payload.token);
+  const fallbackUrl =
+    typeof window !== "undefined" ? `${window.location.origin}${sharePath}` : sharePath;
+  return {
+    ...payload,
+    share_path: sharePath,
+    share_url: payload.share_url || fallbackUrl,
+  };
+}
+
+export async function getPublicSharePlayback(token: string): Promise<PublicSharePlayback> {
+  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取分享播放内容失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getPublicShareHtml(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}/html`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取分享 HTML 演示稿失败: ${res.statusText}`);
+  }
+  return res.text();
 }
 
 export async function createSessionSnapshot(
@@ -1023,6 +1079,30 @@ interface SlidevUpdateEvent {
   modifications?: Record<string, unknown>[];
 }
 
+export interface ChatAssistantStatusEvent {
+  assistant_status:
+    | "thinking"
+    | "inspecting_context"
+    | "running_tools"
+    | "applying_change"
+    | "ready"
+    | "error"
+    | string;
+}
+
+export interface ChatToolCallEvent {
+  tool_name: string;
+  call_id: string;
+  summary: string;
+}
+
+export interface ChatToolResultEvent {
+  tool_name: string;
+  call_id: string;
+  ok: boolean;
+  summary: string;
+}
+
 export type ChatActionHint =
   | "refresh_layout"
   | "simplify"
@@ -1044,7 +1124,10 @@ export async function chatStream(
   onSlideUpdate?: (update: SlideUpdateEvent) => void,
   onNoOp?: (event: ChatNoOpEvent) => void,
   onHtmlUpdate?: (update: HtmlUpdateEvent) => void,
-  onSlidevUpdate?: (update: SlidevUpdateEvent) => void
+  onSlidevUpdate?: (update: SlidevUpdateEvent) => void,
+  onAssistantStatus?: (event: ChatAssistantStatusEvent) => void,
+  onToolCall?: (event: ChatToolCallEvent) => void,
+  onToolResult?: (event: ChatToolResultEvent) => void
 ): Promise<void> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
@@ -1082,6 +1165,23 @@ export async function chatStream(
             const parsed = JSON.parse(data);
             if (parsed.type === "text" && parsed.content) {
               onChunk(parsed.content);
+            } else if (parsed.type === "assistant_status" && onAssistantStatus) {
+              onAssistantStatus({
+                assistant_status: parsed.assistant_status || "thinking",
+              });
+            } else if (parsed.type === "tool_call" && onToolCall) {
+              onToolCall({
+                tool_name: parsed.tool_name || "",
+                call_id: parsed.call_id || "",
+                summary: parsed.summary || "",
+              });
+            } else if (parsed.type === "tool_result" && onToolResult) {
+              onToolResult({
+                tool_name: parsed.tool_name || "",
+                call_id: parsed.call_id || "",
+                ok: Boolean(parsed.ok),
+                summary: parsed.summary || "",
+              });
             } else if (parsed.type === "slide_update" && onSlideUpdate) {
               onSlideUpdate({
                 slides: parsed.slides,

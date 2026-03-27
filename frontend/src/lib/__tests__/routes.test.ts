@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   canResumeGenerationJob,
   getCreateSessionPath,
+  getSharePlaybackPath,
   getSessionEditorPath,
   pickCreateLandingSessionId,
   resolvePostCreateEditorPath,
@@ -16,6 +17,11 @@ test("getSessionEditorPath returns canonical session editor route", () => {
 
 test("getSessionEditorPath appends one-based slide query when provided", () => {
   assert.equal(getSessionEditorPath("abc", { slide: 3 }), "/sessions/abc/editor?slide=3");
+});
+
+test("getSharePlaybackPath returns canonical public share route", () => {
+  assert.equal(getSharePlaybackPath("share-token"), "/share/share-token");
+  assert.equal(getSharePlaybackPath("a/b?c"), "/share/a%2Fb%3Fc");
 });
 
 test("getCreateSessionPath returns bare create route without session", () => {
