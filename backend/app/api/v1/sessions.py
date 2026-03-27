@@ -1038,57 +1038,61 @@ async def save_latest_presentation(
     slidev_deck = req.slidev_deck
     slidev_build = None
     presentation_payload = req.presentation
-    temp_build_root: Path | None = None
-    if (req.output_mode or "").strip() == "slidev":
-        if not isinstance(slidev_deck, dict):
-            raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 slidev_deck")
-        markdown = str(slidev_deck.get("markdown") or "").strip()
-        if not markdown:
-            raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 markdown")
-        outline_items = _slidev_outline_items_from_payload(slidev_deck, presentation_payload)
-        settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-        temp_root = Path(tempfile.mkdtemp(prefix="zhiyan-slidev-save-", dir=settings.uploads_dir))
-        temp_build_root = temp_root / "dist"
-        try:
-            finalized = await finalize_slidev_deck(
-                markdown=markdown,
-                fallback_title=str(presentation_payload.get("title") or "新演示文稿"),
-                selected_style_id=str(slidev_deck.get("selected_style_id") or "").strip() or None,
-                topic=str(presentation_payload.get("title") or ""),
-                outline_items=outline_items,
-                expected_pages=max(1, len(outline_items) or int(slidev_deck.get("expected_slide_count") or 0) or 1),
-                build_base_path=f"/api/v1/sessions/{sid}/presentations/latest/slidev/build/",
-                build_out_dir=temp_build_root,
-            )
-            presentation_payload = finalized["presentation"]
-            slidev_deck = {
-                "markdown": finalized["markdown"],
-                "meta": finalized["meta"],
-                "selected_style_id": finalized["selected_style_id"],
-            }
-            slidev_build = {
-                "build_root": finalized["build_root"],
-                "entry_path": finalized["entry_path"],
-                "slide_count": finalized["meta"]["slide_count"],
-            }
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    saved = await session_store.save_presentation(
-        session_id=sid,
-        payload=presentation_payload,
-        is_snapshot=False,
-        snapshot_label=None,
-        output_mode=req.output_mode,
-        html_deck=req.html_deck,
-        slidev_deck=slidev_deck,
-        slidev_build=slidev_build,
-    )
-    if temp_build_root is not None:
-        with suppress(Exception):
-            shutil.rmtree(temp_build_root.parent)
-    return SnapshotMeta.model_validate(saved)
+    temp_root: Path | None = None
+    try:
+        if (req.output_mode or "").strip() == "slidev":
+            if not isinstance(slidev_deck, dict):
+                raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 slidev_deck")
+            markdown = str(slidev_deck.get("markdown") or "").strip()
+            if not markdown:
+                raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 markdown")
+            outline_items = _slidev_outline_items_from_payload(slidev_deck, presentation_payload)
+            settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+            temp_root = Path(tempfile.mkdtemp(prefix="zhiyan-slidev-save-", dir=settings.uploads_dir))
+            temp_build_root = temp_root / "dist"
+            try:
+                finalized = await finalize_slidev_deck(
+                    markdown=markdown,
+                    fallback_title=str(presentation_payload.get("title") or "新演示文稿"),
+                    selected_style_id=str(slidev_deck.get("selected_style_id") or "").strip() or None,
+                    topic=str(presentation_payload.get("title") or ""),
+                    outline_items=outline_items,
+                    expected_pages=max(
+                        1, len(outline_items) or int(slidev_deck.get("expected_slide_count") or 0) or 1
+                    ),
+                    build_base_path=f"/api/v1/sessions/{sid}/presentations/latest/slidev/build/",
+                    build_out_dir=temp_build_root,
+                )
+                presentation_payload = finalized["presentation"]
+                slidev_deck = {
+                    "markdown": finalized["markdown"],
+                    "meta": finalized["meta"],
+                    "selected_style_id": finalized["selected_style_id"],
+                }
+                slidev_build = {
+                    "build_root": finalized["build_root"],
+                    "entry_path": finalized["entry_path"],
+                    "slide_count": finalized["meta"]["slide_count"],
+                }
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        saved = await session_store.save_presentation(
+            session_id=sid,
+            payload=presentation_payload,
+            is_snapshot=False,
+            snapshot_label=None,
+            output_mode=req.output_mode,
+            html_deck=req.html_deck,
+            slidev_deck=slidev_deck,
+            slidev_build=slidev_build,
+        )
+        return SnapshotMeta.model_validate(saved)
+    finally:
+        if temp_root is not None:
+            with suppress(Exception):
+                shutil.rmtree(temp_root)
 
 
 @router.post("/{session_id}/snapshots", response_model=SnapshotMeta)
