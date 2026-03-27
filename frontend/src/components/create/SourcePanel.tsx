@@ -109,6 +109,7 @@ export default function SourcePanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preferredSessionId = searchParams.get("session");
+  const suppressEditorRedirect = searchParams.get("from") === "editor";
   const {
     setWorkspaceId,
     setSessions,
@@ -203,6 +204,7 @@ export default function SourcePanel() {
       sessionId: string,
       options?: {
         fromExplicitSessionParam?: boolean;
+        suppressEditorRedirect?: boolean;
       }
     ) => {
       const detail = await getSessionDetail(sessionId);
@@ -307,7 +309,8 @@ export default function SourcePanel() {
         shouldAutoRedirectToEditor(
           Boolean(detail.latest_presentation),
           Boolean(options?.fromExplicitSessionParam)
-        )
+        ) &&
+        !options?.suppressEditorRedirect
       ) {
         router.push(getSessionEditorPath(sessionId));
       }
@@ -395,7 +398,10 @@ export default function SourcePanel() {
       }
 
       if (preferredSessionId && items.some((item) => item.id === preferredSessionId)) {
-        await loadSession(preferredSessionId, { fromExplicitSessionParam: true });
+        await loadSession(preferredSessionId, {
+          fromExplicitSessionParam: true,
+          suppressEditorRedirect,
+        });
         return;
       }
 
@@ -433,6 +439,7 @@ export default function SourcePanel() {
     refreshSessions,
     refreshWorkspaceSources,
     setWorkspaceId,
+    suppressEditorRedirect,
   ]);
 
   const ensureSession = useCallback(async () => {

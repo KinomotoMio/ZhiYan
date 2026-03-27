@@ -1,33 +1,24 @@
-"""Create-page planning orchestration for REPL-style PPT kickoff."""
+"""Agentic create-page orchestration."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.services.agents.outline_synthesizer import PresentationOutline
-from app.services.layouts.layout_roles import normalize_outline_items_roles
+from app.core.config import settings
+from app.core.model_status import parse_provider
+from app.models.generation import CreateJobRequest
+from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
+from app.services.planning_legacy import normalize_planning_outline
 
 
-MAX_CLARIFICATION_TURNS = 3
-
-
-class PlanningBrief(BaseModel):
-    topic: str = ""
-    audience: str = ""
-    objective: str = ""
-    style: str = ""
-    tone: str = ""
-    preferred_pages: int | None = None
-    extra_requirements: str = ""
-
-
-class _OutlineRevisionResult(BaseModel):
-    narrative_arc: str = ""
-    items: list[dict[str, Any]] = Field(default_factory=list)
+_FILENAME_SANITIZER = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @dataclass
@@ -38,388 +29,782 @@ class PlanningTurnOutcome:
     outline_version_increment: int = 0
     status: str = "collecting_requirements"
     events: list[dict[str, Any]] | None = None
+    topic_suggestions: list[dict[str, Any]] = field(default_factory=list)
+    assistant_status: str | None = None
+    active_job_id: str | None = None
 
 
-_brief_agent = None
-_outline_revision_agent = None
+@dataclass
+class _TurnState:
+    brief: dict[str, Any] = field(default_factory=dict)
+    outline: dict[str, Any] | None = None
+    topic_suggestions: list[dict[str, Any]] = field(default_factory=list)
+    assistant_status: str | None = None
+    launch_requested: bool = False
+    events: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _get_brief_agent():
-    global _brief_agent
-    if _brief_agent is None:
-        from pydantic_ai import Agent
-
-        from app.core.config import settings
-        from app.core.model_resolver import resolve_model
-
-        _brief_agent = Agent(
-            model=resolve_model(settings.fast_model or settings.strong_model),
-            output_type=PlanningBrief,
-            instructions=(
-                "你是 PPT 需求梳理助手。"
-                "请基于当前 brief、最近几轮对话和用户最新输入，提炼稳定需求。"
-                "只输出已明确表达或高置信可归纳的信息；不确定时留空。"
-                "preferred_pages 仅在用户明确提到页数、篇幅、长短需求时填写。"
-            ),
-        )
-    return _brief_agent
+class _ReadSourceFileArgs(BaseModel):
+    source_id: str = Field(description="Selected source id to inspect.")
+    limit: int = Field(default=2400, ge=200, le=8000)
 
 
-def _get_outline_revision_agent():
-    global _outline_revision_agent
-    if _outline_revision_agent is None:
-        from pydantic_ai import Agent
-
-        from app.core.config import settings
-        from app.core.model_resolver import resolve_model
-
-        _outline_revision_agent = Agent(
-            model=resolve_model(settings.strong_model),
-            output_type=_OutlineRevisionResult,
-            instructions=(
-                "你是演示文稿大纲编辑助手。"
-                "你会根据用户反馈修改现有逐页大纲。"
-                "必须保留 slide_number 连续，title 清晰，content_brief 简洁，"
-                "并尽量保持每页角色合理。"
-                "如果用户要求增删页、调序、改标题、补备注，都直接体现在输出里。"
-                "不要输出解释，只输出结构化结果。"
-            ),
-        )
-    return _outline_revision_agent
+class _SuggestTopicsArgs(BaseModel):
+    focus: str = Field(default="", description="Optional direction from the current conversation.")
+    count: int = Field(default=4, ge=3, le=5)
 
 
-def build_opening_message() -> str:
-    return (
-        "想一起做什么样的 PPT？\n\n"
-        "你可以直接告诉我主题、受众、目标，或者先把左侧素材勾上，我来帮你梳理成可确认的大纲。"
-    )
+class _SubmitBriefArgs(BaseModel):
+    topic: str = ""
+    audience: str = ""
+    objective: str = ""
+    style: str = ""
+    tone: str = ""
+    preferred_pages: int | None = Field(default=None, ge=3, le=20)
+    extra_requirements: str = ""
 
 
-def _normalize_brief_payload(brief: dict[str, Any] | None) -> dict[str, Any]:
-    current = dict(brief or {})
-    meta = current.get("_meta")
-    if not isinstance(meta, dict):
-        meta = {}
-    current["_meta"] = {
-        "clarification_turns": int(meta.get("clarification_turns") or 0),
-        "user_turns": int(meta.get("user_turns") or 0),
-    }
-    return current
+class _OutlineItemArgs(BaseModel):
+    slide_number: int | None = None
+    title: str
+    content_brief: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    content_hints: list[str] = Field(default_factory=list)
+    source_references: list[str] = Field(default_factory=list)
+    suggested_slide_role: str = "narrative"
+    note: str = ""
 
 
-def _merge_brief(current: dict[str, Any] | None, extracted: PlanningBrief) -> dict[str, Any]:
-    merged = _normalize_brief_payload(current)
-    payload = extracted.model_dump(exclude_none=True)
-    for key, value in payload.items():
+class _OutlineArgs(BaseModel):
+    narrative_arc: str = "问题→分析→方案→结论"
+    items: list[_OutlineItemArgs] = Field(default_factory=list)
+
+
+class _LaunchGenerationArgs(BaseModel):
+    confirmed: bool = False
+
+
+def _merge_brief(current: dict[str, Any] | None, updates: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current or {})
+    for key, value in updates.items():
         if value is None:
             continue
         if isinstance(value, str):
-            normalized = value.strip()
-            if normalized:
-                merged[key] = normalized
-        elif key == "preferred_pages" and isinstance(value, int) and value > 0:
+            cleaned = value.strip()
+            if cleaned:
+                merged[key] = cleaned
+            continue
+        if key == "preferred_pages" and isinstance(value, int) and value > 0:
             merged[key] = value
     return merged
 
 
-def _brief_to_prompt_text(brief: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for key in (
-        "topic",
-        "audience",
-        "objective",
-        "style",
-        "tone",
-        "preferred_pages",
-        "extra_requirements",
-    ):
-        value = brief.get(key)
-        if value in (None, "", []):
+def _safe_slug(value: str) -> str:
+    cleaned = _FILENAME_SANITIZER.sub("-", value.strip())
+    collapsed = cleaned.strip("-._")
+    return collapsed[:48] or "source"
+
+
+def _extract_source_headings(text: str, limit: int = 6) -> list[str]:
+    headings: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip().strip("#").strip()
+        if not line:
             continue
-        label = {
-            "topic": "主题",
-            "audience": "受众",
-            "objective": "目标",
-            "style": "风格",
-            "tone": "语气",
-            "preferred_pages": "页数偏好",
-            "extra_requirements": "补充要求",
-        }[key]
-        parts.append(f"{label}: {value}")
-    return "\n".join(parts)
+        if len(line) > 48:
+            continue
+        if line.startswith(("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "0", "1", "2", "3", "4", "5")):
+            headings.append(line)
+        elif raw_line.lstrip().startswith("#"):
+            headings.append(line)
+        if len(headings) >= limit:
+            break
+    return headings
 
 
-def _source_summary(source_names: list[str]) -> str:
-    cleaned = [item.strip() for item in source_names if item and item.strip()]
-    if not cleaned:
-        return "无素材"
-    return "、".join(cleaned[:8])
+def _extract_source_passages(text: str, limit: int = 3) -> list[str]:
+    passages: list[str] = []
+    for block in text.split("\n\n"):
+        paragraph = " ".join(part.strip() for part in block.splitlines() if part.strip()).strip()
+        if len(paragraph) < 24:
+            continue
+        passages.append(paragraph[:180])
+        if len(passages) >= limit:
+            break
+    return passages
 
 
-async def extract_brief(
-    *,
-    current_brief: dict[str, Any] | None,
-    recent_messages: list[dict[str, str]],
-    user_message: str,
-    source_names: list[str],
-) -> dict[str, Any]:
-    history_lines = []
-    for item in recent_messages[-6:]:
-        role = "用户" if item.get("role") == "user" else "助手"
-        content = str(item.get("content") or "").strip()
-        if content:
-            history_lines.append(f"{role}: {content}")
-    prompt = (
-        f"当前 brief:\n{json.dumps(current_brief or {}, ensure_ascii=False, indent=2)}\n\n"
-        f"已选素材: {_source_summary(source_names)}\n\n"
-        f"最近对话:\n{chr(10).join(history_lines) or '（无）'}\n\n"
-        f"用户最新输入:\n{user_message.strip()}\n"
-    )
-    result = await _get_brief_agent().run(prompt)
-    return _merge_brief(current_brief, result.output)
+def _render_source_brief_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Create Agent Source Brief",
+        "",
+        f"- Topic Hint: {payload.get('topic_hint') or ''}",
+        f"- Source Count: {payload.get('source_count') or 0}",
+        "",
+    ]
+    for source in payload.get("sources") or []:
+        lines.append(f"## {source.get('name') or source.get('id') or 'Source'}")
+        headings = source.get("headings") or []
+        passages = source.get("key_passages") or []
+        if headings:
+            lines.append("Headings:")
+            lines.extend(f"- {heading}" for heading in headings)
+        if passages:
+            lines.append("Passages:")
+            lines.extend(f"- {passage}" for passage in passages)
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
 
 
-def _missing_fields(brief: dict[str, Any]) -> list[str]:
-    missing: list[str] = []
-    if not str(brief.get("topic") or "").strip():
-        missing.append("topic")
-    if not str(brief.get("audience") or "").strip():
-        missing.append("audience")
-    if not str(brief.get("objective") or "").strip():
-        missing.append("objective")
-    if not str(brief.get("style") or "").strip():
-        missing.append("style")
-    return missing
+class CreateAgentService:
+    def __init__(self, session_store) -> None:
+        self._session_store = session_store
 
+    async def ensure_opening_message(self, *, workspace_id: str, session_id: str) -> dict | None:
+        chats = await self._session_store.list_chat_messages(workspace_id, session_id, limit=300)
+        planning_messages = [
+            item
+            for item in chats
+            if isinstance(item.get("model_meta"), dict) and item["model_meta"].get("phase") == "planning"
+        ]
+        if planning_messages:
+            return await self._session_store.get_planning_state(workspace_id, session_id)
 
-def _preferred_page_count(brief: dict[str, Any], outline: dict[str, Any] | None = None) -> int:
-    preferred = brief.get("preferred_pages")
-    if isinstance(preferred, int) and preferred > 0:
-        return max(3, min(preferred, 20))
-    if outline and isinstance(outline.get("items"), list) and outline["items"]:
-        return max(3, min(len(outline["items"]), 20))
-    return 6
-
-
-def _should_generate_outline(
-    *,
-    brief: dict[str, Any],
-    user_message: str,
-    source_count: int,
-) -> bool:
-    meta = _normalize_brief_payload(brief)["_meta"]
-    clarification_turns = int(meta.get("clarification_turns") or 0)
-    user_turns = int(meta.get("user_turns") or 0)
-    message_length = len(user_message.strip())
-    missing = _missing_fields(brief)
-    complex_task = (
-        source_count >= 2
-        or message_length >= 180
-        or int(brief.get("preferred_pages") or 0) >= 8
-    )
-    if clarification_turns >= MAX_CLARIFICATION_TURNS:
-        return True
-    if source_count > 0 and user_turns >= 1 and message_length >= 24:
-        return True
-    if len(missing) <= 1 and user_turns >= 1:
-        return True
-    if user_turns >= 2 and not complex_task:
-        return True
-    if user_turns >= 3:
-        return True
-    return False
-
-
-def _build_followup_question(brief: dict[str, Any]) -> str:
-    missing = _missing_fields(brief)
-    if not missing:
-        return "我先按这个方向起一版大纲，你看看结构是否对路。"
-    if missing[:2] == ["topic", "audience"] or "topic" in missing:
-        return "我先补两个关键点：这份 PPT 主要讲什么主题，给谁看？"
-    if "audience" in missing and "objective" in missing:
-        return "这份 PPT 主要给谁看，希望他们看完后形成什么判断或动作？"
-    if "style" in missing:
-        return "表达风格上你更偏正式汇报、方案提案，还是更故事化一点？"
-    return "我再确认一下：这份 PPT 最想达成的目标是什么？"
-
-
-def normalize_planning_outline(
-    outline: dict[str, Any] | PresentationOutline | _OutlineRevisionResult | None,
-) -> dict[str, Any]:
-    raw = outline.model_dump() if isinstance(outline, BaseModel) else dict(outline or {})
-    items = raw.get("items") or []
-    normalized_items: list[dict[str, Any]] = []
-    for index, item in enumerate(items, start=1):
-        row = dict(item or {})
-        title = str(row.get("title") or "").strip() or f"第 {index} 页"
-        content_brief = str(
-            row.get("content_brief") or row.get("note") or row.get("remark") or ""
-        ).strip()
-        key_points = [
-            str(point).strip()
-            for point in (row.get("key_points") or [])
-            if str(point).strip()
-        ][:5]
-        if not key_points:
-            if content_brief:
-                key_points = [content_brief[:40]]
-            else:
-                key_points = [title]
-        normalized_items.append(
-            {
-                "slide_number": index,
-                "title": title,
-                "content_brief": content_brief,
-                "note": content_brief,
-                "key_points": key_points,
-                "content_hints": [
-                    str(point).strip()
-                    for point in (row.get("content_hints") or [])
-                    if str(point).strip()
-                ][:6],
-                "source_references": [
-                    str(point).strip()
-                    for point in (row.get("source_references") or [])
-                    if str(point).strip()
-                ][:8],
-                "suggested_slide_role": str(
-                    row.get("suggested_slide_role")
-                    or row.get("suggested_layout_category")
-                    or "narrative"
-                ).strip()
-                or "narrative",
-            }
+        current_state = await self._session_store.get_planning_state(workspace_id, session_id)
+        workspace_bundle = await self._prepare_workspace(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            current_state=current_state,
         )
-    normalized_items = normalize_outline_items_roles(
-        normalized_items,
-        num_pages=len(normalized_items),
-    )
-    for item in normalized_items:
-        item["note"] = str(item.get("content_brief") or "").strip()
-    return {
-        "narrative_arc": str(raw.get("narrative_arc") or "问题→分析→方案→结论").strip(),
-        "items": normalized_items,
-    }
+        opening_message, suggestions = self._build_opening_message(workspace_bundle["sources"])
+        next_state = await self._session_store.save_planning_state(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            mode="agentic",
+            status="collecting_requirements",
+            brief=current_state.get("brief") if current_state else {},
+            outline=current_state.get("outline") if current_state else {},
+            outline_version=int(current_state.get("outline_version") or 0) if current_state else 0,
+            source_ids=workspace_bundle["source_ids"],
+            source_digest=workspace_bundle["source_digest"],
+            outline_stale=bool(current_state.get("outline_stale")) if current_state else False,
+            active_job_id=str(current_state.get("active_job_id") or "") if current_state else None,
+            agent_workspace_root=str(workspace_bundle["root"]),
+            agent_session_version=int(current_state.get("agent_session_version") or 0) if current_state else 0,
+            assistant_status="ready",
+            topic_suggestions=suggestions,
+        )
+        await self._session_store.add_chat_message(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            role="assistant",
+            content=opening_message,
+            model_meta={
+                "phase": "planning",
+                "message_kind": "assistant_reply",
+                "outline_version": next_state.get("outline_version", 0),
+            },
+        )
+        return next_state
+
+    async def handle_turn(
+        self,
+        *,
+        workspace_id: str,
+        session_id: str,
+        user_message: str,
+    ) -> PlanningTurnOutcome:
+        current_state = await self._session_store.get_planning_state(workspace_id, session_id)
+        workspace_bundle = await self._prepare_workspace(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            current_state=current_state,
+        )
+        current_outline = dict(current_state.get("outline") or {}) if current_state else {}
+        outline_stale = bool(current_state.get("outline_stale")) if current_state else False
+        if current_state and current_state.get("source_digest") != workspace_bundle["source_digest"]:
+            outline_stale = bool(current_outline.get("items"))
+
+        await self._session_store.add_chat_message(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            role="user",
+            content=user_message,
+            model_meta={
+                "phase": "planning",
+                "message_kind": "user_turn",
+                "outline_version": int(current_state.get("outline_version") or 0) if current_state else 0,
+            },
+        )
+
+        turn_state = _TurnState(
+            brief=dict(current_state.get("brief") or {}) if current_state else {},
+            outline=current_outline if current_outline else None,
+            topic_suggestions=list(current_state.get("topic_suggestions") or []) if current_state else [],
+            assistant_status="thinking",
+            events=[{"type": "assistant_status", "assistant_status": "thinking"}],
+        )
+
+        agent = self._build_agent(
+            workspace_root=workspace_bundle["root"],
+            turn_state=turn_state,
+            source_bundle=workspace_bundle,
+            current_state=current_state or {},
+        )
+        session = agent.start_session(snapshot=workspace_bundle["snapshot"])
+        prompt = self._build_turn_prompt(
+            user_message=user_message,
+            current_state=current_state or {},
+            source_bundle=workspace_bundle,
+            outline_stale=outline_stale,
+        )
+        result = await session.send(prompt)
+
+        next_snapshot_version = int(current_state.get("agent_session_version") or 0) + 1 if current_state else 1
+        self._write_snapshot(
+            workspace_bundle["state_path"],
+            {
+                "version": next_snapshot_version,
+                "session": session.to_snapshot(),
+            },
+        )
+
+        next_brief = _merge_brief(current_state.get("brief") if current_state else None, turn_state.brief)
+        next_outline = turn_state.outline or current_outline or {}
+        has_new_outline = bool(turn_state.outline and turn_state.outline.get("items"))
+        next_outline_version = int(current_state.get("outline_version") or 0) if current_state else 0
+        if has_new_outline:
+            next_outline_version += 1
+        next_status = "outline_ready" if next_outline.get("items") else "collecting_requirements"
+        next_outline_stale = False if has_new_outline else outline_stale
+        topic_suggestions = turn_state.topic_suggestions
+        assistant_status = turn_state.assistant_status or ("outline_ready" if next_outline.get("items") else "ready")
+
+        next_state = await self._session_store.save_planning_state(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            mode="agentic",
+            status=next_status,
+            brief=next_brief,
+            outline=next_outline,
+            outline_version=next_outline_version,
+            source_ids=workspace_bundle["source_ids"],
+            source_digest=workspace_bundle["source_digest"],
+            outline_stale=next_outline_stale,
+            active_job_id=str(current_state.get("active_job_id") or "") if current_state else None,
+            agent_workspace_root=str(workspace_bundle["root"]),
+            agent_session_version=next_snapshot_version,
+            assistant_status=assistant_status,
+            topic_suggestions=topic_suggestions,
+        )
+
+        assistant_message = result.output_text.strip() or self._fallback_assistant_message(
+            topic_suggestions=topic_suggestions,
+            outline=next_outline,
+            outline_stale=next_outline_stale,
+        )
+        if assistant_message:
+            await self._session_store.add_chat_message(
+                workspace_id=workspace_id,
+                session_id=session_id,
+                role="assistant",
+                content=assistant_message,
+                model_meta={
+                    "phase": "planning",
+                    "message_kind": "assistant_reply",
+                    "outline_version": next_outline_version,
+                },
+            )
+
+        return PlanningTurnOutcome(
+            assistant_message=assistant_message,
+            brief=next_brief,
+            outline=next_outline or None,
+            outline_version_increment=1 if has_new_outline else 0,
+            status=next_status,
+            events=list(turn_state.events),
+            topic_suggestions=topic_suggestions,
+            assistant_status=assistant_status,
+            active_job_id=next_state.get("active_job_id"),
+        )
+
+    def _build_agent(
+        self,
+        *,
+        workspace_root: Path,
+        turn_state: _TurnState,
+        source_bundle: dict[str, Any],
+        current_state: dict[str, Any],
+    ):
+        builder = AgentBuilder.from_project(workspace_root)
+        builder.with_model_client(self._create_model_client())
+        builder.with_system_prompt(self._system_prompt())
+        builder.with_max_turns(6)
+        builder.with_auto_compact(True)
+        builder.with_compact_token_threshold(4500)
+        builder.tool_registry = self._build_tool_registry(
+            workspace_root=workspace_root,
+            turn_state=turn_state,
+            source_bundle=source_bundle,
+            current_state=current_state,
+        )
+        return builder.build()
+
+    def _build_tool_registry(
+        self,
+        *,
+        workspace_root: Path,
+        turn_state: _TurnState,
+        source_bundle: dict[str, Any],
+        current_state: dict[str, Any],
+    ) -> ToolRegistry:
+        registry = ToolRegistry()
+
+        async def _list_selected_sources(_args: BaseModel, _context: ToolContext) -> dict[str, Any]:
+            return {
+                "source_count": len(source_bundle["sources"]),
+                "sources": source_bundle["sources"],
+            }
+
+        async def _read_source_brief(_args: BaseModel, _context: ToolContext) -> dict[str, Any]:
+            return {
+                "path": str(source_bundle["brief_markdown_path"]),
+                "content": source_bundle["brief_markdown_path"].read_text(encoding="utf-8"),
+            }
+
+        async def _read_source_file(args: _ReadSourceFileArgs, _context: ToolContext) -> dict[str, Any]:
+            for source in source_bundle["sources"]:
+                if source["id"] != args.source_id:
+                    continue
+                path = workspace_root / source["workspace_text_path"]
+                text = path.read_text(encoding="utf-8") if path.exists() else ""
+                truncated = len(text) > args.limit
+                return {
+                    "source_id": source["id"],
+                    "name": source["name"],
+                    "content": text[: args.limit],
+                    "truncated": truncated,
+                }
+            raise ValueError(f"Unknown source id: {args.source_id}")
+
+        async def _suggest_topics(args: _SuggestTopicsArgs, _context: ToolContext) -> dict[str, Any]:
+            suggestions = self._suggest_topics(
+                sources=source_bundle["sources"],
+                focus=args.focus,
+                count=args.count,
+                current_brief=current_state.get("brief") or {},
+            )
+            turn_state.topic_suggestions = suggestions
+            turn_state.assistant_status = "topic_suggestions_ready"
+            turn_state.events.append(
+                {"type": "topic_suggestions", "topics": suggestions}
+            )
+            turn_state.events.append(
+                {"type": "assistant_status", "assistant_status": "topic_suggestions_ready"}
+            )
+            return {"topics": suggestions}
+
+        async def _submit_brief(args: _SubmitBriefArgs, _context: ToolContext) -> dict[str, Any]:
+            payload = args.model_dump(exclude_none=True)
+            turn_state.brief = _merge_brief(turn_state.brief, payload)
+            turn_state.events.append({"type": "brief_updated", "brief": turn_state.brief})
+            return {"brief": turn_state.brief}
+
+        async def _submit_outline(args: _OutlineArgs, _context: ToolContext) -> dict[str, Any]:
+            normalized = normalize_planning_outline(args.model_dump(mode="python"))
+            turn_state.outline = normalized
+            turn_state.topic_suggestions = []
+            turn_state.assistant_status = "outline_ready"
+            turn_state.events.append({"type": "outline_updated", "outline": normalized})
+            turn_state.events.append({"type": "assistant_status", "assistant_status": "outline_ready"})
+            return {
+                "status": "ok",
+                "item_count": len(normalized.get("items") or []),
+            }
+
+        async def _update_outline(args: _OutlineArgs, context: ToolContext) -> dict[str, Any]:
+            return await _submit_outline(args, context)
+
+        async def _launch_generation(args: _LaunchGenerationArgs, _context: ToolContext) -> dict[str, Any]:
+            if not args.confirmed:
+                return {
+                    "status": "blocked",
+                    "reason": "UI 仍会通过 planning/confirm 显式启动生成，本轮不要直接启动。",
+                }
+            turn_state.launch_requested = True
+            return {"status": "blocked", "reason": "当前创建页仍要求通过 planning/confirm 启动生成。"}
+
+        empty_args = type("_EmptyArgs", (BaseModel,), {})
+        registry.register(
+            Tool(
+                name="list_selected_sources",
+                description="List selected source materials and light metadata.",
+                args_model=empty_args,
+                handler=_list_selected_sources,
+            )
+        )
+        registry.register(
+            Tool(
+                name="read_source_brief",
+                description="Read the local source brief synthesized from selected materials.",
+                args_model=empty_args,
+                handler=_read_source_brief,
+            )
+        )
+        registry.register(
+            Tool(
+                name="read_source_file",
+                description="Read one selected source file by source id when you need more detail.",
+                args_model=_ReadSourceFileArgs,
+                handler=_read_source_file,
+            )
+        )
+        registry.register(
+            Tool(
+                name="suggest_topics",
+                description="Return 3-5 viable topic directions when the user is unsure what to write.",
+                args_model=_SuggestTopicsArgs,
+                handler=_suggest_topics,
+            )
+        )
+        registry.register(
+            Tool(
+                name="submit_brief",
+                description="Save stable planning requirements extracted from the conversation.",
+                args_model=_SubmitBriefArgs,
+                handler=_submit_brief,
+            )
+        )
+        registry.register(
+            Tool(
+                name="submit_outline",
+                description="Submit a fresh outline artifact for the create page.",
+                args_model=_OutlineArgs,
+                handler=_submit_outline,
+            )
+        )
+        registry.register(
+            Tool(
+                name="update_outline",
+                description="Update the current outline after the user changes direction.",
+                args_model=_OutlineArgs,
+                handler=_update_outline,
+            )
+        )
+        registry.register(
+            Tool(
+                name="launch_generation",
+                description="Reserved for explicit confirmation flows. Do not use during normal create-page turns.",
+                args_model=_LaunchGenerationArgs,
+                handler=_launch_generation,
+            )
+        )
+        return registry
+
+    def _system_prompt(self) -> str:
+        return (
+            "你是知演创建页里的 AI 助手，不是固定问卷。\n"
+            "你的目标是像一个真正的助手那样推进：在用户迷茫时先给方向，在信息足够时再沉淀 brief 和大纲。\n\n"
+            "工具使用原则：\n"
+            "- 先用 `list_selected_sources` 和 `read_source_brief` 建立上下文，必要时再用 `read_source_file`。\n"
+            "- 当用户说不知道写什么、主题还没定、想先找切入点时，优先调用 `suggest_topics`，不要只追问两个字段。\n"
+            "- 当你识别到稳定需求时，用 `submit_brief` 保存。\n"
+            "- 当你准备好大纲或需要根据反馈改大纲时，用 `submit_outline` 或 `update_outline`。\n"
+            "- 不要调用 `launch_generation`；创建页仍通过单独的确认按钮开始生成。\n\n"
+            "回复要求：\n"
+            "- 使用中文，语气自然、有温度。\n"
+            "- 回复要推动用户前进，不要重复工具结果。\n"
+            "- 如果已经给出 topic suggestions，就在自然语言里简单点题，并邀请用户选一个方向继续。"
+        )
+
+    def _build_turn_prompt(
+        self,
+        *,
+        user_message: str,
+        current_state: dict[str, Any],
+        source_bundle: dict[str, Any],
+        outline_stale: bool,
+    ) -> str:
+        current_outline = current_state.get("outline") or {}
+        return (
+            "当前 create-page 状态：\n"
+            f"- selected_sources: {len(source_bundle['sources'])}\n"
+            f"- source_digest: {source_bundle['source_digest']}\n"
+            f"- outline_stale: {'true' if outline_stale else 'false'}\n"
+            f"- current_brief: {json.dumps(current_state.get('brief') or {}, ensure_ascii=False)}\n"
+            f"- current_outline: {json.dumps(current_outline, ensure_ascii=False)}\n"
+            f"- current_topic_suggestions: {json.dumps(current_state.get('topic_suggestions') or [], ensure_ascii=False)}\n\n"
+            f"用户最新输入：{user_message.strip()}\n\n"
+            "请基于这些信息决定下一步。"
+        )
+
+    def _create_model_client(self) -> LiteLLMModelClient:
+        model_name = str(settings.fast_model or settings.strong_model or "").strip()
+        provider = parse_provider(model_name)
+        api_key: str | None = None
+        api_base: str | None = None
+        if provider == "openai":
+            api_key = str(settings.openai_api_key or "").strip() or None
+            api_base = str(settings.openai_base_url or "").strip() or None
+        elif provider == "anthropic":
+            api_key = str(settings.anthropic_api_key or "").strip() or None
+        elif provider == "google-gla":
+            api_key = str(settings.google_api_key or "").strip() or None
+        elif provider == "deepseek":
+            api_key = str(settings.deepseek_api_key or "").strip() or None
+        elif provider == "openrouter":
+            api_key = str(settings.openrouter_api_key or "").strip() or None
+        return LiteLLMModelClient(model=model_name, api_key=api_key, api_base=api_base)
+
+    async def _prepare_workspace(
+        self,
+        *,
+        workspace_id: str,
+        session_id: str,
+        current_state: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        sources = await self._session_store.list_sources(workspace_id, session_id)
+        ready_sources = [source for source in sources if source.get("status") == "ready" and source.get("id")]
+        source_ids = [str(source["id"]) for source in ready_sources]
+        source_records = await self._session_store.get_workspace_source_records_by_ids(workspace_id, source_ids)
+        source_digest = self._compute_source_digest(source_records)
+        root = (settings.project_root / "data" / "create-agent" / workspace_id / session_id).resolve()
+        sources_dir = root / "sources"
+        artifacts_dir = root / "artifacts"
+        state_dir = root / "state"
+        root.mkdir(parents=True, exist_ok=True)
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        source_payloads: list[dict[str, Any]] = []
+        combined_parts: list[str] = []
+        for index, record in enumerate(source_records, start=1):
+            source_id = str(record.get("id") or f"source-{index}")
+            parsed_content = str(record.get("parsed_content") or "").strip()
+            file_name = f"{index:02d}-{source_id}-{_safe_slug(str(record.get('name') or source_id))}.md"
+            relative_path = Path("sources") / file_name
+            target_path = root / relative_path
+            target_path.write_text(parsed_content, encoding="utf-8")
+            source_payloads.append(
+                {
+                    "id": source_id,
+                    "name": record.get("name"),
+                    "fileCategory": record.get("fileCategory"),
+                    "workspace_text_path": str(relative_path),
+                    "previewSnippet": record.get("previewSnippet"),
+                    "headings": _extract_source_headings(parsed_content),
+                    "key_passages": _extract_source_passages(parsed_content),
+                }
+            )
+            combined_parts.append(f"# Source: {record.get('name') or source_id}\n\n{parsed_content}".strip())
+
+        manifest = {
+            "source_count": len(source_payloads),
+            "source_digest": source_digest,
+            "sources": [
+                {
+                    "id": source["id"],
+                    "name": source["name"],
+                    "fileCategory": source["fileCategory"],
+                    "workspace_text_path": source["workspace_text_path"],
+                    "previewSnippet": source["previewSnippet"],
+                }
+                for source in source_payloads
+            ],
+        }
+        request_payload = {
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "source_ids": source_ids,
+            "source_digest": source_digest,
+            "brief": current_state.get("brief") if current_state else {},
+            "outline_version": int(current_state.get("outline_version") or 0) if current_state else 0,
+        }
+        brief_payload = {
+            "topic_hint": (current_state or {}).get("brief", {}).get("topic") if current_state else "",
+            "source_count": len(source_payloads),
+            "sources": source_payloads,
+        }
+        brief_markdown = _render_source_brief_markdown(brief_payload)
+
+        (root / "request.json").write_text(json.dumps(request_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        (sources_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        (sources_dir / "combined.md").write_text("\n\n---\n\n".join(part for part in combined_parts if part).strip(), encoding="utf-8")
+        brief_json_path = artifacts_dir / "source-brief.json"
+        brief_markdown_path = artifacts_dir / "source-brief.md"
+        brief_json_path.write_text(json.dumps(brief_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        brief_markdown_path.write_text(brief_markdown, encoding="utf-8")
+
+        snapshot_path = state_dir / "agent-session.json"
+        snapshot_payload = {}
+        if snapshot_path.exists():
+            with snapshot_path.open("r", encoding="utf-8") as handle:
+                snapshot_payload = json.load(handle)
+        return {
+            "root": root,
+            "state_path": snapshot_path,
+            "snapshot": dict(snapshot_payload.get("session") or {}),
+            "source_ids": source_ids,
+            "source_digest": source_digest,
+            "sources": source_payloads,
+            "brief_markdown_path": brief_markdown_path,
+            "brief_json_path": brief_json_path,
+        }
+
+    def _write_snapshot(self, path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _build_opening_message(self, sources: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        suggestions = self._suggest_topics(sources=sources, focus="", count=4, current_brief={})
+        if sources:
+            top_names = "、".join(str(source.get("name") or "素材") for source in sources[:3])
+            return (
+                f"我先看了你当前勾选的素材：{top_names}。如果你还没想好怎么讲，我可以先给你几个切入方向，或者直接按你想要的受众和目标起一版结构。",
+                suggestions,
+            )
+        return (
+            "我们可以先一起定方向。如果你还没想好写什么，我先给你几个常见的演示题目切口；你也可以直接告诉我想给谁看、希望他们看完形成什么判断。",
+            suggestions,
+        )
+
+    def _fallback_assistant_message(
+        self,
+        *,
+        topic_suggestions: list[dict[str, Any]],
+        outline: dict[str, Any],
+        outline_stale: bool,
+    ) -> str:
+        if outline_stale:
+            return "我注意到素材刚更新了。要不要我按最新素材重新整理一版结构，或者你先告诉我这次想强调哪一部分？"
+        if outline.get("items"):
+            return "我先把结构整理成一版大纲放下面了。你可以直接改页序和标题，也可以继续告诉我想怎么调。"
+        if topic_suggestions:
+            return "我先给你几种可行方向。你挑一个最接近的，我就顺着它继续起结构。"
+        return "我先继续帮你梳理，你也可以直接告诉我这份 PPT 最想讲清楚什么。"
+
+    def _suggest_topics(
+        self,
+        *,
+        sources: list[dict[str, Any]],
+        focus: str,
+        count: int,
+        current_brief: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        normalized_focus = focus.strip()
+        suggestions: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        for source in sources:
+            source_name = str(source.get("name") or "素材")
+            for heading in source.get("headings") or []:
+                title = str(heading).strip()
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                suggestions.append(
+                    {
+                        "title": title,
+                        "reason": f"可以直接从 {source_name} 里的这个部分展开，比较容易讲成一页一观点的结构。",
+                        "prompt": f"做一份围绕「{title}」的演示，帮我先梳理给谁看、核心结论是什么。",
+                    }
+                )
+                if len(suggestions) >= count:
+                    return suggestions
+
+        generic_focus = normalized_focus or str(current_brief.get("topic") or "").strip()
+        generic_templates = [
+            ("现状问题与机会", "先讲现在发生了什么、哪里有机会或风险，适合汇报和沟通共识。"),
+            ("方案设计与取舍", "聚焦方案本身，适合提案、评审和对比不同路线。"),
+            ("项目复盘与经验", "把过程、结果、经验讲清楚，适合内部分享或复盘。"),
+            ("策略建议与下一步", "更偏行动导向，适合希望推动决策或拿到资源支持的场景。"),
+            ("新人理解版导览", "把复杂内容讲得更容易懂，适合培训、入门介绍或跨团队同步。"),
+        ]
+        for title, reason in generic_templates:
+            label = f"{generic_focus}：{title}" if generic_focus else title
+            if label in seen:
+                continue
+            seen.add(label)
+            suggestions.append(
+                {
+                    "title": label,
+                    "reason": reason,
+                    "prompt": f"围绕「{label}」做一份演示，先帮我梳理结构和适合的受众。",
+                }
+            )
+            if len(suggestions) >= count:
+                break
+        return suggestions[:count]
+
+    def _compute_source_digest(self, source_records: list[dict[str, Any]]) -> str:
+        serializable = [
+            {
+                "id": str(record.get("id") or ""),
+                "name": str(record.get("name") or ""),
+                "updated_at": str(record.get("updated_at") or ""),
+                "content_hash": str(record.get("content_hash") or ""),
+            }
+            for record in source_records
+        ]
+        return hashlib.sha256(
+            json.dumps(serializable, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
 
 
-async def generate_outline(
-    *,
-    brief: dict[str, Any],
-    content: str,
-) -> dict[str, Any]:
-    from app.services.agents.outline_synthesizer import outline_synthesizer_agent
+async def ensure_planning_opening(*, workspace_id: str, session_id: str) -> dict | None:
+    from app.services.sessions import session_store
 
-    topic = str(brief.get("topic") or "综合演示").strip() or "综合演示"
-    num_pages = _preferred_page_count(brief)
-    brief_section = _brief_to_prompt_text(brief)
-    prompt = (
-        f"演示文稿主题：{topic}\n"
-        f"目标页数：{num_pages} 页\n\n"
-        f"需求摘要:\n{brief_section or '（用户尚未补充更多要求）'}\n\n"
-        f"内容:\n{content.strip() or topic}\n\n"
-        f"请生成一个 {num_pages} 页的演示文稿大纲。"
-    )
-    result = await outline_synthesizer_agent.run(prompt)
-    return normalize_planning_outline(result.output)
-
-
-async def revise_outline(
-    *,
-    current_outline: dict[str, Any],
-    brief: dict[str, Any],
-    user_message: str,
-) -> dict[str, Any]:
-    prompt = (
-        f"当前需求摘要:\n{json.dumps(brief, ensure_ascii=False, indent=2)}\n\n"
-        f"当前大纲:\n{json.dumps(current_outline, ensure_ascii=False, indent=2)}\n\n"
-        f"用户修改意见:\n{user_message.strip()}\n"
-    )
-    result = await _get_outline_revision_agent().run(prompt)
-    return normalize_planning_outline(result.output)
-
-
-def build_outline_ready_message(outline: dict[str, Any]) -> str:
-    items = outline.get("items") or []
-    return (
-        f"我先起了一版 {len(items)} 页的大纲，已经放在下面了。\n\n"
-        "你可以直接改每页标题和备注、拖动顺序、增删页面，"
-        "也可以继续用自然语言告诉我想怎么调整。"
-    )
-
-
-def build_outline_revised_message() -> str:
-    return "我已经按你的反馈更新了大纲，看看现在的结构和页序是否更接近你想要的版本。"
+    service = CreateAgentService(session_store)
+    return await service.ensure_opening_message(workspace_id=workspace_id, session_id=session_id)
 
 
 async def handle_planning_turn(
     *,
-    current_brief: dict[str, Any] | None,
-    current_outline: dict[str, Any] | None,
+    workspace_id: str,
+    session_id: str,
     user_message: str,
-    recent_messages: list[dict[str, str]],
-    content: str,
-    source_names: list[str],
-    source_ids: list[str],
 ) -> PlanningTurnOutcome:
-    merged_brief = await extract_brief(
-        current_brief=current_brief,
-        recent_messages=recent_messages,
+    from app.services.sessions import session_store
+
+    service = CreateAgentService(session_store)
+    return await service.handle_turn(
+        workspace_id=workspace_id,
+        session_id=session_id,
         user_message=user_message,
-        source_names=source_names,
     )
-    meta = _normalize_brief_payload(merged_brief)["_meta"]
-    meta["user_turns"] = int(meta.get("user_turns") or 0) + 1
-    merged_brief["_meta"] = meta
 
-    events: list[dict[str, Any]] = [
-        {"type": "brief_updated", "brief": merged_brief},
-    ]
 
-    if current_outline and (current_outline.get("items") or []):
-        next_outline = await revise_outline(
-            current_outline=current_outline,
-            brief=merged_brief,
-            user_message=user_message,
-        )
-        events.append({"type": "outline_revised", "outline": next_outline})
-        events.append({"type": "status_changed", "status": "outline_ready"})
-        return PlanningTurnOutcome(
-            assistant_message=build_outline_revised_message(),
-            brief=merged_brief,
-            outline=next_outline,
-            outline_version_increment=1,
-            status="outline_ready",
-            events=events,
-        )
+async def launch_generation_from_planning(
+    *,
+    workspace_id: str,
+    session_id: str,
+    topic: str,
+    brief: dict[str, Any],
+    approved_outline: dict[str, Any],
+    source_ids: list[str],
+):
+    from app.services.generation.job_factory import create_generation_job_record
 
-    if not _should_generate_outline(
-        brief=merged_brief,
-        user_message=user_message,
-        source_count=len(source_ids),
-    ):
-        meta["clarification_turns"] = min(
-            MAX_CLARIFICATION_TURNS,
-            int(meta.get("clarification_turns") or 0) + 1,
-        )
-        merged_brief["_meta"] = meta
-        question = _build_followup_question(merged_brief)
-        events.append({"type": "status_changed", "status": "collecting_requirements"})
-        return PlanningTurnOutcome(
-            assistant_message=question,
-            brief=merged_brief,
-            outline=None,
-            status="collecting_requirements",
-            events=events,
-        )
-
-    next_outline = await generate_outline(brief=merged_brief, content=content)
-    events.append({"type": "outline_drafted", "outline": next_outline})
-    events.append({"type": "status_changed", "status": "outline_ready"})
-    return PlanningTurnOutcome(
-        assistant_message=build_outline_ready_message(next_outline),
-        brief=merged_brief,
-        outline=next_outline,
-        outline_version_increment=1,
-        status="outline_ready",
-        events=events,
+    return await create_generation_job_record(
+        workspace_id=workspace_id,
+        req=CreateJobRequest(
+            topic=topic,
+            content=str(brief.get("extra_requirements") or ""),
+            session_id=session_id,
+            source_ids=source_ids,
+            template_id=None,
+            num_pages=len(approved_outline.get("items") or []),
+            approved_outline=approved_outline,
+        ),
     )
+
+
+__all__ = [
+    "CreateAgentService",
+    "PlanningTurnOutcome",
+    "ensure_planning_opening",
+    "handle_planning_turn",
+    "launch_generation_from_planning",
+    "normalize_planning_outline",
+]

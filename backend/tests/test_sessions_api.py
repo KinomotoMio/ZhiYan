@@ -301,7 +301,11 @@ def test_planning_turn_persists_outline_and_messages(monkeypatch, tmp_path):
     planning_json = planning_detail.json()
     assert planning_json["planning_state"]["status"] == "outline_ready"
     assert planning_json["planning_state"]["outline"]["items"][1]["title"] == "方案设计"
-    assert [item["role"] for item in planning_json["planning_messages"]] == ["user", "assistant"]
+    assert [item["role"] for item in planning_json["planning_messages"]] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     session_detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
     assert session_detail.status_code == 200

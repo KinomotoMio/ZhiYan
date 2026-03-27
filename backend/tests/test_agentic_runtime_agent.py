@@ -143,6 +143,34 @@ async def test_agent_session_preserves_history_across_turns(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_agent_session_snapshot_roundtrip_restores_history(tmp_path: Path) -> None:
+    model = FakeModel(
+        responses=[
+            AssistantMessage(content="first"),
+            AssistantMessage(content="second"),
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tool_registry=ToolRegistry(),
+        tool_context=default_tool_context(tmp_path),
+        skill_catalog=SkillCatalog(),
+        system_prompt="Be helpful.",
+    )
+
+    session = agent.start_session()
+    await session.send("hello")
+    snapshot = session.to_snapshot()
+
+    restored = agent.start_session(snapshot=snapshot)
+    result = await restored.send("again")
+
+    assert result.output_text == "second"
+    assert any(getattr(message, "content", "") == "hello" for message in restored.messages)
+    assert any(getattr(message, "content", "") == "again" for message in restored.messages)
+
+
+@pytest.mark.asyncio
 async def test_agent_session_skill_persists_until_reset(tmp_path: Path, skill_file_contents: str) -> None:
     skill_dir = tmp_path / ".agents" / "skills" / "example-skill"
     skill_dir.mkdir(parents=True)

@@ -83,7 +83,7 @@ export default function SessionEditorPage() {
   }, [params]);
   const requestedSlide = searchParams.get("slide");
   const createSessionPath = useMemo(
-    () => getCreateSessionPath(sessionId || null),
+    () => getCreateSessionPath(sessionId || null, { fromEditor: true }),
     [sessionId]
   );
 

@@ -63,13 +63,19 @@ class PlanningOutlineItem(BaseModel):
 
 class PlanningState(BaseModel):
     session_id: str
+    mode: str = "agentic"
     status: str = "collecting_requirements"
     brief: dict[str, Any] = Field(default_factory=dict)
     outline: dict[str, Any] = Field(default_factory=dict)
     outline_version: int = 0
     source_ids: list[str] = Field(default_factory=list)
+    source_digest: str = ""
     outline_stale: bool = False
     active_job_id: str | None = None
+    agent_workspace_root: str | None = None
+    agent_session_version: int = 0
+    assistant_status: str | None = None
+    topic_suggestions: list[dict[str, Any]] = Field(default_factory=list)
     updated_at: str
 
 

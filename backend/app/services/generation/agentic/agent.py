@@ -5,14 +5,23 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .background import BackgroundManager
-from .context_policy import ContextMarker, ContextPolicy
+from .context_policy import ContextMarker, ContextPolicy, ContextRetentionClass
 from .models import ModelClient, ModelUsage
 from .skills import SkillCatalog
 from .subagents import SubagentManager
 from .tasks import TaskManager
 from .todo import TodoManager
 from .tools import ToolContext, ToolRegistry
-from .types import AssistantMessage, Message, SystemMessage, ToolCall, ToolMessage, UserMessage
+from .types import (
+    AssistantMessage,
+    Message,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+    UserMessage,
+    deserialize_message,
+    serialize_message,
+)
 
 
 @dataclass(slots=True)
@@ -253,6 +262,53 @@ class AgentSession:
         self._load_task_state()
         self.messages = self._base_messages()
         return next(task for task in self.task_manager.list_tasks() if task["id"] == record.id)
+
+    def to_snapshot(self) -> dict[str, Any]:
+        self._persist_current_task_state()
+        return {
+            "messages": [serialize_message(message) for message in self.messages],
+            "active_skills": list(self.active_skills),
+            "rounds_since_todo": self.rounds_since_todo,
+            "compact_summary": self.compact_summary,
+            "compact_generation": self.compact_generation,
+            "context_markers": [marker.to_dict() for marker in self.context_markers],
+        }
+
+    def load_snapshot(self, snapshot: dict[str, Any] | None) -> None:
+        if not isinstance(snapshot, dict):
+            return
+        messages = [
+            deserialize_message(item)
+            for item in snapshot.get("messages") or []
+            if isinstance(item, dict)
+        ]
+        self.active_skills = [
+            str(name).strip()
+            for name in snapshot.get("active_skills") or []
+            if str(name).strip()
+        ]
+        self.rounds_since_todo = int(snapshot.get("rounds_since_todo") or 0)
+        self.compact_summary = str(snapshot.get("compact_summary") or "")
+        self.compact_generation = int(snapshot.get("compact_generation") or 0)
+        markers: list[ContextMarker] = []
+        for item in snapshot.get("context_markers") or []:
+            if not isinstance(item, dict):
+                continue
+            retention_raw = str(item.get("retention") or ContextRetentionClass.PERSISTENT_MARKER.value)
+            try:
+                retention = ContextRetentionClass(retention_raw)
+            except ValueError:
+                retention = ContextRetentionClass.PERSISTENT_MARKER
+            markers.append(
+                ContextMarker(
+                    kind=str(item.get("kind") or ""),
+                    summary=str(item.get("summary") or ""),
+                    retention=retention,
+                    metadata=dict(item.get("metadata") or {}),
+                )
+            )
+        self.context_markers = markers
+        self.messages = messages or self._base_messages()
 
     async def _continue_loop(
         self,
@@ -617,7 +673,13 @@ class Agent:
         result.tool_results = [*preload_tool_results, *result.tool_results]
         return result
 
-    def start_session(self, activate_skills: list[str] | None = None) -> AgentSession:
+    def start_session(
+        self,
+        activate_skills: list[str] | None = None,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> AgentSession:
+        del activate_skills
         task_manager = self.task_manager or TaskManager.from_project(self.tool_context.workspace_root, create_if_missing=True)
         session = AgentSession(
             model=self.model,
@@ -631,6 +693,7 @@ class Agent:
             compact_token_threshold=self.compact_token_threshold,
             compact_tail_turns=self.compact_tail_turns,
         )
+        session.load_snapshot(snapshot)
         return session
 
     def _build_system_prompt(self) -> str:

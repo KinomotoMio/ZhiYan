@@ -2,13 +2,23 @@ interface EditorPathOptions {
   slide?: number;
 }
 
-export function getCreateSessionPath(sessionId?: string | null): string {
-  if (!sessionId) {
-    return "/create";
-  }
+interface CreatePathOptions {
+  fromEditor?: boolean;
+}
 
-  const params = new URLSearchParams({ session: sessionId });
-  return `/create?${params.toString()}`;
+export function getCreateSessionPath(
+  sessionId?: string | null,
+  options?: CreatePathOptions
+): string {
+  const params = new URLSearchParams();
+  if (sessionId) {
+    params.set("session", sessionId);
+  }
+  if (options?.fromEditor) {
+    params.set("from", "editor");
+  }
+  const query = params.toString();
+  return query ? `/create?${query}` : "/create";
 }
 
 export function resolvePostCreateEditorPath(
