@@ -23,12 +23,22 @@ _PROVIDER_KEY_FIELD: dict[str, str] = {
 }
 
 
-def parse_provider(model_str: str) -> str:
+def split_model_identifier(model_str: str) -> tuple[str, str]:
     model = model_str.strip()
-    if not model or ":" not in model:
-        return ""
-    provider, _, _ = model.partition(":")
-    return provider.strip()
+    if not model:
+        return "", ""
+    if ":" in model:
+        provider, _, model_name = model.partition(":")
+        return provider.strip(), model_name.strip()
+    if "/" in model:
+        provider, _, model_name = model.partition("/")
+        return provider.strip(), model_name.strip()
+    return "", model
+
+
+def parse_provider(model_str: str) -> str:
+    provider, _ = split_model_identifier(model_str)
+    return provider
 
 
 def provider_required_key(provider: str) -> str | None:
@@ -54,7 +64,7 @@ def build_model_status(model_str: str, settings: Any) -> ModelStatus:
             message="未检测到 provider 前缀，将按原始模型名尝试调用",
         )
 
-    _, _, model_name = model.partition(":")
+    _, model_name = split_model_identifier(model)
     if not model_name.strip():
         return ModelStatus(
             model=model,

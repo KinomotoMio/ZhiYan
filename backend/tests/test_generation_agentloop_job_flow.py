@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
+from app.models.generation import GenerationJob, GenerationRequestData, StageStatus
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
@@ -83,12 +84,12 @@ def _deck_payload(page_count: int) -> dict:
             "slideNumber": 2,
             "title": "这次迁移先解决什么",
             "role": "agenda",
-            "layoutHint": "outline-slide",
+            "layoutHint": "outline-slide-rail",
             "sections": [
                 {"title": "复用创建页入口", "description": "不改现有按钮和 editor 壳"},
                 {"title": "给 job 建 workspace", "description": "把 source manifest 和文本素材落盘"},
-                {"title": "让 agent 主导生成", "description": "先出 outline，再出 deck"},
-                {"title": "临时适配 editor", "description": "先转成 presentation，后面再升级 IR"},
+                {"title": "单阶段生成", "description": "auto 模式直接进 deck，不再先出 outline"},
+                {"title": "强模板适配", "description": "按 layout-native schema 直接填充模板"},
             ],
         },
     ]
@@ -98,11 +99,12 @@ def _deck_payload(page_count: int) -> dict:
                 "slideNumber": slide_number,
                 "title": f"核心阶段 {slide_number - 2}",
                 "role": "narrative",
-                "layoutHint": "bullet-with-icons",
-                "points": [
-                    {"title": "工作区可读", "detail": "agent 通过文件工具读素材而不是只吃拼接文本"},
-                    {"title": "状态机兼容", "detail": "继续复用 job、SSE、editor hydrate"},
-                    {"title": "输出可替换", "detail": "当前 presentation 只是前端适配层"},
+                "layoutHint": "bullet-with-icons-cards",
+                "items": [
+                    {"title": "工作区可读", "description": "Agent 通过文件工具读素材而不是只吃拼接文本"},
+                    {"title": "模板直填", "description": "直接按 layout-native schema 产出可展示内容"},
+                    {"title": "状态机兼容", "description": "继续复用 job、SSE、editor hydrate"},
+                    {"title": "输出可替换", "description": "当前 presentation 只是前端适配层"},
                 ],
                 "speakerNotes": "强调这是临时适配，不是最终表示。",
             }
@@ -228,7 +230,8 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
 
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
 
-    models = [_outline_model(4), _deck_model(4)]
+    deck_model = _deck_model(4)
+    models = [deck_model]
 
     def fake_model_factory():
         return models.pop(0)
@@ -270,8 +273,22 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     assert len(body["slides"]) == 4
     assert body["presentation"] is not None
     assert body["presentation"]["slides"][0]["layoutType"] == "intro-slide"
-    assert Path(body["document_metadata"]["agent_workspace"]["root"], "artifacts", "outline.json").exists()
-    assert Path(body["document_metadata"]["agent_workspace"]["root"], "artifacts", "deck.json").exists()
+    workspace_root = Path(body["document_metadata"]["agent_workspace"]["root"])
+    assert (workspace_root / "artifacts" / "deck.json").exists()
+
+    agent_debug = body["document_metadata"]["agent_debug"]
+    assert Path(agent_debug["root"]).exists()
+    assert sorted(agent_debug["files"]) == [
+        "model-deck-request.json",
+        "model-deck-response.json",
+        "runner-trace.json",
+        "session-deck.json",
+        "tool-trace.ndjson",
+    ]
+    assert agent_debug["runs"]["deck"]["stop_reason"] == "completed"
+    assert (workspace_root / "artifacts" / "debug" / "session-deck.json").exists()
+    assert (workspace_root / "artifacts" / "debug" / "runner-trace.json").exists()
+    assert set(tool["name"] for tool in deck_model.seen_tools[0]) == {"read_file", "submit_deck"}
 
 
 def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):
@@ -342,3 +359,41 @@ def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_pa
     assert final_detail.status_code == 200
     assert final_detail.json()["status"] == "completed"
     assert len(final_detail.json()["presentation"]["slides"]) == 4
+
+
+def test_runner_stage_does_not_use_asyncio_wait_for(monkeypatch, tmp_path):
+    store = GenerationJobStore(tmp_path / "jobs")
+    bus = GenerationEventBus()
+    runner = GenerationRunner(store, bus)
+    workspace_root = tmp_path / "workspace"
+    (workspace_root / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    job = GenerationJob(
+        job_id="job-no-stage-timeout",
+        request=GenerationRequestData(topic="去掉 stage timeout", resolved_content="测试内容"),
+        document_metadata={"agent_workspace": {"root": str(workspace_root)}},
+    )
+    asyncio.run(store.create_job(job))
+
+    from app.services.generation import runner as runner_mod
+
+    async def _fail_if_called(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("GenerationRunner should not call asyncio.wait_for for stage execution")
+
+    monkeypatch.setattr(runner_mod.asyncio, "wait_for", _fail_if_called)
+
+    async def _case():
+        state = runner._build_state(job)  # noqa: SLF001
+
+        async def stage_coro():
+            await asyncio.sleep(0)
+
+        await runner._run_stage(job, state, stage=StageStatus.OUTLINE, stage_coro=stage_coro())  # noqa: SLF001
+
+    asyncio.run(_case())
+
+    saved = asyncio.run(store.get_job(job.job_id))
+    assert saved is not None
+    assert saved.stage_results[-1].stage == StageStatus.OUTLINE
+    assert saved.stage_results[-1].status == "completed"
+    assert saved.stage_results[-1].timeout_seconds is None

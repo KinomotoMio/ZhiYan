@@ -1,4 +1,4 @@
-"""Generation v2 API - job based pipeline orchestration."""
+"""Generation v2 API - AgentLoop-backed job orchestration."""
 
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic_ai.exceptions import ModelHTTPError
-
 from app.core.config import settings
 from app.models.generation import (
     AcceptOutlineRequest,
@@ -27,21 +25,12 @@ from app.models.generation import (
     GenerationRequestData,
     JobActionResponse,
     JobStatus,
-    SlidevMvpRequest,
-    SlidevMvpResponse,
     StageStatus,
     now_iso,
 )
 from app.services.generation import event_bus, generation_runner, job_store
 from app.services.generation.agent_workspace import build_agent_workspace
 from app.services.generation.loading_title import DEFAULT_LOADING_TITLE, build_loading_title
-from app.services.generation.slidev_mvp import (
-    SlidevMvpBuildError,
-    SlidevMvpNotFoundError,
-    SlidevMvpProviderError,
-    SlidevMvpService,
-    SlidevMvpValidationError,
-)
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
 
@@ -185,35 +174,6 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         created_at=job.created_at,
         event_stream_url=f"/api/v2/generation/jobs/{job.job_id}/events",
     )
-
-
-@router.post("/slidev-mvp", response_model=SlidevMvpResponse)
-async def create_slidev_mvp(req: SlidevMvpRequest, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    service = SlidevMvpService(workspace_id=workspace_id)
-
-    try:
-        artifact = await service.generate_deck(
-            topic=req.topic,
-            content=req.content,
-            session_id=req.session_id,
-            source_ids=req.source_ids,
-            num_pages=req.num_pages,
-            build=req.build,
-        )
-    except SlidevMvpNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SlidevMvpValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SlidevMvpProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except SlidevMvpBuildError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except ModelHTTPError as exc:
-        detail = f"上游模型请求失败 ({exc.status_code}): {exc}"
-        raise HTTPException(status_code=503 if exc.status_code == 429 else 502, detail=detail) from exc
-
-    return SlidevMvpResponse.model_validate(artifact.to_payload())
 
 
 @router.get("/jobs/{job_id}", response_model=GenerationJob)

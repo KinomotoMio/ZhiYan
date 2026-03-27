@@ -34,3 +34,8 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "ruff>=0.15.0",
 ]
+
+[tool.pytest.ini_options]
+addopts = ["--ignore=_backup", "--ignore=backend/_backup"]
+norecursedirs = ["_backup", ".git", ".venv", "node_modules"]
+testpaths = ["tests"]

@@ -5,6 +5,8 @@ from typing import Any, Protocol, cast
 
 from litellm import acompletion
 
+from app.core.model_status import split_model_identifier
+
 from .types import AssistantMessage, Message, ToolCall, ToolMessage
 
 
@@ -37,8 +39,8 @@ class LiteLLMModelClient:
 
     async def complete(self, messages: list[Message], tools: list[dict[str, Any]]) -> ModelResponse:
         request: dict[str, Any] = {
-            "model": self.model,
-            "messages": [_to_litellm_message(message) for message in messages],
+            "model": normalize_litellm_model(self.model),
+            "messages": _to_litellm_messages(messages),
         }
         if tools:
             request["tools"] = [_to_openai_tool(tool) for tool in tools]
@@ -84,6 +86,18 @@ class LiteLLMModelClient:
         return ModelResponse(message=assistant, usage=normalized_usage, raw=response)
 
 
+def normalize_litellm_model(model: str) -> str:
+    raw = str(model or "").strip()
+    if not raw:
+        return raw
+    if ":" not in raw:
+        return raw
+    provider, model_name = split_model_identifier(raw)
+    if not provider or not model_name:
+        return raw
+    return f"{provider}/{model_name}"
+
+
 def _to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "function",
@@ -95,15 +109,22 @@ def _to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _to_litellm_message(message: Message) -> dict[str, Any]:
+def _to_litellm_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for message in messages:
+        payloads.extend(_expand_litellm_message(message))
+    return payloads
+
+
+def _expand_litellm_message(message: Message) -> list[dict[str, Any]]:
     if message.role == "system":
-        return {"role": "system", "content": message.content}
+        return [{"role": "system", "content": message.content}]
     if message.role == "user":
-        return {"role": "user", "content": message.content}
+        return [{"role": "user", "content": message.content}]
     if message.role == "assistant":
         payload: dict[str, Any] = {
             "role": "assistant",
-            "content": message.content,
+            "content": None if message.tool_calls and not message.content else message.content,
         }
         if message.tool_calls:
             payload["tool_calls"] = [
@@ -117,24 +138,16 @@ def _to_litellm_message(message: Message) -> dict[str, Any]:
                 }
                 for tool_call in message.tool_calls
             ]
-        return payload
+        return [payload]
     if isinstance(message, ToolMessage):
-        if len(message.results) == 1:
-            result = message.results[0]
-            return {
+        return [
+            {
                 "role": "tool",
                 "tool_call_id": result.tool_call_id,
                 "content": _dump_json(result.content),
             }
-        return {
-            "role": "user",
-            "content": _dump_json(
-                [
-                    _compact_multi_tool_result(result)
-                    for result in message.results
-                ]
-            ),
-        }
+            for result in message.results
+        ]
     raise TypeError(f"Unsupported message type: {type(message)!r}")
 
 
@@ -143,10 +156,3 @@ def _dump_json(value: Any) -> str:
 
     return json.dumps(value, ensure_ascii=True)
 
-
-def _compact_multi_tool_result(result: Any) -> dict[str, Any]:
-    return {
-        "tool_name": result.tool_name,
-        "content": result.content,
-        "is_error": result.is_error,
-    }

@@ -3,7 +3,7 @@ import json
 import app.services.skill_runtime.executor as executor
 from app.core import config, settings_store
 from app.core.config import reload_settings
-from app.core.model_status import build_model_status
+from app.core.model_status import build_model_status, parse_provider, split_model_identifier
 
 
 def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatch):
@@ -64,3 +64,9 @@ def test_build_model_status_for_known_and_unknown_providers():
 
     invalid_model_status = build_model_status("openrouter:", test_settings)
     assert invalid_model_status.ready is False
+
+
+def test_model_identifier_supports_colon_and_slash_forms():
+    assert split_model_identifier("openai:gpt-4o-mini") == ("openai", "gpt-4o-mini")
+    assert split_model_identifier("openrouter/moonshotai/kimi-k2.5") == ("openrouter", "moonshotai/kimi-k2.5")
+    assert parse_provider("openrouter/moonshotai/kimi-k2.5") == "openrouter"

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.main import app
 from app.models.generation import EventType, TERMINAL_EVENTS
-from app.models.slide import Slide
+from app.services.generation.agent_adapter import AgentDeck, AgentOutline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
@@ -26,98 +26,62 @@ def _install_runtime(monkeypatch, tmp_path: Path) -> tuple[GenerationJobStore, G
     return store, runner
 
 
-def _patch_fast_pipeline(monkeypatch):
+def _patch_fast_agentloop(monkeypatch, runner: GenerationRunner):
     from app.services.generation import runner as runner_mod
 
-    async def fake_parse(state, progress=None):
-        if progress:
-            await progress("parse", 1, 6, "解析文档...")
-        state.document_metadata = {"char_count": len(state.raw_content)}
-
-    async def fake_outline(state, progress=None):
-        if progress:
-            await progress("outline", 2, 6, "生成大纲...")
-        state.outline = {
-            "items": [
-                {
-                    "slide_number": 1,
-                    "title": "封面",
-                    "suggested_slide_role": "cover",
-                    "key_points": [],
-                },
-                {
-                    "slide_number": 2,
-                    "title": "内容",
-                    "suggested_slide_role": "narrative",
-                    "key_points": ["要点一", "要点二"],
-                },
-            ]
-        }
-
-    async def fake_layout(state, progress=None):
-        if progress:
-            await progress("layout", 3, 6, "选择布局...")
-        state.layout_selections = [
-            {"slide_number": 1, "layout_id": "intro-slide"},
-            {"slide_number": 2, "layout_id": "bullet-with-icons"},
-        ]
-
-    async def fake_slides(state, per_slide_timeout, progress=None, on_slide=None):  # noqa: ARG001
-        if progress:
-            await progress("slides", 4, 6, "生成幻灯片...")
-        state.slide_contents = [
-            {"slide_number": 1, "layout_id": "intro-slide", "content_data": {"title": "封面"}},
+    async def fake_outline(_job, _state):
+        return AgentOutline.model_validate(
             {
-                "slide_number": 2,
-                "layout_id": "bullet-with-icons",
-                "content_data": {"title": "内容", "items": [{"title": "要点一", "description": "说明"}]},
-            },
-        ]
-        state.slides = [
-            Slide(
-                slideId="slide-1",
-                layoutType="intro-slide",
-                layoutId="intro-slide",
-                contentData={"title": "封面"},
-                components=[],
-            ),
-            Slide(
-                slideId="slide-2",
-                layoutType="bullet-with-icons",
-                layoutId="bullet-with-icons",
-                contentData={"title": "内容", "items": [{"title": "要点一", "description": "说明"}]},
-                components=[],
-            ),
-        ]
-        if on_slide:
-            await on_slide({"slide_index": 0, "slide": state.slides[0].model_dump(mode="json", by_alias=True)})
-            await on_slide({"slide_index": 1, "slide": state.slides[1].model_dump(mode="json", by_alias=True)})
+                "title": "测试主题",
+                "items": [
+                    {"slideNumber": 1, "title": "封面", "role": "cover"},
+                    {"slideNumber": 2, "title": "目录", "role": "agenda"},
+                    {"slideNumber": 3, "title": "内容", "role": "narrative", "keyPoints": ["要点一", "要点二"]},
+                ],
+            }
+        )
 
-    async def fake_assets(state, progress=None):
-        if progress:
-            await progress("assets", 5, 6, "处理资源...")
+    async def fake_deck(_job, _state):
+        return AgentDeck.model_validate(
+            {
+                "title": "测试主题",
+                "slides": [
+                    {"slideNumber": 1, "title": "封面", "role": "cover", "layoutHint": "intro-slide"},
+                    {
+                        "slideNumber": 2,
+                        "title": "目录",
+                        "role": "agenda",
+                        "layoutHint": "outline-slide-rail",
+                        "sections": [{"title": "内容", "description": "展开说明"}],
+                    },
+                    {
+                        "slideNumber": 3,
+                        "title": "内容",
+                        "role": "process",
+                        "layoutHint": "numbered-bullets",
+                        "steps": [
+                            {"title": "读取素材", "description": "读取工作区素材摘要与正文"},
+                            {"title": "填充模板", "description": "按 layout-native schema 直接生成页面"},
+                            {"title": "适配编辑器", "description": "输出当前 presentation payload"},
+                        ],
+                    },
+                ],
+            }
+        )
 
     async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
         if progress:
-            await progress("verify", 6, 6, "验证布局质量...")
+            await progress("verify", 1, 1, "验证布局质量...")
         state.verification_issues = []
-
-    async def fake_fix(state, per_slide_timeout, progress=None, on_slide=None):  # noqa: ARG001
-        if progress:
-            await progress("fix", 6, 6, "修复页面...")
-
-    monkeypatch.setattr(runner_mod, "stage_parse_document", fake_parse)
-    monkeypatch.setattr(runner_mod, "stage_generate_outline", fake_outline)
-    monkeypatch.setattr(runner_mod, "stage_select_layouts", fake_layout)
-    monkeypatch.setattr(runner_mod, "stage_generate_slides", fake_slides)
-    monkeypatch.setattr(runner_mod, "stage_resolve_assets", fake_assets)
+    monkeypatch.setattr(runner, "_generate_outline_with_agent", fake_outline)
+    monkeypatch.setattr(runner, "_generate_deck_with_agent", fake_deck)
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
-    monkeypatch.setattr(runner_mod, "stage_fix_slides_once", fake_fix)
 
 
 def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     _, runner = _install_runtime(monkeypatch, tmp_path)
-    _patch_fast_pipeline(monkeypatch)
+    _patch_fast_agentloop(monkeypatch, runner)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
 
     async def run_inline(job_id: str, from_stage=None):
         await runner._run_job(job_id, from_stage)  # noqa: SLF001
@@ -128,7 +92,7 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     client = TestClient(app)
     create_resp = client.post(
         "/api/v2/generation/jobs",
-        json={"topic": "测试主题", "content": "测试内容", "num_pages": 2, "mode": "auto"},
+        json={"topic": "测试主题", "content": "测试内容", "num_pages": 3, "mode": "auto"},
     )
     assert create_resp.status_code == 200
     job_id = create_resp.json()["job_id"]
@@ -155,8 +119,6 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
 
     types = [evt["type"] for evt in events]
     assert EventType.JOB_STARTED.value in types
-    assert EventType.OUTLINE_READY.value in types
-    assert EventType.LAYOUT_READY.value in types
     assert EventType.SLIDE_READY.value in types
     terminal = [t for t in types if t in {et.value for et in TERMINAL_EVENTS}]
     assert len(terminal) == 1
@@ -166,7 +128,7 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     assert snapshot.status_code == 200
     body = snapshot.json()
     assert body["status"] == "completed"
-    assert len(body["slides"]) == 2
+    assert len(body["slides"]) == 3
 
 
 def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):

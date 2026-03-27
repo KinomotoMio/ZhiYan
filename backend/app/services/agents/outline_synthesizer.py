@@ -57,7 +57,7 @@ def get_outline_synthesizer_agent():
         from app.core.config import settings
         from app.core.model_resolver import resolve_model
         from app.services.harness import compose_outline_instructions
-        from app.services.pipeline.layout_roles import format_role_contract_for_prompt
+        from app.services.layouts.layout_roles import format_role_contract_for_prompt
 
         _agent = Agent(
             model=resolve_model(settings.strong_model),

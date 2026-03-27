@@ -10,14 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pydantic import BaseModel
 
-from app.services.pipeline.layout_taxonomy import (
+from app.services.layouts.layout_taxonomy import (
     LayoutDesignTraits,
     LayoutTemplateNotes,
     get_layout_variant_definition,
     get_layout_notes,
     get_layout_taxonomy,
 )
-from app.services.pipeline.layout_usage import format_usage_tags, get_layout_usage_tags
+from app.services.layouts.layout_usage import format_usage_tags, get_layout_usage_tags
 from app.models.layouts.schemas import (
     BulletIconsOnlyData,
     BulletWithIconsData,
