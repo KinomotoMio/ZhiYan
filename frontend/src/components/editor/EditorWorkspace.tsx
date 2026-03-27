@@ -11,6 +11,7 @@ import {
   LayoutPanelLeft,
   Loader2,
   Play,
+  Share2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
@@ -25,6 +26,7 @@ import {
   fixPreview,
   fixSkip,
   generateSpeakerNotes,
+  createOrGetSessionShareLink,
   saveLatestSessionPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
@@ -43,6 +45,7 @@ import RevealPreview from "@/components/slides/RevealPreview";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
+import ShareLinkDialog from "@/components/editor/ShareLinkDialog";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
 import {
@@ -139,6 +142,9 @@ export default function EditorWorkspace({
   const [revealSlideIndex, setRevealSlideIndex] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [creatingShareLink, setCreatingShareLink] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
   const [previewingFix, setPreviewingFix] = useState(false);
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
@@ -153,6 +159,11 @@ export default function EditorWorkspace({
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
+  const canShare = Boolean(
+    currentSessionId &&
+      !isGenerating &&
+      (isHtmlMode ? presentationHtml : presentation && presentation.slides.length > 0)
+  );
 
   const handleResume = async () => {
     if (!jobId || resuming) return;
@@ -214,6 +225,30 @@ export default function EditorWorkspace({
       toast.error(err instanceof Error ? err.message : "确认大纲失败");
     } finally {
       setAcceptingOutline(false);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!currentSessionId || creatingShareLink) return;
+    setCreatingShareLink(true);
+    try {
+      const result = await createOrGetSessionShareLink(currentSessionId);
+      setShareUrl(result.share_url);
+      setShareDialogOpen(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成分享链接失败");
+    } finally {
+      setCreatingShareLink(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("已复制分享链接");
+    } catch {
+      toast.error("复制失败，请手动复制链接");
     }
   };
 
@@ -680,6 +715,22 @@ export default function EditorWorkspace({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <button
+              type="button"
+              onClick={() => {
+                void handleShare();
+              }}
+              disabled={!canShare || creatingShareLink}
+              title={canShare ? "生成并查看分享链接" : "当前暂无可分享的演示稿"}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50"
+            >
+              {creatingShareLink ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Share2 className="h-3.5 w-3.5" />
+              )}
+              {creatingShareLink ? "生成中..." : "分享"}
+            </button>
             {canResume && (
               <button
                 onClick={() => {
@@ -920,6 +971,15 @@ export default function EditorWorkspace({
         }}
         onDiscardPreview={handleDiscardFixPreview}
         onMarkHandled={handleMarkSlideHandled}
+      />
+      <ShareLinkDialog
+        open={shareDialogOpen}
+        shareUrl={shareUrl}
+        loading={creatingShareLink}
+        onCopy={() => {
+          void handleCopyShareLink();
+        }}
+        onClose={() => setShareDialogOpen(false)}
       />
 
       <FloatingChatPanel />
