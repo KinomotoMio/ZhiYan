@@ -23,6 +23,8 @@ test("speaker notes panel renders placeholder and keeps read-aloud disabled when
   assert.match(html, />生成全部</);
   assert.match(html, /title="朗读注解"/);
   assert.match(html, /<button type="button" disabled=""/);
+  assert.doesNotMatch(html, /当前页还没有演讲者注解/);
+  assert.doesNotMatch(html, /0 字/);
   assert.doesNotMatch(html, /字<\/span>/);
 });
 

@@ -837,6 +837,8 @@ export default function EditorWorkspace({
                     index={i}
                     isActive={i === currentSlideIndex}
                     onClick={() => setCurrentSlideIndex(i)}
+                    htmlContent={isHtmlMode ? presentationHtml : null}
+                    htmlStartSlide={i}
                     issueMeta={
                       groupedIssues.has(slide.slideId)
                         ? {

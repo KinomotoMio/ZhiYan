@@ -658,7 +658,8 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     }
     html_deck = (
         "<!DOCTYPE html><html><head><title>HTML 最新稿</title></head><body>"
-        '<section data-slide-id="slide-1" data-slide-title="封面">'
+        '<section class="slide-cover" id="slide-cover-1" style="background:#111827" '
+        'data-slide-id="slide-1" data-slide-title="封面">'
         "<div><h1>封面</h1><p>支持预览与播放。</p></div>"
         "</section>"
         "</body></html>"
@@ -685,7 +686,11 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     html_resp = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/html", headers=headers)
     assert html_resp.status_code == 200
     assert html_resp.headers["content-type"].startswith("text/html")
-    assert "<section data-slide-id=\"slide-1\"" in html_resp.text
+    assert 'data-slide-id="slide-1"' in html_resp.text
+    assert 'data-slide-title="封面"' in html_resp.text
+    assert 'class="slide-cover"' in html_resp.text
+    assert 'id="slide-cover-1"' in html_resp.text
+    assert 'style="background:#111827"' in html_resp.text
 
     meta_resp = client.get(
         f"/api/v1/sessions/{session_id}/presentations/latest/html/meta",
