@@ -421,9 +421,9 @@ export default function HomeView() {
 
   return (
     <div className="zy-bg-home min-h-screen lg:h-screen lg:overflow-hidden">
-      <main className="relative mx-auto h-full w-full max-w-[1480px] px-4 py-8 md:px-6 lg:px-8 lg:py-5">
-        <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-blue-300/35 blur-3xl" />
-        <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-rose-300/35 blur-3xl" />
+      <main className="relative mx-auto h-full w-full max-w-none px-4 py-8 md:px-6 lg:px-6 lg:py-5">
+        <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-[rgba(var(--zy-brand-blue),0.18)] blur-3xl" />
+        <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-[rgba(var(--zy-brand-red),0.16)] blur-3xl" />
 
         <section className="grid h-full gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
           <article
@@ -612,7 +612,7 @@ export default function HomeView() {
             </div>
           </article>
 
-          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-blue-100/80 bg-gradient-to-br from-white/92 via-rose-50/60 to-blue-50/80 p-5 shadow-[0_20px_45px_-35px_rgba(30,64,175,0.35)] lg:min-h-0">
+          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-[rgba(var(--zy-brand-blue),0.12)] bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(var(--zy-brand-red),0.045),rgba(var(--zy-brand-blue),0.10))] p-5 shadow-[0_20px_45px_-35px_rgba(0,75,132,0.35)] lg:min-h-0">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <FileText className="h-4 w-4 text-blue-700" />
               最近成果预览

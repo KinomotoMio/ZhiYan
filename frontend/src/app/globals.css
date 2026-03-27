@@ -49,8 +49,8 @@
 
 :root {
   --radius: 0.625rem;
-  --zy-brand-red: 159, 34, 65;
-  --zy-brand-blue: 28, 72, 167;
+  --zy-brand-red: 210, 11, 23;
+  --zy-brand-blue: 0, 75, 132;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -85,8 +85,8 @@
 }
 
 .dark {
-  --zy-brand-red: 214, 48, 88;
-  --zy-brand-blue: 78, 128, 255;
+  --zy-brand-red: 210, 11, 23;
+  --zy-brand-blue: 0, 75, 132;
   --zy-dark-bg-start: 18, 20, 34;
   --zy-dark-bg-mid: 14, 22, 40;
   --zy-dark-bg-end: 12, 28, 58;
@@ -135,14 +135,14 @@
 @layer utilities {
   .zy-bg-home {
     background:
-      radial-gradient(circle at 14% 12%, rgba(var(--zy-brand-red), 0.24), transparent 44%),
-      radial-gradient(circle at 84% 10%, rgba(var(--zy-brand-blue), 0.2), transparent 38%),
-      radial-gradient(circle at 56% 84%, rgba(var(--zy-brand-blue), 0.12), transparent 34%),
+      radial-gradient(circle at 14% 12%, rgba(var(--zy-brand-red), 0.2), transparent 44%),
+      radial-gradient(circle at 84% 10%, rgba(var(--zy-brand-blue), 0.18), transparent 38%),
+      radial-gradient(circle at 56% 84%, rgba(var(--zy-brand-blue), 0.1), transparent 34%),
       linear-gradient(
         160deg,
-        rgba(255, 247, 248, 0.97) 8%,
-        rgba(245, 246, 255, 0.95) 48%,
-        rgba(236, 242, 255, 0.93) 100%
+        rgba(255, 255, 255, 0.97) 8%,
+        rgba(var(--zy-brand-red), 0.055) 44%,
+        rgba(var(--zy-brand-blue), 0.09) 100%
       );
   }
 
@@ -163,12 +163,12 @@
   .zy-bg-page {
     background:
       radial-gradient(circle at 12% 10%, rgba(var(--zy-brand-red), 0.12), transparent 46%),
-      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.1), transparent 38%),
+      radial-gradient(circle at 86% 8%, rgba(var(--zy-brand-blue), 0.11), transparent 38%),
       linear-gradient(
         165deg,
-        rgba(251, 246, 248, 0.97) 10%,
-        rgba(244, 246, 255, 0.96) 48%,
-        rgba(236, 241, 255, 0.94) 100%
+        rgba(255, 255, 255, 0.97) 10%,
+        rgba(var(--zy-brand-red), 0.04) 48%,
+        rgba(var(--zy-brand-blue), 0.08) 100%
       );
   }
 
