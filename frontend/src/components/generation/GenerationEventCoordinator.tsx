@@ -9,6 +9,7 @@ import {
   type GenerationEvent,
   type HtmlDeckArtifactMeta,
 } from "@/lib/api";
+import { extractHtmlDeckMetaFromPresentation } from "@/lib/html-deck";
 import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
 import type { Presentation, Slide } from "@/types/slide";
@@ -203,14 +204,15 @@ export default function GenerationEventCoordinator() {
                   setPresentationHtmlState(
                     "html",
                     html,
-                    artifacts?.html_deck ?? null
+                    artifacts?.html_deck ?? null,
+                    extractHtmlDeckMetaFromPresentation(presentation)
                   );
                 })
                 .catch(() => {
-                  setPresentationHtmlState("html", null, null);
+                  setPresentationHtmlState("html", null, null, null);
                 });
             } else {
-              setPresentationHtmlState("structured", null, null);
+              setPresentationHtmlState("structured", null, null, null);
             }
             const normalizedIssues = Array.isArray(payload.issues)
               ? (payload.issues as Array<Record<string, unknown>>)

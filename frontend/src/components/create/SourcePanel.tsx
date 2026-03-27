@@ -29,6 +29,7 @@ import {
   pickCreateLandingSessionId,
   shouldAutoRedirectToEditor,
 } from "@/lib/routes";
+import { extractHtmlDeckMetaFromPresentation } from "@/lib/html-deck";
 import type { SourceMeta } from "@/types/source";
 import type { Presentation, Slide } from "@/types/slide";
 
@@ -220,6 +221,7 @@ export default function SourcePanel() {
           : detail.latest_generation_job?.status ?? null;
       let hydratedJob: HydratedGenerationJob | null = null;
       let hydratedPresentation = detail.latest_presentation?.presentation ?? null;
+      const latestOutputMode = detail.latest_presentation?.output_mode ?? "structured";
       const shouldHydrateJob =
         Boolean(detail.latest_generation_job?.job_id) &&
         (resolvedJobStatus === "running" ||
@@ -250,6 +252,11 @@ export default function SourcePanel() {
         sources: detail.sources,
         chatMessages,
         presentation: hydratedPresentation,
+        presentationOutputMode: latestOutputMode,
+        htmlDeckMeta:
+          latestOutputMode === "html"
+            ? extractHtmlDeckMetaFromPresentation(hydratedPresentation)
+            : null,
         planningState: detail.planning_state ?? null,
       });
       if (detail.latest_generation_job?.job_id) {

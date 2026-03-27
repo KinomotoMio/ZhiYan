@@ -37,8 +37,9 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.match(html, /<section data-slide-id="slide-1">/);
   assert.doesNotMatch(html, /<section data-slide-id="slide-1" style=/);
   assert.match(html, /class="slide-shell"/);
+  assert.ok(html.includes("window.__ZY_REVEAL_PREVIEW__"));
   assert.ok(html.includes("const query = new URLSearchParams(window.location.search);"));
-  assert.ok(html.includes("const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';"));
+  assert.ok(html.includes("const requestedMode = embeddedPreview.mode ?? query.get('mode');"));
   assert.ok(html.includes("hash: false"));
   assert.ok(html.includes("margin: 0,"));
   assert.ok(html.includes("center: false,"));

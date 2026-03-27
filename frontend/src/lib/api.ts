@@ -1,6 +1,8 @@
 import type { Presentation, Slide } from "@/types/slide";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import type { SourceMeta } from "@/types/source";
 import { getSharePlaybackPath } from "@/lib/routes";
+import { normalizeHtmlDeckMeta } from "@/lib/html-deck";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WORKSPACE_STORAGE_KEY = "zhiyan-workspace-id";
@@ -360,13 +362,13 @@ export async function getLatestSessionPresentationHtml(sessionId: string): Promi
 
 export async function getLatestSessionPresentationHtmlMeta(
   sessionId: string
-): Promise<Record<string, unknown> | null> {
+): Promise<HtmlDeckMeta | null> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/meta`, {
     headers: withWorkspaceHeaders(),
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`获取 HTML 演示稿元数据失败: ${res.statusText}`);
-  return res.json();
+  return normalizeHtmlDeckMeta(await res.json());
 }
 
 export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
@@ -988,6 +990,7 @@ interface SlideUpdateEvent {
 interface HtmlUpdateEvent {
   html_content: string;
   presentation: Presentation;
+  html_meta?: HtmlDeckMeta | null;
   modifications?: Record<string, unknown>[];
 }
 
@@ -1102,6 +1105,7 @@ export async function chatStream(
               onHtmlUpdate({
                 html_content: parsed.html_content,
                 presentation: parsed.presentation,
+                html_meta: parsed.html_meta ?? null,
                 modifications: parsed.modifications,
               });
             } else if (parsed.type === "no_op" && onNoOp) {

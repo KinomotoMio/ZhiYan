@@ -1,3 +1,5 @@
+import type { HtmlDeckMeta } from "@/types/html-deck";
+
 // Slide data model. Keep in sync with shared/schemas/slide.schema.json.
 
 export type ComponentType = "text" | "image" | "chart" | "shape";
@@ -40,7 +42,8 @@ export type LayoutType =
   | "challenge-outcome"
   | "thank-you"
   | "thank-you-contact"
-  | "section-header-side";
+  | "section-header-side"
+  | "html-meta";
 
 export type SceneBackgroundPreset =
   | "hero-glow"
@@ -123,4 +126,5 @@ export interface Presentation {
   title: string;
   theme?: Theme;
   slides: Slide[];
+  htmlDeckMeta?: HtmlDeckMeta;
 }

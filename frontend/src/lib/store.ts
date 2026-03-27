@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import type { SourceMeta } from "@/types/source";
 import type {
   HtmlDeckArtifactMeta,
@@ -78,6 +79,7 @@ interface AppState {
   presentationOutputMode: PresentationOutputMode;
   presentationHtml: string | null;
   presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
+  htmlDeckMeta: HtmlDeckMeta | null;
   currentSlideIndex: number;
   isGenerating: boolean;
   jobId: string | null;
@@ -122,6 +124,7 @@ interface AppState {
     presentationOutputMode?: PresentationOutputMode;
     presentationHtml?: string | null;
     presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
+    htmlDeckMeta?: HtmlDeckMeta | null;
     planningState?: PlanningState | null;
   }) => void;
 
@@ -130,8 +133,10 @@ interface AppState {
   setPresentationHtmlState: (
     outputMode: PresentationOutputMode,
     html: string | null,
-    artifact?: HtmlDeckArtifactMeta | null
+    artifact?: HtmlDeckArtifactMeta | null,
+    htmlDeckMeta?: HtmlDeckMeta | null
   ) => void;
+  setHtmlDeckMeta: (meta: HtmlDeckMeta | null) => void;
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
@@ -203,6 +208,7 @@ export const useAppStore = create<AppState>()(
       presentationOutputMode: "structured",
       presentationHtml: null,
       presentationHtmlArtifact: null,
+      htmlDeckMeta: null,
       currentSlideIndex: 0,
       isGenerating: false,
       jobId: null,
@@ -276,6 +282,7 @@ export const useAppStore = create<AppState>()(
         presentationOutputMode,
         presentationHtml,
         presentationHtmlArtifact,
+        htmlDeckMeta,
         planningState,
       }) =>
         set((state) => ({
@@ -291,6 +298,9 @@ export const useAppStore = create<AppState>()(
           presentationOutputMode: presentationOutputMode ?? "structured",
           presentationHtml: presentationHtml ?? null,
           presentationHtmlArtifact: presentationHtmlArtifact ?? null,
+          htmlDeckMeta:
+            htmlDeckMeta ??
+            ((presentation as Presentation | null)?.htmlDeckMeta ?? null),
           planningState: planningState ?? null,
           draftOutline: Array.isArray(planningState?.outline?.items)
             ? planningState.outline.items
@@ -332,6 +342,7 @@ export const useAppStore = create<AppState>()(
             p.title.trim().length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
           return {
             presentation: p,
+            htmlDeckMeta: p.htmlDeckMeta ?? state.htmlDeckMeta,
             sessions:
               shouldSyncSessionTitle && state.currentSessionId
                 ? state.sessions.map((session) =>
@@ -342,12 +353,14 @@ export const useAppStore = create<AppState>()(
                 : state.sessions,
           };
         }),
-      setPresentationHtmlState: (outputMode, html, artifact) =>
+      setPresentationHtmlState: (outputMode, html, artifact, htmlDeckMeta) =>
         set({
           presentationOutputMode: outputMode,
           presentationHtml: html,
           presentationHtmlArtifact: artifact ?? null,
+          htmlDeckMeta: htmlDeckMeta ?? null,
         }),
+      setHtmlDeckMeta: (meta) => set({ htmlDeckMeta: meta }),
       updateSlides: (slides) =>
         set((state) => {
           if (!state.presentation) return {};

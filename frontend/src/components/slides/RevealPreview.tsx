@@ -15,20 +15,36 @@ interface RevealPreviewProps {
   listenForSlideChange?: boolean;
 }
 
+export type RevealPreviewMode = "interactive" | "thumbnail";
+
+export interface RevealPreviewConfig {
+  slide: number;
+  mode: RevealPreviewMode;
+}
+
+const PREVIEW_CONFIG_MARKER = "data-zy-reveal-preview-config";
+
+export function resolveRevealPreviewConfig(options?: {
+  startSlide?: number;
+  thumbnailMode?: boolean;
+}): RevealPreviewConfig {
+  const slide =
+    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
+      ? Math.max(0, Math.trunc(options.startSlide))
+      : 0;
+
+  return {
+    slide,
+    mode: options?.thumbnailMode ? "thumbnail" : "interactive",
+  };
+}
+
 export function buildRevealPreviewSrc(
   blobUrl: string,
   options?: { startSlide?: number; thumbnailMode?: boolean }
 ): string {
-  const safeStartSlide =
-    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
-      ? Math.max(0, Math.trunc(options.startSlide))
-      : 0;
-  const search = new URLSearchParams({
-    slide: String(safeStartSlide),
-    mode: options?.thumbnailMode ? "thumbnail" : "interactive",
-  });
-
-  return `${blobUrl}?${search.toString()}`;
+  void options;
+  return String(blobUrl || "");
 }
 
 export function getRevealPreviewSlideIndex(data: unknown): number | null {
@@ -45,9 +61,35 @@ export function getRevealPreviewSlideIndex(data: unknown): number | null {
 
 export function buildRevealPreviewHtml(
   htmlContent: string,
-  options?: { thumbnailMode?: boolean }
+  options?: { startSlide?: number; thumbnailMode?: boolean }
 ): string {
-  return String(htmlContent || "");
+  const html = String(htmlContent || "");
+  if (!html) return html;
+
+  const config = resolveRevealPreviewConfig(options);
+  const serializedConfig = JSON.stringify(config)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+  const configScript = `<script ${PREVIEW_CONFIG_MARKER}>window.__ZY_REVEAL_PREVIEW__ = ${serializedConfig};</script>`;
+  const configScriptPattern = new RegExp(
+    `<script[^>]*${PREVIEW_CONFIG_MARKER}[^>]*>.*?<\\/script>\\s*`,
+    "is"
+  );
+
+  if (configScriptPattern.test(html)) {
+    return html.replace(configScriptPattern, `${configScript}\n`);
+  }
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${configScript}\n</head>`);
+  }
+  if (/<script\b/i.test(html)) {
+    return html.replace(/<script\b/i, `${configScript}\n<script`);
+  }
+  if (/<body\b[^>]*>/i.test(html)) {
+    return html.replace(/<body\b[^>]*>/i, (match) => `${match}\n${configScript}`);
+  }
+  return `${configScript}\n${html}`;
 }
 
 export function resolveRevealPreviewBehavior(options?: {
@@ -93,6 +135,35 @@ export function focusRevealPreviewFrame(frame: FocusableRevealFrame | null): voi
   }
 }
 
+export function queueRevealPreviewUrlCleanup(
+  queue: string[],
+  activeUrl: string | null,
+  nextActiveUrl: string | null
+): string[] {
+  if (!activeUrl || activeUrl === nextActiveUrl || queue.includes(activeUrl)) {
+    return queue;
+  }
+  return [...queue, activeUrl];
+}
+
+export function flushRevealPreviewUrlCleanupQueue(
+  queue: string[],
+  activeUrl: string | null,
+  revokeUrl: (url: string) => void
+): string[] {
+  const remaining: string[] = [];
+  for (const url of queue) {
+    if (!url || url === activeUrl) {
+      if (url && !remaining.includes(url)) {
+        remaining.push(url);
+      }
+      continue;
+    }
+    revokeUrl(url);
+  }
+  return remaining;
+}
+
 export default function RevealPreview({
   presentation,
   htmlContent,
@@ -104,6 +175,8 @@ export default function RevealPreview({
   listenForSlideChange = true,
 }: RevealPreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const activeUrlRef = useRef<string | null>(null);
+  const cleanupQueueRef = useRef<string[]>([]);
   const behavior = resolveRevealPreviewBehavior({
     thumbnailMode,
     autoFocusOnLoad,
@@ -113,17 +186,54 @@ export default function RevealPreview({
 
   useEffect(() => {
     if (!iframeRef.current) return;
-    const rawHtml = htmlContent ?? (presentation ? presentationToRevealHTML(presentation) : "");
-    const html = buildRevealPreviewHtml(rawHtml, { thumbnailMode });
+    const rawHtml =
+      htmlContent ??
+      (presentation && !presentation.htmlDeckMeta
+        ? presentationToRevealHTML(presentation)
+        : "");
+    const html = buildRevealPreviewHtml(rawHtml, { startSlide, thumbnailMode });
     if (!html) {
+      cleanupQueueRef.current = queueRevealPreviewUrlCleanup(
+        cleanupQueueRef.current,
+        activeUrlRef.current,
+        null
+      );
+      activeUrlRef.current = null;
       iframeRef.current.removeAttribute("src");
+      cleanupQueueRef.current = flushRevealPreviewUrlCleanupQueue(
+        cleanupQueueRef.current,
+        activeUrlRef.current,
+        (url) => URL.revokeObjectURL(url)
+      );
       return;
     }
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
+    cleanupQueueRef.current = queueRevealPreviewUrlCleanup(
+      cleanupQueueRef.current,
+      activeUrlRef.current,
+      url
+    );
+    activeUrlRef.current = url;
     iframeRef.current.src = buildRevealPreviewSrc(url, { startSlide, thumbnailMode });
-    return () => URL.revokeObjectURL(url);
   }, [htmlContent, presentation, startSlide, thumbnailMode]);
+
+  useEffect(
+    () => () => {
+      cleanupQueueRef.current = queueRevealPreviewUrlCleanup(
+        cleanupQueueRef.current,
+        activeUrlRef.current,
+        null
+      );
+      activeUrlRef.current = null;
+      cleanupQueueRef.current = flushRevealPreviewUrlCleanupQueue(
+        cleanupQueueRef.current,
+        activeUrlRef.current,
+        (url) => URL.revokeObjectURL(url)
+      );
+    },
+    []
+  );
 
   useEffect(() => {
     if (!behavior.listenForSlideChange || !onSlideChange) return;
@@ -152,6 +262,11 @@ export default function RevealPreview({
       loading={thumbnailMode ? "lazy" : undefined}
       tabIndex={-1}
       onLoad={() => {
+        cleanupQueueRef.current = flushRevealPreviewUrlCleanupQueue(
+          cleanupQueueRef.current,
+          activeUrlRef.current,
+          (url) => URL.revokeObjectURL(url)
+        );
         if (!behavior.autoFocusOnLoad) return;
         focusRevealPreviewFrame(iframeRef.current);
       }}

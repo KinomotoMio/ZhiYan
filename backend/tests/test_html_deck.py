@@ -41,9 +41,11 @@ def test_normalize_html_deck_preserves_section_attributes():
     assert meta["slides"][0]["slide_id"] == "legacy-cover"
     assert meta["slides"][0]["title"] == "旧标题"
     assert presentation["slides"][0]["slideId"] == "legacy-cover"
+    assert presentation["slides"][0]["layoutType"] == "html-meta"
+    assert presentation["htmlDeckMeta"]["slides"][0]["slideId"] == "legacy-cover"
 
 
-def test_normalize_html_deck_uses_query_param_bootstrap_and_preserves_speaker_notes():
+def test_normalize_html_deck_prefers_embedded_preview_config_and_preserves_speaker_notes():
     raw_html = """
     <!DOCTYPE html>
     <html>
@@ -71,8 +73,9 @@ def test_normalize_html_deck_uses_query_param_bootstrap_and_preserves_speaker_no
         ],
     )
 
+    assert "window.__ZY_REVEAL_PREVIEW__" in normalized_html
     assert "const query = new URLSearchParams(window.location.search);" in normalized_html
-    assert "const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';" in normalized_html
+    assert "const requestedMode = embeddedPreview.mode ?? query.get('mode');" in normalized_html
     assert "hash: false" in normalized_html
     assert "deck.slide(initialSlide);" in normalized_html
     assert '<aside class="notes">封面注解</aside>' in normalized_html
@@ -81,3 +84,5 @@ def test_normalize_html_deck_uses_query_param_bootstrap_and_preserves_speaker_no
     assert meta["slides"][1]["speaker_notes"] == "新的正文注解"
     assert presentation["slides"][0]["speakerNotes"] == "封面注解"
     assert presentation["slides"][1]["speakerNotes"] == "新的正文注解"
+    assert presentation["htmlDeckMeta"]["slideCount"] == 2
+    assert presentation["htmlDeckMeta"]["slides"][1]["speakerNotes"] == "新的正文注解"

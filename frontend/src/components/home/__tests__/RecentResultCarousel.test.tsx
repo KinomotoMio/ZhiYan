@@ -20,6 +20,14 @@ test("html mode uses reveal preview for main stage and thumbnails", () => {
       presentation={basePresentation}
       outputMode="html"
       htmlContent="<!DOCTYPE html><html><head></head><body><section>HTML</section><section>HTML 2</section></body></html>"
+      htmlMeta={{
+        title: "HTML Home Preview",
+        slideCount: 2,
+        slides: [
+          { index: 0, slideId: "slide-1", title: "第一页" },
+          { index: 1, slideId: "slide-2", title: "第二页" },
+        ],
+      }}
       previewSlideIndex={0}
       setPreviewSlideIndex={() => {}}
       isPreviewHovered={false}

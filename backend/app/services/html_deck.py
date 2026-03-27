@@ -92,14 +92,11 @@ def normalize_html_deck(
         "slide_count": len(slides_meta),
         "slides": slides_meta,
     }
-    presentation = {
-        "presentationId": "pres-html",
-        "title": title,
-        "slides": [
-            _build_presentation_slide(item, existing_slide_by_id.get(item["slide_id"]))
-            for item in slides_meta
-        ],
-    }
+    presentation = _build_html_presentation_payload(
+        title=title,
+        slides_meta=slides_meta,
+        existing_slide_by_id=existing_slide_by_id,
+    )
     return normalized_html, meta, presentation
 
 
@@ -221,11 +218,10 @@ def _build_presentation_slide(
 ) -> dict[str, Any]:
     slide = {
         "slideId": slide_meta["slide_id"],
-        "layoutType": "blank",
-        "layoutId": "blank",
+        "layoutType": "html-meta",
+        "layoutId": "html-meta",
         "contentData": {
             "title": slide_meta["title"],
-            "_htmlDeck": True,
         },
         "components": [],
     }
@@ -237,6 +233,50 @@ def _build_presentation_slide(
         if isinstance(speaker_audio, dict):
             slide["speakerAudio"] = speaker_audio
     return slide
+
+
+def _build_html_presentation_payload(
+    *,
+    title: str,
+    slides_meta: list[dict[str, Any]],
+    existing_slide_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "presentationId": "pres-html",
+        "title": title,
+        "outputMode": "html",
+        "htmlDeckMeta": {
+            "title": title,
+            "slideCount": len(slides_meta),
+            "slides": [
+                _build_html_meta_slide(item, existing_slide_by_id.get(item["slide_id"]))
+                for item in slides_meta
+            ],
+        },
+        "slides": [
+            _build_presentation_slide(item, existing_slide_by_id.get(item["slide_id"]))
+            for item in slides_meta
+        ],
+    }
+
+
+def _build_html_meta_slide(
+    slide_meta: dict[str, Any],
+    existing_slide: dict[str, Any] | None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "index": slide_meta["index"],
+        "slideId": slide_meta["slide_id"],
+        "title": slide_meta["title"],
+    }
+    speaker_notes = slide_meta.get("speaker_notes")
+    if isinstance(speaker_notes, str):
+        item["speakerNotes"] = speaker_notes
+    if isinstance(existing_slide, dict):
+        speaker_audio = existing_slide.get("speakerAudio")
+        if isinstance(speaker_audio, dict):
+            item["speakerAudio"] = speaker_audio
+    return item
 
 
 def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str) -> str:
@@ -292,10 +332,18 @@ def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str
   <script>
     const revealElement = document.querySelector('.reveal');
     const deck = new Reveal(revealElement);
+    const embeddedPreview =
+      window.__ZY_REVEAL_PREVIEW__ && typeof window.__ZY_REVEAL_PREVIEW__ === 'object'
+        ? window.__ZY_REVEAL_PREVIEW__
+        : {{}};
     const query = new URLSearchParams(window.location.search);
-    const requestedSlide = Number.parseInt(query.get('slide') || '0', 10);
+    const requestedSlide = Number.parseInt(
+      String(embeddedPreview.slide ?? query.get('slide') ?? '0'),
+      10
+    );
     const initialSlide = Number.isFinite(requestedSlide) ? Math.max(0, requestedSlide) : 0;
-    const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';
+    const requestedMode = embeddedPreview.mode ?? query.get('mode');
+    const previewMode = requestedMode === 'thumbnail' ? 'thumbnail' : 'interactive';
     const isInteractive = previewMode === 'interactive';
     document.documentElement.dataset.previewMode = previewMode;
 

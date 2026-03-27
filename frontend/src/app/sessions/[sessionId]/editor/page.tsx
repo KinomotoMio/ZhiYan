@@ -7,9 +7,11 @@ import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import {
   getJob,
   getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlMeta,
   getSessionDetail,
   updateSession,
 } from "@/lib/api";
+import { extractHtmlDeckMetaFromPresentation } from "@/lib/html-deck";
 import { DEFAULT_LOADING_TITLE, resolveGenerationRequestTitle } from "@/lib/loading-title";
 import { getCreateSessionPath } from "@/lib/routes";
 import {
@@ -128,6 +130,10 @@ export default function SessionEditorPage() {
         let presentation =
           detail.latest_presentation?.presentation ?? localPresentation ?? null;
         const latestOutputMode = detail.latest_presentation?.output_mode ?? "structured";
+        let htmlDeckMeta =
+          latestOutputMode === "html"
+            ? extractHtmlDeckMetaFromPresentation(presentation)
+            : null;
         let presentationHtml =
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationHtml
@@ -199,7 +205,12 @@ export default function SessionEditorPage() {
 
         if (latestOutputMode === "html") {
           try {
-            presentationHtml = await getLatestSessionPresentationHtml(sessionId);
+            const [latestHtml, latestHtmlMeta] = await Promise.all([
+              getLatestSessionPresentationHtml(sessionId),
+              getLatestSessionPresentationHtmlMeta(sessionId),
+            ]);
+            presentationHtml = latestHtml;
+            htmlDeckMeta = latestHtmlMeta ?? htmlDeckMeta;
           } catch {
             presentationHtml = null;
           }
@@ -207,7 +218,9 @@ export default function SessionEditorPage() {
 
         const initialSlideIndex = parseSlideQueryToIndex(
           requestedSlide,
-          presentation?.slides.length ?? 0
+          latestOutputMode === "html"
+            ? htmlDeckMeta?.slides.length ?? 0
+            : presentation?.slides.length ?? 0
         );
 
         setCurrentSessionId(sessionId);
@@ -218,12 +231,14 @@ export default function SessionEditorPage() {
           presentationOutputMode: latestOutputMode,
           presentationHtml,
           presentationHtmlArtifact: detail.latest_presentation?.artifacts?.html_deck ?? null,
+          htmlDeckMeta,
           planningState: detail.planning_state ?? null,
         });
         setPresentationHtmlState(
           latestOutputMode,
           presentationHtml,
-          detail.latest_presentation?.artifacts?.html_deck ?? null
+          detail.latest_presentation?.artifacts?.html_deck ?? null,
+          htmlDeckMeta
         );
         if (latestJob?.job_id) {
           updateJobState({

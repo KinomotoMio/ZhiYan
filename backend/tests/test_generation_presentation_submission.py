@@ -67,3 +67,26 @@ def test_presentation_submission_returns_hydrated_payload_before_normalization(t
 
     assert payload["slides"][0]["contentData"]["items"][0]["description"] == ""
     assert presentation.slides[0].content_data["items"][0]["description"] == "一"
+
+
+def test_html_prompt_enforces_direct_canvas_first_reveal_output(tmp_path):
+    runner = GenerationRunner(GenerationJobStore(tmp_path / "jobs"), GenerationEventBus())
+    job = GenerationJob(
+        job_id="job-html-prompt",
+        output_mode="html",
+        request=GenerationRequestData(
+            topic="HTML 直出",
+            title="HTML 直出",
+            resolved_content="测试内容",
+            num_pages=6,
+        ),
+    )
+    state = runner._build_state(job)  # noqa: SLF001
+
+    prompt = runner._build_agent_presentation_prompt(job, state)  # noqa: SLF001
+
+    assert "不要先设计结构化 slide schema" in prompt
+    assert "1280x720" in prompt
+    assert "核心文字放在初始 `opacity: 0`" in prompt
+    assert "不要假设有模版系统" in prompt
+    assert "不要写成长文档" in prompt

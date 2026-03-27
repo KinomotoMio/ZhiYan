@@ -287,6 +287,8 @@ def test_chat_html_mode_emits_html_update(monkeypatch, tmp_path):
     html_updates = [evt for evt in events if evt.get("type") == "html_update"]
     assert len(html_updates) == 1
     assert html_updates[0]["presentation"]["title"] == "HTML 改稿"
+    assert html_updates[0]["presentation"]["htmlDeckMeta"]["slideCount"] == 1
+    assert html_updates[0]["html_meta"]["slide_count"] == 1
     assert "<section data-slide-id=\"slide-1\"" in html_updates[0]["html_content"]
 
 
