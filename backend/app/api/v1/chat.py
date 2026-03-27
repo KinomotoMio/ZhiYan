@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -63,9 +63,9 @@ def _resolve_preview_asset(preview_id: str, asset_path: str) -> Path:
     root = get_slidev_preview_root(preview_id)
     candidate = (root / "dist" / asset_path).resolve()
     if candidate != root / "dist" and (root / "dist") not in candidate.parents:
-        raise FileNotFoundError(asset_path)
+        raise HTTPException(status_code=404, detail=f"Preview asset not found: {asset_path}")
     if not candidate.exists() or not candidate.is_file():
-        raise FileNotFoundError(asset_path)
+        raise HTTPException(status_code=404, detail=f"Preview asset not found: {asset_path}")
     return candidate
 
 
