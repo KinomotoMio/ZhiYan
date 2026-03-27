@@ -9,6 +9,7 @@ import time
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 from typing import Any
 
@@ -16,46 +17,34 @@ import httpx
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.model_status import build_model_status, parse_provider
+from app.core.model_status import parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
 from app.services.generation.agentic import (
     AgentBuilder,
     LiteLLMModelClient,
+    Message,
     Tool,
     ToolContext,
+    ToolMessage,
+    ToolRegistry,
+    create_builtin_registry,
 )
+from app.services.generation.agentic.models import ModelClient, ModelResponse, normalize_litellm_model
 from app.services.generation.agent_adapter import AgentDeck, AgentOutline, deck_to_layout_selections, deck_to_slides, outline_to_job_outline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
-from app.services.generation.loop_planner import GenerationLoopPlanner, LoopHistoryItem
-from app.services.generation.tool_registry import GenerationTool, GenerationToolRegistry
-from app.services.pipeline.graph import (
-    PipelineState,
-    stage_fix_slides_once,
-    stage_generate_outline,
-    stage_generate_slides,
-    stage_parse_document,
-    stage_resolve_assets,
-    stage_select_layouts,
-    stage_verify_slides,
-)
+from app.services.generation.runtime_state import GenerationRuntimeState
+from app.services.generation.verifier import stage_fix_slides_once, stage_verify_slides
+from app.services.presentations import normalize_presentation_payload
 
 logger = logging.getLogger(__name__)
 
-ERROR_STAGE_TIMEOUT = "STAGE_TIMEOUT"
 ERROR_PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
 ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
 ERROR_CANCELLED = "CANCELLED"
 ERROR_UNKNOWN = "UNKNOWN"
-
-
-class StageTimeoutError(TimeoutError):
-    def __init__(self, stage: StageStatus, timeout_seconds: float):
-        self.stage = stage
-        self.timeout_seconds = timeout_seconds
-        super().__init__(f"{stage.value} timed out after {timeout_seconds:.1f}s")
 
 
 @dataclass(frozen=True)
@@ -79,13 +68,89 @@ class _SubmitDeckArgs(BaseModel):
     slides: list[dict[str, Any]]
 
 
+AUTO_DECK_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
+    "read_file",
+)
+
+REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
+    "read_file",
+)
+
+TEXT_FRIENDLY_LAYOUTS: tuple[str, ...] = (
+    "intro-slide",
+    "intro-slide-left",
+    "outline-slide",
+    "outline-slide-rail",
+    "section-header",
+    "section-header-side",
+    "bullet-with-icons",
+    "bullet-with-icons-cards",
+    "bullet-icons-only",
+    "numbered-bullets",
+    "numbered-bullets-track",
+    "metrics-slide",
+    "metrics-slide-band",
+    "timeline",
+    "two-column-compare",
+    "challenge-outcome",
+    "quote-slide",
+    "quote-banner",
+    "thank-you",
+    "thank-you-contact",
+)
+
+VISUAL_LAYOUTS: tuple[str, ...] = (
+    "metrics-with-image",
+    "image-and-description",
+)
+
+DATA_LAYOUTS: tuple[str, ...] = (
+)
+
+# These repair types indicate the generator lost too much structure and the
+# normalizer had to materially flatten or reshape the slide. Benign schema
+# normalization such as outline/closing field coercion should not fail the run.
+HARD_FAIL_REPAIR_TYPES: frozenset[str] = frozenset(
+    {
+        "bullet-with-icons-fallback-state",
+    }
+)
+
+
+@dataclass(slots=True)
+class _TracingModelCall:
+    index: int
+    request: dict[str, Any]
+    response: dict[str, Any] | None = None
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class _TracingModelClient:
+    delegate: ModelClient
+    calls: list[_TracingModelCall]
+
+    async def complete(self, messages: list[Message], tools: list[dict[str, Any]]) -> ModelResponse:
+        call = _TracingModelCall(
+            index=len(self.calls) + 1,
+            request=_summarize_model_request(self.delegate, messages, tools),
+        )
+        self.calls.append(call)
+        try:
+            response = await self.delegate.complete(messages, tools)
+        except Exception as exc:
+            call.error = f"{type(exc).__name__}: {exc}"
+            raise
+        call.response = _summarize_model_response(response)
+        return response
+
+
 class GenerationRunner:
     def __init__(self, store: GenerationJobStore, event_bus: GenerationEventBus):
         self._store = store
         self._event_bus = event_bus
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tasks_lock = asyncio.Lock()
-        self._loop_planner = GenerationLoopPlanner()
 
     async def start_job(self, job_id: str, from_stage: StageStatus | None = None) -> bool:
         async with self._tasks_lock:
@@ -187,7 +252,10 @@ class GenerationRunner:
         try:
             await self._ensure_not_cancelled(job)
 
-            completed = await self._run_selected_runtime(
+            if not self._job_has_agent_workspace(job):
+                raise ValueError("Agent workspace is not initialized for this job.")
+
+            completed = await self._run_agentic_job(
                 job,
                 state,
                 start_stage=start_stage,
@@ -205,6 +273,7 @@ class GenerationRunner:
                 job.advisory_issue_count = advisory_count
                 job.fix_preview_slides = []
                 job.fix_preview_source_ids = []
+                self._write_runner_trace(job, state)
                 job.updated_at = now_iso()
                 await self._store.save_job(job)
                 if job.request.session_id:
@@ -251,6 +320,7 @@ class GenerationRunner:
                     "slowest_stage_ms": slowest_stage_ms,
                 }
             )
+            self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             await self._store.save_job(job)
             if job.request.session_id:
@@ -284,6 +354,7 @@ class GenerationRunner:
         except asyncio.CancelledError:
             job.status = JobStatus.CANCELLED
             job.current_stage = None
+            self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             await self._store.save_job(job)
             if job.request.session_id:
@@ -312,12 +383,12 @@ class GenerationRunner:
             classified = self._classify_generation_error(
                 e,
                 stage=failed_stage,
-                timeout_seconds=None,
             )
             elapsed_ms = int((time.monotonic() - job_started_monotonic) * 1000)
             job.status = JobStatus.FAILED
             job.error = f"[{classified.error_code}] {classified.error_message}"
             job.current_stage = None
+            self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             await self._store.save_job(job)
             if job.request.session_id:
@@ -329,7 +400,6 @@ class GenerationRunner:
             payload = self._build_error_payload(
                 classified=classified,
                 stage=failed_stage,
-                timeout_seconds=e.timeout_seconds if isinstance(e, StageTimeoutError) else None,
             )
             payload["partial_saved"] = partial_saved
             if partial_presentation is not None:
@@ -352,79 +422,10 @@ class GenerationRunner:
                 },
             )
 
-    def _build_tool_registry(self) -> GenerationToolRegistry:
-        return GenerationToolRegistry(
-            [
-                GenerationTool(
-                    name="parse_document",
-                    stage=StageStatus.PARSE,
-                    description="Parse the source document and derive structure signals for later tools.",
-                    timeout_seconds=lambda: float(settings.job_timeout_seconds),
-                    runner=lambda state, progress, _on_slide: stage_parse_document(state, progress=progress),
-                ),
-                GenerationTool(
-                    name="generate_outline",
-                    stage=StageStatus.OUTLINE,
-                    description="Generate the presentation outline and slide role plan.",
-                    timeout_seconds=lambda: float(settings.outline_timeout_seconds),
-                    runner=lambda state, progress, _on_slide: stage_generate_outline(state, progress=progress),
-                ),
-                GenerationTool(
-                    name="select_layouts",
-                    stage=StageStatus.LAYOUT,
-                    description="Select layout variants for each outline item.",
-                    timeout_seconds=lambda: float(settings.layout_timeout_seconds),
-                    runner=lambda state, progress, _on_slide: stage_select_layouts(state, progress=progress),
-                ),
-                GenerationTool(
-                    name="generate_slides",
-                    stage=StageStatus.SLIDES,
-                    description="Generate slide content for each selected layout.",
-                    timeout_seconds=lambda: float(settings.job_timeout_seconds),
-                    runner=lambda state, progress, on_slide: stage_generate_slides(
-                        state,
-                        per_slide_timeout=float(settings.per_slide_timeout_seconds),
-                        progress=progress,
-                        on_slide=on_slide,
-                    ),
-                ),
-                GenerationTool(
-                    name="resolve_assets",
-                    stage=StageStatus.ASSETS,
-                    description="Materialize slide payloads and normalize assets.",
-                    timeout_seconds=lambda: float(settings.job_timeout_seconds),
-                    runner=lambda state, progress, _on_slide: stage_resolve_assets(state, progress=progress),
-                ),
-                GenerationTool(
-                    name="verify_slides",
-                    stage=StageStatus.VERIFY,
-                    description="Run programmatic and aesthetic verification on the generated slides.",
-                    timeout_seconds=lambda: float(settings.verify_timeout_seconds),
-                    runner=lambda state, progress, _on_slide: stage_verify_slides(
-                        state,
-                        progress=progress,
-                        enable_vision=settings.enable_vision_verification,
-                    ),
-                ),
-            ]
-        )
-
-    @staticmethod
-    def _bootstrap_history_for_start_stage(
-        registry: GenerationToolRegistry,
-        start_stage: StageStatus,
-    ) -> list[LoopHistoryItem]:
-        history: list[LoopHistoryItem] = []
-        for tool in registry.list_tools():
-            if tool.stage == start_stage:
-                break
-            history.append(LoopHistoryItem(tool_name=tool.name, stage=tool.stage, outcome="skipped"))
-        return history
-
     async def _after_tool_completed(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         stage: StageStatus,
     ) -> bool:
         await self._sync_state_to_job(job, state)
@@ -451,6 +452,7 @@ class GenerationRunner:
             if job.mode.value == "review_outline" and not job.outline_accepted:
                 job.status = JobStatus.WAITING_OUTLINE_REVIEW
                 job.current_stage = StageStatus.OUTLINE
+                self._write_runner_trace(job, state)
                 job.updated_at = now_iso()
                 await self._store.save_job(job)
                 if job.request.session_id:
@@ -495,7 +497,7 @@ class GenerationRunner:
         preview_state = self._build_state(job)
         await stage_fix_slides_once(
             preview_state,
-            per_slide_timeout=float(settings.per_slide_timeout_seconds),
+            per_slide_timeout=0.0,
             target_slide_ids=set(target_ids),
         )
 
@@ -584,6 +586,7 @@ class GenerationRunner:
         )
         job.status = JobStatus.COMPLETED
         job.current_stage = StageStatus.COMPLETE
+        self._write_runner_trace(job, self._build_state(job))
         job.updated_at = now_iso()
         await self._store.save_job(job)
 
@@ -626,6 +629,7 @@ class GenerationRunner:
         job.presentation = self._build_presentation_payload(job, slides)
         job.status = JobStatus.COMPLETED
         job.current_stage = StageStatus.COMPLETE
+        self._write_runner_trace(job, self._build_state(job))
         job.updated_at = now_iso()
         await self._store.save_job(job)
 
@@ -658,9 +662,8 @@ class GenerationRunner:
     async def _run_stage(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         stage: StageStatus,
-        timeout: float,
         stage_coro,
     ) -> None:
         await self._ensure_not_cancelled(job)
@@ -680,7 +683,6 @@ class GenerationRunner:
             stage=stage,
             message=f"{stage.value} 阶段开始",
             payload={
-                "stage_timeout_seconds": timeout,
                 "started_at": start_ts,
                 "provider_model": provider_model,
                 "provider": provider,
@@ -692,59 +694,15 @@ class GenerationRunner:
                 "event": "generation_stage_start",
                 "job_id": job.job_id,
                 "stage": stage.value,
-                "timeout_seconds": timeout,
                 "provider_model": provider_model,
                 "provider": provider,
             },
         )
 
         try:
-            await asyncio.wait_for(stage_coro, timeout=timeout)
-        except asyncio.TimeoutError as e:
-            timeout_exc = StageTimeoutError(stage=stage, timeout_seconds=timeout)
-            classified = self._classify_generation_error(timeout_exc, stage=stage, timeout_seconds=timeout)
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            job.stage_results.append(
-                StageResult(
-                    stage=stage,
-                    status="failed",
-                    started_at=start_ts,
-                    ended_at=now_iso(),
-                    duration_ms=duration_ms,
-                    error=classified.error_message,
-                    error_code=classified.error_code,
-                    retriable=classified.retriable,
-                    timeout_seconds=timeout,
-                    provider_model=self._model_for_stage(stage),
-                    provider=self._provider_for_stage(stage),
-                )
-            )
-            await self._store.save_job(job)
-            await self._emit_event(
-                job,
-                EventType.STAGE_FAILED,
-                stage=stage,
-                message=f"{stage.value} 阶段超时",
-                payload=self._build_error_payload(
-                    classified=classified,
-                    stage=stage,
-                    timeout_seconds=timeout,
-                ),
-            )
-            logger.warning(
-                "generation stage failed",
-                extra={
-                    "job_id": job.job_id,
-                    "stage": stage.value,
-                    "error_type": type(e).__name__,
-                    "error_code": classified.error_code,
-                    "retriable": classified.retriable,
-                    "elapsed_ms": duration_ms,
-                },
-            )
-            raise timeout_exc from e
+            await stage_coro
         except Exception as e:
-            classified = self._classify_generation_error(e, stage=stage, timeout_seconds=timeout)
+            classified = self._classify_generation_error(e, stage=stage)
             duration_ms = int((time.monotonic() - t0) * 1000)
             ended_at = now_iso()
             job.stage_results.append(
@@ -757,7 +715,6 @@ class GenerationRunner:
                     error=classified.error_message,
                     error_code=classified.error_code,
                     retriable=classified.retriable,
-                    timeout_seconds=timeout if classified.error_code == ERROR_STAGE_TIMEOUT else None,
                     provider_model=self._model_for_stage(stage),
                     provider=self._provider_for_stage(stage),
                 )
@@ -771,7 +728,6 @@ class GenerationRunner:
                 payload=self._build_error_payload(
                     classified=classified,
                     stage=stage,
-                    timeout_seconds=timeout,
                 ),
             )
             logger.warning(
@@ -796,7 +752,6 @@ class GenerationRunner:
                 started_at=start_ts,
                 ended_at=ended_at,
                 duration_ms=duration_ms,
-                timeout_seconds=timeout,
                 provider_model=provider_model,
                 provider=provider,
             )
@@ -825,7 +780,6 @@ class GenerationRunner:
                 "duration_ms": duration_ms,
                 "started_at": start_ts,
                 "ended_at": ended_at,
-                "timeout_seconds": timeout,
                 "provider_model": provider_model,
                 "provider": provider,
             },
@@ -835,15 +789,7 @@ class GenerationRunner:
         self,
         error: Exception,
         stage: StageStatus | None,
-        timeout_seconds: float | None,
     ) -> ClassifiedError:
-        if isinstance(error, StageTimeoutError):
-            return ClassifiedError(
-                error_code=ERROR_STAGE_TIMEOUT,
-                error_message=f"{error.stage.value} timed out after {error.timeout_seconds:.1f}s",
-                retriable=True,
-            )
-
         if isinstance(error, asyncio.CancelledError):
             return ClassifiedError(
                 error_code=ERROR_CANCELLED,
@@ -875,12 +821,6 @@ class GenerationRunner:
         error_name = type(error).__name__.lower()
         error_text = str(error).lower()
         if "timeout" in error_name or "timed out" in error_text:
-            if stage and timeout_seconds and "after" in error_text:
-                return ClassifiedError(
-                    error_code=ERROR_STAGE_TIMEOUT,
-                    error_message=f"{stage.value} timed out after {timeout_seconds:.1f}s",
-                    retriable=True,
-                )
             return ClassifiedError(
                 error_code=ERROR_PROVIDER_TIMEOUT,
                 error_message="provider request timed out",
@@ -898,14 +838,13 @@ class GenerationRunner:
         *,
         classified: ClassifiedError,
         stage: StageStatus | None,
-        timeout_seconds: float | None,
     ) -> dict[str, object]:
         payload: dict[str, object] = {
             "error": classified.error_message,
             "error_code": classified.error_code,
             "error_message": classified.error_message,
             "retriable": classified.retriable,
-            "timeout_seconds": timeout_seconds if classified.error_code == ERROR_STAGE_TIMEOUT else None,
+            "timeout_seconds": None,
             "provider_model": self._model_for_stage(stage),
             "provider": self._provider_for_stage(stage),
             "stage": stage.value if stage else None,
@@ -944,7 +883,7 @@ class GenerationRunner:
         msg = str(error).lower()
         return "rate limit" in msg or "status code: 429" in msg or "http 429" in msg
 
-    async def _sync_state_to_job(self, job: GenerationJob, state: PipelineState) -> None:
+    async def _sync_state_to_job(self, job: GenerationJob, state: GenerationRuntimeState) -> None:
         job.document_metadata = state.document_metadata
         job.outline = state.outline
         job.layouts = state.layout_selections
@@ -966,6 +905,7 @@ class GenerationRunner:
         job.hard_issue_slide_ids = hard_slide_ids
         job.advisory_issue_count = advisory_count
         job.failed_slide_indices = list(state.failed_slide_indices)
+        self._write_runner_trace(job, state)
         job.updated_at = now_iso()
         await self._store.save_job(job)
 
@@ -1001,7 +941,7 @@ class GenerationRunner:
     async def _persist_partial_presentation(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
     ) -> tuple[bool, dict | None]:
         if not job.slides and not state.slides:
             return False, None
@@ -1066,85 +1006,14 @@ class GenerationRunner:
             raise asyncio.CancelledError()
 
     @staticmethod
-    def _should_use_agentic_loop() -> bool:
-        status = build_model_status(str(settings.strong_model or ""), settings)
-        return status.ready
-
-    async def _run_selected_runtime(
-        self,
-        job: GenerationJob,
-        state: PipelineState,
-        *,
-        start_stage: StageStatus,
-        progress_hook,
-        slide_hook,
-    ) -> bool:
-        if self._should_use_agentic_loop() and self._job_has_agent_workspace(job):
-            return await self._run_agentic_job(
-                job,
-                state,
-                start_stage=start_stage,
-                progress_hook=progress_hook,
-                slide_hook=slide_hook,
-            )
-        return await self._run_pipeline_job(
-            job,
-            state,
-            start_stage=start_stage,
-            progress_hook=progress_hook,
-            slide_hook=slide_hook,
-        )
-
-    async def _run_agentic_job(
-        self,
-        job: GenerationJob,
-        state: PipelineState,
-        *,
-        start_stage: StageStatus,
-        progress_hook,
-        slide_hook,
-    ) -> bool:
-        try:
-            return await self._run_embedded_agentic_job(
-                job,
-                state,
-                start_stage=start_stage,
-                progress_hook=progress_hook,
-                slide_hook=slide_hook,
-            )
-        except Exception:
-            logger.warning(
-                "embedded agent runtime failed; falling back to pipeline",
-                extra={
-                    "job_id": job.job_id,
-                    "start_stage": start_stage.value,
-                },
-                exc_info=True,
-            )
-        return await self._run_pipeline_job(
-            job,
-            state,
-            start_stage=start_stage,
-            progress_hook=progress_hook,
-            slide_hook=slide_hook,
-        )
-
-    @staticmethod
-    def _stage_already_completed(job: GenerationJob, stage: StageStatus) -> bool:
-        return any(result.stage == stage and result.status == "completed" for result in job.stage_results)
-
-    def _agentic_runtime_completed(self, job: GenerationJob) -> bool:
-        return self._stage_already_completed(job, StageStatus.VERIFY)
-
-    @staticmethod
     def _job_has_agent_workspace(job: GenerationJob) -> bool:
         root = (job.document_metadata.get("agent_workspace") or {}).get("root")
         return isinstance(root, str) and bool(root.strip())
 
-    async def _run_embedded_agentic_job(
+    async def _run_agentic_job(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         *,
         start_stage: StageStatus,
         progress_hook,
@@ -1155,16 +1024,17 @@ class GenerationRunner:
                 job,
                 state,
                 stage=StageStatus.PARSE,
-                timeout=float(settings.outline_timeout_seconds),
                 stage_coro=self._stage_prepare_agent_workspace(job, state, progress_hook=progress_hook),
             )
 
-        if start_stage in {StageStatus.PARSE, StageStatus.OUTLINE}:
+        if (
+            job.mode.value == "review_outline"
+            and start_stage in {StageStatus.PARSE, StageStatus.OUTLINE}
+        ):
             await self._run_stage(
                 job,
                 state,
                 stage=StageStatus.OUTLINE,
-                timeout=float(settings.outline_timeout_seconds),
                 stage_coro=self._stage_generate_agent_outline(job, state, progress_hook=progress_hook),
             )
             should_stop = await self._after_tool_completed(job, state, StageStatus.OUTLINE)
@@ -1183,7 +1053,6 @@ class GenerationRunner:
                 job,
                 state,
                 stage=StageStatus.SLIDES,
-                timeout=float(settings.job_timeout_seconds),
                 stage_coro=self._stage_generate_agent_slides(
                     job,
                     state,
@@ -1197,7 +1066,6 @@ class GenerationRunner:
             job,
             state,
             stage=StageStatus.VERIFY,
-            timeout=float(settings.verify_timeout_seconds),
             stage_coro=stage_verify_slides(
                 state,
                 progress=progress_hook,
@@ -1210,7 +1078,7 @@ class GenerationRunner:
     async def _stage_prepare_agent_workspace(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         *,
         progress_hook,
     ) -> None:
@@ -1218,11 +1086,16 @@ class GenerationRunner:
         state.document_metadata.setdefault("agent_workspace", workspace_meta)
         if progress_hook:
             await progress_hook("parse", 1, 3, "准备 Agent 工作区与素材清单...")
+        brief = self._build_local_source_brief(job)
+        state.document_metadata["source_brief"] = brief
+        if progress_hook:
+            await progress_hook("parse", 2, 3, "整理本地素材摘要与结构线索...")
+            await progress_hook("parse", 3, 3, "工作区已准备完成。")
 
     async def _stage_generate_agent_outline(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         *,
         progress_hook,
     ) -> None:
@@ -1238,7 +1111,7 @@ class GenerationRunner:
     async def _stage_generate_agent_slides(
         self,
         job: GenerationJob,
-        state: PipelineState,
+        state: GenerationRuntimeState,
         *,
         progress_hook,
         slide_hook,
@@ -1247,6 +1120,9 @@ class GenerationRunner:
             await progress_hook("slides", 1, 3, "Agent 正在生成完整演示内容...")
         deck = await self._generate_deck_with_agent(job, state)
         slides = deck_to_slides(deck)
+        audit = self._audit_generated_deck(job, deck, slides)
+        if audit["issues"]:
+            raise ValueError("Deck audit failed: " + " | ".join(audit["issues"]))
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         if len(slides) != expected:
             raise ValueError(f"Deck slide count mismatch after correction: expected {expected}, got {len(slides)}")
@@ -1262,56 +1138,15 @@ class GenerationRunner:
         ]
         state.document_metadata.setdefault("agent_outputs", {})
         state.document_metadata["agent_outputs"]["deck"] = deck.model_dump(mode="json", by_alias=True)
+        state.document_metadata["agent_outputs"]["deck_audit"] = audit
         for index, slide in enumerate(slides):
             if slide_hook:
                 await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         if progress_hook:
             await progress_hook("slides", 3, 3, "Agent 演示页已适配为当前编辑器结构。")
 
-    async def _run_pipeline_job(
-        self,
-        job: GenerationJob,
-        state: PipelineState,
-        *,
-        start_stage: StageStatus,
-        progress_hook,
-        slide_hook,
-    ) -> bool:
-        registry = self._build_tool_registry()
-        history: list[LoopHistoryItem] = self._bootstrap_history_for_start_stage(registry, start_stage)
-        forced_stage: StageStatus | None = start_stage
-
-        while True:
-            await self._ensure_not_cancelled(job)
-            if len(history) >= self._loop_planner.max_iterations():
-                raise RuntimeError("generation loop exceeded max iterations")
-
-            decision = await self._loop_planner.decide(
-                state=state,
-                registry=registry,
-                history=history,
-                forced_stage=forced_stage,
-            )
-            forced_stage = None
-
-            if decision.action == "complete":
-                return True
-
-            tool = registry.get(decision.tool_name or "")
-            await self._run_stage(
-                job,
-                state,
-                stage=tool.stage,
-                timeout=tool.timeout_seconds(),
-                stage_coro=tool.runner(state, progress_hook, slide_hook),
-            )
-            history.append(LoopHistoryItem(tool_name=tool.name, stage=tool.stage))
-            should_stop = await self._after_tool_completed(job, state, tool.stage)
-            if should_stop:
-                return False
-
-    def _build_state(self, job: GenerationJob) -> PipelineState:
-        state = PipelineState(
+    def _build_state(self, job: GenerationJob) -> GenerationRuntimeState:
+        state = GenerationRuntimeState(
             raw_content=job.request.resolved_content or job.request.topic,
             source_ids=list(job.request.source_ids),
             topic=job.request.topic or job.request.title,
@@ -1338,16 +1173,304 @@ class GenerationRunner:
             state.slides = [Slide.model_validate(slide) for slide in job.slides]
         return state
 
-    async def _generate_outline_with_agent(
+    def _debug_dir_for_job(self, job: GenerationJob) -> Path:
+        return self._workspace_root_for_job(job) / "artifacts" / "debug"
+
+    def _ensure_debug_index(self, state: GenerationRuntimeState, job: GenerationJob) -> dict[str, Any]:
+        debug_dir = self._debug_dir_for_job(job)
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        index = state.document_metadata.setdefault("agent_debug", {})
+        index["root"] = str(debug_dir)
+        index.setdefault("files", [])
+        index.setdefault("runs", {})
+        return index
+
+    def _register_debug_file(self, state: GenerationRuntimeState, job: GenerationJob, file_name: str) -> Path:
+        debug_dir = self._debug_dir_for_job(job)
+        index = self._ensure_debug_index(state, job)
+        files = index.setdefault("files", [])
+        if file_name not in files:
+            files.append(file_name)
+            files.sort()
+        return debug_dir / file_name
+
+    def _write_debug_json(
         self,
         job: GenerationJob,
-        state: PipelineState,
-    ) -> AgentOutline:
+        state: GenerationRuntimeState,
+        file_name: str,
+        payload: dict[str, Any] | list[Any],
+    ) -> Path:
+        path = self._register_debug_file(state, job, file_name)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return path
+
+    def _append_debug_ndjson(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        file_name: str,
+        payloads: list[dict[str, Any]],
+    ) -> Path:
+        path = self._register_debug_file(state, job, file_name)
+        with path.open("a", encoding="utf-8") as handle:
+            for payload in payloads:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+                handle.write("\n")
+        return path
+
+    def _write_agent_run_debug(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        *,
+        stage_name: str,
+        prompt: str,
+        session,
+        result,
+        traced_model: _TracingModelClient,
+        submitted_payload: dict[str, Any] | None,
+        attempt: int,
+    ) -> None:
+        calls = traced_model.calls
+        request_payload = {
+            "stage": stage_name,
+            "attempt": attempt,
+            "model": _summarize_model_identity(traced_model.delegate),
+            "call_count": len(calls),
+            "calls": [{"index": call.index, **call.request} for call in calls],
+        }
+        response_payload = {
+            "stage": stage_name,
+            "attempt": attempt,
+            "model": _summarize_model_identity(traced_model.delegate),
+            "call_count": len(calls),
+            "calls": [
+                {
+                    "index": call.index,
+                    "response": call.response,
+                    "error": call.error,
+                }
+                for call in calls
+            ],
+        }
+        session_payload = {
+            "stage": stage_name,
+            "attempt": attempt,
+            "prompt": prompt,
+            "turns": result.turns,
+            "stop_reason": result.stop_reason,
+            "error": result.error,
+            "submitted_payload": submitted_payload,
+            "messages": [_serialize_message(message) for message in result.messages],
+            "tool_results": [_serialize_tool_result(item) for item in result.tool_results],
+            "context_markers": list(result.context_markers),
+            "compact_events": list(result.compact_events),
+            "todo_items": list(getattr(session, "todo_items", []) or []),
+            "tasks": list(getattr(session, "tasks", []) or []),
+            "current_task": getattr(session, "current_task", None),
+        }
+        self._write_debug_json(job, state, f"model-{stage_name}-request.json", request_payload)
+        self._write_debug_json(job, state, f"model-{stage_name}-response.json", response_payload)
+        self._write_debug_json(job, state, f"session-{stage_name}.json", session_payload)
+
+        tool_trace_rows = [
+            {
+                "ts": now_iso(),
+                "stage": stage_name,
+                "attempt": attempt,
+                "result": _serialize_tool_result(item),
+            }
+            for item in result.tool_results
+        ]
+        if tool_trace_rows:
+            self._append_debug_ndjson(job, state, "tool-trace.ndjson", tool_trace_rows)
+
+        index = self._ensure_debug_index(state, job)
+        runs = index.setdefault("runs", {})
+        runs[stage_name] = {
+            "attempt": attempt,
+            "turns": result.turns,
+            "stop_reason": result.stop_reason,
+            "error": result.error,
+            "call_count": len(calls),
+            "submitted": bool(submitted_payload),
+        }
+
+    def _write_runner_trace(self, job: GenerationJob, state: GenerationRuntimeState) -> None:
+        if not self._job_has_agent_workspace(job):
+            return
+        trace_payload = {
+            "job_id": job.job_id,
+            "status": job.status.value,
+            "current_stage": job.current_stage.value if job.current_stage else None,
+            "stage_results": [result.model_dump(mode="json") for result in job.stage_results],
+            "outline_ready": bool(state.outline),
+            "slide_count": len(state.slides) if state.slides else len(job.slides),
+            "issue_count": len(state.verification_issues),
+            "failed_slide_indices": list(state.failed_slide_indices),
+            "agent_debug": deepcopy(state.document_metadata.get("agent_debug") or {}),
+        }
+        self._write_debug_json(job, state, "runner-trace.json", trace_payload)
+
+    def _build_tool_registry(self, workspace_root: Path, allowed_builtin_tools: tuple[str, ...]) -> ToolRegistry:
+        registry = create_builtin_registry(workspace_root, permissive_mode=False)
+        selected = {name: registry.tools[name] for name in allowed_builtin_tools if name in registry.tools}
+        return ToolRegistry(tools=selected)
+
+    def _build_local_source_brief(self, job: GenerationJob) -> dict[str, Any]:
+        workspace_root = self._workspace_root_for_job(job)
+        artifacts_dir = workspace_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_path = workspace_root / "sources" / "manifest.json"
+        manifest_payload: dict[str, Any] = {}
+        if manifest_path.exists():
+            with suppress(Exception):
+                manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        source_cards: list[dict[str, Any]] = []
+        for source in list(manifest_payload.get("sources") or [])[:6]:
+            relative_path = str(source.get("workspace_text_path") or "").strip()
+            source_path = workspace_root / relative_path if relative_path else None
+            text = ""
+            if source_path and source_path.exists():
+                with suppress(Exception):
+                    text = source_path.read_text(encoding="utf-8")
+            source_cards.append(
+                {
+                    "id": source.get("id"),
+                    "name": source.get("name"),
+                    "fileCategory": source.get("fileCategory"),
+                    "workspace_text_path": relative_path or None,
+                    "headings": _extract_source_headings(text),
+                    "key_passages": _extract_source_passages(text),
+                }
+            )
+
+        recommended_layouts = self._allowed_layout_palette(job)
+        brief_payload = {
+            "topic": job.request.topic or job.request.title,
+            "num_pages": job.request.num_pages,
+            "source_count": len(source_cards),
+            "recommended_layouts": recommended_layouts,
+            "sources": source_cards,
+        }
+        markdown = _render_source_brief_markdown(brief_payload)
+        json_path = artifacts_dir / "source-brief.json"
+        md_path = artifacts_dir / "source-brief.md"
+        json_path.write_text(json.dumps(brief_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        md_path.write_text(markdown, encoding="utf-8")
+        return {
+            "json_path": str(json_path),
+            "markdown_path": str(md_path),
+            "recommended_layouts": recommended_layouts,
+            "summary_markdown": markdown,
+            "sources": source_cards,
+        }
+
+    def _allowed_layout_palette(self, job: GenerationJob, *, include_visual: bool = False) -> list[str]:
+        palette = list(TEXT_FRIENDLY_LAYOUTS)
+        hints = job.document_metadata.get("agent_workspace", {}).get("source_hints") or {}
+        images = int(hints.get("images") or 0)
+        data = int(hints.get("data") or 0)
+        if include_visual or images > 0:
+            palette.extend(VISUAL_LAYOUTS)
+        if data > 0:
+            palette.extend(DATA_LAYOUTS)
+        return sorted(set(palette))
+
+    def _audit_generated_deck(
+        self,
+        job: GenerationJob,
+        deck: AgentDeck,
+        slides: list[Slide],
+    ) -> dict[str, Any]:
+        issues: list[str] = []
+        layout_ids = [slide.layout_id or slide.layout_type for slide in slides]
+        layout_counts: dict[str, int] = {}
+        for layout_id in layout_ids:
+            layout_counts[layout_id] = layout_counts.get(layout_id, 0) + 1
+        dominant_layout = max(layout_counts.values(), default=0)
+        if job.request.num_pages >= 6 and dominant_layout > max(2, job.request.num_pages // 2):
+            issues.append("布局重复过多：请增加版式变化，不要让大多数页面都使用同一类 layout。")
+        if job.request.num_pages >= 5 and len(set(layout_ids)) < 3:
+            issues.append("布局种类过少：至少使用 3 种不同 layout。")
+
+        title_counts: dict[str, int] = {}
+        subtitle_counts: dict[str, int] = {}
+        for slide in deck.slides:
+            title = slide.title.strip()
+            subtitle = slide.subtitle.strip()
+            if title:
+                title_counts[title] = title_counts.get(title, 0) + 1
+            if subtitle:
+                subtitle_counts[subtitle] = subtitle_counts.get(subtitle, 0) + 1
+            layout_id = next(
+                (entry["layout_id"] for entry in deck_to_layout_selections(AgentDeck(slides=[slide]))),
+                None,
+            )
+            if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
+                bullet_items = list(slide.items)
+                if len(bullet_items) < 3:
+                    issues.append(f"{slide.title}: bullet 类页面必须提供 3-4 个 items。")
+                if any(not item.description.strip() for item in bullet_items):
+                    issues.append(f"{slide.title}: bullet 类页面的 items.description 不能为空。")
+            if layout_id in {"outline-slide", "outline-slide-rail"}:
+                if any(not section.description.strip() for section in slide.sections):
+                    issues.append(f"{slide.title}: outline 类页面的 sections.description 不能为空。")
+            if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
+                if len(slide.steps) < 3:
+                    issues.append(f"{slide.title}: process 类页面至少需要 3 个 steps。")
+                if any(not step.description.strip() for step in slide.steps):
+                    issues.append(f"{slide.title}: process 类页面的 steps.description 不能为空。")
+            if layout_id in {"thank-you", "thank-you-contact"} and not (
+                slide.subtitle.strip() or slide.contact.strip() or slide.takeaway.strip()
+            ):
+                issues.append(f"{slide.title}: closing 页面不能只有标题。")
+            if layout_id in {"quote-slide", "quote-banner"} and not slide.quote.strip():
+                issues.append(f"{slide.title}: highlight 页面必须提供 quote。")
+            if layout_id == "two-column-compare" and not (slide.left and slide.right):
+                issues.append(f"{slide.title}: comparison 页面必须提供 left/right。")
+            if layout_id == "challenge-outcome" and len(slide.challenge_outcomes) < 2:
+                issues.append(f"{slide.title}: challenge-outcome 页面至少需要 2 组 challenge/outcome。")
+
+        repeated_titles = sorted(title for title, count in title_counts.items() if count > 1)
+        if repeated_titles:
+            issues.append("标题重复过多：" + " / ".join(repeated_titles[:4]))
+        repeated_subtitles = sorted(title for title, count in subtitle_counts.items() if count > 1)
+        if repeated_subtitles:
+            issues.append("副标题重复过多：" + " / ".join(repeated_subtitles[:4]))
+
+        payload = {
+            "presentationId": "pres-audit",
+            "title": deck.title or job.request.title or "生成审计",
+            "slides": [slide.model_dump(mode="json", by_alias=True) for slide in slides],
+        }
+        _normalized, _changed, report = normalize_presentation_payload(payload)
+        repair_types = sorted(set(report.get("repair_types") or []))
+        noisy = sorted(HARD_FAIL_REPAIR_TYPES.intersection(repair_types))
+        if noisy:
+            issues.append("模板修复噪声过高：" + " / ".join(noisy))
+
+        return {
+            "issues": issues,
+            "layout_ids": layout_ids,
+            "repair_types": repair_types,
+            "invalid_slide_count": int(report.get("invalid_slide_count") or 0),
+            "repaired_slide_count": int(report.get("repaired_slide_count") or 0),
+        }
+
+    async def _generate_outline_with_agent(self, job: GenerationJob, state: GenerationRuntimeState) -> AgentOutline:
         payload_holder: dict[str, Any] = {}
-        agent = self._build_generation_agent(
+        agent, traced_model = self._build_generation_agent(
             job=job,
             extra_tools=[self._make_outline_submit_tool(payload_holder)],
             system_prompt=self._build_agent_outline_prompt(job, state),
+            allowed_builtin_tools=REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
@@ -1356,10 +1479,22 @@ class GenerationRunner:
                 self._build_agent_outline_user_prompt(job)
                 if attempt == 0
                 else (
-                    f"上一次提交的大纲页数不正确。请重新提交，必须严格输出 {expected} 页，并再次调用 submit_outline。"
+                    f"上一次提交的大纲不满足要求。请重新提交，必须严格输出 {expected} 页，"
+                    "并为每页补齐 role / objective / keyPoints / contentHints，再次调用 submit_outline。"
                 )
             )
             result = await session.send(prompt)
+            self._write_agent_run_debug(
+                job,
+                state,
+                stage_name="outline",
+                prompt=prompt,
+                session=session,
+                result=result,
+                traced_model=traced_model,
+                submitted_payload=payload_holder.get("outline"),
+                attempt=attempt + 1,
+            )
             outline = self._extract_outline_submission(payload_holder)
             if outline is None:
                 raise RuntimeError(result.error or "Agent did not submit an outline.")
@@ -1368,32 +1503,48 @@ class GenerationRunner:
             payload_holder.clear()
         raise ValueError(f"Outline item count mismatch: expected {expected}")
 
-    async def _generate_deck_with_agent(
-        self,
-        job: GenerationJob,
-        state: PipelineState,
-    ) -> AgentDeck:
+    async def _generate_deck_with_agent(self, job: GenerationJob, state: GenerationRuntimeState) -> AgentDeck:
         payload_holder: dict[str, Any] = {}
-        agent = self._build_generation_agent(
+        agent, traced_model = self._build_generation_agent(
             job=job,
             extra_tools=[self._make_deck_submit_tool(payload_holder)],
             system_prompt=self._build_agent_deck_prompt(job, state),
+            allowed_builtin_tools=AUTO_DECK_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        for attempt in range(2):
+        last_issues: list[str] = []
+        for attempt in range(3):
             prompt = (
                 self._build_agent_deck_user_prompt(job, state)
                 if attempt == 0
-                else f"上一次提交的 deck 页数不正确。请重新提交，必须严格输出 {expected} 页，并再次调用 submit_deck。"
+                else self._build_agent_deck_retry_prompt(expected, last_issues)
             )
             result = await session.send(prompt)
+            self._write_agent_run_debug(
+                job,
+                state,
+                stage_name="deck",
+                prompt=prompt,
+                session=session,
+                result=result,
+                traced_model=traced_model,
+                submitted_payload=payload_holder.get("deck"),
+                attempt=attempt + 1,
+            )
             deck = self._extract_deck_submission(payload_holder)
             if deck is None:
                 raise RuntimeError(result.error or "Agent did not submit a deck.")
-            if len(deck.slides) == expected:
+            slides = deck_to_slides(deck)
+            audit = self._audit_generated_deck(job, deck, slides)
+            if len(deck.slides) == expected and not audit["issues"]:
                 return deck
+            last_issues = list(audit["issues"])
+            if len(deck.slides) != expected:
+                last_issues.insert(0, f"页数错误：必须严格输出 {expected} 页，当前是 {len(deck.slides)} 页。")
             payload_holder.clear()
+        if last_issues:
+            raise ValueError("Deck audit failed: " + " | ".join(last_issues))
         raise ValueError(f"Deck slide count mismatch: expected {expected}")
 
     def _build_generation_agent(
@@ -1402,21 +1553,22 @@ class GenerationRunner:
         job: GenerationJob,
         extra_tools: list[Tool],
         system_prompt: str,
-    ):
+        allowed_builtin_tools: tuple[str, ...],
+    ) -> tuple[Any, _TracingModelClient]:
         workspace_root = self._workspace_root_for_job(job)
         builder = AgentBuilder.from_project(workspace_root)
-        builder.with_model_client(self._create_agent_model_client())
+        traced_model = _TracingModelClient(delegate=self._create_agent_model_client(), calls=[])
+        builder.with_model_client(traced_model)
         builder.with_system_prompt(system_prompt)
         builder.with_max_turns(settings.agentic_max_turns)
         builder.with_auto_compact(True)
         builder.with_compact_token_threshold(6000)
         builder.with_compact_tail_turns(2)
         builder.with_permissive_tools(False)
-        builder.discover_skills()
-        builder.load_mcp_config()
+        builder.tool_registry = self._build_tool_registry(workspace_root, allowed_builtin_tools)
         for tool in extra_tools:
             builder.register_tool(tool)
-        return builder.build()
+        return builder.build(), traced_model
 
     def _create_agent_model_client(self):
         model_name = str(settings.strong_model or "").strip()
@@ -1513,7 +1665,7 @@ class GenerationRunner:
 
         return Path(workspace).resolve()
 
-    def _build_agent_outline_prompt(self, job: GenerationJob, state: PipelineState) -> str:
+    def _build_agent_outline_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 生成内核。\n"
             "你的工作不是解释，而是基于工作区素材，为后续 deck 生成提交一个严格结构化的大纲。\n\n"
@@ -1521,11 +1673,12 @@ class GenerationRunner:
             "- `request.json` 包含 topic、页数、mode、source_ids。\n"
             "- `sources/manifest.json` 描述所有可用来源。\n"
             "- `sources/*.md` 是来源解析文本；优先阅读这些文件，而不是只凭记忆生成。\n"
-            "- 可以使用 `task_create` / `task_update` 跟踪步骤，也可以用 `subagent_run` 并行处理长素材。\n\n"
+            "- 你只有 `read_file` 和 `submit_outline` 两类工具，不要假设还有别的能力。\n\n"
             "大纲要求：\n"
             f"- 必须严格提交 {state.num_pages} 页。\n"
-            "- `role` 仅使用：cover, agenda, section-divider, narrative, evidence, process, highlight, closing。\n"
-            "- 这是一个故事化演示，不是文档摘抄；每页标题要清晰、可展示。\n"
+            "- `role` 仅使用：cover, agenda, section-divider, narrative, evidence, comparison, process, highlight, closing。\n"
+            "- 每页必须补齐 `objective`，并尽量提供 `keyPoints` 与 `contentHints`。\n"
+            "- 这是一个故事化演示，不是文档摘抄；每页标题要清晰、可展示，并能支撑后续选择 layout。\n"
             "- 最终只通过 `submit_outline` 提交结构化结果，不要只输出自然语言。\n"
         )
 
@@ -1538,31 +1691,51 @@ class GenerationRunner:
             "现在开始工作，并在大纲准备好后调用 `submit_outline`。"
         )
 
-    def _build_agent_deck_prompt(self, job: GenerationJob, state: PipelineState) -> str:
-        outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2)
+    def _build_agent_deck_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+        outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
+        source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
+        palette = ", ".join(self._allowed_layout_palette(job))
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 演示生成内核。\n"
-            "请基于工作区素材和已确认的大纲，产出一个中间 deck IR，再由系统适配到现有 editor presentation。\n\n"
+            "请基于工作区素材和已确认的大纲/本地摘要，产出一个结构化、强模板约束的 deck，再由系统适配到现有 editor presentation。\n\n"
             "工作方式：\n"
-            "- 必须优先阅读 `request.json`、`sources/manifest.json` 和相关 `sources/*.md`。\n"
-            "- 可以使用 `subagent_run` 做并行整理，但最终由主 agent 提交结果。\n"
+            "- 先使用本地素材摘要判断故事线和页面结构，再按需要补读原始 source 文本。\n"
+            "- 你只有 `read_file` 和 `submit_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
             "- 不要输出解释文本；最终只通过 `submit_deck` 提交结构化 deck。\n\n"
             "Deck 约束：\n"
             f"- 严格输出 {state.num_pages} 页。\n"
-            "- `layoutHint` 尽量使用：intro-slide, outline-slide, section-header, bullet-with-icons, metrics-slide, timeline, quote-slide, thank-you。\n"
-            "- `points` 适合 narrative 页，`metrics` 适合 evidence 页，`events` 适合 timeline 页。\n"
-            "- 每页都要能直接用于演示，避免空泛标题和重复段落。\n\n"
+            f"- 仅使用这组 layoutHint：{palette}。\n"
+            "- 禁止把页面写成提纲词条；每页都必须是可展示内容。\n"
+            "- bullet 类页面使用 `items[{title,description,iconQuery?}]`，并保证 description 非空。\n"
+            "- outline 类页面使用 `sections[{title,description}]`，并保证 description 非空。\n"
+            "- process 类页面优先使用 `steps[{title,description}]`，timeline 再用 `events[{date,title,description}]`。\n"
+            "- comparison 类页面使用 `left/right`；challenge 页面使用 `challengeOutcomes`。\n"
+            "- metrics 类页面使用 `metrics[{value,label,description}] + conclusion`。\n"
+            "- visual 类页面使用 `image{source,prompt,url?,alt} + description/bullets`。\n"
+            "- highlight 类页面优先使用 `quote/quoteAuthor/context`；closing 类页面补齐 `subtitle/contact`。\n"
+            "- 不要生成同一 slideNumber 的 section-header + 正文重复拆页。\n\n"
+            f"本地素材摘要：\n{source_brief}\n\n"
             f"已确认大纲：\n{outline_json}\n"
         )
 
-    def _build_agent_deck_user_prompt(self, job: GenerationJob, state: PipelineState) -> str:
+    def _build_agent_deck_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         del state
         return (
-            "请基于已确认大纲生成完整 deck。\n"
+            "请生成完整 deck。\n"
             f"主题：{job.request.topic or job.request.title}\n"
             f"补充指令：{job.request.content or '无'}\n"
             f"目标页数：{job.request.num_pages}\n"
             "完成后调用 `submit_deck`。"
+        )
+
+    def _build_agent_deck_retry_prompt(self, expected: int, issues: list[str]) -> str:
+        issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 deck 未通过本地审计。"
+        return (
+            "请修正上一版 deck 并重新提交。\n"
+            f"必须严格输出 {expected} 页。\n"
+            "以下问题必须全部修正：\n"
+            f"{issue_text}\n"
+            "修正后再次调用 `submit_deck`。"
         )
 
     @staticmethod
@@ -1581,3 +1754,128 @@ def _parse_stage(raw: str) -> StageStatus | None:
     with suppress(ValueError):
         return StageStatus(raw)
     return None
+
+
+def _summarize_model_identity(client: ModelClient) -> dict[str, Any]:
+    raw_model = str(getattr(client, "model", "") or "").strip()
+    normalized_model = normalize_litellm_model(raw_model) if raw_model else ""
+    api_base = str(getattr(client, "api_base", "") or "").strip()
+    return {
+        "raw_model": raw_model or None,
+        "normalized_model": normalized_model or None,
+        "provider": parse_provider(raw_model) if raw_model else None,
+        "api_base": api_base or None,
+        "api_base_enabled": bool(api_base),
+        "client_type": type(client).__name__,
+    }
+
+
+def _summarize_model_request(client: ModelClient, messages: list[Message], tools: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "model": _summarize_model_identity(client),
+        "message_count": len(messages),
+        "messages": [_serialize_message(message) for message in messages],
+        "tool_count": len(tools),
+        "tool_names": [str(tool.get("name") or "") for tool in tools],
+        "tools": deepcopy(tools),
+    }
+
+
+def _summarize_model_response(response: ModelResponse) -> dict[str, Any]:
+    return {
+        "message": _serialize_message(response.message),
+        "usage": {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens,
+        },
+    }
+
+
+def _serialize_message(message: Message) -> dict[str, Any]:
+    if message.role in {"system", "user"}:
+        return {
+            "role": message.role,
+            "content": getattr(message, "content", ""),
+        }
+    if message.role == "assistant":
+        return {
+            "role": message.role,
+            "content": getattr(message, "content", ""),
+            "tool_calls": [
+                {
+                    "tool_name": tool_call.tool_name,
+                    "tool_call_id": tool_call.tool_call_id,
+                    "args": deepcopy(tool_call.args),
+                }
+                for tool_call in getattr(message, "tool_calls", [])
+            ],
+        }
+    if isinstance(message, ToolMessage):
+        return {
+            "role": message.role,
+            "results": [_serialize_tool_result(result) for result in message.results],
+        }
+    return {"role": getattr(message, "role", "unknown"), "content": repr(message)}
+
+
+def _serialize_tool_result(item: Any) -> dict[str, Any]:
+    return {
+        "tool_name": str(getattr(item, "tool_name", "")),
+        "tool_call_id": str(getattr(item, "tool_call_id", "")),
+        "is_error": bool(getattr(item, "is_error", False)),
+        "content": deepcopy(getattr(item, "content", None)),
+        "metadata": deepcopy(getattr(item, "metadata", {}) or {}),
+    }
+
+
+def _extract_source_headings(text: str, limit: int = 6) -> list[str]:
+    headings: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip().strip("#").strip()
+        if not line:
+            continue
+        if len(line) > 48:
+            continue
+        if line.startswith(("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "0", "1", "2", "3", "4", "5")):
+            headings.append(line)
+        elif raw_line.lstrip().startswith("#"):
+            headings.append(line)
+        if len(headings) >= limit:
+            break
+    return headings
+
+
+def _extract_source_passages(text: str, limit: int = 3) -> list[str]:
+    passages: list[str] = []
+    for block in text.split("\n\n"):
+        paragraph = " ".join(part.strip() for part in block.splitlines() if part.strip()).strip()
+        if len(paragraph) < 24:
+            continue
+        passages.append(paragraph[:180])
+        if len(passages) >= limit:
+            break
+    return passages
+
+
+def _render_source_brief_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Local Source Brief",
+        "",
+        f"- Topic: {payload.get('topic') or ''}",
+        f"- Target Pages: {payload.get('num_pages') or ''}",
+        f"- Recommended Layouts: {', '.join(payload.get('recommended_layouts') or [])}",
+        "",
+    ]
+    for source in payload.get("sources") or []:
+        lines.append(f"## {source.get('name') or source.get('id') or 'Source'}")
+        headings = source.get("headings") or []
+        passages = source.get("key_passages") or []
+        if headings:
+            lines.append("Headings:")
+            lines.extend(f"- {heading}" for heading in headings)
+        if passages:
+            lines.append("Passages:")
+            lines.extend(f"- {passage}" for passage in passages)
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
