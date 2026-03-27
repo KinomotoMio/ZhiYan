@@ -42,6 +42,8 @@ class SnapshotMeta(BaseModel):
 class LatestPresentationWriteRequest(BaseModel):
     presentation: dict
     source: str | None = "editor"
+    output_mode: str | None = None
+    html_deck: dict[str, Any] | None = None
 
 
 class LatestGenerationJobMeta(BaseModel):

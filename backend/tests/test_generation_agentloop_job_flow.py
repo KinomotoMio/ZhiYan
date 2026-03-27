@@ -173,6 +173,51 @@ def _presentation_model(page_count: int) -> FakeModel:
     )
 
 
+def _html_deck_payload(page_count: int) -> dict:
+    sections: list[str] = []
+    for slide_number in range(1, page_count + 1):
+        title = "AI Agent Runtime 架构演进" if slide_number == 1 else f"第 {slide_number} 页"
+        sections.append(
+            "<section "
+            f'data-slide-id="slide-{slide_number}" '
+            f'data-slide-title="{title}">'
+            "<div class='slide-shell'>"
+            f"<h2>{title}</h2>"
+            f"<p>这是第 {slide_number} 页的 HTML 演示内容。</p>"
+            "</div>"
+            "</section>"
+        )
+    return {
+        "title": "AI Agent Runtime 架构演进",
+        "html": (
+            "<!DOCTYPE html><html><head><title>AI Agent Runtime 架构演进</title>"
+            "<style>.slide-shell{display:grid;place-items:center;height:100%;"
+            "background:linear-gradient(135deg,#f8fafc,#dbeafe);color:#0f172a;}</style>"
+            "</head><body>"
+            f"{''.join(sections)}"
+            "</body></html>"
+        ),
+    }
+
+
+def _html_deck_model(page_count: int) -> FakeModel:
+    payload = _html_deck_payload(page_count)
+    return FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="submit_html_deck",
+                        args=payload,
+                        tool_call_id="call-submit-html-deck",
+                    )
+                ]
+            ),
+            AssistantMessage(content="html deck submitted"),
+        ]
+    )
+
+
 def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
@@ -307,6 +352,96 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     assert (workspace_root / "artifacts" / "debug" / "session-presentation.json").exists()
     assert (workspace_root / "artifacts" / "debug" / "runner-trace.json").exists()
     assert set(tool["name"] for tool in presentation_model.seen_tools[0]) == {"read_file", "submit_presentation"}
+
+
+def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    runner = _install_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+    monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+
+    from app.services.generation import runner as runner_mod
+
+    async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+        if progress:
+            await progress("verify", 1, 1, "验证完成")
+        state.verification_issues = []
+
+    monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
+
+    html_model = _html_deck_model(4)
+    models = [html_model]
+
+    def fake_model_factory():
+        return models.pop(0)
+
+    monkeypatch.setattr(runner, "_create_agent_model_client", fake_model_factory)
+
+    async def run_inline(job_id: str, from_stage=None):
+        await runner._run_job(job_id, from_stage)  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(runner, "start_job", run_inline)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-agent-html"}
+    session_id = _create_session(client, headers, "agent-html")
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "背景材料", "content": "AgentLoop 会直接产出 HTML 演示文件。"},
+    )
+    assert source_resp.status_code == 200
+
+    create_resp = client.post(
+        f"/api/v1/sessions/{session_id}/generation/jobs",
+        headers=headers,
+        json={
+            "topic": "生成一个高美观 HTML 演示稿",
+            "source_ids": [source_resp.json()["id"]],
+            "num_pages": 4,
+            "mode": "auto",
+            "output_mode": "html",
+        },
+    )
+    assert create_resp.status_code == 200
+
+    job_detail = client.get(
+        f"/api/v1/sessions/{session_id}/generation/jobs/{create_resp.json()['job_id']}",
+        headers=headers,
+    )
+    assert job_detail.status_code == 200
+    body = job_detail.json()
+    assert body["status"] == "completed"
+    assert body["output_mode"] == "html"
+    assert len(body["slides"]) == 4
+    assert body["presentation"] is not None
+    workspace_root = Path(body["document_metadata"]["agent_workspace"]["root"])
+    assert (workspace_root / "artifacts" / "presentation.html").exists()
+    assert (workspace_root / "artifacts" / "presentation.meta.json").exists()
+    html_payload = body["document_metadata"]["agent_outputs"]["html_deck"]
+    assert html_payload["html"].startswith("<!DOCTYPE html>")
+    assert html_payload["meta"]["slide_count"] == 4
+
+    latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
+    assert latest.status_code == 200
+    latest_payload = latest.json()
+    assert latest_payload["output_mode"] == "html"
+    assert latest_payload["artifacts"]["html_deck"]["slide_count"] == 4
+
+    latest_html = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/html", headers=headers)
+    assert latest_html.status_code == 200
+    assert "<section data-slide-id=" in latest_html.text
+
+    latest_meta = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/html/meta",
+        headers=headers,
+    )
+    assert latest_meta.status_code == 200
+    assert latest_meta.json()["slide_count"] == 4
+    assert set(tool["name"] for tool in html_model.seen_tools[0]) == {"read_file", "submit_html_deck"}
 
 
 def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):

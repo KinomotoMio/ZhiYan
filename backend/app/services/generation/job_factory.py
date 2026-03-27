@@ -131,7 +131,9 @@ async def create_generation_job_record(
             num_pages=effective_num_pages,
             title=loading_title,
             resolved_content=combined or req.topic,
+            output_mode=req.output_mode,
         ),
+        output_mode=req.output_mode,
         outline=approved_outline if isinstance(approved_outline, dict) else {},
         outline_accepted=bool(req.approved_outline) or normalized_mode == GenerationMode.AUTO,
     )
@@ -147,6 +149,7 @@ async def create_generation_job_record(
             "template_id": req.template_id,
             "num_pages": effective_num_pages,
             "mode": normalized_mode.value,
+            "output_mode": req.output_mode.value,
             "title": loading_title,
         },
         source_records=source_records,

@@ -5,7 +5,8 @@ import type { Presentation } from "@/types/slide";
 import { presentationToRevealHTML } from "@/lib/slide-to-reveal";
 
 interface RevealPreviewProps {
-  presentation: Presentation;
+  presentation?: Presentation | null;
+  htmlContent?: string | null;
   startSlide?: number;
   className?: string;
   onSlideChange?: (slideIndex: number) => void;
@@ -61,6 +62,7 @@ export function focusRevealPreviewFrame(frame: FocusableRevealFrame | null): voi
 
 export default function RevealPreview({
   presentation,
+  htmlContent,
   startSlide = 0,
   className = "",
   onSlideChange,
@@ -69,12 +71,16 @@ export default function RevealPreview({
 
   useEffect(() => {
     if (!iframeRef.current) return;
-    const html = presentationToRevealHTML(presentation);
+    const html = htmlContent ?? (presentation ? presentationToRevealHTML(presentation) : "");
+    if (!html) {
+      iframeRef.current.removeAttribute("src");
+      return;
+    }
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     iframeRef.current.src = buildRevealPreviewSrc(url, startSlide);
     return () => URL.revokeObjectURL(url);
-  }, [presentation, startSlide]);
+  }, [htmlContent, presentation, startSlide]);
 
   useEffect(() => {
     if (!onSlideChange) return;

@@ -11,6 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.services.agents.html_deck_editor import edit_html_deck
+from app.services.html_deck import normalize_html_deck
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
 
@@ -57,23 +59,20 @@ class ChatRequest(BaseModel):
     action_hint: ActionHint = "free_text"
 
 
+class HtmlDeckContext(BaseModel):
+    title: str
+    html_content: str
+    slide_meta: dict[str, Any]
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request):
     """流式对话 — SSE 响应，支持幻灯片修改"""
-    from app.services.agents.chat_agent import ChatDeps, chat_agent
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
-    from pydantic_ai.messages import TextPart, UserPromptPart
-
     slides: list[dict[str, Any]] = []
     if req.presentation_context:
         raw_slides = req.presentation_context.get("slides", [])
         if isinstance(raw_slides, list):
             slides = copy.deepcopy(raw_slides)
-
-    deps = ChatDeps(
-        slides=slides,
-        current_slide_index=req.current_slide_index,
-    )
 
     history = req.messages[-20:] if req.messages else []
     dedup_applied = False
@@ -85,20 +84,35 @@ async def chat(req: ChatRequest, request: Request):
         history = history[:-1]
         dedup_applied = True
 
-    message_history: list[ModelMessage] = []
-    for msg in history:
-        if msg.role == "user":
-            message_history.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
-        else:
-            message_history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
-
-    prompt = _build_prompt(req, slides, force_tool=False)
     workspace_id = get_workspace_id_from_request(request)
     assistant_chunks: list[str] = []
     strict_tool_mode = req.action_hint != "free_text"
     provider = settings.strong_model.split(":", 1)[0] if settings.strong_model else ""
+    html_context = _extract_html_context(req, slides)
+    deps = None
+    chat_agent = None
+    message_history = []
+    prompt = ""
 
-    async def _run_once(current_prompt: str, run_deps: ChatDeps) -> str:
+    if html_context is None:
+        from app.services.agents.chat_agent import ChatDeps, chat_agent as structured_chat_agent
+        from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+        from pydantic_ai.messages import TextPart, UserPromptPart
+
+        deps = ChatDeps(
+            slides=slides,
+            current_slide_index=req.current_slide_index,
+        )
+        message_history = []
+        for msg in history:
+            if msg.role == "user":
+                message_history.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
+            else:
+                message_history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+        prompt = _build_prompt(req, slides, force_tool=False)
+        chat_agent = structured_chat_agent
+
+    async def _run_once(current_prompt: str, run_deps) -> str:
         result = await chat_agent.run(
             current_prompt,
             deps=run_deps,
@@ -116,18 +130,68 @@ async def chat(req: ChatRequest, request: Request):
         assistant_text = ""
         modification_count = 0
         effective_modification_count = 0
+        html_update: dict[str, Any] | None = None
 
         try:
-            if strict_tool_mode:
+            if html_context is not None:
+                result = await edit_html_deck(
+                    message=req.message,
+                    action_hint=req.action_hint,
+                    html_content=html_context.html_content,
+                    current_slide_index=req.current_slide_index,
+                    slide_meta=html_context.slide_meta,
+                    history=[
+                        {"role": msg.role, "content": msg.content}
+                        for msg in history
+                    ],
+                )
+                assistant_text = result.assistant_reply.strip()
+                if assistant_text:
+                    assistant_chunks.append(assistant_text)
+
+                if result.should_update and result.html.strip():
+                    normalized_html, _meta, normalized_presentation = normalize_html_deck(
+                        html=result.html,
+                        fallback_title=html_context.title,
+                    )
+                    html_update = {
+                        "type": "html_update",
+                        "html_content": normalized_html,
+                        "presentation": normalized_presentation,
+                        "modifications": [
+                            {
+                                "action": "update_html_deck",
+                                "slide_index": max(0, req.current_slide_index),
+                                "mode": "html",
+                            }
+                        ],
+                    }
+                    effective_modification_count = len(html_update["modifications"])
+                elif strict_tool_mode:
+                    no_op = True
+                    no_op_reason = _build_no_op_reason(req.action_hint)
+
+                assistant_text = "".join(assistant_chunks).strip()
+                if no_op and strict_tool_mode:
+                    assistant_text = f"未执行改稿：{no_op_reason}"
+                if assistant_text:
+                    text_data = json.dumps(
+                        {"type": "text", "content": assistant_text},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {text_data}\n\n"
+            elif strict_tool_mode:
                 assistant_text = await _run_once(prompt, deps)
                 if assistant_text:
                     assistant_chunks.append(assistant_text)
 
                 effective_modification_count = _count_effective_modifications(
                     req.action_hint,
-                    deps.modifications,
+                    deps.modifications if deps is not None else [],
                 )
                 if effective_modification_count == 0:
+                    from app.services.agents.chat_agent import ChatDeps
+
                     retry_deps = ChatDeps(
                         slides=copy.deepcopy(slides),
                         current_slide_index=req.current_slide_index,
@@ -173,16 +237,22 @@ async def chat(req: ChatRequest, request: Request):
                 assistant_text = "".join(assistant_chunks).strip()
                 effective_modification_count = _count_effective_modifications(
                     req.action_hint,
-                    deps.modifications,
+                    deps.modifications if deps is not None else [],
                 )
 
-            modification_count = len(deps.modifications)
-            if effective_modification_count > 0:
+            modification_count = (
+                len(html_update.get("modifications") or [])
+                if html_update is not None
+                else len(deps.modifications if deps is not None else [])
+            )
+            if html_update is not None:
+                yield f"data: {json.dumps(html_update, ensure_ascii=False)}\n\n"
+            elif effective_modification_count > 0:
                 mod_data = json.dumps(
                     {
                         "type": "slide_update",
-                        "slides": deps.slides,
-                        "modifications": [m.model_dump() for m in deps.modifications],
+                        "slides": deps.slides if deps is not None else [],
+                        "modifications": [m.model_dump() for m in deps.modifications] if deps is not None else [],
                     },
                     ensure_ascii=False,
                 )
@@ -376,3 +446,30 @@ def _build_no_op_reason(action_hint: ActionHint) -> str:
     if action_hint in VISIBLE_CONTENT_ACTIONS:
         return "本次未产生页面可见内容改动（仅建议或注释不计入），请指定要修改的标题/要点。"
     return "本次请求未触发可执行修改，请指定更明确的改动目标。"
+
+
+def _extract_html_context(
+    req: ChatRequest,
+    slides: list[dict[str, Any]],
+) -> HtmlDeckContext | None:
+    if not isinstance(req.presentation_context, dict):
+        return None
+    if str(req.presentation_context.get("output_mode") or "").strip() != "html":
+        return None
+    html_content = str(req.presentation_context.get("html_content") or "").strip()
+    if not html_content:
+        return None
+    title = str(req.presentation_context.get("title") or "新演示文稿").strip() or "新演示文稿"
+    slide_meta = {
+        "title": title,
+        "slides": [
+            {
+                "index": index,
+                "slide_id": str(slide.get("slideId") or f"slide-{index + 1}"),
+                "title": _extract_title(slide) or f"第 {index + 1} 页",
+            }
+            for index, slide in enumerate(slides)
+            if isinstance(slide, dict)
+        ],
+    }
+    return HtmlDeckContext(title=title, html_content=html_content, slide_meta=slide_meta)

@@ -18,6 +18,11 @@ class GenerationMode(str, Enum):
     REVIEW_OUTLINE = "review_outline"
 
 
+class PresentationOutputMode(str, Enum):
+    STRUCTURED = "structured"
+    HTML = "html"
+
+
 class JobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -94,6 +99,7 @@ class GenerationRequestData(BaseModel):
     num_pages: int = 5
     title: str = "新演示文稿"
     resolved_content: str = ""
+    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
 
 
 class StageResult(BaseModel):
@@ -130,6 +136,7 @@ class GenerationJob(BaseModel):
     updated_at: str = Field(default_factory=now_iso)
 
     request: GenerationRequestData
+    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
 
     document_metadata: dict[str, Any] = Field(default_factory=dict)
     outline: dict[str, Any] = Field(default_factory=dict)
@@ -163,6 +170,7 @@ class CreateJobResponse(BaseModel):
 
 class AcceptOutlineRequest(BaseModel):
     outline: dict[str, Any] | None = None
+    output_mode: PresentationOutputMode | None = None
 
 
 class FixPreviewRequest(BaseModel):
@@ -188,4 +196,4 @@ class CreateJobRequest(BaseModel):
     num_pages: int = 5
     mode: GenerationMode = GenerationMode.AUTO
     approved_outline: dict[str, Any] | None = None
-
+    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
