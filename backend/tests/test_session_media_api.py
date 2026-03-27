@@ -214,6 +214,57 @@ def test_generate_speaker_notes_rejects_mismatched_submission(monkeypatch, tmp_p
     assert "slideId" in response.json()["detail"]
 
 
+def test_generate_speaker_notes_accepts_reordered_slide_ids(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-speaker-notes"}
+    session_id = _create_session(client, headers, "speaker notes")
+    _save_latest_presentation(store, session_id, _sample_presentation())
+
+    fake_model = FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="submit_speaker_notes",
+                        args={
+                            "notes": [
+                                {
+                                    "slideId": "slide-2",
+                                    "notes": "第二页的顺序先返回，也应该被接受。"
+                                },
+                                {
+                                    "slideId": "slide-1",
+                                    "notes": "第一页后返回，只要 slideId 集合一致就可以。"
+                                },
+                            ]
+                        },
+                        tool_call_id="call-submit-notes",
+                    )
+                ]
+            ),
+            AssistantMessage(content="notes submitted"),
+        ]
+    )
+    monkeypatch.setattr("app.services.speaker_notes._create_agent_model_client", lambda: fake_model)
+
+    response = client.post(
+        f"/api/v1/sessions/{session_id}/speaker-notes/generate",
+        headers=headers,
+        json={
+            "presentation": _sample_presentation(),
+            "scope": "all",
+            "currentSlideIndex": 0,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updatedSlideIds"] == ["slide-1", "slide-2"]
+    assert payload["presentation"]["slides"][0]["speakerNotes"] == "第一页后返回，只要 slideId 集合一致就可以。"
+    assert payload["presentation"]["slides"][1]["speakerNotes"] == "第二页的顺序先返回，也应该被接受。"
+
+
 def test_speaker_audio_reuses_cached_file_and_regenerates_when_notes_change(monkeypatch, tmp_path):
     store = _install_temp_session_store(monkeypatch, tmp_path)
     client = TestClient(app)

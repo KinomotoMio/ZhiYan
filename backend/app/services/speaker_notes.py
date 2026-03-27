@@ -206,7 +206,7 @@ def _validate_submission(
         raise ValueError("Agent 没有提交演讲者注解结果")
     parsed = SubmitSpeakerNotesArgs.model_validate(payload)
     submitted_ids = [item.slide_id for item in parsed.notes]
-    if submitted_ids != target_slide_ids:
+    if sorted(submitted_ids) != sorted(target_slide_ids):
         raise ValueError(
             "提交的 slideId 与目标不匹配: "
             f"expected={target_slide_ids}, actual={submitted_ids}"
