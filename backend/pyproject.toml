@@ -36,6 +36,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = ["--ignore=_backup", "--ignore=backend/_backup"]
-norecursedirs = ["_backup", ".git", ".venv", "node_modules"]
+addopts = []
+norecursedirs = [".git", ".venv", "node_modules"]
 testpaths = ["tests"]

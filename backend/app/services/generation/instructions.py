@@ -1,4 +1,4 @@
-"""Harness configuration and prompt composition helpers."""
+"""Generation instruction config and prompt composition helpers."""
 
 from __future__ import annotations
 
@@ -11,47 +11,47 @@ from app.core.config import settings
 from app.services.skill_runtime.registry import SkillRegistry
 
 
-HARNESS_ROOT = settings.project_root / "harness" / "generation"
+INSTRUCTIONS_ROOT = settings.project_root / "harness" / "generation"
 
 
 @dataclass(frozen=True)
-class PlannerHarnessConfig:
+class PlannerInstructionsConfig:
     mode: str = "llm"
     fallback_mode: str = "deterministic"
     max_iterations: int = 8
 
 
 @dataclass(frozen=True)
-class OutlineHarnessConfig:
+class OutlineInstructionsConfig:
     agenda_page_index: int = 2
     narrative_arc: str = "问题→分析→方案→结论"
     content_brief_range: str = "100-200字"
 
 
 @dataclass(frozen=True)
-class SlidevHarnessConfig:
+class SlidevInstructionsConfig:
     theme: str = "default"
     paginate: bool = True
 
 
 @dataclass(frozen=True)
-class PromptHarnessConfig:
+class PromptInstructionsConfig:
     outline_extra_instruction: str = ""
     planner_extra_instruction: str = ""
 
 
 @dataclass(frozen=True)
-class SkillHarnessConfig:
+class SkillInstructionsConfig:
     enabled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
-class GenerationHarnessConfig:
-    planner: PlannerHarnessConfig = field(default_factory=PlannerHarnessConfig)
-    outline: OutlineHarnessConfig = field(default_factory=OutlineHarnessConfig)
-    slidev: SlidevHarnessConfig = field(default_factory=SlidevHarnessConfig)
-    prompts: PromptHarnessConfig = field(default_factory=PromptHarnessConfig)
-    skills: SkillHarnessConfig = field(default_factory=SkillHarnessConfig)
+class GenerationInstructionsConfig:
+    planner: PlannerInstructionsConfig = field(default_factory=PlannerInstructionsConfig)
+    outline: OutlineInstructionsConfig = field(default_factory=OutlineInstructionsConfig)
+    slidev: SlidevInstructionsConfig = field(default_factory=SlidevInstructionsConfig)
+    prompts: PromptInstructionsConfig = field(default_factory=PromptInstructionsConfig)
+    skills: SkillInstructionsConfig = field(default_factory=SkillInstructionsConfig)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -63,8 +63,8 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def load_generation_harness_config(root: Path | None = None) -> GenerationHarnessConfig:
-    root = root or HARNESS_ROOT
+def load_generation_harness_config(root: Path | None = None) -> GenerationInstructionsConfig:
+    root = root or INSTRUCTIONS_ROOT
     raw = _read_json(root / "config.json")
     planner = raw.get("planner") or {}
     outline = raw.get("outline") or {}
@@ -72,26 +72,26 @@ def load_generation_harness_config(root: Path | None = None) -> GenerationHarnes
     prompts = raw.get("prompts") or {}
     skills = raw.get("skills") or {}
 
-    return GenerationHarnessConfig(
-        planner=PlannerHarnessConfig(
+    return GenerationInstructionsConfig(
+        planner=PlannerInstructionsConfig(
             mode=str(planner.get("mode") or "llm"),
             fallback_mode=str(planner.get("fallback_mode") or "deterministic"),
             max_iterations=max(1, int(planner.get("max_iterations") or 8)),
         ),
-        outline=OutlineHarnessConfig(
+        outline=OutlineInstructionsConfig(
             agenda_page_index=max(2, int(outline.get("agenda_page_index") or 2)),
             narrative_arc=str(outline.get("narrative_arc") or "问题→分析→方案→结论"),
             content_brief_range=str(outline.get("content_brief_range") or "100-200字"),
         ),
-        slidev=SlidevHarnessConfig(
+        slidev=SlidevInstructionsConfig(
             theme=str(slidev.get("theme") or "default"),
             paginate=bool(slidev.get("paginate", True)),
         ),
-        prompts=PromptHarnessConfig(
+        prompts=PromptInstructionsConfig(
             outline_extra_instruction=str(prompts.get("outline_extra_instruction") or "").strip(),
             planner_extra_instruction=str(prompts.get("planner_extra_instruction") or "").strip(),
         ),
-        skills=SkillHarnessConfig(
+        skills=SkillInstructionsConfig(
             enabled=tuple(
                 str(item).strip()
                 for item in (skills.get("enabled") or [])
@@ -102,7 +102,7 @@ def load_generation_harness_config(root: Path | None = None) -> GenerationHarnes
 
 
 def load_prompt_template(name: str, root: Path | None = None) -> str:
-    root = root or HARNESS_ROOT
+    root = root or INSTRUCTIONS_ROOT
     path = root / "agents" / f"{name}.md"
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
@@ -133,7 +133,7 @@ def build_skill_instruction_bundle(
 def compose_outline_instructions(
     *,
     role_contract: str,
-    config: GenerationHarnessConfig | None = None,
+    config: GenerationInstructionsConfig | None = None,
     root: Path | None = None,
 ) -> str:
     config = config or load_generation_harness_config(root=root)
@@ -153,7 +153,10 @@ def compose_outline_instructions(
     ).strip()
 
 
-def compose_planner_instructions(config: GenerationHarnessConfig | None = None, root: Path | None = None) -> str:
+def compose_planner_instructions(
+    config: GenerationInstructionsConfig | None = None,
+    root: Path | None = None,
+) -> str:
     config = config or load_generation_harness_config(root=root)
     template = load_prompt_template("loop_planner", root=root)
     if not template:
