@@ -340,3 +340,47 @@ def test_speaker_audio_reuses_cached_file_and_regenerates_when_notes_change(monk
         settings.tts_base_url = original_base_url
         settings.tts_model = original_model
         settings.tts_voice_id = original_voice_id
+
+
+def test_request_minimax_tts_accepts_zero_status_code(monkeypatch):
+    from app.services.speaker_audio import _request_minimax_tts
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+                "data": {"audio": "66616b652d6d7033"},
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    original_provider = settings.tts_provider
+    original_key = settings.tts_api_key
+    original_base_url = settings.tts_base_url
+    original_model = settings.tts_model
+    original_voice_id = settings.tts_voice_id
+    settings.tts_provider = "minimax"
+    settings.tts_api_key = "tts-secret-key"
+    settings.tts_base_url = "https://api.minimaxi.com"
+    settings.tts_model = "speech-2.8-hd"
+    settings.tts_voice_id = "male-qn-qingse"
+    monkeypatch.setattr("app.services.speaker_audio.get_safe_httpx_client", lambda **_kwargs: _FakeClient())
+
+    try:
+        assert asyncio.run(_request_minimax_tts("最小测试")) == b"fake-mp3"
+    finally:
+        settings.tts_provider = original_provider
+        settings.tts_api_key = original_key
+        settings.tts_base_url = original_base_url
+        settings.tts_model = original_model
+        settings.tts_voice_id = original_voice_id

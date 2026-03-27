@@ -95,7 +95,12 @@ async def _request_minimax_tts(notes: str) -> bytes:
 
     body = resp.json()
     base_resp = body.get("base_resp") if isinstance(body, dict) else None
-    if not isinstance(base_resp, dict) or int(base_resp.get("status_code") or -1) != 0:
+    status_code_raw = base_resp.get("status_code") if isinstance(base_resp, dict) else None
+    try:
+        status_code = int(status_code_raw) if status_code_raw is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    if not isinstance(base_resp, dict) or status_code != 0:
         raise ValueError(
             f"TTS 服务返回业务错误: {base_resp.get('status_msg') if isinstance(base_resp, dict) else 'unknown'}"
         )
