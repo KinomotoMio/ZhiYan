@@ -64,10 +64,10 @@ export function pickCreateLandingSessionId(
 ): string | null {
   if (currentSessionId) {
     const current = sessions.find((item) => item.id === currentSessionId);
-    if (current && !current.has_presentation) {
+    if (current) {
       return current.id;
     }
   }
   const editable = sessions.find((item) => !item.has_presentation);
-  return editable?.id ?? null;
+  return editable?.id ?? sessions[0]?.id ?? null;
 }

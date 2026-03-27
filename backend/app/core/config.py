@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": PROJECT_ROOT / ".env",
         "env_file_encoding": "utf-8",
+        "extra": "ignore",
     }
 
 

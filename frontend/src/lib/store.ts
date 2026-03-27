@@ -2,7 +2,12 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
-import type { SessionSummary, WorkspaceId } from "@/lib/api";
+import type {
+  PlanningOutlineItem,
+  PlanningState,
+  SessionSummary,
+  WorkspaceId,
+} from "@/lib/api";
 import type { LayoutRole } from "@/lib/layout-role";
 import { compactLoadingTitle, DEFAULT_LOADING_TITLE } from "@/lib/loading-title";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
@@ -41,6 +46,18 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  phase?: "planning" | "editor" | "generation" | string;
+  messageKind?: string;
+  outlineVersion?: number | null;
+  jobId?: string | null;
+}
+
+export interface GenerationCardState {
+  jobId: string;
+  status: string;
+  currentStage: string | null;
+  sessionTitle: string;
+  updatedAt: string | null;
 }
 
 interface AppState {
@@ -68,6 +85,10 @@ interface AppState {
   issuePanelSlideId: string | null;
   issueDecisionBySlideId: Record<string, IssueDecisionStatus>;
   chatMessages: ChatMessage[];
+  planningState: PlanningState | null;
+  draftOutline: PlanningOutlineItem[];
+  outlineStale: boolean;
+  activeGenerationCard: GenerationCardState | null;
 
   // Create view state
   workspaceSources: SourceMeta[];
@@ -87,6 +108,7 @@ interface AppState {
     sources: SourceMeta[];
     chatMessages: ChatMessage[];
     presentation: Presentation | null;
+    planningState?: PlanningState | null;
   }) => void;
 
   // Editor actions
@@ -118,6 +140,10 @@ interface AppState {
   clearFixReviewState: () => void;
   addChatMessage: (msg: ChatMessage) => void;
   setChatMessages: (messages: ChatMessage[]) => void;
+  setPlanningState: (planningState: PlanningState | null) => void;
+  setDraftOutline: (items: PlanningOutlineItem[]) => void;
+  setOutlineStale: (value: boolean) => void;
+  setActiveGenerationCard: (card: GenerationCardState | null) => void;
   getCurrentSlide: () => Slide | null;
 
   // Progressive generation actions
@@ -171,6 +197,10 @@ export const useAppStore = create<AppState>()(
       issuePanelSlideId: null,
       issueDecisionBySlideId: {},
       chatMessages: [],
+      planningState: null,
+      draftOutline: [],
+      outlineStale: false,
+      activeGenerationCard: null,
 
       // Create view state
       workspaceSources: [],
@@ -215,7 +245,7 @@ export const useAppStore = create<AppState>()(
           currentSessionId: id,
           topic: getSessionTopicDraft(state.sessionTopicDrafts, id),
         })),
-      setSessionData: ({ sources, chatMessages, presentation }) =>
+      setSessionData: ({ sources, chatMessages, presentation, planningState }) =>
         set((state) => ({
           selectedSourceIds: sources
             .filter((s) => s.status === "ready")
@@ -226,6 +256,23 @@ export const useAppStore = create<AppState>()(
           ),
           chatMessages,
           presentation,
+          planningState: planningState ?? null,
+          draftOutline: Array.isArray(planningState?.outline?.items)
+            ? planningState.outline.items
+            : [],
+          outlineStale: Boolean(planningState?.outline_stale),
+          activeGenerationCard:
+            planningState?.active_job_id && state.currentSessionId
+              ? {
+                  jobId: planningState.active_job_id,
+                  status: planningState.status,
+                  currentStage: state.currentStage,
+                  sessionTitle:
+                    state.sessions.find((session) => session.id === state.currentSessionId)
+                      ?.title || "未命名会话",
+                  updatedAt: planningState.updated_at || null,
+                }
+              : null,
           currentSlideIndex: 0,
           hardIssueSlideIds: [],
           advisoryIssueCount: 0,
@@ -287,6 +334,16 @@ export const useAppStore = create<AppState>()(
           fixPreviewSourceIds: patch.fixPreviewSourceIds ?? state.fixPreviewSourceIds,
           selectedFixPreviewSlideIds:
             patch.selectedFixPreviewSlideIds ?? state.selectedFixPreviewSlideIds,
+          activeGenerationCard:
+            state.activeGenerationCard &&
+            (patch.jobId ?? state.jobId) === state.activeGenerationCard.jobId
+              ? {
+                  ...state.activeGenerationCard,
+                  status: patch.jobStatus ?? state.jobStatus ?? state.activeGenerationCard.status,
+                  currentStage:
+                    patch.currentStage ?? state.currentStage ?? state.activeGenerationCard.currentStage,
+                }
+              : state.activeGenerationCard,
         })),
       resetJobState: () =>
         set({
@@ -362,6 +419,50 @@ export const useAppStore = create<AppState>()(
       addChatMessage: (msg) =>
         set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
       setChatMessages: (messages) => set({ chatMessages: messages }),
+      setPlanningState: (planningState) =>
+        set((state) => ({
+          planningState,
+          draftOutline: Array.isArray(planningState?.outline?.items)
+            ? planningState.outline.items
+            : [],
+          outlineStale: Boolean(planningState?.outline_stale),
+          activeGenerationCard:
+            planningState?.active_job_id
+              ? {
+                  jobId: planningState.active_job_id,
+                  status: planningState.status,
+                  currentStage:
+                    state.activeGenerationCard?.jobId === planningState.active_job_id
+                      ? state.activeGenerationCard.currentStage
+                      : state.currentStage,
+                  sessionTitle:
+                    state.sessions.find((session) => session.id === state.currentSessionId)
+                      ?.title || "未命名会话",
+                  updatedAt: planningState.updated_at || null,
+                }
+              : null,
+        })),
+      setDraftOutline: (items) =>
+        set((state) => ({
+          draftOutline: items,
+          planningState: state.planningState
+            ? {
+                ...state.planningState,
+                outline: {
+                  ...(state.planningState.outline || {}),
+                  items,
+                },
+              }
+            : state.planningState,
+        })),
+      setOutlineStale: (value) =>
+        set((state) => ({
+          outlineStale: value,
+          planningState: state.planningState
+            ? { ...state.planningState, outline_stale: value }
+            : state.planningState,
+        })),
+      setActiveGenerationCard: (card) => set({ activeGenerationCard: card }),
 
       getCurrentSlide: () => {
         const { presentation, currentSlideIndex } = get();

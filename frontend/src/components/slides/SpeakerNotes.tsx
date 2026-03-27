@@ -55,14 +55,14 @@ export default function SpeakerNotes({ notes }: SpeakerNotesProps) {
   };
 
   return (
-    <div className="border-t bg-muted/30 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-sm font-medium">演讲者注释</span>
+    <div className="zy-card-inner border-white/80 bg-white/72 p-4 shadow-[0_20px_50px_-40px_rgba(15,23,42,0.35)]">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm font-medium text-slate-800">演讲者注释</span>
         <button
           type="button"
           onClick={handlePlay}
           disabled={loading}
-          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+          className="rounded-md p-1 text-slate-500 transition-colors hover:bg-white/80 hover:text-slate-800 disabled:opacity-50"
           title={playing ? "停止朗读" : "朗读注释"}
         >
           {loading ? (
@@ -74,7 +74,7 @@ export default function SpeakerNotes({ notes }: SpeakerNotesProps) {
           )}
         </button>
       </div>
-      <p className="text-sm text-muted-foreground leading-relaxed">{notes}</p>
+      <p className="text-sm leading-relaxed text-slate-600">{notes}</p>
     </div>
   );
 }

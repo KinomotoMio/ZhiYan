@@ -222,6 +222,11 @@ async def chat(req: ChatRequest, request: Request):
                         session_id=req.session_id,
                         role="user",
                         content=req.message,
+                        model_meta={
+                            "phase": "editor",
+                            "message_kind": "user_turn",
+                            "action_hint": req.action_hint,
+                        },
                     )
                     if assistant_text:
                         await session_store.add_chat_message(
@@ -229,6 +234,11 @@ async def chat(req: ChatRequest, request: Request):
                             session_id=req.session_id,
                             role="assistant",
                             content=assistant_text,
+                            model_meta={
+                                "phase": "editor",
+                                "message_kind": "assistant_reply",
+                                "action_hint": req.action_hint,
+                            },
                         )
                 except Exception as e:
                     logger.warning("persist chat message failed: %s", e)

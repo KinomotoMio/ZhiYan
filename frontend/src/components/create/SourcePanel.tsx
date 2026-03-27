@@ -61,11 +61,25 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
       const role = item.role === "assistant" ? "assistant" : "user";
       const content = typeof item.content === "string" ? item.content : "";
       const createdAt = typeof item.created_at === "string" ? item.created_at : "";
+      const modelMeta =
+        item.model_meta && typeof item.model_meta === "object"
+          ? (item.model_meta as Record<string, unknown>)
+          : {};
       return {
         id: typeof item.id === "string" ? item.id : `msg-${Math.random().toString(36).slice(2)}`,
         role,
         content,
         timestamp: Date.parse(createdAt) || Date.now(),
+        phase: typeof modelMeta.phase === "string" ? modelMeta.phase : undefined,
+        messageKind:
+          typeof modelMeta.message_kind === "string"
+            ? modelMeta.message_kind
+            : undefined,
+        outlineVersion:
+          typeof modelMeta.outline_version === "number"
+            ? modelMeta.outline_version
+            : null,
+        jobId: typeof modelMeta.job_id === "string" ? modelMeta.job_id : null,
       } as ChatMessage;
     })
     .filter((item) => item.content.trim().length > 0);
@@ -104,6 +118,8 @@ export default function SourcePanel() {
     setSessionData,
     updateJobState,
     setIsGenerating,
+    planningState,
+    setOutlineStale,
     workspaceSources,
     setWorkspaceSources,
     addWorkspaceSource,
@@ -232,6 +248,7 @@ export default function SourcePanel() {
         sources: detail.sources,
         chatMessages,
         presentation: hydratedPresentation,
+        planningState: detail.planning_state ?? null,
       });
       if (detail.latest_generation_job?.job_id) {
         updateJobState({
@@ -447,6 +464,9 @@ export default function SourcePanel() {
           addSelectedSource(meta.id);
           await refreshWorkspaceSources();
           refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
+          if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+            setOutlineStale(true);
+          }
           if (meta.deduped) {
             toast.info("检测到重复素材，已复用已有内容");
           }
@@ -462,9 +482,11 @@ export default function SourcePanel() {
       addSelectedSource,
       addWorkspaceSource,
       ensureSession,
+      planningState?.outline?.items,
       refreshSessions,
       refreshWorkspaceSources,
       removeWorkspaceSource,
+      setOutlineStale,
       updateWorkspaceSource,
     ]
   );
@@ -487,6 +509,9 @@ export default function SourcePanel() {
         addSelectedSource(meta.id);
         await refreshWorkspaceSources();
         refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
+        if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+          setOutlineStale(true);
+        }
         if (meta.deduped) {
           toast.info("检测到重复素材，已复用已有内容");
         }
@@ -498,9 +523,11 @@ export default function SourcePanel() {
       addSelectedSource,
       addWorkspaceSource,
       ensureSession,
+      planningState?.outline?.items,
       refreshSessions,
       refreshWorkspaceSources,
       removeWorkspaceSource,
+      setOutlineStale,
       updateWorkspaceSource,
     ]
   );
@@ -514,6 +541,9 @@ export default function SourcePanel() {
         removeSelectedSource(sourceId);
         try {
           await unlinkSourceFromSession(sessionId, sourceId);
+          if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+            setOutlineStale(true);
+          }
         } catch {
           addSelectedSource(sourceId);
           toast.error("取消关联失败，请稍后重试");
@@ -522,6 +552,9 @@ export default function SourcePanel() {
         addSelectedSource(sourceId);
         try {
           await linkSourcesToSession(sessionId, [sourceId]);
+          if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+            setOutlineStale(true);
+          }
         } catch {
           removeSelectedSource(sourceId);
           toast.error("关联素材失败，请稍后重试");
@@ -534,8 +567,10 @@ export default function SourcePanel() {
       ensureSession,
       effectiveSelectedSourceIds,
       isBootstrapping,
+      planningState?.outline?.items,
       refreshSessions,
       removeSelectedSource,
+      setOutlineStale,
     ]
   );
 
@@ -558,6 +593,9 @@ export default function SourcePanel() {
           })
         )
       );
+      if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+        setOutlineStale(true);
+      }
       refreshSessions().catch((err) => { console.error("Failed to refresh sessions:", err); });
       return;
     }
@@ -569,6 +607,9 @@ export default function SourcePanel() {
     selectAllSources();
     try {
       await linkSourcesToSession(sessionId, toLink);
+      if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+        setOutlineStale(true);
+      }
     } catch {
       toLink.forEach((id) => removeSelectedSource(id));
       toast.error("批量关联失败，请稍后重试");
@@ -581,9 +622,11 @@ export default function SourcePanel() {
     ensureSession,
     effectiveSelectedSourceIds,
     isBootstrapping,
+    planningState?.outline?.items,
     readySources,
     refreshSessions,
     removeSelectedSource,
+    setOutlineStale,
     selectAllSources,
   ]);
 
@@ -638,9 +681,9 @@ export default function SourcePanel() {
 
   return (
     <>
-      <div
+        <div
         className={cn(
-          "relative flex w-[340px] shrink-0 flex-col border-r border-white/60 bg-card/60 backdrop-blur-md",
+          "relative flex w-[332px] shrink-0 flex-col border-r border-white/55 bg-white/34 backdrop-blur-xl",
           isDragOver && "ring-2 ring-inset ring-cyan-500/50"
         )}
         onDragOver={handleDragOver}
@@ -655,7 +698,7 @@ export default function SourcePanel() {
           </div>
         )}
 
-        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-3">
+        <div className="border-b border-white/55 px-4 pb-4 pt-5">
           <div className="flex items-center gap-2">
             {readySources.length > 0 && (
               <input
@@ -669,30 +712,32 @@ export default function SourcePanel() {
                 aria-label="全选来源"
               />
             )}
-            <h2 className="text-sm font-semibold">素材库</h2>
+            <h2 className="text-sm font-semibold text-slate-900">素材库</h2>
           </div>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+          <p className="mt-1 text-xs leading-5 text-slate-500">
             {loadingWorkspaceSources
               ? "加载素材中..."
               : readySources.length > 0
-                ? `当前会话已勾选 ${selectedCount}/${readySources.length} 个可用素材`
-                : `共 ${workspaceSources.length} 条素材`}
+                ? `当前会话已选中 ${selectedCount}/${readySources.length} 份可用素材`
+                : `共 ${workspaceSources.length} 份素材`}
           </p>
         </div>
 
-        <div className="border-b border-slate-200 dark:border-slate-700 px-3 py-2">
+        <div className="border-b border-white/55 px-4 py-4">
           <input
             value={workspaceQuery}
             onChange={(e) => setWorkspaceQuery(e.target.value)}
             placeholder="检索素材..."
-            className="mb-2 h-8 w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            className="h-10 w-full rounded-2xl border border-white/90 bg-white/88 px-3 text-sm text-slate-700 shadow-[0_12px_24px_-24px_rgba(15,23,42,0.5)] outline-none transition placeholder:text-slate-400 focus:border-cyan-200 focus:ring-2 focus:ring-cyan-500/15"
           />
-          <div className="flex gap-1">
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               onClick={() => setSourceFilterMode("all")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs transition-colors",
-                sourceFilterMode === "all" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                sourceFilterMode === "all"
+                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
+                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
               )}
             >
               全部
@@ -700,24 +745,28 @@ export default function SourcePanel() {
             <button
               onClick={() => setSourceFilterMode("selected")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs transition-colors",
-                sourceFilterMode === "selected" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                sourceFilterMode === "selected"
+                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
+                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
               )}
             >
-              已勾选
+              已选择
             </button>
             <button
               onClick={() => setSourceFilterMode("unselected")}
               className={cn(
-                "rounded-md px-2 py-1 text-xs transition-colors",
-                sourceFilterMode === "unselected" ? "bg-slate-900 text-white shadow-sm dark:bg-slate-100 dark:text-slate-900" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                sourceFilterMode === "unselected"
+                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
+                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
               )}
             >
-              未勾选
+              未选择
             </button>
             <button
               onClick={() => router.push("/assets")}
-              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-foreground"
+              className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs text-slate-500 transition hover:bg-white/70 hover:text-slate-700"
             >
               <FolderOpen className="h-3.5 w-3.5" />
               管理素材库
@@ -725,14 +774,16 @@ export default function SourcePanel() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 py-2">
+        <div className="flex-1 overflow-y-auto px-4 py-4">
           {visibleSources.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-slate-500 dark:text-slate-400">
-              <p>当前没有可显示素材</p>
-              <p className="mt-1 text-xs">上传文档、粘贴网址，即可开始生成</p>
+            <div className="flex flex-col items-center justify-center px-5 py-12 text-center text-sm text-slate-500">
+              <p className="font-medium text-slate-700">这里还没有可用素材</p>
+              <p className="mt-2 text-xs leading-6">
+                上传文件或贴上链接后，就可以让知演围绕这些内容帮你整理演示结构。
+              </p>
             </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2.5">
               {visibleSources.map((source) => (
                 <SourceItem
                   key={source.id}
@@ -755,7 +806,7 @@ export default function SourcePanel() {
           )}
         </div>
 
-        <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-3">
+        <div className="border-t border-white/55 px-4 py-4">
           <AddSourceArea
             onFilesSelected={(files) => {
               void handleUploadFiles(files);

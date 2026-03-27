@@ -7,7 +7,6 @@ import json
 import logging
 from contextlib import suppress
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -23,8 +22,6 @@ from app.models.generation import (
     FixPreviewRequest,
     GenerationEvent,
     GenerationJob,
-    GenerationMode,
-    GenerationRequestData,
     JobActionResponse,
     JobStatus,
     SlidevMvpRequest,
@@ -33,8 +30,7 @@ from app.models.generation import (
     now_iso,
 )
 from app.services.generation import event_bus, generation_runner, job_store
-from app.services.generation.agent_workspace import build_agent_workspace
-from app.services.generation.loading_title import DEFAULT_LOADING_TITLE, build_loading_title
+from app.services.generation.job_factory import create_generation_job_record
 from app.services.generation.slidev_mvp import (
     SlidevMvpBuildError,
     SlidevMvpNotFoundError,
@@ -49,134 +45,25 @@ router = APIRouter(prefix="/generation", tags=["generation-v2"])
 logger = logging.getLogger(__name__)
 
 
-def _build_source_hints(
-    *,
-    source_ids: list[str],
-    source_metas: list[dict],
-) -> dict:
-    """Compute a coarse material inventory from source metas.
-
-    Keep this logic stable and explainable: it should never raise and should be
-    safe to omit (backward compatible).
-    """
-
-    by_category: dict[str, int] = {}
-    for meta in source_metas or []:
-        raw = meta.get("fileCategory")
-        category = str(raw).strip().lower() if raw else "unknown"
-        by_category[category] = by_category.get(category, 0) + 1
-
-    def count(*cats: str) -> int:
-        return sum(by_category.get(cat, 0) for cat in cats)
-
-    images = count("image")
-    slides = count("pptx")
-    documents = count("pdf", "docx", "markdown")
-    data = count("text")
-    unknown = len(source_ids or []) - (images + slides + documents + data)
-    if unknown < 0:
-        unknown = by_category.get("unknown", 0)
-
-    return {
-        "total_sources": int(len(source_ids or [])),
-        "images": int(images),
-        "documents": int(documents),
-        "slides": int(slides),
-        "data": int(data),
-        "unknown": int(unknown),
-        "by_file_category": by_category,
-    }
-
-
 @router.post("/jobs", response_model=CreateJobResponse)
 async def create_generation_job(req: CreateJobRequest, request: Request):
     workspace_id = get_workspace_id_from_request(request)
-    await session_store.ensure_workspace(workspace_id)
-
-    combined = req.content
-    session_id = req.session_id
-    if not session_id:
-        created_session = await session_store.create_session(workspace_id, "未命名会话")
-        session_id = created_session["id"]
-
     try:
-        session = await session_store.get_session(workspace_id, session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    if session.get("has_presentation"):
-        raise HTTPException(status_code=409, detail="当前会话已有演示稿，请新建会话生成")
-
-    if req.source_ids:
-        source_metas = await session_store.get_workspace_sources_by_ids(workspace_id, req.source_ids)
-        source_records = await session_store.get_workspace_source_records_by_ids(workspace_id, req.source_ids)
-        source_hints = _build_source_hints(source_ids=req.source_ids, source_metas=source_metas)
-        source_content = await session_store.get_combined_source_content(
-            workspace_id,
-            session_id,
-            req.source_ids,
+        job, session_id = await create_generation_job_record(
+            workspace_id=workspace_id,
+            req=req,
+            session_store_override=session_store,
+            job_store_override=job_store,
+            generation_runner_override=generation_runner,
         )
-        combined = f"{source_content}\n\n{combined}".strip() if combined else source_content
-    else:
-        source_hints = {}
-        source_metas = []
-        source_records = []
-
-    if not combined and not req.topic:
-        raise HTTPException(status_code=422, detail="请提供来源文档或主题描述")
-
-    loading_title = build_loading_title(
-        topic=req.topic or req.content,
-        source_names=[meta.get("name", "") for meta in source_metas],
-        fallback=DEFAULT_LOADING_TITLE,
-    )
-    await session_store.set_generated_title_if_unedited(
-        workspace_id,
-        session_id,
-        loading_title,
-    )
-
-    job_id = f"job-{uuid4().hex[:12]}"
-
-    job = GenerationJob(
-        job_id=job_id,
-        mode=req.mode,
-        status=JobStatus.PENDING,
-        request=GenerationRequestData(
-            topic=req.topic,
-            content=req.content,
-            session_id=session_id,
-            source_ids=req.source_ids,
-            source_hints=source_hints,
-            template_id=req.template_id,
-            num_pages=max(3, min(req.num_pages, settings.max_slide_pages)),
-            title=loading_title,
-            resolved_content=combined or req.topic,
-        ),
-        outline_accepted=req.mode == GenerationMode.AUTO,
-    )
-    workspace_bundle = build_agent_workspace(
-        root=settings.project_root / "data" / "agentic-runs" / job_id,
-        request_payload={
-            "job_id": job_id,
-            "workspace_id": workspace_id,
-            "session_id": session_id,
-            "topic": req.topic,
-            "content": req.content,
-            "source_ids": list(req.source_ids),
-            "template_id": req.template_id,
-            "num_pages": max(3, min(req.num_pages, settings.max_slide_pages)),
-            "mode": req.mode.value,
-            "title": loading_title,
-        },
-        source_records=source_records,
-    )
-    job.document_metadata["agent_workspace"] = workspace_bundle.to_metadata()
-    job.document_metadata["agent_workspace"]["workspace_id"] = workspace_id
-    job.document_metadata["agent_workspace"]["source_hints"] = source_hints
-
-    await job_store.create_job(job)
-    await session_store.save_generation_job(job.job_id, session_id, job.status.value)
-    await generation_runner.start_job(job_id)
+    except ValueError as e:
+        message = str(e)
+        status_code = 422
+        if "已有演示稿" in message:
+            status_code = 409
+        elif "不存在" in message:
+            status_code = 404
+        raise HTTPException(status_code=status_code, detail=message) from e
 
     return CreateJobResponse(
         job_id=job.job_id,

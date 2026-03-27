@@ -1,11 +1,14 @@
 import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
 
+from app.models.generation import JobStatus, StageStatus
 from app.main import app
+from app.services.planning import PlanningTurnOutcome
 
 
 def _install_temp_session_store(monkeypatch, tmp_path):
@@ -27,6 +30,18 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(workspaces_api, "session_store", store)
     monkeypatch.setattr(generation_api, "session_store", store)
     return store
+
+
+def _parse_sse_payloads(raw_text: str) -> list[dict]:
+    events: list[dict] = []
+    for line in raw_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if payload == "[DONE]":
+            continue
+        events.append(json.loads(payload))
+    return events
 
 
 def test_sessions_workspace_isolation_and_chat_persistence(monkeypatch, tmp_path):
@@ -218,6 +233,221 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert preserved_detail.status_code == 200
     assert preserved_detail.json()["session"]["title"] == "用户手动命名"
 
+
+def test_planning_turn_persists_outline_and_messages(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import sessions as sessions_api
+
+    async def _fake_handle_planning_turn(**kwargs):  # noqa: ARG001
+        return PlanningTurnOutcome(
+            assistant_message="我先起了一版 3 页大纲。",
+            brief={
+                "topic": "智能客服方案",
+                "_meta": {"clarification_turns": 1, "user_turns": 1},
+            },
+            outline={
+                "narrative_arc": "问题→方案→价值",
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "背景与目标",
+                        "content_brief": "交代现状与目标",
+                        "key_points": ["现状", "目标"],
+                        "suggested_slide_role": "cover",
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "方案设计",
+                        "content_brief": "说明方案模块",
+                        "key_points": ["架构", "流程"],
+                        "suggested_slide_role": "narrative",
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "预期价值",
+                        "content_brief": "总结收益",
+                        "key_points": ["效率", "满意度"],
+                        "suggested_slide_role": "closing",
+                    },
+                ],
+            },
+            outline_version_increment=1,
+            status="outline_ready",
+            events=[
+                {"type": "brief_updated", "brief": {"topic": "智能客服方案"}},
+                {"type": "outline_drafted", "outline": {"items": [{"title": "背景与目标"}]}},
+                {"type": "status_changed", "status": "outline_ready"},
+            ],
+        )
+
+    monkeypatch.setattr(sessions_api, "handle_planning_turn", _fake_handle_planning_turn)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-plan"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "planning"})
+    session_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/v1/sessions/{session_id}/planning/turns",
+        headers=headers,
+        json={"message": "做一个面向客服团队的智能客服方案汇报"},
+    )
+    assert response.status_code == 200
+    _ = response.text
+
+    planning_detail = client.get(f"/api/v1/sessions/{session_id}/planning", headers=headers)
+    assert planning_detail.status_code == 200
+    planning_json = planning_detail.json()
+    assert planning_json["planning_state"]["status"] == "outline_ready"
+    assert planning_json["planning_state"]["outline"]["items"][1]["title"] == "方案设计"
+    assert [item["role"] for item in planning_json["planning_messages"]] == ["user", "assistant"]
+
+    session_detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
+    assert session_detail.status_code == 200
+    assert session_detail.json()["planning_state"]["outline_version"] == 1
+
+    outline_patch = client.patch(
+        f"/api/v1/sessions/{session_id}/planning/outline",
+        headers=headers,
+        json={
+            "outline": {
+                "narrative_arc": "问题→方案→价值",
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "业务背景",
+                        "content_brief": "重新命名后的首页",
+                        "key_points": ["背景"],
+                        "suggested_slide_role": "cover",
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "方案设计",
+                        "content_brief": "说明方案模块",
+                        "key_points": ["架构", "流程"],
+                        "suggested_slide_role": "narrative",
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "预期价值",
+                        "content_brief": "总结收益",
+                        "key_points": ["效率", "满意度"],
+                        "suggested_slide_role": "closing",
+                    },
+                ],
+            }
+        },
+    )
+    assert outline_patch.status_code == 200
+    assert outline_patch.json()["outline_version"] == 2
+    assert outline_patch.json()["outline"]["items"][0]["title"] == "业务背景"
+
+
+def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import sessions as sessions_api
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-plan-confirm"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "planning"})
+    session_id = created.json()["id"]
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "素材", "content": "智能客服建设方案"},
+    )
+    source_id = source_resp.json()["id"]
+    link_resp = client.post(
+        f"/api/v1/sessions/{session_id}/sources/link",
+        headers=headers,
+        json={"source_ids": [source_id]},
+    )
+    assert link_resp.status_code == 200
+
+    asyncio.run(
+        store.save_planning_state(
+            workspace_id="ws-plan-confirm",
+            session_id=session_id,
+            status="outline_ready",
+            brief={"topic": "智能客服方案", "_meta": {"clarification_turns": 1, "user_turns": 1}},
+            outline={
+                "narrative_arc": "问题→方案→价值",
+                "items": [
+                    {
+                        "slide_number": 1,
+                        "title": "业务背景",
+                        "content_brief": "说明客服现状",
+                        "key_points": ["背景"],
+                        "suggested_slide_role": "cover",
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "方案设计",
+                        "content_brief": "说明方案模块",
+                        "key_points": ["架构", "流程"],
+                        "suggested_slide_role": "narrative",
+                    },
+                    {
+                        "slide_number": 3,
+                        "title": "预期价值",
+                        "content_brief": "总结收益",
+                        "key_points": ["效率", "满意度"],
+                        "suggested_slide_role": "closing",
+                    },
+                ],
+            },
+            outline_version=2,
+            source_ids=[source_id],
+            outline_stale=False,
+            active_job_id=None,
+        )
+    )
+
+    captured = {}
+
+    async def _fake_create_generation_job_record(*, workspace_id, req, **kwargs):
+        captured["workspace_id"] = workspace_id
+        captured["req"] = req
+        return (
+            SimpleNamespace(
+                job_id="job-approved-outline",
+                status=JobStatus.PENDING,
+                current_stage=None,
+            ),
+            session_id,
+        )
+
+    monkeypatch.setattr(
+        sessions_api,
+        "create_generation_job_record",
+        _fake_create_generation_job_record,
+    )
+
+    confirm = client.post(
+        f"/api/v1/sessions/{session_id}/planning/confirm",
+        headers=headers,
+    )
+    assert confirm.status_code == 200
+    payload = confirm.json()
+    assert payload["job_id"] == "job-approved-outline"
+    assert payload["status"] == "running"
+    assert payload["current_stage"] == StageStatus.LAYOUT.value
+
+    req = captured["req"]
+    assert req.session_id == session_id
+    assert req.topic == "智能客服方案"
+    assert req.num_pages == 3
+    assert req.approved_outline["items"][0]["title"] == "业务背景"
+
+    detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
+    assert detail.status_code == 200
+    planning_state = detail.json()["planning_state"]
+    assert planning_state["status"] == "generating"
+    assert planning_state["active_job_id"] == "job-approved-outline"
+
     presentation = {
         "presentationId": "pres-ready",
         "title": "已有稿件",
@@ -233,14 +463,14 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     }
     saved = client.put(
         f"/api/v1/sessions/{session_id}/presentations/latest",
-        headers=h1,
+        headers=headers,
         json={"presentation": presentation, "source": "chat"},
     )
     assert saved.status_code == 200
 
     create_conflict = client.post(
         "/api/v2/generation/jobs",
-        headers=h1,
+        headers=headers,
         json={
             "topic": "禁止在已有稿件会话生成",
             "session_id": session_id,

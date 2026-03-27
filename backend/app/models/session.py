@@ -1,5 +1,7 @@
 """Session API models."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.models.source import SourceMeta
@@ -48,9 +50,33 @@ class LatestGenerationJobMeta(BaseModel):
     updated_at: str
 
 
+class PlanningOutlineItem(BaseModel):
+    slide_number: int
+    title: str
+    content_brief: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    content_hints: list[str] = Field(default_factory=list)
+    source_references: list[str] = Field(default_factory=list)
+    suggested_slide_role: str = "narrative"
+    note: str = ""
+
+
+class PlanningState(BaseModel):
+    session_id: str
+    status: str = "collecting_requirements"
+    brief: dict[str, Any] = Field(default_factory=dict)
+    outline: dict[str, Any] = Field(default_factory=dict)
+    outline_version: int = 0
+    source_ids: list[str] = Field(default_factory=list)
+    outline_stale: bool = False
+    active_job_id: str | None = None
+    updated_at: str
+
+
 class SessionDetail(BaseModel):
     session: SessionSummary
     sources: list[SourceMeta] = Field(default_factory=list)
     chat_messages: list[ChatRecord] = Field(default_factory=list)
     latest_presentation: dict | None = None
     latest_generation_job: LatestGenerationJobMeta | None = None
+    planning_state: PlanningState | None = None
