@@ -11,7 +11,7 @@ from app.models.generation import EventType, TERMINAL_EVENTS
 from app.services.generation.agent_adapter import AgentOutline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
-from app.services.generation.legacy.deck_adapter import AgentDeck
+from app.models.slide import Presentation
 from app.services.generation.runner import GenerationRunner
 from app.services.sessions.store import SessionStore
 
@@ -56,44 +56,53 @@ def _patch_fast_agentloop(monkeypatch, runner: GenerationRunner):
             }
         )
 
-    async def fake_deck(_job, _state):
-        return AgentDeck.model_validate(
-            {
-                "title": "测试主题",
-                "slides": [
-                    {"slideNumber": 1, "title": "封面", "role": "cover", "layoutHint": "intro-slide"},
-                    {
-                        "slideNumber": 2,
+    async def fake_presentation(_job, _state):
+        payload = {
+            "presentationId": "pres-test",
+            "title": "测试主题",
+            "slides": [
+                {
+                    "slideId": "slide-1",
+                    "layoutType": "intro-slide",
+                    "layoutId": "intro-slide",
+                    "contentData": {"title": "封面", "subtitle": "测试主题"},
+                },
+                {
+                    "slideId": "slide-2",
+                    "layoutType": "outline-slide-rail",
+                    "layoutId": "outline-slide-rail",
+                    "contentData": {
                         "title": "目录",
-                        "role": "agenda",
-                        "layoutHint": "outline-slide-rail",
                         "sections": [{"title": "内容", "description": "展开说明"}],
                     },
-                    {
-                        "slideNumber": 3,
+                },
+                {
+                    "slideId": "slide-3",
+                    "layoutType": "numbered-bullets",
+                    "layoutId": "numbered-bullets",
+                    "contentData": {
                         "title": "内容",
-                        "role": "process",
-                        "layoutHint": "numbered-bullets",
-                        "steps": [
+                        "items": [
                             {"title": "读取素材", "description": "读取工作区素材摘要与正文"},
-                            {"title": "填充模板", "description": "按 layout-native schema 直接生成页面"},
+                            {"title": "填充模板", "description": "按最终 schema 直接生成页面"},
                             {"title": "适配编辑器", "description": "输出当前 presentation payload"},
                         ],
                     },
-                ],
-            }
-        )
+                },
+            ],
+        }
+        return payload, Presentation.model_validate(payload)
 
     async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
         if progress:
             await progress("verify", 1, 1, "验证布局质量...")
         state.verification_issues = []
     monkeypatch.setattr(runner, "_generate_outline_with_agent", fake_outline)
-    monkeypatch.setattr(runner, "_generate_deck_with_agent", fake_deck)
+    monkeypatch.setattr(runner, "_generate_presentation_with_agent", fake_presentation)
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
 
 
-def test_generation_v1_stream_protocol_sequence(monkeypatch, tmp_path):
+def test_generation_stream_protocol_sequence(monkeypatch, tmp_path):
     _, runner = _install_runtime(monkeypatch, tmp_path)
     _patch_fast_agentloop(monkeypatch, runner)
     monkeypatch.setattr(settings, "project_root", tmp_path)
@@ -149,7 +158,7 @@ def test_generation_v1_stream_protocol_sequence(monkeypatch, tmp_path):
     assert len(body["slides"]) == 3
 
 
-def test_generation_v1_stream_protocol_heartbeat(monkeypatch, tmp_path):
+def test_generation_stream_protocol_heartbeat(monkeypatch, tmp_path):
     store, runner = _install_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "sse_heartbeat_seconds", 0.1)
 
@@ -185,7 +194,7 @@ def test_generation_v1_stream_protocol_heartbeat(monkeypatch, tmp_path):
     assert EventType.HEARTBEAT.value in first_chunk
 
 
-def test_generation_v1_stream_after_seq_skips_old_terminal_event(monkeypatch, tmp_path):
+def test_generation_stream_after_seq_skips_old_terminal_event(monkeypatch, tmp_path):
     store, _runner = _install_runtime(monkeypatch, tmp_path)
 
     from app.api.v1 import sessions as sessions_api
@@ -253,7 +262,7 @@ def test_generation_v1_stream_after_seq_skips_old_terminal_event(monkeypatch, tm
     asyncio.run(_case())
 
 
-def test_generation_v1_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_path):
+def test_generation_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_path):
     store, _runner = _install_runtime(monkeypatch, tmp_path)
 
     from app.api.v1 import sessions as sessions_api

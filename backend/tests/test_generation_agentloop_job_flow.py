@@ -75,57 +75,64 @@ def _outline_payload(page_count: int) -> dict:
     }
 
 
-def _deck_payload(page_count: int) -> dict:
+def _presentation_payload(page_count: int) -> dict:
     slides = [
         {
-            "slideNumber": 1,
-            "title": "AI Agent Runtime 架构演进",
-            "role": "cover",
-            "layoutHint": "intro-slide",
-            "subtitle": "从简单调用，到可控工作区，再到长期演进内核",
+            "slideId": "slide-1",
+            "layoutType": "intro-slide",
+            "layoutId": "intro-slide",
+            "contentData": {
+                "title": "AI Agent Runtime 架构演进",
+                "subtitle": "从简单调用，到可控工作区，再到长期演进内核",
+            },
         },
         {
-            "slideNumber": 2,
-            "title": "这次迁移先解决什么",
-            "role": "agenda",
-            "layoutHint": "outline-slide-rail",
-            "sections": [
-                {"title": "复用创建页入口", "description": "不改现有按钮和 editor 壳"},
-                {"title": "给 job 建 workspace", "description": "把 source manifest 和文本素材落盘"},
-                {"title": "单阶段生成", "description": "auto 模式直接进 deck，不再先出 outline"},
-                {"title": "强模板适配", "description": "按 layout-native schema 直接填充模板"},
-            ],
+            "slideId": "slide-2",
+            "layoutType": "outline-slide-rail",
+            "layoutId": "outline-slide-rail",
+            "contentData": {
+                "title": "这次迁移先解决什么",
+                "sections": [
+                    {"title": "复用创建页入口", "description": "不改现有按钮和 editor 壳"},
+                    {"title": "给 job 建 workspace", "description": "把 source manifest 和文本素材落盘"},
+                    {"title": "单阶段生成", "description": "auto 模式直接进 presentation，不再先出 outline"},
+                    {"title": "强模板适配", "description": "直接按最终 schema 填充页面"},
+                ],
+            },
         },
     ]
     for slide_number in range(3, page_count):
         slides.append(
             {
-                "slideNumber": slide_number,
-                "title": f"核心阶段 {slide_number - 2}",
-                "role": "narrative",
-                "layoutHint": "bullet-with-icons-cards",
-                "items": [
-                    {"title": "工作区可读", "description": "Agent 通过文件工具读素材而不是只吃拼接文本"},
-                    {"title": "模板直填", "description": "直接按 layout-native schema 产出可展示内容"},
-                    {"title": "状态机兼容", "description": "继续复用 job、SSE、editor hydrate"},
-                    {"title": "输出可替换", "description": "当前 presentation 只是前端适配层"},
-                ],
+                "slideId": f"slide-{slide_number}",
+                "layoutType": "bullet-with-icons-cards",
+                "layoutId": "bullet-with-icons-cards",
+                "contentData": {
+                    "title": f"核心阶段 {slide_number - 2}",
+                    "items": [
+                        {"title": "工作区可读", "description": "Agent 通过文件工具读素材而不是只吃拼接文本"},
+                        {"title": "模板直填", "description": "直接按最终 schema 产出可展示内容"},
+                        {"title": "状态机兼容", "description": "继续复用 job、SSE、editor hydrate"},
+                        {"title": "输出可替换", "description": "当前 presentation 只是前端适配层"},
+                    ],
+                },
                 "speakerNotes": "强调这是临时适配，不是最终表示。",
             }
         )
     slides.append(
         {
-            "slideNumber": page_count,
-            "title": "谢谢",
-            "role": "closing",
-            "layoutHint": "thank-you",
-            "subtitle": "第一步先把创建页按钮打通，后面再升级 deck IR。",
+            "slideId": f"slide-{page_count}",
+            "layoutType": "thank-you",
+            "layoutId": "thank-you",
+            "contentData": {
+                "title": "谢谢",
+                "subtitle": "第一步先把创建页按钮打通，后面再继续升级生成表示。",
+            },
         }
     )
     return {
         "title": "AI Agent Runtime 架构演进",
-        "subtitle": "From Workflow to Runtime",
-        "storyline": "先打通当前入口，再逐步解耦 presentation adapter。",
+        "theme": {"primaryColor": "#5B8CFF"},
         "slides": slides,
     }
 
@@ -148,20 +155,20 @@ def _outline_model(page_count: int) -> FakeModel:
     )
 
 
-def _deck_model(page_count: int) -> FakeModel:
-    payload = _deck_payload(page_count)
+def _presentation_model(page_count: int) -> FakeModel:
+    payload = _presentation_payload(page_count)
     return FakeModel(
         responses=[
             AssistantMessage(
                 tool_calls=[
                     ToolCall(
-                        tool_name="submit_deck",
+                        tool_name="submit_presentation",
                         args=payload,
-                        tool_call_id="call-submit-deck",
+                        tool_call_id="call-submit-presentation",
                     )
                 ]
             ),
-            AssistantMessage(content="deck submitted"),
+            AssistantMessage(content="presentation submitted"),
         ]
     )
 
@@ -235,8 +242,8 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
 
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
 
-    deck_model = _deck_model(4)
-    models = [deck_model]
+    presentation_model = _presentation_model(4)
+    models = [presentation_model]
 
     def fake_model_factory():
         return models.pop(0)
@@ -283,23 +290,23 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     assert body["presentation"] is not None
     assert body["presentation"]["slides"][0]["layoutType"] == "intro-slide"
     workspace_root = Path(body["document_metadata"]["agent_workspace"]["root"])
-    assert (workspace_root / "artifacts" / "deck.json").exists()
+    assert (workspace_root / "artifacts" / "presentation.json").exists()
 
     agent_debug = body["document_metadata"]["agent_debug"]
     assert Path(agent_debug["root"]).exists()
     assert sorted(agent_debug["files"]) == [
-        "model-deck-request.json",
-        "model-deck-response.json",
+        "model-presentation-request.json",
+        "model-presentation-response.json",
         "runner-trace.json",
-        "session-deck.json",
+        "session-presentation.json",
         "tool-trace.ndjson",
     ]
-    assert agent_debug["runs"]["deck"]["stop_reason"] == "completed"
-    assert body["document_metadata"]["agent_outputs"]["deck_metadata"]["deprecated"] is True
-    assert body["document_metadata"]["agent_outputs"]["deck_metadata"]["path_kind"] == "legacy_deck"
-    assert (workspace_root / "artifacts" / "debug" / "session-deck.json").exists()
+    assert agent_debug["runs"]["presentation"]["stop_reason"] == "completed"
+    assert "deck_metadata" not in body["document_metadata"]["agent_outputs"]
+    assert "presentation" in body["document_metadata"]["agent_outputs"]
+    assert (workspace_root / "artifacts" / "debug" / "session-presentation.json").exists()
     assert (workspace_root / "artifacts" / "debug" / "runner-trace.json").exists()
-    assert set(tool["name"] for tool in deck_model.seen_tools[0]) == {"read_file", "submit_deck"}
+    assert set(tool["name"] for tool in presentation_model.seen_tools[0]) == {"read_file", "submit_presentation"}
 
 
 def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):
@@ -318,7 +325,7 @@ def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_pa
 
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
 
-    models = [_outline_model(4), _deck_model(4)]
+    models = [_outline_model(4), _presentation_model(4)]
 
     def fake_model_factory():
         return models.pop(0)
