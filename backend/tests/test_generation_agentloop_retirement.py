@@ -40,3 +40,8 @@ def test_active_agent_adapter_no_longer_exposes_deck_types():
     assert "class AgentDeck" not in text
     assert "deck_to_slides" not in text
     assert "deck_to_layout_selections" not in text
+
+
+def test_legacy_deck_adapter_is_removed():
+    root = Path(__file__).resolve().parents[1] / "app" / "services" / "generation" / "legacy"
+    assert not (root / "deck_adapter.py").exists()
