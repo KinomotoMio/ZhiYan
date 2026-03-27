@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from app.services.html_deck import normalize_html_deck
 from app.services.presentations import normalize_presentation_payload
+from app.services.slidev import parse_slidev_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -1304,6 +1305,8 @@ class SessionStore:
         snapshot_label: str | None = None,
         output_mode: str | None = None,
         html_deck: dict | None = None,
+        slidev_deck: dict | None = None,
+        slidev_build: dict | None = None,
     ) -> dict:
         now = _now_iso()
         pid = f"sp-{uuid4().hex[:12]}"
@@ -1317,6 +1320,8 @@ class SessionStore:
                 snapshot_label,
                 output_mode,
                 html_deck,
+                slidev_deck,
+                slidev_build,
                 now,
             )
 
@@ -1329,6 +1334,8 @@ class SessionStore:
         snapshot_label: str | None,
         output_mode: str | None,
         html_deck: dict | None,
+        slidev_deck: dict | None,
+        slidev_build: dict | None,
         now: str,
     ) -> dict:
         stored_payload = dict(payload or {})
@@ -1353,6 +1360,31 @@ class SessionStore:
                 artifacts = stored_payload.get("artifacts")
                 artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
                 artifacts_dict["html_deck"] = artifact_meta
+                stored_payload["artifacts"] = artifacts_dict
+            if slidev_deck is not None:
+                deck_meta = self._persist_slidev_deck_artifact_sync(
+                    session_id=session_id,
+                    presentation_id=presentation_id,
+                    version_no=version_no,
+                    slidev_deck=slidev_deck,
+                    fallback_title=normalized_title or "新演示文稿",
+                    now=now,
+                )
+                artifacts = stored_payload.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
+                artifacts_dict["slidev_deck"] = deck_meta
+                stored_payload["artifacts"] = artifacts_dict
+            if slidev_build is not None:
+                build_meta = self._persist_slidev_build_artifact_sync(
+                    session_id=session_id,
+                    presentation_id=presentation_id,
+                    version_no=version_no,
+                    slidev_build=slidev_build,
+                    now=now,
+                )
+                artifacts = stored_payload.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
+                artifacts_dict["slidev_build"] = build_meta
                 stored_payload["artifacts"] = artifacts_dict
             conn.execute(
                 """
@@ -1553,6 +1585,90 @@ class SessionStore:
             }
         return html, meta
 
+    async def get_latest_slidev_deck(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_slidev_deck_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_slidev_deck_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        latest = self._get_latest_presentation_sync(workspace_id, session_id)
+        if not latest:
+            return None
+        artifacts = latest.get("artifacts")
+        deck = artifacts.get("slidev_deck") if isinstance(artifacts, dict) else None
+        if not isinstance(deck, dict):
+            return None
+        storage_path = str(deck.get("storage_path") or "").strip()
+        meta_path = str(deck.get("meta_storage_path") or "").strip()
+        if not storage_path:
+            return None
+        markdown_path = Path(storage_path)
+        if not markdown_path.exists():
+            return None
+        markdown = markdown_path.read_text(encoding="utf-8")
+        meta: dict[str, Any] = {}
+        if meta_path:
+            meta_file = Path(meta_path)
+            if meta_file.exists():
+                with suppress(Exception):
+                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        if not meta:
+            parsed = parse_slidev_markdown(
+                markdown=markdown,
+                fallback_title=latest.get("presentation", {}).get("title") or "新演示文稿",
+            )
+            meta = {
+                "title": parsed["title"],
+                "slide_count": parsed["slide_count"],
+                "slides": parsed["slides"],
+            }
+        return markdown, meta
+
+    async def get_latest_slidev_build(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_slidev_build_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_slidev_build_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        latest = self._get_latest_presentation_sync(workspace_id, session_id)
+        if not latest:
+            return None
+        artifacts = latest.get("artifacts")
+        build = artifacts.get("slidev_build") if isinstance(artifacts, dict) else None
+        if not isinstance(build, dict):
+            return None
+        entry_storage_path = str(build.get("entry_storage_path") or "").strip()
+        build_root = str(build.get("build_root") or "").strip()
+        if not entry_storage_path or not build_root:
+            return None
+        entry_path = Path(entry_storage_path)
+        root_path = Path(build_root)
+        if not entry_path.exists() or not root_path.exists():
+            return None
+        return build
+
     @staticmethod
     def _extract_output_mode(payload: dict | None) -> str:
         if not isinstance(payload, dict):
@@ -1601,6 +1717,76 @@ class SessionStore:
             "updated_at": now,
             "storage_path": str(html_path.resolve()),
             "meta_storage_path": str(meta_path.resolve()),
+        }
+
+    def _persist_slidev_deck_artifact_sync(
+        self,
+        *,
+        session_id: str,
+        presentation_id: str,
+        version_no: int,
+        slidev_deck: dict,
+        fallback_title: str,
+        now: str,
+    ) -> dict[str, Any]:
+        markdown = str(slidev_deck.get("markdown") or "").strip()
+        if not markdown:
+            raise ValueError("Slidev deck markdown is empty.")
+        raw_meta = slidev_deck.get("meta")
+        meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+        if not meta:
+            parsed = parse_slidev_markdown(markdown=markdown, fallback_title=fallback_title)
+            meta = {
+                "title": parsed["title"],
+                "slide_count": parsed["slide_count"],
+                "slides": parsed["slides"],
+            }
+        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "slidev"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        markdown_path = artifact_dir / "slides.md"
+        meta_path = artifact_dir / "slides.meta.json"
+        markdown_path.write_text(markdown, encoding="utf-8")
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "version": version_no,
+            "slide_count": int(meta.get("slide_count") or 0),
+            "updated_at": now,
+            "storage_path": str(markdown_path.resolve()),
+            "meta_storage_path": str(meta_path.resolve()),
+            "selected_style_id": slidev_deck.get("selected_style_id"),
+        }
+
+    def _persist_slidev_build_artifact_sync(
+        self,
+        *,
+        session_id: str,
+        presentation_id: str,
+        version_no: int,
+        slidev_build: dict,
+        now: str,
+    ) -> dict[str, Any]:
+        build_root = Path(str(slidev_build.get("build_root") or "").strip())
+        entry_path = Path(str(slidev_build.get("entry_path") or "").strip())
+        if not build_root.exists() or not entry_path.exists():
+            raise ValueError("Slidev build artifact is missing.")
+        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "slidev-build"
+        if artifact_dir.exists():
+            shutil.rmtree(artifact_dir)
+        shutil.copytree(build_root, artifact_dir)
+        copied_entry = artifact_dir / entry_path.relative_to(build_root)
+        slide_count = slidev_build.get("slide_count")
+        if not isinstance(slide_count, int):
+            slide_count = int(slidev_build.get("meta", {}).get("slide_count") or 0)
+        return {
+            "version": version_no,
+            "slide_count": slide_count,
+            "updated_at": now,
+            "build_root": str(artifact_dir.resolve()),
+            "entry_storage_path": str(copied_entry.resolve()),
+            "entry_relative_path": str(copied_entry.relative_to(artifact_dir)),
         }
 
     async def get_planning_state(

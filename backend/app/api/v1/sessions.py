@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from pathlib import Path
+import shutil
+import tempfile
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -44,6 +47,7 @@ from app.services.planning import (
 )
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
+from app.services.slidev import finalize_slidev_deck
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -68,6 +72,64 @@ class SessionChatWriteRequest(BaseModel):
     role: str
     content: str
     model_meta: dict = Field(default_factory=dict)
+
+
+def _slidev_outline_items_from_payload(
+    slidev_deck: dict[str, object] | None,
+    presentation: dict[str, object],
+) -> list[dict[str, object]]:
+    if isinstance(slidev_deck, dict):
+        raw_meta = slidev_deck.get("meta")
+        if isinstance(raw_meta, dict):
+            raw_slides = raw_meta.get("slides")
+            if isinstance(raw_slides, list):
+                items: list[dict[str, object]] = []
+                for index, slide in enumerate(raw_slides, start=1):
+                    if not isinstance(slide, dict):
+                        continue
+                    items.append(
+                        {
+                            "slide_number": index,
+                            "title": str(slide.get("title") or f"第 {index} 页"),
+                            "suggested_slide_role": str(slide.get("role") or "narrative"),
+                            "objective": "",
+                        }
+                    )
+                if items:
+                    return items
+    raw_slides = presentation.get("slides")
+    if not isinstance(raw_slides, list):
+        return []
+    items = []
+    for index, slide in enumerate(raw_slides, start=1):
+        if not isinstance(slide, dict):
+            continue
+        content_data = slide.get("contentData")
+        title = ""
+        if isinstance(content_data, dict):
+            title = str(content_data.get("title") or "")
+        items.append(
+            {
+                "slide_number": index,
+                "title": title or f"第 {index} 页",
+                "suggested_slide_role": str(
+                    (content_data or {}).get("role") if isinstance(content_data, dict) else "narrative"
+                )
+                or "narrative",
+                "objective": "",
+            }
+        )
+    return items
+
+
+def _resolve_slidev_build_asset(build_root: str, asset_path: str) -> Path:
+    root = Path(build_root).resolve()
+    candidate = (root / asset_path).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=404, detail="Slidev 构建资源不存在")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Slidev 构建资源不存在")
+    return candidate
 
 
 class PlanningTurnRequest(BaseModel):
@@ -845,6 +907,81 @@ async def get_latest_presentation_html_meta(session_id: str, request: Request):
     return JSONResponse(content=meta)
 
 
+@router.get("/{session_id}/presentations/latest/slidev")
+async def get_latest_presentation_slidev(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_presentation(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无演示稿")
+    if latest.get("output_mode") != "slidev":
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
+    deck = await session_store.get_latest_slidev_deck(workspace_id, sid)
+    build = await session_store.get_latest_slidev_build(workspace_id, sid)
+    if not deck or not build:
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
+    markdown, meta = deck
+    return {
+        "markdown": markdown,
+        "meta": meta,
+        "build_url": f"/api/v1/sessions/{sid}/presentations/latest/slidev/build",
+        "assets": latest.get("artifacts", {}),
+    }
+
+
+@router.get("/{session_id}/presentations/latest/slidev/markdown")
+async def get_latest_presentation_slidev_markdown(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_slidev_deck(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
+    markdown, _meta = latest
+    return PlainTextResponse(content=markdown, media_type="text/markdown")
+
+
+@router.get("/{session_id}/presentations/latest/slidev/meta")
+async def get_latest_presentation_slidev_meta(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_slidev_deck(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
+    _markdown, meta = latest
+    return JSONResponse(content=meta)
+
+
+@router.get("/{session_id}/presentations/latest/slidev/build")
+async def get_latest_presentation_slidev_build(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    build = await session_store.get_latest_slidev_build(workspace_id, sid)
+    if not build:
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")
+    entry_path = _resolve_slidev_build_asset(str(build.get("build_root") or ""), "index.html")
+    return FileResponse(entry_path, media_type="text/html")
+
+
+@router.get("/{session_id}/presentations/latest/slidev/build/{asset_path:path}")
+async def get_latest_presentation_slidev_build_asset(
+    session_id: str,
+    asset_path: str,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    build = await session_store.get_latest_slidev_build(workspace_id, sid)
+    if not build:
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")
+    target = _resolve_slidev_build_asset(str(build.get("build_root") or ""), asset_path)
+    return FileResponse(target)
+
+
 @router.put("/{session_id}/presentations/latest", response_model=SnapshotMeta)
 async def save_latest_presentation(
     session_id: str,
@@ -854,14 +991,59 @@ async def save_latest_presentation(
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
+    slidev_deck = req.slidev_deck
+    slidev_build = None
+    presentation_payload = req.presentation
+    temp_build_root: Path | None = None
+    if (req.output_mode or "").strip() == "slidev":
+        if not isinstance(slidev_deck, dict):
+            raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 slidev_deck")
+        markdown = str(slidev_deck.get("markdown") or "").strip()
+        if not markdown:
+            raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 markdown")
+        outline_items = _slidev_outline_items_from_payload(slidev_deck, presentation_payload)
+        settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+        temp_root = Path(tempfile.mkdtemp(prefix="zhiyan-slidev-save-", dir=settings.uploads_dir))
+        temp_build_root = temp_root / "dist"
+        try:
+            finalized = await finalize_slidev_deck(
+                markdown=markdown,
+                fallback_title=str(presentation_payload.get("title") or "新演示文稿"),
+                selected_style_id=str(slidev_deck.get("selected_style_id") or "").strip() or None,
+                topic=str(presentation_payload.get("title") or ""),
+                outline_items=outline_items,
+                expected_pages=max(1, len(outline_items) or int(slidev_deck.get("expected_slide_count") or 0) or 1),
+                build_base_path=f"/api/v1/sessions/{sid}/presentations/latest/slidev/build/",
+                build_out_dir=temp_build_root,
+            )
+            presentation_payload = finalized["presentation"]
+            slidev_deck = {
+                "markdown": finalized["markdown"],
+                "meta": finalized["meta"],
+                "selected_style_id": finalized["selected_style_id"],
+            }
+            slidev_build = {
+                "build_root": finalized["build_root"],
+                "entry_path": finalized["entry_path"],
+                "slide_count": finalized["meta"]["slide_count"],
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     saved = await session_store.save_presentation(
         session_id=sid,
-        payload=req.presentation,
+        payload=presentation_payload,
         is_snapshot=False,
         snapshot_label=None,
         output_mode=req.output_mode,
         html_deck=req.html_deck,
+        slidev_deck=slidev_deck,
+        slidev_build=slidev_build,
     )
+    if temp_build_root is not None:
+        with suppress(Exception):
+            shutil.rmtree(temp_build_root.parent)
     return SnapshotMeta.model_validate(saved)
 
 

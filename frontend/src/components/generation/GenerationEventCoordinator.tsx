@@ -3,11 +3,15 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {
+  buildLatestSessionPresentationSlidevUrl,
   getLatestSessionPresentationHtml,
+  getLatestSessionPresentationSlidev,
   subscribeJobEvents,
   type GenerationErrorCode,
   type GenerationEvent,
   type HtmlDeckArtifactMeta,
+  type SlidevBuildArtifactMeta,
+  type SlidevDeckArtifactMeta,
 } from "@/lib/api";
 import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
@@ -59,6 +63,7 @@ export default function GenerationEventCoordinator() {
     updateSlideAtIndex,
     setPresentation,
     setPresentationHtmlState,
+    setPresentationSlidevState,
     setIsGenerating,
     finishGeneration,
   } = useAppStore();
@@ -209,8 +214,42 @@ export default function GenerationEventCoordinator() {
                 .catch(() => {
                   setPresentationHtmlState("html", null, null);
                 });
+            } else if (payload.output_mode === "slidev" && currentSessionId) {
+              void getLatestSessionPresentationSlidev(currentSessionId)
+                .then((slidev) => {
+                  const artifacts =
+                    payload.artifacts && typeof payload.artifacts === "object"
+                      ? (payload.artifacts as {
+                          slidev_deck?: SlidevDeckArtifactMeta;
+                          slidev_build?: SlidevBuildArtifactMeta;
+                        })
+                      : undefined;
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: slidev?.markdown ?? null,
+                    meta: slidev?.meta ?? null,
+                    deckArtifact: artifacts?.slidev_deck ?? null,
+                    buildArtifact: artifacts?.slidev_build ?? null,
+                    buildUrl:
+                      slidev?.build_url ?? buildLatestSessionPresentationSlidevUrl(currentSessionId),
+                  });
+                })
+                .catch(() => {
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: null,
+                    meta: null,
+                    buildUrl: buildLatestSessionPresentationSlidevUrl(currentSessionId),
+                  });
+                });
             } else {
               setPresentationHtmlState("structured", null, null);
+              setPresentationSlidevState({
+                outputMode: "structured",
+                markdown: null,
+                meta: null,
+                buildUrl: null,
+              });
             }
             const normalizedIssues = Array.isArray(payload.issues)
               ? (payload.issues as Array<Record<string, unknown>>)

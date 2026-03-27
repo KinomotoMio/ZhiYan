@@ -40,6 +40,7 @@ import SlidePreview from "@/components/slides/SlidePreview";
 import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
+import SlidevPreview from "@/components/slides/SlidevPreview";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
@@ -110,6 +111,8 @@ export default function EditorWorkspace({
     presentation,
     presentationOutputMode,
     presentationHtml,
+    presentationSlidevBuildUrl,
+    presentationSlidevMeta,
     currentSessionId,
     currentSlideIndex,
     setCurrentSlideIndex,
@@ -149,6 +152,7 @@ export default function EditorWorkspace({
     "current" | "all" | null
   >(null);
   const isHtmlMode = presentationOutputMode === "html";
+  const isSlidevMode = presentationOutputMode === "slidev";
   const prevPresentationRef = useRef(presentation);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
@@ -614,12 +618,20 @@ export default function EditorWorkspace({
         >
           退出演示
         </button>
-        <RevealPreview
-          presentation={presentation}
-          htmlContent={isHtmlMode ? presentationHtml : null}
-          startSlide={currentSlideIndex}
-          onSlideChange={setRevealSlideIndex}
-        />
+        {isSlidevMode ? (
+          <SlidevPreview
+            src={presentationSlidevBuildUrl}
+            startSlide={currentSlideIndex}
+            onSlideChange={setRevealSlideIndex}
+          />
+        ) : (
+          <RevealPreview
+            presentation={presentation}
+            htmlContent={isHtmlMode ? presentationHtml : null}
+            startSlide={currentSlideIndex}
+            onSlideChange={setRevealSlideIndex}
+          />
+        )}
       </div>
     );
   }
@@ -660,7 +672,7 @@ export default function EditorWorkspace({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  disabled={exporting || isGenerating || isHtmlMode}
+                  disabled={exporting || isGenerating || isHtmlMode || isSlidevMode}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50"
                 >
                   {exporting ? (
@@ -773,39 +785,64 @@ export default function EditorWorkspace({
           <div className="flex-1 overflow-y-auto p-3">
             <div className="space-y-2">
               {presentation.slides.map((slide, i) => (
-                <div
-                  key={slide.slideId}
-                  className={`zy-list-item p-2 ${
-                    i === currentSlideIndex
-                      ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
-                      : ""
-                  }`}
-                >
-                  <SlideThumbnail
-                    slide={slide}
-                    index={i}
-                    isActive={i === currentSlideIndex}
+                isSlidevMode ? (
+                  <button
+                    key={slide.slideId}
+                    type="button"
                     onClick={() => setCurrentSlideIndex(i)}
-                    issueMeta={
-                      groupedIssues.has(slide.slideId)
-                        ? {
-                            hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
-                            advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
-                            total: groupedIssues.get(slide.slideId)?.total ?? 0,
-                            decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
-                          }
-                        : undefined
-                    }
-                    onIssueClick={
-                      groupedIssues.has(slide.slideId)
-                        ? () => {
-                            setCurrentSlideIndex(i);
-                            openIssuePanelForSlide(slide.slideId);
-                          }
-                        : undefined
-                    }
-                  />
-                </div>
+                    className={`zy-list-item w-full p-3 text-left ${
+                      i === currentSlideIndex
+                        ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
+                        : ""
+                    }`}
+                  >
+                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+                      {(presentationSlidevMeta?.slides as Array<Record<string, unknown>> | undefined)?.[i]?.role
+                        ? String((presentationSlidevMeta?.slides as Array<Record<string, unknown>>)[i]?.role)
+                        : `Slide ${i + 1}`}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {String(
+                        (presentationSlidevMeta?.slides as Array<Record<string, unknown>> | undefined)?.[i]?.title ??
+                          (slide.contentData?.title || `第 ${i + 1} 页`)
+                      )}
+                    </div>
+                  </button>
+                ) : (
+                  <div
+                    key={slide.slideId}
+                    className={`zy-list-item p-2 ${
+                      i === currentSlideIndex
+                        ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
+                        : ""
+                    }`}
+                  >
+                    <SlideThumbnail
+                      slide={slide}
+                      index={i}
+                      isActive={i === currentSlideIndex}
+                      onClick={() => setCurrentSlideIndex(i)}
+                      issueMeta={
+                        groupedIssues.has(slide.slideId)
+                          ? {
+                              hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
+                              advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
+                              total: groupedIssues.get(slide.slideId)?.total ?? 0,
+                              decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
+                            }
+                          : undefined
+                      }
+                      onIssueClick={
+                        groupedIssues.has(slide.slideId)
+                          ? () => {
+                              setCurrentSlideIndex(i);
+                              openIssuePanelForSlide(slide.slideId);
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                )
               ))}
             </div>
           </div>
@@ -842,6 +879,21 @@ export default function EditorWorkspace({
                       ) : (
                         <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
                           HTML 演示稿还在生成中，完成后会自动切换到真实预览。
+                        </div>
+                      )
+                    ) : isSlidevMode ? (
+                      presentationSlidevBuildUrl ? (
+                        <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
+                          <SlidevPreview
+                            src={presentationSlidevBuildUrl}
+                            startSlide={currentSlideIndex}
+                            onSlideChange={setCurrentSlideIndex}
+                            className="rounded-[20px]"
+                          />
+                        </div>
+                      ) : (
+                        <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
+                          Slidev 演示稿还在生成中，完成后会自动切换到真实预览。
                         </div>
                       )
                     ) : (

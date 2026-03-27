@@ -38,6 +38,10 @@ from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
 from app.services.generation.verifier import stage_fix_slides_once, stage_verify_slides
 from app.services.presentations import normalize_presentation_payload
+from app.services.slidev import (
+    build_slidev_role_reference_bundle,
+    finalize_slidev_deck,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,14 @@ class _SubmitPresentationArgs(BaseModel):
 class _SubmitHtmlDeckArgs(BaseModel):
     title: str = ""
     html: str
+
+
+class _SubmitSlidevDeckArgs(BaseModel):
+    title: str = ""
+    markdown: str
+    selected_style_id: str | None = Field(None, alias="selectedStyleId")
+
+    model_config = {"populate_by_name": True}
 
 
 AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
@@ -334,6 +346,8 @@ class GenerationRunner:
             if job.request.session_id:
                 from app.services.sessions import session_store
                 html_output = state.document_metadata.get("agent_outputs", {}).get("html_deck")
+                slidev_output = state.document_metadata.get("agent_outputs", {}).get("slidev_deck")
+                slidev_build_output = state.document_metadata.get("agent_outputs", {}).get("slidev_build")
                 saved = await session_store.save_presentation(
                     session_id=job.request.session_id,
                     payload=job.presentation,
@@ -345,6 +359,24 @@ class GenerationRunner:
                             "expected_slide_count": len(state.slides),
                         }
                         if job.output_mode.value == "html" and isinstance(html_output, dict)
+                        else None
+                    ),
+                    slidev_deck=(
+                        {
+                            "markdown": slidev_output.get("markdown"),
+                            "meta": slidev_output.get("meta"),
+                            "selected_style_id": slidev_output.get("selected_style_id"),
+                        }
+                        if job.output_mode.value == "slidev" and isinstance(slidev_output, dict)
+                        else None
+                    ),
+                    slidev_build=(
+                        {
+                            "build_root": slidev_build_output.get("build_root"),
+                            "entry_path": slidev_build_output.get("entry_path"),
+                            "slide_count": slidev_build_output.get("slide_count"),
+                        }
+                        if job.output_mode.value == "slidev" and isinstance(slidev_build_output, dict)
                         else None
                     ),
                 )
@@ -1183,6 +1215,46 @@ class GenerationRunner:
             for index, slide in enumerate(presentation.slides):
                 if slide_hook:
                     await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
+        elif job.output_mode.value == "slidev":
+            slidev_payload, presentation = await self._generate_slidev_deck_with_agent(job, state)
+            state.layout_selections = [
+                {
+                    "slide_number": index + 1,
+                    "layout_id": "slidev",
+                }
+                for index, _slide in enumerate(presentation.slides)
+            ]
+            state.slides = list(presentation.slides)
+            state.slide_contents = [
+                {
+                    "slide_number": index + 1,
+                    "layout_id": "slidev",
+                    "content_data": slide.content_data or {},
+                }
+                for index, slide in enumerate(presentation.slides)
+            ]
+            state.document_metadata.setdefault("agent_outputs", {})
+            state.document_metadata["agent_outputs"]["slidev_deck"] = {
+                "title": slidev_payload["title"],
+                "markdown": slidev_payload["markdown"],
+                "meta": slidev_payload["meta"],
+                "selected_style_id": slidev_payload["selected_style_id"],
+                "selected_style": slidev_payload["selected_style"],
+                "selected_theme": slidev_payload["selected_theme"],
+            }
+            state.document_metadata["agent_outputs"]["slidev_build"] = {
+                "build_root": slidev_payload["build_root"],
+                "entry_path": slidev_payload["entry_path"],
+                "slide_count": slidev_payload["meta"]["slide_count"],
+            }
+            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+            )
+            for index, slide in enumerate(presentation.slides):
+                if slide_hook:
+                    await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         else:
             submitted_payload, presentation = await self._generate_presentation_with_agent(job, state)
             audit = self._audit_generated_presentation(job, submitted_payload, presentation)
@@ -1689,6 +1761,52 @@ class GenerationRunner:
             payload_holder.clear()
         raise RuntimeError("Agent did not submit a valid HTML deck.")
 
+    async def _generate_slidev_deck_with_agent(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+    ) -> tuple[dict[str, Any], Presentation]:
+        payload_holder: dict[str, Any] = {}
+        agent, traced_model = self._build_generation_agent(
+            job=job,
+            extra_tools=[self._make_slidev_deck_submit_tool(payload_holder)],
+            system_prompt=self._build_agent_presentation_prompt(job, state),
+            allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
+        )
+        session = agent.start_session()
+        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+        for attempt in range(3):
+            prompt = (
+                self._build_agent_presentation_user_prompt(job, state)
+                if attempt == 0
+                else self._build_agent_presentation_retry_prompt(
+                    expected,
+                    [
+                        "必须输出可被 slidev build 编译的完整 Slidev markdown deck。",
+                        f"必须严格包含 {expected} 页，且由全局 frontmatter + Slidev 页面分隔组成。",
+                        "必须只通过 submit_slidev_deck 提交 markdown 和 selected_style_id。",
+                    ],
+                    output_mode="slidev",
+                )
+            )
+            result = await session.send(prompt)
+            self._write_agent_run_debug(
+                job,
+                state,
+                stage_name="presentation",
+                prompt=prompt,
+                session=session,
+                result=result,
+                traced_model=traced_model,
+                submitted_payload=payload_holder.get("slidev_deck"),
+                attempt=attempt + 1,
+            )
+            extracted = await self._extract_slidev_deck_submission(job, state, payload_holder)
+            if extracted is not None and len(extracted[1].slides) == expected:
+                return extracted
+            payload_holder.clear()
+        raise RuntimeError("Agent did not submit a valid Slidev deck.")
+
     def _build_generation_agent(
         self,
         *,
@@ -1820,6 +1938,30 @@ class GenerationRunner:
             source="embedded",
         )
 
+    def _make_slidev_deck_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitSlidevDeckArgs, context: ToolContext) -> dict[str, Any]:
+            payload = args.model_dump(mode="json", by_alias=True, exclude_none=True)
+            markdown = str(payload.get("markdown") or "").strip()
+            if not markdown:
+                raise ValueError("Slidev deck markdown is empty.")
+            payload_holder["slidev_deck"] = payload
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "slides.md").write_text(markdown, encoding="utf-8")
+            return {
+                "status": "ok",
+                "selected_style_id": payload.get("selectedStyleId"),
+                "path": str((artifacts_dir / "slides.md").resolve()),
+            }
+
+        return Tool(
+            name="submit_slidev_deck",
+            description="Submit the final Slidev markdown deck with markdown and selected_style_id. Call this exactly once when the deck is ready.",
+            args_model=_SubmitSlidevDeckArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
     @staticmethod
     def _extract_outline_submission(payload_holder: dict[str, Any]) -> AgentOutline | None:
         payload = payload_holder.get("outline")
@@ -1853,6 +1995,37 @@ class GenerationRunner:
         normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
         validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
         return payload, validated
+
+    async def _extract_slidev_deck_submission(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        payload_holder: dict[str, Any],
+    ) -> tuple[dict[str, Any], Presentation] | None:
+        payload = payload_holder.get("slidev_deck")
+        if not isinstance(payload, dict):
+            return None
+        markdown = str(payload.get("markdown") or "").strip()
+        if not markdown:
+            return None
+        outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
+        build_root = self._workspace_root_for_job(job) / "artifacts" / "slidev-build"
+        finalized = await finalize_slidev_deck(
+            markdown=markdown,
+            fallback_title=str(payload.get("title") or job.request.title or "新演示文稿"),
+            selected_style_id=str(payload.get("selectedStyleId") or "").strip() or None,
+            topic=job.request.topic or job.request.title,
+            outline_items=outline_items,
+            expected_pages=max(3, min(job.request.num_pages, settings.max_slide_pages)),
+            build_base_path=f"/api/v1/sessions/{job.request.session_id}/presentations/latest/slidev/build/",
+            build_out_dir=build_root,
+        )
+        presentation = finalized.get("presentation")
+        if not isinstance(presentation, dict):
+            return None
+        normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
+        validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
+        return finalized, validated
 
     @staticmethod
     def _workspace_root_for_job(job: GenerationJob):
@@ -1926,6 +2099,20 @@ class GenerationRunner:
         outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
         source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
         palette = ", ".join(self._allowed_layout_palette(job))
+        outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
+        slidev_refs = build_slidev_role_reference_bundle(outline_items) if outline_items else {
+            "selected_layouts": [],
+            "page_briefs": [],
+        }
+        slidev_ref_json = json.dumps(
+            {
+                "selected_layouts": slidev_refs.get("selected_layouts", []),
+                "page_briefs": slidev_refs.get("page_briefs", []),
+                "available_style_presets": sorted(["narrative-brief", "structured-insight", "tech-launch"]),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
         if job.output_mode.value == "html":
             return (
                 "你是 ZhiYan 当前创建页按钮背后的 HTML 演示生成内核。\n"
@@ -1941,6 +2128,27 @@ class GenerationRunner:
                 "- 必须体现强视觉设计：鲜明但克制的主题、明确的版式层级、面向展示的文案密度、符合主题的艺术风格。\n"
                 "- 优先做带艺术方向的 HTML PPT，不要退化成普通 markdown 页面。\n"
                 "- 内容要贴合素材，不要空泛，不要出现“待补充”“内容生成中”之类占位文本。\n\n"
+                f"本地素材摘要：\n{source_brief}\n\n"
+                f"已确认大纲：\n{outline_json}\n"
+            )
+        if job.output_mode.value == "slidev":
+            return (
+                "你是 ZhiYan 当前创建页按钮背后的 Slidev 演示生成内核。\n"
+                "Slidev 是一个 markdown-first 的演示框架：一份 deck 由全局 frontmatter 和多个用 `---` 分隔的 slide 组成，目标是生成能被 `slidev build` 编译的 presentation markdown，而不是文章 markdown。\n"
+                "请基于工作区素材和已确认大纲，产出一个完整、可编译、可展示、可继续改稿的 Slidev markdown deck。\n\n"
+                "工作方式：\n"
+                "- 先使用本地素材摘要判断叙事、语气和视觉方向，再按需补读原始 source 文本。\n"
+                "- 你只有 `read_file` 和 `submit_slidev_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+                "- 最终必须只通过 `submit_slidev_deck` 提交 markdown 和 selected_style_id。\n\n"
+                "Slidev 约束：\n"
+                f"- 严格输出 {state.num_pages} 页。\n"
+                "- deck 必须由全局 frontmatter + `---` 分隔的 slides 组成。\n"
+                "- 输出目标是可被 `slidev build` 编译的 presentation markdown，不是普通文档 markdown。\n"
+                "- 允许使用 Slidev 原生结构：theme、themeConfig、layout、class、Mermaid、表格、双栏、callout、quote 等。\n"
+                "- 不要把页面写成长段落文档，不要出现“待补充”“内容生成中”等占位语。\n"
+                "- 只能从本地 style preset 中选择一个 deck 风格，并通过 selected_style_id 提交。\n"
+                "- 默认保持演示语气和页面密度，重点让页面像 presentation，而不是报告正文。\n\n"
+                f"本地 Slidev preset / role 参考：\n{slidev_ref_json}\n\n"
                 f"本地素材摘要：\n{source_brief}\n\n"
                 f"已确认大纲：\n{outline_json}\n"
             )
@@ -1981,6 +2189,14 @@ class GenerationRunner:
                 f"目标页数：{job.request.num_pages}\n"
                 "完成后调用 `submit_html_deck`。"
             )
+        if job.output_mode.value == "slidev":
+            return (
+                "请生成完整 Slidev markdown deck。\n"
+                f"主题：{job.request.topic or job.request.title}\n"
+                f"补充指令：{job.request.content or '无'}\n"
+                f"目标页数：{job.request.num_pages}\n"
+                "完成后调用 `submit_slidev_deck`。"
+            )
         return (
             "请生成完整 presentation。\n"
             f"主题：{job.request.topic or job.request.title}\n"
@@ -1997,8 +2213,15 @@ class GenerationRunner:
         output_mode: str,
     ) -> str:
         issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 presentation 未通过本地审计。"
-        submit_tool = "submit_html_deck" if output_mode == "html" else "submit_presentation"
-        label = "HTML deck" if output_mode == "html" else "presentation"
+        if output_mode == "html":
+            submit_tool = "submit_html_deck"
+            label = "HTML deck"
+        elif output_mode == "slidev":
+            submit_tool = "submit_slidev_deck"
+            label = "Slidev deck"
+        else:
+            submit_tool = "submit_presentation"
+            label = "presentation"
         return (
             f"请修正上一版 {label} 并重新提交。\n"
             f"必须严格输出 {expected} 页。\n"

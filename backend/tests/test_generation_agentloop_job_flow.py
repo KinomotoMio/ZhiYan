@@ -218,6 +218,35 @@ def _html_deck_model(page_count: int) -> FakeModel:
     )
 
 
+def _slidev_deck_payload(page_count: int) -> dict:
+    slides = ["# AI Agent Runtime 架构演进"]
+    for slide_number in range(2, page_count + 1):
+        slides.append(f"# 第 {slide_number} 页\n\n- 这是第 {slide_number} 页的 Slidev 内容")
+    return {
+        "title": "AI Agent Runtime 架构演进",
+        "selectedStyleId": "tech-launch",
+        "markdown": "---\ntitle: AI Agent Runtime 架构演进\n---\n\n" + "\n\n---\n\n".join(slides) + "\n",
+    }
+
+
+def _slidev_deck_model(page_count: int) -> FakeModel:
+    payload = _slidev_deck_payload(page_count)
+    return FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="submit_slidev_deck",
+                        args=payload,
+                        tool_call_id="call-submit-slidev-deck",
+                    )
+                ]
+            ),
+            AssistantMessage(content="slidev deck submitted"),
+        ]
+    )
+
+
 def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
@@ -442,6 +471,151 @@ def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
     assert latest_meta.status_code == 200
     assert latest_meta.json()["slide_count"] == 4
     assert set(tool["name"] for tool in html_model.seen_tools[0]) == {"read_file", "submit_html_deck"}
+
+
+def test_agentic_auto_job_generates_slidev_deck(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    runner = _install_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+    monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+
+    from app.services.generation import runner as runner_mod
+
+    async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+        if progress:
+            await progress("verify", 1, 1, "验证完成")
+        state.verification_issues = []
+
+    async def fake_finalize_slidev_deck(**kwargs):  # noqa: ANN003
+        markdown = str(kwargs["markdown"])
+        build_out_dir = Path(kwargs["build_out_dir"])
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+        (build_out_dir / "index.html").write_text("<html><body>slidev build</body></html>", encoding="utf-8")
+        assets_dir = build_out_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        (assets_dir / "entry.js").write_text("console.log('slidev-build');", encoding="utf-8")
+        slides = [
+            {
+                "index": index,
+                "slide_id": f"slide-{index + 1}",
+                "title": "AI Agent Runtime 架构演进" if index == 0 else f"第 {index + 1} 页",
+                "role": "cover" if index == 0 else "narrative",
+                "layout": "default",
+            }
+            for index in range(4)
+        ]
+        return {
+            "title": "AI Agent Runtime 架构演进",
+            "markdown": markdown,
+            "meta": {
+                "title": "AI Agent Runtime 架构演进",
+                "slide_count": 4,
+                "slides": slides,
+                "selected_style_id": "tech-launch",
+                "validation": {"ok": True, "issues": []},
+                "review": {"issues": []},
+            },
+            "presentation": {
+                "presentationId": "pres-slidev-agent",
+                "title": "AI Agent Runtime 架构演进",
+                "slides": [
+                    {
+                        "slideId": slide["slide_id"],
+                        "layoutType": "blank",
+                        "layoutId": "blank",
+                        "contentData": {"title": slide["title"]},
+                        "components": [],
+                    }
+                    for slide in slides
+                ],
+            },
+            "selected_style_id": "tech-launch",
+            "selected_style": {"name": "tech-launch", "theme": "seriph"},
+            "selected_theme": {"theme": "seriph"},
+            "build_root": str(build_out_dir.resolve()),
+            "entry_path": str((build_out_dir / "index.html").resolve()),
+        }
+
+    monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
+    monkeypatch.setattr(runner_mod, "finalize_slidev_deck", fake_finalize_slidev_deck)
+
+    slidev_model = _slidev_deck_model(4)
+    models = [slidev_model]
+
+    def fake_model_factory():
+        return models.pop(0)
+
+    monkeypatch.setattr(runner, "_create_agent_model_client", fake_model_factory)
+
+    async def run_inline(job_id: str, from_stage=None):
+        await runner._run_job(job_id, from_stage)  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(runner, "start_job", run_inline)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-agent-slidev"}
+    session_id = _create_session(client, headers, "agent-slidev")
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "背景材料", "content": "AgentLoop 会直接产出 Slidev markdown deck。"},
+    )
+    assert source_resp.status_code == 200
+
+    create_resp = client.post(
+        f"/api/v1/sessions/{session_id}/generation/jobs",
+        headers=headers,
+        json={
+            "topic": "生成一个适合产品发布会的 Slidev 演示稿",
+            "source_ids": [source_resp.json()["id"]],
+            "num_pages": 4,
+            "mode": "auto",
+            "output_mode": "slidev",
+        },
+    )
+    assert create_resp.status_code == 200
+
+    job_detail = client.get(
+        f"/api/v1/sessions/{session_id}/generation/jobs/{create_resp.json()['job_id']}",
+        headers=headers,
+    )
+    assert job_detail.status_code == 200
+    body = job_detail.json()
+    assert body["status"] == "completed"
+    assert body["output_mode"] == "slidev"
+    assert len(body["slides"]) == 4
+    assert body["presentation"] is not None
+    workspace_root = Path(body["document_metadata"]["agent_workspace"]["root"])
+    assert (workspace_root / "artifacts" / "slides.md").exists()
+    assert (workspace_root / "artifacts" / "slidev-build" / "index.html").exists()
+    slidev_payload = body["document_metadata"]["agent_outputs"]["slidev_deck"]
+    assert slidev_payload["markdown"].startswith("---")
+    assert slidev_payload["meta"]["slide_count"] == 4
+    assert body["document_metadata"]["agent_outputs"]["slidev_build"]["slide_count"] == 4
+
+    latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
+    assert latest.status_code == 200
+    latest_payload = latest.json()
+    assert latest_payload["output_mode"] == "slidev"
+    assert latest_payload["artifacts"]["slidev_deck"]["selected_style_id"] == "tech-launch"
+
+    latest_slidev = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/slidev",
+        headers=headers,
+    )
+    assert latest_slidev.status_code == 200
+    assert latest_slidev.json()["meta"]["slide_count"] == 4
+
+    latest_build = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/slidev/build",
+        headers=headers,
+    )
+    assert latest_build.status_code == 200
+    assert "slidev build" in latest_build.text
+    assert set(tool["name"] for tool in slidev_model.seen_tools[0]) == {"read_file", "submit_slidev_deck"}
 
 
 def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):

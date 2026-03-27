@@ -3,18 +3,21 @@
 import copy
 import json
 import logging
+from pathlib import Path
 
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services.agents.html_deck_editor import edit_html_deck
+from app.services.agents.slidev_deck_editor import edit_slidev_deck
 from app.services.html_deck import normalize_html_deck
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
+from app.services.slidev import create_slidev_preview, get_slidev_preview_root
 
 if TYPE_CHECKING:
     from app.services.agents.chat_agent import ChatDeps
@@ -68,6 +71,35 @@ class HtmlDeckContext(BaseModel):
     slide_meta: dict[str, Any]
 
 
+class SlidevDeckContext(BaseModel):
+    title: str
+    markdown: str
+    slide_meta: dict[str, Any]
+    selected_style_id: str | None = None
+
+
+def _resolve_preview_asset(preview_id: str, asset_path: str) -> Path:
+    root = get_slidev_preview_root(preview_id)
+    candidate = (root / "dist" / asset_path).resolve()
+    if candidate != root / "dist" and (root / "dist") not in candidate.parents:
+        raise FileNotFoundError(asset_path)
+    if not candidate.exists() or not candidate.is_file():
+        raise FileNotFoundError(asset_path)
+    return candidate
+
+
+@router.get("/slidev-previews/{preview_id}")
+async def get_slidev_preview_entry(preview_id: str):
+    path = _resolve_preview_asset(preview_id, "index.html")
+    return FileResponse(path, media_type="text/html")
+
+
+@router.get("/slidev-previews/{preview_id}/{asset_path:path}")
+async def get_slidev_preview_asset(preview_id: str, asset_path: str):
+    path = _resolve_preview_asset(preview_id, asset_path)
+    return FileResponse(path)
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request):
     """流式对话 — SSE 响应，支持幻灯片修改"""
@@ -92,12 +124,13 @@ async def chat(req: ChatRequest, request: Request):
     strict_tool_mode = req.action_hint != "free_text"
     provider = settings.strong_model.split(":", 1)[0] if settings.strong_model else ""
     html_context = _extract_html_context(req, slides)
+    slidev_context = _extract_slidev_context(req, slides)
     deps = None
     chat_agent = None
     message_history = []
     prompt = ""
 
-    if html_context is None:
+    if html_context is None and slidev_context is None:
         from app.services.agents.chat_agent import ChatDeps, chat_agent as structured_chat_agent
         from pydantic_ai.messages import ModelRequest, ModelResponse
         from pydantic_ai.messages import TextPart, UserPromptPart
@@ -134,6 +167,7 @@ async def chat(req: ChatRequest, request: Request):
         modification_count = 0
         effective_modification_count = 0
         html_update: dict[str, Any] | None = None
+        slidev_update: dict[str, Any] | None = None
 
         try:
             if html_context is not None:
@@ -170,6 +204,62 @@ async def chat(req: ChatRequest, request: Request):
                         ],
                     }
                     effective_modification_count = len(html_update["modifications"])
+                elif strict_tool_mode:
+                    no_op = True
+                    no_op_reason = _build_no_op_reason(req.action_hint)
+
+                assistant_text = "".join(assistant_chunks).strip()
+                if no_op and strict_tool_mode:
+                    assistant_text = f"未执行改稿：{no_op_reason}"
+                if assistant_text:
+                    text_data = json.dumps(
+                        {"type": "text", "content": assistant_text},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {text_data}\n\n"
+            elif slidev_context is not None:
+                result = await edit_slidev_deck(
+                    message=req.message,
+                    action_hint=req.action_hint,
+                    markdown=slidev_context.markdown,
+                    current_slide_index=req.current_slide_index,
+                    slide_meta=slidev_context.slide_meta,
+                    selected_style_id=slidev_context.selected_style_id,
+                    history=[
+                        {"role": msg.role, "content": msg.content}
+                        for msg in history
+                    ],
+                )
+                assistant_text = result.assistant_reply.strip()
+                if assistant_text:
+                    assistant_chunks.append(assistant_text)
+
+                if result.should_update and result.markdown.strip():
+                    preview = await create_slidev_preview(
+                        markdown=result.markdown,
+                        fallback_title=slidev_context.title,
+                        selected_style_id=result.selected_style_id or slidev_context.selected_style_id,
+                        topic=slidev_context.title,
+                        outline_items=_slidev_outline_items(slidev_context.slide_meta),
+                        expected_pages=len((slidev_context.slide_meta or {}).get("slides") or []),
+                        preview_id=f"spv-{req.session_id or 'anon'}-{abs(hash(result.markdown)) % 10**10}",
+                    )
+                    slidev_update = {
+                        "type": "slidev_update",
+                        "markdown": preview["markdown"],
+                        "meta": preview["meta"],
+                        "presentation": preview["presentation"],
+                        "selected_style_id": preview["selected_style_id"],
+                        "preview_url": f"/api/v1/slidev-previews/{preview['preview_id']}",
+                        "modifications": [
+                            {
+                                "action": "update_slidev_deck",
+                                "slide_index": max(0, req.current_slide_index),
+                                "mode": "slidev",
+                            }
+                        ],
+                    }
+                    effective_modification_count = len(slidev_update["modifications"])
                 elif strict_tool_mode:
                     no_op = True
                     no_op_reason = _build_no_op_reason(req.action_hint)
@@ -246,10 +336,14 @@ async def chat(req: ChatRequest, request: Request):
             modification_count = (
                 len(html_update.get("modifications") or [])
                 if html_update is not None
+                else len(slidev_update.get("modifications") or [])
+                if slidev_update is not None
                 else len(deps.modifications if deps is not None else [])
             )
             if html_update is not None:
                 yield f"data: {json.dumps(html_update, ensure_ascii=False)}\n\n"
+            elif slidev_update is not None:
+                yield f"data: {json.dumps(slidev_update, ensure_ascii=False)}\n\n"
             elif effective_modification_count > 0:
                 mod_data = json.dumps(
                     {
@@ -476,3 +570,58 @@ def _extract_html_context(
         ],
     }
     return HtmlDeckContext(title=title, html_content=html_content, slide_meta=slide_meta)
+
+
+def _extract_slidev_context(
+    req: ChatRequest,
+    slides: list[dict[str, Any]],
+) -> SlidevDeckContext | None:
+    if not isinstance(req.presentation_context, dict):
+        return None
+    if str(req.presentation_context.get("output_mode") or "").strip() != "slidev":
+        return None
+    markdown = str(req.presentation_context.get("slidev_markdown") or "").strip()
+    if not markdown:
+        return None
+    title = str(req.presentation_context.get("title") or "新演示文稿").strip() or "新演示文稿"
+    raw_meta = req.presentation_context.get("slidev_meta")
+    slide_meta = dict(raw_meta) if isinstance(raw_meta, dict) else {
+        "title": title,
+        "slides": [
+            {
+                "index": index,
+                "slide_id": str(slide.get("slideId") or f"slide-{index + 1}"),
+                "title": _extract_title(slide) or f"第 {index + 1} 页",
+                "role": (
+                    str(((slide.get("contentData") or {}) if isinstance(slide, dict) else {}).get("role") or "narrative")
+                ),
+            }
+            for index, slide in enumerate(slides)
+            if isinstance(slide, dict)
+        ],
+    }
+    return SlidevDeckContext(
+        title=title,
+        markdown=markdown,
+        slide_meta=slide_meta,
+        selected_style_id=str(req.presentation_context.get("selected_style_id") or "").strip() or None,
+    )
+
+
+def _slidev_outline_items(slide_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    slides = slide_meta.get("slides") if isinstance(slide_meta, dict) else None
+    if not isinstance(slides, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for index, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            continue
+        items.append(
+            {
+                "slide_number": index,
+                "title": str(slide.get("title") or f"第 {index} 页"),
+                "suggested_slide_role": str(slide.get("role") or "narrative"),
+                "objective": "",
+            }
+        )
+    return items
