@@ -1,0 +1,344 @@
+import asyncio
+import json
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from app.core.config import settings
+from app.main import app
+from app.services.generation.event_bus import GenerationEventBus
+from app.services.generation.job_store import GenerationJobStore
+from app.services.generation.runner import GenerationRunner
+from app.services.sessions.store import SessionStore
+from app.services.generation.agentic.types import AssistantMessage, ToolCall
+from tests.conftest import FakeModel
+
+
+def _install_temp_session_store(monkeypatch, tmp_path: Path):
+    import app.services.sessions as sessions_pkg
+    from app.api.v1 import chat as chat_api
+    from app.api.v1 import sessions as sessions_api
+    from app.api.v1 import workspaces as workspaces_api
+    from app.api.v1 import workspace_sources as workspace_sources_api
+    from app.api.v2 import generation as generation_api
+
+    store = SessionStore(tmp_path / "zhiyan-test.db", tmp_path / "uploads")
+    asyncio.run(store.init())
+
+    monkeypatch.setattr(sessions_pkg, "session_store", store)
+    monkeypatch.setattr(sessions_api, "session_store", store)
+    monkeypatch.setattr(chat_api, "session_store", store)
+    monkeypatch.setattr(workspace_sources_api, "session_store", store)
+    monkeypatch.setattr(workspaces_api, "session_store", store)
+    monkeypatch.setattr(generation_api, "session_store", store)
+    return store
+
+
+def _install_runtime(monkeypatch, tmp_path: Path) -> GenerationRunner:
+    from app.api.v2 import generation as generation_api
+
+    store = GenerationJobStore(tmp_path / "jobs")
+    bus = GenerationEventBus()
+    runner = GenerationRunner(store, bus)
+    monkeypatch.setattr(generation_api, "job_store", store)
+    monkeypatch.setattr(generation_api, "event_bus", bus)
+    monkeypatch.setattr(generation_api, "generation_runner", runner)
+    return runner
+
+
+def _outline_payload(page_count: int) -> dict:
+    items = [
+        {"slideNumber": 1, "title": "封面", "role": "cover", "objective": "设置主题"},
+        {"slideNumber": 2, "title": "目录", "role": "agenda", "objective": "说明结构"},
+    ]
+    for slide_number in range(3, page_count):
+        items.append(
+            {
+                "slideNumber": slide_number,
+                "title": f"核心内容 {slide_number - 2}",
+                "role": "narrative",
+                "objective": "展开核心论点",
+                "keyPoints": [f"要点 {slide_number - 2}A", f"要点 {slide_number - 2}B"],
+            }
+        )
+    items.append({"slideNumber": page_count, "title": "结尾", "role": "closing", "objective": "收束"})
+    return {
+        "title": "AI Agent Runtime 架构演进",
+        "subtitle": "From Workflow to Runtime",
+        "storyline": "用 runtime 视角解释从简单调用到 agent 工作区的演进。",
+        "items": items,
+    }
+
+
+def _deck_payload(page_count: int) -> dict:
+    slides = [
+        {
+            "slideNumber": 1,
+            "title": "AI Agent Runtime 架构演进",
+            "role": "cover",
+            "layoutHint": "intro-slide",
+            "subtitle": "从简单调用，到可控工作区，再到长期演进内核",
+        },
+        {
+            "slideNumber": 2,
+            "title": "这次迁移先解决什么",
+            "role": "agenda",
+            "layoutHint": "outline-slide",
+            "sections": [
+                {"title": "复用创建页入口", "description": "不改现有按钮和 editor 壳"},
+                {"title": "给 job 建 workspace", "description": "把 source manifest 和文本素材落盘"},
+                {"title": "让 agent 主导生成", "description": "先出 outline，再出 deck"},
+                {"title": "临时适配 editor", "description": "先转成 presentation，后面再升级 IR"},
+            ],
+        },
+    ]
+    for slide_number in range(3, page_count):
+        slides.append(
+            {
+                "slideNumber": slide_number,
+                "title": f"核心阶段 {slide_number - 2}",
+                "role": "narrative",
+                "layoutHint": "bullet-with-icons",
+                "points": [
+                    {"title": "工作区可读", "detail": "agent 通过文件工具读素材而不是只吃拼接文本"},
+                    {"title": "状态机兼容", "detail": "继续复用 job、SSE、editor hydrate"},
+                    {"title": "输出可替换", "detail": "当前 presentation 只是前端适配层"},
+                ],
+                "speakerNotes": "强调这是临时适配，不是最终表示。",
+            }
+        )
+    slides.append(
+        {
+            "slideNumber": page_count,
+            "title": "谢谢",
+            "role": "closing",
+            "layoutHint": "thank-you",
+            "subtitle": "第一步先把创建页按钮打通，后面再升级 deck IR。",
+        }
+    )
+    return {
+        "title": "AI Agent Runtime 架构演进",
+        "subtitle": "From Workflow to Runtime",
+        "storyline": "先打通当前入口，再逐步解耦 presentation adapter。",
+        "slides": slides,
+    }
+
+
+def _outline_model(page_count: int) -> FakeModel:
+    payload = _outline_payload(page_count)
+    return FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="submit_outline",
+                        args=payload,
+                        tool_call_id="call-submit-outline",
+                    )
+                ]
+            ),
+            AssistantMessage(content="outline submitted"),
+        ]
+    )
+
+
+def _deck_model(page_count: int) -> FakeModel:
+    payload = _deck_payload(page_count)
+    return FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="submit_deck",
+                        args=payload,
+                        tool_call_id="call-submit-deck",
+                    )
+                ]
+            ),
+            AssistantMessage(content="deck submitted"),
+        ]
+    )
+
+
+def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v2 import generation as generation_api
+
+    class _NoopRunner:
+        async def start_job(self, job_id: str, from_stage=None):  # noqa: ARG002
+            return True
+
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+    monkeypatch.setattr(generation_api, "job_store", GenerationJobStore(tmp_path / "jobs"))
+    monkeypatch.setattr(generation_api, "generation_runner", _NoopRunner())
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-workspace"}
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "素材一", "content": "这是一段关于 agent runtime 的解析文本。"},
+    )
+    assert source_resp.status_code == 200
+    source_id = source_resp.json()["id"]
+
+    create_resp = client.post(
+        "/api/v2/generation/jobs",
+        headers=headers,
+        json={
+            "topic": "生成一个关于 AgentLoop 集成 ZhiYan 的演示稿",
+            "source_ids": [source_id],
+            "num_pages": 4,
+            "mode": "auto",
+        },
+    )
+    assert create_resp.status_code == 200
+    job_id = create_resp.json()["job_id"]
+
+    job_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    assert job_detail.status_code == 200
+    workspace_meta = job_detail.json()["document_metadata"]["agent_workspace"]
+    workspace_root = Path(workspace_meta["root"])
+    assert workspace_root.exists()
+    assert (workspace_root / "request.json").exists()
+    assert (workspace_root / "sources" / "manifest.json").exists()
+    assert (workspace_root / "sources" / "combined.md").exists()
+
+    manifest = json.loads((workspace_root / "sources" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_count"] == 1
+    assert manifest["sources"][0]["id"] == source_id
+    assert manifest["sources"][0]["parsed_content_available"] is True
+
+
+def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    runner = _install_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+    monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+
+    from app.services.generation import runner as runner_mod
+
+    async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+        if progress:
+            await progress("verify", 1, 1, "验证完成")
+        state.verification_issues = []
+
+    monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
+
+    models = [_outline_model(4), _deck_model(4)]
+
+    def fake_model_factory():
+        return models.pop(0)
+
+    monkeypatch.setattr(runner, "_create_agent_model_client", fake_model_factory)
+
+    async def run_inline(job_id: str, from_stage=None):
+        await runner._run_job(job_id, from_stage)  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(runner, "start_job", run_inline)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-agent-auto"}
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "背景材料", "content": "AgentLoop 将每个 job 变成一个带 workspace 的运行单元。"},
+    )
+    assert source_resp.status_code == 200
+
+    create_resp = client.post(
+        "/api/v2/generation/jobs",
+        headers=headers,
+        json={
+            "topic": "讲清楚 AgentLoop 集成到 ZhiYan 创建页的价值",
+            "source_ids": [source_resp.json()["id"]],
+            "num_pages": 4,
+            "mode": "auto",
+        },
+    )
+    assert create_resp.status_code == 200
+
+    job_detail = client.get(f"/api/v2/generation/jobs/{create_resp.json()['job_id']}", headers=headers)
+    assert job_detail.status_code == 200
+    body = job_detail.json()
+    assert body["status"] == "completed"
+    assert len(body["slides"]) == 4
+    assert body["presentation"] is not None
+    assert body["presentation"]["slides"][0]["layoutType"] == "intro-slide"
+    assert Path(body["document_metadata"]["agent_workspace"]["root"], "artifacts", "outline.json").exists()
+    assert Path(body["document_metadata"]["agent_workspace"]["root"], "artifacts", "deck.json").exists()
+
+
+def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    runner = _install_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+    monkeypatch.setattr(settings, "strong_model", "openai:gpt-4o")
+    monkeypatch.setattr(settings, "openai_api_key", "token")
+
+    from app.services.generation import runner as runner_mod
+
+    async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+        if progress:
+            await progress("verify", 1, 1, "验证完成")
+        state.verification_issues = []
+
+    monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
+
+    models = [_outline_model(4), _deck_model(4)]
+
+    def fake_model_factory():
+        return models.pop(0)
+
+    monkeypatch.setattr(runner, "_create_agent_model_client", fake_model_factory)
+
+    async def run_inline(job_id: str, from_stage=None):
+        await runner._run_job(job_id, from_stage)  # noqa: SLF001
+        return True
+
+    monkeypatch.setattr(runner, "start_job", run_inline)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-agent-review"}
+
+    source_resp = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "资料", "content": "先审大纲，再继续生成 deck。"},
+    )
+    assert source_resp.status_code == 200
+
+    create_resp = client.post(
+        "/api/v2/generation/jobs",
+        headers=headers,
+        json={
+            "topic": "需要 review_outline 的演示稿",
+            "source_ids": [source_resp.json()["id"]],
+            "num_pages": 4,
+            "mode": "review_outline",
+        },
+    )
+    assert create_resp.status_code == 200
+    job_id = create_resp.json()["job_id"]
+
+    first_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    assert first_detail.status_code == 200
+    assert first_detail.json()["status"] == "waiting_outline_review"
+    assert len(first_detail.json()["outline"]["items"]) == 4
+
+    accept_resp = client.post(
+        f"/api/v2/generation/jobs/{job_id}/outline/accept",
+        headers=headers,
+        json={},
+    )
+    assert accept_resp.status_code == 200
+
+    final_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    assert final_detail.status_code == 200
+    assert final_detail.json()["status"] == "completed"
+    assert len(final_detail.json()["presentation"]["slides"]) == 4
