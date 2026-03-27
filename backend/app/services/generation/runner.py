@@ -1690,7 +1690,7 @@ class GenerationRunner:
             return None
         hydrated_payload = self._hydrate_submitted_presentation(job, payload)
         normalized_payload, _changed, _report = normalize_presentation_payload(hydrated_payload)
-        return normalized_payload, Presentation.model_validate(normalized_payload)
+        return hydrated_payload, Presentation.model_validate(normalized_payload)
 
     @staticmethod
     def _workspace_root_for_job(job: GenerationJob):
