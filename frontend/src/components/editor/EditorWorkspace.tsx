@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -41,6 +41,7 @@ import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
+import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
 
 interface EditorWorkspaceProps {
   returnHref: string;
@@ -134,6 +135,7 @@ export default function EditorWorkspace({
   const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
   const [generatingSpeakerNotes, setGeneratingSpeakerNotes] = useState(false);
+  const prevPresentationRef = useRef(presentation);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
@@ -385,16 +387,16 @@ export default function EditorWorkspace({
   useEffect(() => {
     if (!presentation) {
       setSpeakerNotesDrafts({});
+      prevPresentationRef.current = presentation;
       return;
     }
 
     setSpeakerNotesDrafts((current) => {
-      const next = Object.fromEntries(
-        presentation.slides.map((slide) => [
-          slide.slideId,
-          current[slide.slideId] ?? slide.speakerNotes ?? "",
-        ])
-      );
+      const next = mergeSpeakerNotesDrafts({
+        currentDrafts: current,
+        previousSlides: prevPresentationRef.current?.slides,
+        currentSlides: presentation.slides,
+      });
       const currentKeys = Object.keys(current);
       const nextKeys = Object.keys(next);
       const unchanged =
@@ -402,6 +404,8 @@ export default function EditorWorkspace({
         nextKeys.every((key) => current[key] === next[key]);
       return unchanged ? current : next;
     });
+
+    prevPresentationRef.current = presentation;
   }, [presentation]);
 
   useEffect(() => {
