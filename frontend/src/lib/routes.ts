@@ -6,6 +6,10 @@ interface CreatePathOptions {
   fromEditor?: boolean;
 }
 
+export function getSharePlaybackPath(token: string): string {
+  return `/share/${encodeURIComponent(token)}`;
+}
+
 export function getCreateSessionPath(
   sessionId?: string | null,
   options?: CreatePathOptions

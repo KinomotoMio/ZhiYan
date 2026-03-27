@@ -1,5 +1,6 @@
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
+import { getSharePlaybackPath } from "@/lib/routes";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WORKSPACE_STORAGE_KEY = "zhiyan-workspace-id";
@@ -190,6 +191,19 @@ export interface SessionDetail {
   planning_state: PlanningState | null;
 }
 
+export interface SessionShareLink {
+  token: string;
+  share_path: string;
+  share_url: string;
+  created_at: string;
+}
+
+export interface PublicSharePlayback {
+  title: string;
+  outputMode: PresentationOutputMode;
+  presentation: Presentation | null;
+}
+
 export async function createSession(title?: string): Promise<SessionSummary> {
   const res = await fetch(`${API_BASE}/api/v1/sessions`, {
     method: "POST",
@@ -353,6 +367,48 @@ export async function getLatestSessionPresentationHtmlMeta(
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`获取 HTML 演示稿元数据失败: ${res.statusText}`);
   return res.json();
+}
+
+export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/share-link`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `生成分享链接失败: ${res.statusText}`);
+  }
+  const payload = (await res.json()) as SessionShareLink;
+  const sharePath = payload.share_path || getSharePlaybackPath(payload.token);
+  const fallbackUrl =
+    typeof window !== "undefined" ? `${window.location.origin}${sharePath}` : sharePath;
+  return {
+    ...payload,
+    share_path: sharePath,
+    share_url: payload.share_url || fallbackUrl,
+  };
+}
+
+export async function getPublicSharePlayback(token: string): Promise<PublicSharePlayback> {
+  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取分享播放内容失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function getPublicShareHtml(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}/html`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取分享 HTML 演示稿失败: ${res.statusText}`);
+  }
+  return res.text();
 }
 
 export async function createSessionSnapshot(

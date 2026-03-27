@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -94,11 +95,27 @@ class PlanningConfirmRequest(BaseModel):
     output_mode: PresentationOutputMode = PresentationOutputMode.HTML
 
 
+class SessionShareLinkResponse(BaseModel):
+    token: str
+    share_path: str
+    share_url: str
+    created_at: str
+
+
 def _ensure_session_id(value: str) -> str:
     sid = value.strip()
     if not sid:
         raise HTTPException(status_code=400, detail="缺少 session_id")
     return sid
+
+
+def _build_share_path(token: str) -> str:
+    return f"/share/{quote(token, safe='')}"
+
+
+def _build_share_url(token: str) -> str:
+    base = settings.public_app_url.rstrip("/")
+    return f"{base}{_build_share_path(token)}"
 
 
 async def _get_generation_job_for_session(
@@ -843,6 +860,32 @@ async def get_latest_presentation_html_meta(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
     _html, meta = latest
     return JSONResponse(content=meta)
+
+
+@router.post("/{session_id}/share-link", response_model=SessionShareLinkResponse)
+async def create_or_get_session_share_link(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+
+    latest = await session_store.get_latest_presentation(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无可分享的演示稿")
+
+    output_mode = str(latest.get("output_mode") or "structured")
+    if output_mode == "html":
+        html_deck = await session_store.get_latest_html_deck(workspace_id, sid)
+        if not html_deck:
+            raise HTTPException(status_code=404, detail="当前会话暂无可分享的 HTML 演示稿")
+
+    share = await session_store.create_or_get_share_link(workspace_id, sid)
+    token = str(share["token"])
+    return SessionShareLinkResponse(
+        token=token,
+        share_path=_build_share_path(token),
+        share_url=_build_share_url(token),
+        created_at=str(share["created_at"]),
+    )
 
 
 @router.put("/{session_id}/presentations/latest", response_model=SnapshotMeta)
