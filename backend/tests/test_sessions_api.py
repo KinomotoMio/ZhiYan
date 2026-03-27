@@ -17,7 +17,6 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     from app.api.v1 import sessions as sessions_api
     from app.api.v1 import workspaces as workspaces_api
     from app.api.v1 import workspace_sources as workspace_sources_api
-    from app.api.v2 import generation as generation_api
     from app.services.sessions.store import SessionStore
 
     store = SessionStore(tmp_path / "zhiyan-test.db", tmp_path / "uploads")
@@ -28,7 +27,6 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(chat_api, "session_store", store)
     monkeypatch.setattr(workspace_sources_api, "session_store", store)
     monkeypatch.setattr(workspaces_api, "session_store", store)
-    monkeypatch.setattr(generation_api, "session_store", store)
     return store
 
 
@@ -93,15 +91,15 @@ def test_sessions_workspace_isolation_and_chat_persistence(monkeypatch, tmp_path
 def test_generation_job_session_binding(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
     from app.services.generation.job_store import GenerationJobStore
 
     class _NoopRunner:
         async def start_job(self, job_id: str, from_stage=None):  # noqa: ARG002
             return True
 
-    monkeypatch.setattr(generation_api, "job_store", GenerationJobStore(tmp_path / "jobs"))
-    monkeypatch.setattr(generation_api, "generation_runner", _NoopRunner())
+    monkeypatch.setattr(sessions_api, "job_store", GenerationJobStore(tmp_path / "jobs"))
+    monkeypatch.setattr(sessions_api, "generation_runner", _NoopRunner())
 
     client = TestClient(app)
     h1 = {"X-Workspace-Id": "ws-a"}
@@ -126,11 +124,10 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert link_resp.status_code == 200
 
     create_ok = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=h1,
         json={
             "topic": "测试主题",
-            "session_id": session_id,
             "source_ids": [source_id],
             "num_pages": 3,
             "mode": "auto",
@@ -141,7 +138,7 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     created_job_id = create_ok.json()["job_id"]
 
     # Ensure source_hints is computed from source_ids and stored in the job request.
-    job_detail = client.get(f"/api/v2/generation/jobs/{created_job_id}", headers=h1)
+    job_detail = client.get(f"/api/v1/sessions/{session_id}/generation/jobs/{created_job_id}", headers=h1)
     assert job_detail.status_code == 200
     source_hints = job_detail.json()["request"]["source_hints"]
     assert source_hints["total_sources"] == 1
@@ -156,11 +153,10 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert latest_generation_job["status"] == "pending"
 
     create_denied = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=h2,
         json={
             "topic": "测试主题",
-            "session_id": session_id,
             "source_ids": [source_id],
             "num_pages": 3,
             "mode": "auto",
@@ -168,8 +164,16 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     )
     assert create_denied.status_code == 404
 
+    auto_session = client.post(
+        "/api/v1/sessions",
+        headers=h1,
+        json={"title": "人工智能对未来工作影响"},
+    )
+    assert auto_session.status_code == 200
+    auto_session_id = auto_session.json()["id"]
+
     create_auto = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{auto_session_id}/generation/jobs",
         headers=h1,
         json={
             "topic": "请基于以下内容生成一个关于人工智能对未来工作影响的10页PPT，需要适合管理层汇报。",
@@ -178,18 +182,16 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
         },
     )
     assert create_auto.status_code == 200
-    auto_session_id = create_auto.json()["session_id"]
-    assert auto_session_id
     auto_session_detail = client.get(f"/api/v1/sessions/{auto_session_id}", headers=h1)
     assert auto_session_detail.status_code == 200
     assert auto_session_detail.json()["session"]["title"] == "人工智能对未来工作影响"
 
     auto_job_detail = client.get(
-        f"/api/v2/generation/jobs/{create_auto.json()['job_id']}",
+        f"/api/v1/sessions/{auto_session_id}/generation/jobs/{create_auto.json()['job_id']}",
         headers=h1,
     )
     assert auto_job_detail.status_code == 200
-    assert auto_job_detail.json()["request"]["title"] == "人工智能对未来工作影响"
+    assert auto_job_detail.json()["request"]["session_id"] == auto_session_id
     assert auto_job_detail.json()["request"]["topic"].startswith("请基于以下内容生成一个关于人工智能")
 
     existing_session = client.post("/api/v1/sessions", headers=h1, json={"title": "旧草稿"})
@@ -197,11 +199,10 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     existing_session_id = existing_session.json()["id"]
 
     create_existing = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{existing_session_id}/generation/jobs",
         headers=h1,
         json={
             "topic": "准备一个关于供应链优化的演示文稿，突出冷链、仓配协同和损耗控制。",
-            "session_id": existing_session_id,
             "num_pages": 4,
             "mode": "auto",
         },
@@ -219,11 +220,10 @@ def test_generation_job_session_binding(monkeypatch, tmp_path):
     assert renamed.status_code == 200
 
     create_preserved = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{existing_session_id}/generation/jobs",
         headers=h1,
         json={
             "topic": "准备一个关于出海策略的演示文稿，强调渠道和品牌。",
-            "session_id": existing_session_id,
             "num_pages": 4,
             "mode": "auto",
         },
@@ -348,6 +348,7 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     store = _install_temp_session_store(monkeypatch, tmp_path)
 
     from app.api.v1 import sessions as sessions_api
+    real_create_generation_job_record = sessions_api.create_generation_job_record
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-plan-confirm"}
@@ -448,6 +449,12 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     assert planning_state["status"] == "generating"
     assert planning_state["active_job_id"] == "job-approved-outline"
 
+    monkeypatch.setattr(
+        sessions_api,
+        "create_generation_job_record",
+        real_create_generation_job_record,
+    )
+
     presentation = {
         "presentationId": "pres-ready",
         "title": "已有稿件",
@@ -469,11 +476,10 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     assert saved.status_code == 200
 
     create_conflict = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=headers,
         json={
             "topic": "禁止在已有稿件会话生成",
-            "session_id": session_id,
             "source_ids": [source_id],
             "num_pages": 3,
             "mode": "auto",

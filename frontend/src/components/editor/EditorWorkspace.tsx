@@ -97,6 +97,7 @@ export default function EditorWorkspace({
   const router = useRouter();
   const {
     presentation,
+    currentSessionId,
     currentSlideIndex,
     setCurrentSlideIndex,
     isGenerating,
@@ -136,7 +137,8 @@ export default function EditorWorkspace({
     if (!jobId || resuming) return;
     setResuming(true);
     try {
-      const resumed = await resumeGenerationJob(jobId);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      const resumed = await resumeGenerationJob(currentSessionId, jobId);
       updateJobState({
         lastJobEventSeq: resumed.eventsSeq,
       });
@@ -161,7 +163,8 @@ export default function EditorWorkspace({
   const handleCancelGeneration = async () => {
     if (!jobId) return;
     try {
-      await cancelJob(jobId);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      await cancelJob(currentSessionId, jobId);
       updateJobState({
         jobStatus: "cancelled",
         currentStage: null,
@@ -177,7 +180,8 @@ export default function EditorWorkspace({
     if (!jobId || acceptingOutline) return;
     setAcceptingOutline(true);
     try {
-      const result = await acceptOutline(jobId);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      const result = await acceptOutline(currentSessionId, jobId);
       updateJobState({
         jobId: result.job_id,
         jobStatus: result.status,
@@ -196,7 +200,9 @@ export default function EditorWorkspace({
     if (!jobId || previewingFix || applyingFix || skippingFix) return;
     setPreviewingFix(true);
     try {
+      if (!currentSessionId) throw new Error("缺少 session_id");
       const job = await fixPreview(
+        currentSessionId,
         jobId,
         targetSlideIds && targetSlideIds.length > 0
           ? targetSlideIds
@@ -246,7 +252,8 @@ export default function EditorWorkspace({
     }
     setApplyingFix(true);
     try {
-      const job = await fixApply(jobId, selectedFixPreviewSlideIds);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      const job = await fixApply(currentSessionId, jobId, selectedFixPreviewSlideIds);
       if (job.presentation) {
         setPresentation(job.presentation);
       }
@@ -289,7 +296,8 @@ export default function EditorWorkspace({
     if (!jobId || skippingFix || previewingFix || applyingFix) return;
     setSkippingFix(true);
     try {
-      const job = await fixSkip(jobId);
+      if (!currentSessionId) throw new Error("缺少 session_id");
+      const job = await fixSkip(currentSessionId, jobId);
       if (job.presentation) {
         setPresentation(job.presentation);
       }

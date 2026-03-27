@@ -11,7 +11,6 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     import app.services.sessions as sessions_pkg
     from app.api.v1 import chat as chat_api
     from app.api.v1 import sessions as sessions_api
-    from app.api.v2 import generation as generation_api
     from app.services.sessions.store import SessionStore
 
     store = SessionStore(tmp_path / "zhiyan-chat-test.db", tmp_path / "uploads")
@@ -20,7 +19,6 @@ def _install_temp_session_store(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions_pkg, "session_store", store)
     monkeypatch.setattr(sessions_api, "session_store", store)
     monkeypatch.setattr(chat_api, "session_store", store)
-    monkeypatch.setattr(generation_api, "session_store", store)
     return store
 
 

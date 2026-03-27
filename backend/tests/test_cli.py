@@ -83,23 +83,26 @@ def test_cli_config_set_updates_remote_settings(monkeypatch, capsys):
 
 def test_cli_create_posts_job_payload_and_prints_result(monkeypatch, capsys):
     seen_payload: dict | None = None
+    seen_paths: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal seen_payload
+        seen_paths.append(request.url.path)
         assert request.method == "POST"
-        assert request.url.path == "/api/v2/generation/jobs"
-        seen_payload = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={
-                "job_id": "job-cli-1",
-                "session_id": "session-cli-1",
-                "status": "pending",
-                "created_at": "2026-03-21T00:00:00Z",
-                "event_stream_url": "/api/v2/generation/jobs/job-cli-1/events",
-            },
-            request=request,
-        )
+        if request.url.path == "/api/v1/sessions/session-existing/generation/jobs":
+            seen_payload = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-cli-1",
+                    "session_id": "session-existing",
+                    "status": "pending",
+                    "created_at": "2026-03-21T00:00:00Z",
+                    "event_stream_url": "/api/v1/sessions/session-existing/generation/jobs/job-cli-1/events",
+                },
+                request=request,
+            )
+        raise AssertionError(f"unexpected path: {request.url.path}")
 
     monkeypatch.setattr(cli, "_make_client", lambda context: _mock_client(context, handler))
 
@@ -135,6 +138,7 @@ def test_cli_create_posts_job_payload_and_prints_result(monkeypatch, capsys):
         "num_pages": 7,
         "mode": "review_outline",
     }
+    assert seen_paths == ["/api/v1/sessions/session-existing/generation/jobs"]
     output = json.loads(capsys.readouterr().out)
     assert output["job_id"] == "job-cli-1"
 
@@ -155,7 +159,7 @@ def test_cli_watch_consumes_sse_until_completed(monkeypatch, capsys):
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        assert request.url.path == "/api/v2/generation/jobs/job-cli-1/events"
+        assert request.url.path == "/api/v1/sessions/session-cli-1/generation/jobs/job-cli-1/events"
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -165,7 +169,7 @@ def test_cli_watch_consumes_sse_until_completed(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "_make_client", lambda context: _mock_client(context, handler))
 
-    exit_code = cli.main(["watch", "job-cli-1"])
+    exit_code = cli.main(["watch", "job-cli-1", "--session-id", "session-cli-1"])
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
@@ -195,7 +199,7 @@ def test_cli_watch_treats_waiting_fix_review_as_success_terminal(monkeypatch, ca
 
     monkeypatch.setattr(cli, "_make_client", lambda context: _mock_client(context, handler))
 
-    exit_code = cli.main(["watch", "job-cli-fix"])
+    exit_code = cli.main(["watch", "job-cli-fix", "--session-id", "session-cli-fix"])
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
@@ -233,7 +237,7 @@ def test_cli_surfaces_non_2xx_errors(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "_make_client", lambda context: _mock_client(context, handler))
 
-    exit_code = cli.main(["watch", "job-error"])
+    exit_code = cli.main(["watch", "job-error", "--session-id", "session-error"])
 
     assert exit_code == 1
     captured = capsys.readouterr()

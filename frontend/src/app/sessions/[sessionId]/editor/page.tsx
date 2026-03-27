@@ -135,7 +135,7 @@ export default function SessionEditorPage() {
 
         if (shouldHydrateJob && latestJob?.job_id) {
           try {
-            const job = await getJob(latestJob.job_id);
+            const job = await getJob(sessionId, latestJob.job_id);
             hydratedJob = job as unknown as HydratedGenerationJob;
             if (!presentation) {
               const rawNumPages =

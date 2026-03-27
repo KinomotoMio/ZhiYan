@@ -607,14 +607,14 @@ export interface GenerationEvent {
   payload: GenerationEventPayload;
 }
 
-export async function createJob(req: CreateJobRequest): Promise<CreateJobResponse> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs`, {
+export async function createJob(sessionId: string, req: CreateJobRequest): Promise<CreateJobResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       content: req.content ?? "",
       topic: req.topic ?? "",
-      session_id: req.session_id ?? null,
+      session_id: sessionId,
       source_ids: req.source_ids ?? [],
       template_id: req.template_id ?? null,
       num_pages: req.num_pages ?? 5,
@@ -629,16 +629,19 @@ export async function createJob(req: CreateJobRequest): Promise<CreateJobRespons
   return res.json();
 }
 
-export async function getJob(jobId: string): Promise<GenerationJob> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}`, {
+export async function getJob(sessionId: string, jobId: string): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}`, {
     headers: withWorkspaceHeaders(),
   });
   if (!res.ok) throw new Error(`获取任务失败: ${res.statusText}`);
   return res.json();
 }
 
-export async function runJob(jobId: string): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/run`, {
+export async function runJob(
+  sessionId: string,
+  jobId: string
+): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/run`, {
     method: "POST",
     headers: withWorkspaceHeaders(),
   });
@@ -650,10 +653,11 @@ export async function runJob(jobId: string): Promise<{ job_id: string; status: J
 }
 
 export async function acceptOutline(
+  sessionId: string,
   jobId: string,
   outline?: Record<string, unknown>
 ): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/outline/accept`, {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/outline/accept`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ outline: outline ?? null }),
@@ -666,9 +670,10 @@ export async function acceptOutline(
 }
 
 export async function cancelJob(
+  sessionId: string,
   jobId: string
 ): Promise<{ job_id: string; status: JobStatus; current_stage: StageStatus | null }> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/cancel`, {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/cancel`, {
     method: "POST",
     headers: withWorkspaceHeaders(),
   });
@@ -679,8 +684,8 @@ export async function cancelJob(
   return res.json();
 }
 
-export async function fixPreview(jobId: string, slideIds?: string[]): Promise<GenerationJob> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/preview`, {
+export async function fixPreview(sessionId: string, jobId: string, slideIds?: string[]): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/fix/preview`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ slide_ids: slideIds && slideIds.length > 0 ? slideIds : null }),
@@ -692,8 +697,8 @@ export async function fixPreview(jobId: string, slideIds?: string[]): Promise<Ge
   return res.json();
 }
 
-export async function fixApply(jobId: string, slideIds: string[]): Promise<GenerationJob> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/apply`, {
+export async function fixApply(sessionId: string, jobId: string, slideIds: string[]): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/fix/apply`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ slide_ids: slideIds }),
@@ -705,8 +710,8 @@ export async function fixApply(jobId: string, slideIds: string[]): Promise<Gener
   return res.json();
 }
 
-export async function fixSkip(jobId: string): Promise<GenerationJob> {
-  const res = await fetch(`${API_BASE}/api/v2/generation/jobs/${jobId}/fix/skip`, {
+export async function fixSkip(sessionId: string, jobId: string): Promise<GenerationJob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/fix/skip`, {
     method: "POST",
     headers: withWorkspaceHeaders(),
   });
@@ -728,24 +733,25 @@ export interface SubscribeJobEventsOptions {
   afterSeq?: number;
 }
 
-export function buildJobEventsUrl(jobId: string, afterSeq?: number): string {
+export function buildJobEventsUrl(sessionId: string, jobId: string, afterSeq?: number): string {
   const normalizedAfterSeq =
     typeof afterSeq === "number" && Number.isFinite(afterSeq)
       ? Math.max(0, Math.trunc(afterSeq))
       : 0;
   return normalizedAfterSeq > 0
-    ? `${API_BASE}/api/v2/generation/jobs/${jobId}/events?after_seq=${normalizedAfterSeq}`
-    : `${API_BASE}/api/v2/generation/jobs/${jobId}/events`;
+    ? `${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/events?after_seq=${normalizedAfterSeq}`
+    : `${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs/${jobId}/events`;
 }
 
 export async function subscribeJobEvents(
+  sessionId: string,
   jobId: string,
   callbacks: JobEventCallbacks,
   options?: SubscribeJobEventsOptions
 ): Promise<void> {
   const { onEvent, onDone, onError } = callbacks;
   const signal = options?.signal;
-  const eventsUrl = buildJobEventsUrl(jobId, options?.afterSeq);
+  const eventsUrl = buildJobEventsUrl(sessionId, jobId, options?.afterSeq);
   try {
     const res = await fetch(eventsUrl, {
       method: "GET",

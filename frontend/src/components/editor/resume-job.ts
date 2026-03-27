@@ -11,6 +11,7 @@ export interface ResumeGenerationJobResult {
 }
 
 export async function resumeGenerationJob(
+  sessionId: string,
   jobId: string,
   deps?: {
     getJobFn?: typeof getJob;
@@ -20,8 +21,8 @@ export async function resumeGenerationJob(
   const getJobFn = deps?.getJobFn ?? getJob;
   const runJobFn = deps?.runJobFn ?? runJob;
 
-  const latest = await getJobFn(jobId);
-  const resumed = await runJobFn(jobId);
+  const latest = await getJobFn(sessionId, jobId);
+  const resumed = await runJobFn(sessionId, jobId);
   return {
     eventsSeq: typeof latest.events_seq === "number" ? latest.events_seq : 0,
     resumedStatus: resumed.status,
