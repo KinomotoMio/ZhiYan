@@ -3,9 +3,13 @@
 import { useEffect, useState, type Dispatch, type FocusEvent, type SetStateAction } from "react";
 import type { Presentation } from "@/types/slide";
 import SlidePreview from "@/components/slides/SlidePreview";
+import RevealPreview from "@/components/slides/RevealPreview";
+import type { PresentationOutputMode } from "@/lib/api";
 
 interface RecentResultCarouselProps {
   presentation: Presentation;
+  outputMode?: PresentationOutputMode;
+  htmlContent?: string | null;
   previewSlideIndex: number;
   setPreviewSlideIndex: Dispatch<SetStateAction<number>>;
   isPreviewHovered: boolean;
@@ -15,6 +19,8 @@ interface RecentResultCarouselProps {
 
 export default function RecentResultCarousel({
   presentation,
+  outputMode = "structured",
+  htmlContent = null,
   previewSlideIndex,
   setPreviewSlideIndex,
   isPreviewHovered,
@@ -28,6 +34,7 @@ export default function RecentResultCarousel({
   const normalizedSlideIndex =
     slideCount > 0 ? Math.min(previewSlideIndex, slideCount - 1) : 0;
   const currentSlide = slides[normalizedSlideIndex];
+  const isHtmlMode = outputMode === "html" && Boolean(htmlContent);
 
   useEffect(() => {
     if (slideCount === 0) {
@@ -97,7 +104,17 @@ export default function RecentResultCarousel({
         className="group relative block min-w-0 w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
         aria-label={`打开编辑器并定位到第 ${normalizedSlideIndex + 1} 页`}
       >
-        <SlidePreview slide={currentSlide} className="w-full border-0 shadow-none" />
+        {isHtmlMode ? (
+          <div className="aspect-video w-full overflow-hidden">
+            <RevealPreview
+              htmlContent={htmlContent}
+              startSlide={normalizedSlideIndex}
+              className="w-full border-0 shadow-none"
+            />
+          </div>
+        ) : (
+          <SlidePreview slide={currentSlide} className="w-full border-0 shadow-none" />
+        )}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/55 via-slate-900/10 to-transparent px-3 py-2">
           <p className="text-xs font-medium text-white/90">
             第 {normalizedSlideIndex + 1} / {slideCount} 页 · 点击进入编辑器
@@ -123,7 +140,18 @@ export default function RecentResultCarousel({
                 }`}
               >
                 <div className="w-32 overflow-hidden rounded-md">
-                  <SlidePreview slide={slide} className="w-full border-0 shadow-none" />
+                  {isHtmlMode ? (
+                    <div className="aspect-video w-full overflow-hidden">
+                      <RevealPreview
+                        htmlContent={htmlContent}
+                        startSlide={index}
+                        thumbnailMode
+                        className="w-full border-0 shadow-none pointer-events-none"
+                      />
+                    </div>
+                  ) : (
+                    <SlidePreview slide={slide} className="w-full border-0 shadow-none" />
+                  )}
                 </div>
               </button>
             );
