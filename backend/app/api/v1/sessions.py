@@ -392,36 +392,14 @@ async def create_planning_turn(session_id: str, req: PlanningTurnRequest, reques
                 next_state = await session_store.save_planning_state(
                     workspace_id=workspace_id,
                     session_id=sid,
-                    mode=str(refreshed_state.get("mode") or current_state.get("mode") or "agentic")
-                    if (refreshed_state or current_state)
-                    else "agentic",
                     status=outcome.status,
                     brief=outcome.brief,
                     outline=next_outline if next_outline else {},
                     outline_version=expected_outline_version,
                     source_ids=ready_source_ids,
-                    source_digest=str(
-                        (refreshed_state or current_state or {}).get("source_digest") or ""
-                    ),
-                    outline_stale=bool(
-                        (refreshed_state or current_state or {}).get("outline_stale")
-                    )
-                    and not bool(outcome.outline),
-                    active_job_id=str(
-                        (refreshed_state or current_state or {}).get("active_job_id") or ""
-                    )
-                    or None,
-                    agent_workspace_root=(refreshed_state or current_state or {}).get(
-                        "agent_workspace_root"
-                    ),
-                    agent_session_version=int(
-                        (refreshed_state or current_state or {}).get("agent_session_version") or 0
-                    ),
-                    assistant_status=outcome.assistant_status
-                    or (refreshed_state or current_state or {}).get("assistant_status"),
-                    topic_suggestions=outcome.topic_suggestions
-                    or (refreshed_state or current_state or {}).get("topic_suggestions")
-                    or [],
+                    outline_stale=False if outcome.outline else None,
+                    assistant_status=outcome.assistant_status,
+                    topic_suggestions=outcome.topic_suggestions or None,
                 )
                 if outcome.assistant_message:
                     await session_store.add_chat_message(
