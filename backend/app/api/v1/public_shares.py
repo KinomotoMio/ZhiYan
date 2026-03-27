@@ -32,8 +32,7 @@ async def _resolve_shared_session(token: str) -> dict:
     return share
 
 
-@router.get("/{token}", response_model=PublicSharePlaybackResponse)
-async def get_public_share_playback(token: str):
+async def _resolve_shared_presentation(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
     share = await _resolve_shared_session(token)
     latest = await session_store.get_latest_presentation(
         str(share["workspace_id"]),
@@ -41,7 +40,12 @@ async def get_public_share_playback(token: str):
     )
     if not latest:
         raise HTTPException(status_code=404, detail="当前分享暂无可播放内容")
+    return share, latest
 
+
+@router.get("/{token}", response_model=PublicSharePlaybackResponse)
+async def get_public_share_playback(token: str):
+    _share, latest = await _resolve_shared_presentation(token)
     output_mode = str(latest.get("output_mode") or "structured")
     presentation = latest.get("presentation")
     response = PublicSharePlaybackResponse(
@@ -57,13 +61,7 @@ async def get_public_share_playback(token: str):
 
 @router.get("/{token}/html")
 async def get_public_share_html(token: str):
-    share = await _resolve_shared_session(token)
-    latest = await session_store.get_latest_presentation(
-        str(share["workspace_id"]),
-        str(share["session_id"]),
-    )
-    if not latest:
-        raise HTTPException(status_code=404, detail="当前分享暂无可播放内容")
+    share, latest = await _resolve_shared_presentation(token)
     if str(latest.get("output_mode") or "structured") != "html":
         raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
 
