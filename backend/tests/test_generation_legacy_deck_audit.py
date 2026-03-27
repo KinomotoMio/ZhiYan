@@ -1,11 +1,11 @@
 from app.models.generation import GenerationJob, GenerationRequestData
-from app.services.generation.agent_adapter import AgentDeck, deck_to_slides
+from app.services.generation.legacy.deck_adapter import AgentDeck, deck_to_slides
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
 
 
-def test_deck_audit_flags_empty_descriptions_and_noisy_repairs(tmp_path):
+def test_legacy_deck_audit_flags_empty_descriptions_and_noisy_repairs(tmp_path):
     runner = GenerationRunner(GenerationJobStore(tmp_path / "jobs"), GenerationEventBus())
     job = GenerationJob(
         job_id="job-audit",

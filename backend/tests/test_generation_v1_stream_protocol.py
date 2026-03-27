@@ -8,9 +8,10 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.main import app
 from app.models.generation import EventType, TERMINAL_EVENTS
-from app.services.generation.agent_adapter import AgentDeck, AgentOutline
+from app.services.generation.agent_adapter import AgentOutline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
+from app.services.generation.legacy.deck_adapter import AgentDeck
 from app.services.generation.runner import GenerationRunner
 from app.services.sessions.store import SessionStore
 
