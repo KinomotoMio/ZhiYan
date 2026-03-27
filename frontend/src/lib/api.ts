@@ -935,6 +935,30 @@ interface HtmlUpdateEvent {
   modifications?: Record<string, unknown>[];
 }
 
+export interface ChatAssistantStatusEvent {
+  assistant_status:
+    | "thinking"
+    | "inspecting_context"
+    | "running_tools"
+    | "applying_change"
+    | "ready"
+    | "error"
+    | string;
+}
+
+export interface ChatToolCallEvent {
+  tool_name: string;
+  call_id: string;
+  summary: string;
+}
+
+export interface ChatToolResultEvent {
+  tool_name: string;
+  call_id: string;
+  ok: boolean;
+  summary: string;
+}
+
 export type ChatActionHint =
   | "refresh_layout"
   | "simplify"
@@ -955,7 +979,10 @@ export async function chatStream(
   onError?: (err: Error) => void,
   onSlideUpdate?: (update: SlideUpdateEvent) => void,
   onNoOp?: (event: ChatNoOpEvent) => void,
-  onHtmlUpdate?: (update: HtmlUpdateEvent) => void
+  onHtmlUpdate?: (update: HtmlUpdateEvent) => void,
+  onAssistantStatus?: (event: ChatAssistantStatusEvent) => void,
+  onToolCall?: (event: ChatToolCallEvent) => void,
+  onToolResult?: (event: ChatToolResultEvent) => void
 ): Promise<void> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
@@ -993,6 +1020,23 @@ export async function chatStream(
             const parsed = JSON.parse(data);
             if (parsed.type === "text" && parsed.content) {
               onChunk(parsed.content);
+            } else if (parsed.type === "assistant_status" && onAssistantStatus) {
+              onAssistantStatus({
+                assistant_status: parsed.assistant_status || "thinking",
+              });
+            } else if (parsed.type === "tool_call" && onToolCall) {
+              onToolCall({
+                tool_name: parsed.tool_name || "",
+                call_id: parsed.call_id || "",
+                summary: parsed.summary || "",
+              });
+            } else if (parsed.type === "tool_result" && onToolResult) {
+              onToolResult({
+                tool_name: parsed.tool_name || "",
+                call_id: parsed.call_id || "",
+                ok: Boolean(parsed.ok),
+                summary: parsed.summary || "",
+              });
             } else if (parsed.type === "slide_update" && onSlideUpdate) {
               onSlideUpdate({
                 slides: parsed.slides,

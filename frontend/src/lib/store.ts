@@ -52,6 +52,11 @@ export interface ChatMessage {
   messageKind?: string;
   outlineVersion?: number | null;
   jobId?: string | null;
+  transient?: boolean;
+  toolName?: string;
+  callId?: string;
+  ok?: boolean;
+  summary?: string;
 }
 
 export interface GenerationCardState {
