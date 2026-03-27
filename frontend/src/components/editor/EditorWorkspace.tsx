@@ -22,6 +22,7 @@ import {
   fixApply,
   fixPreview,
   fixSkip,
+  saveLatestSessionPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -120,6 +121,7 @@ export default function EditorWorkspace({
     issuePanelSlideId,
     issueDecisionBySlideId,
     setPresentation,
+    updateSlides,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [revealSlideIndex, setRevealSlideIndex] = useState(0);
@@ -129,6 +131,9 @@ export default function EditorWorkspace({
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
   const [acceptingOutline, setAcceptingOutline] = useState(false);
+  const [speakerNotesDraft, setSpeakerNotesDraft] = useState("");
+  const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
+  const [generatingSpeakerNotes, setGeneratingSpeakerNotes] = useState(false);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
@@ -372,6 +377,10 @@ export default function EditorWorkspace({
         : issueSlideIds[0] ?? null;
 
   useEffect(() => {
+    setSpeakerNotesDraft(currentSlide?.speakerNotes ?? "");
+  }, [currentSlide?.slideId, currentSlide?.speakerNotes]);
+
+  useEffect(() => {
     const missingSlideIds = issueSlideIds.filter(
       (slideId) => !issueDecisionBySlideId[slideId]
     );
@@ -460,6 +469,44 @@ export default function EditorWorkspace({
       toast.error(`导出失败: ${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleSaveSpeakerNotes = async () => {
+    if (!presentation || !currentSlide || !currentSessionId) return;
+
+    const currentNotes = currentSlide.speakerNotes ?? "";
+    if (speakerNotesDraft === currentNotes) return;
+
+    const nextSlides = presentation.slides.map((slide, index) => {
+      if (index !== currentSlideIndex) return slide;
+      return {
+        ...slide,
+        speakerNotes: speakerNotesDraft.trim().length > 0 ? speakerNotesDraft : undefined,
+      };
+    });
+    const nextPresentation = { ...presentation, slides: nextSlides };
+
+    updateSlides(nextSlides);
+    setSavingSpeakerNotes(true);
+
+    try {
+      await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      toast.success("已保存当前页演讲者注解");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "保存演讲者注解失败");
+    } finally {
+      setSavingSpeakerNotes(false);
+    }
+  };
+
+  const handleGenerateSpeakerNotes = async () => {
+    if (generatingSpeakerNotes) return;
+    setGeneratingSpeakerNotes(true);
+    try {
+      toast.info("演讲者注解生成接口即将接入");
+    } finally {
+      setGeneratingSpeakerNotes(false);
     }
   };
 
@@ -668,7 +715,7 @@ export default function EditorWorkspace({
           </div>
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <section className="zy-card-glass flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/70 px-5 py-3">
               <div>
@@ -681,21 +728,36 @@ export default function EditorWorkspace({
                 第 {Math.min(currentSlideIndex + 1, totalCount)} / {totalCount} 页
               </div>
             </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
                 <div className="w-full max-w-4xl">
-                  <SlidePreview
-                    slide={currentSlide}
-                    className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
-                  />
+                  {currentSlide ? (
+                    <SlidePreview
+                      slide={currentSlide}
+                      className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
+                    />
+                  ) : (
+                    <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
+                      当前没有可预览的页面
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+            <SpeakerNotes
+              value={speakerNotesDraft}
+              onChange={setSpeakerNotesDraft}
+              onSave={() => {
+                void handleSaveSpeakerNotes();
+              }}
+              onGenerate={() => {
+                void handleGenerateSpeakerNotes();
+              }}
+              isSaving={savingSpeakerNotes}
+              isGenerating={generatingSpeakerNotes}
+              canGenerate={Boolean(currentSlide)}
+            />
           </section>
-
-          <div className="overflow-hidden rounded-2xl">
-            <SpeakerNotes notes={currentSlide?.speakerNotes} />
-          </div>
         </main>
       </div>
 
