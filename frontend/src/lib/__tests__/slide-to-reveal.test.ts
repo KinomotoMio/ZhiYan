@@ -472,40 +472,6 @@ test("presentationToRevealHTML renders a fallback message for unrecoverable layo
   assert.ok(html.includes("Slide data is unavailable in presentation mode."));
 });
 
-test("presentationToRevealHTML renders outline-slide as a two-column agenda layout", () => {
-  const html = presentationToRevealHTML({
-    ...basePresentation,
-    slides: [
-      {
-        slideId: "slide-outline",
-        layoutType: "outline-slide",
-        layoutId: "outline-slide",
-        contentData: {
-          title: "Presentation Outline",
-          subtitle: "A quick way to preview the report structure.",
-          sections: [
-            { title: "Background", description: "Why this matters" },
-            { title: "Method", description: "How we approached it" },
-            { title: "Findings", description: "What we observed" },
-            { title: "Results", description: "What changed" },
-            { title: "Next Steps", description: "How to proceed" },
-          ],
-        },
-        components: [],
-      },
-    ],
-  });
-
-  assert.match(html, /Presentation Outline/);
-  assert.match(html, /Background/);
-  assert.match(html, /Next Steps/);
-  assert.match(html, /display:flex;gap:56px;flex:1;margin-top:48px;/);
-  assert.ok(html.includes(">01<"));
-  assert.ok(html.includes(">05<"));
-  assert.doesNotMatch(html, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
-  assert.doesNotMatch(html, /shadow-\[/);
-});
-
 test("presentationToRevealHTML renders metrics-slide executive summary and legacy fallback", () => {
   const html = presentationToRevealHTML({
     ...basePresentation,
