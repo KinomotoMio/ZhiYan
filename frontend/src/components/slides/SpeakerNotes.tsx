@@ -185,8 +185,12 @@ export default function SpeakerNotes({
           />
         </div>
 
-        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
-          <span>{isSaving ? "正在保存..." : "点击保存，或使用 Cmd/Ctrl + Enter"}</span>
+        <div
+          className={`mt-2 flex items-center gap-3 text-xs text-slate-500 ${
+            isSaving ? "justify-between" : "justify-end"
+          }`}
+        >
+          {isSaving ? <span>正在保存...</span> : null}
           <span>{hasNotes ? `${value.trim().length} 字` : "当前页还没有演讲者注解"}</span>
         </div>
       </div>
