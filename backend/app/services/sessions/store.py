@@ -1527,7 +1527,7 @@ class SessionStore:
         latest = self._get_latest_presentation_sync(workspace_id, session_id)
         if not latest:
             return None
-        artifacts = self._extract_artifacts(latest.get("presentation"))
+        artifacts = latest.get("artifacts")
         deck = artifacts.get("html_deck") if isinstance(artifacts, dict) else None
         if not isinstance(deck, dict):
             return None
