@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
-import { getJob, getSessionDetail, updateSession } from "@/lib/api";
+import {
+  getJob,
+  getLatestSessionPresentationHtml,
+  getSessionDetail,
+  updateSession,
+} from "@/lib/api";
 import { DEFAULT_LOADING_TITLE, resolveGenerationRequestTitle } from "@/lib/loading-title";
 import { getCreateSessionPath } from "@/lib/routes";
 import {
@@ -97,6 +102,7 @@ export default function SessionEditorPage() {
   const displaySessionTitle = syncedSessionTitle || sessionTitle;
   const upsertSession = useAppStore((store) => store.upsertSession);
   const setSessionData = useAppStore((store) => store.setSessionData);
+  const setPresentationHtmlState = useAppStore((store) => store.setPresentationHtmlState);
   const setCurrentSlideIndex = useAppStore((store) => store.setCurrentSlideIndex);
   const updateJobState = useAppStore((store) => store.updateJobState);
   const setIsGenerating = useAppStore((store) => store.setIsGenerating);
@@ -121,6 +127,11 @@ export default function SessionEditorPage() {
             : null;
         let presentation =
           detail.latest_presentation?.presentation ?? localPresentation ?? null;
+        const latestOutputMode = detail.latest_presentation?.output_mode ?? "structured";
+        let presentationHtml =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationHtml
+            : null;
         const latestJob = detail.latest_generation_job;
         const resolvedJobStatus =
           latestJob?.status === "pending" &&
@@ -186,6 +197,14 @@ export default function SessionEditorPage() {
           }
         }
 
+        if (latestOutputMode === "html") {
+          try {
+            presentationHtml = await getLatestSessionPresentationHtml(sessionId);
+          } catch {
+            presentationHtml = null;
+          }
+        }
+
         const initialSlideIndex = parseSlideQueryToIndex(
           requestedSlide,
           presentation?.slides.length ?? 0
@@ -196,8 +215,16 @@ export default function SessionEditorPage() {
           sources: detail.sources,
           chatMessages,
           presentation,
+          presentationOutputMode: latestOutputMode,
+          presentationHtml,
+          presentationHtmlArtifact: detail.latest_presentation?.artifacts?.html_deck ?? null,
           planningState: detail.planning_state ?? null,
         });
+        setPresentationHtmlState(
+          latestOutputMode,
+          presentationHtml,
+          detail.latest_presentation?.artifacts?.html_deck ?? null
+        );
         if (latestJob?.job_id) {
           updateJobState({
             jobId: latestJob.job_id,
@@ -278,6 +305,7 @@ export default function SessionEditorPage() {
     setCurrentSessionId,
     setCurrentSlideIndex,
     setIsGenerating,
+    setPresentationHtmlState,
     setSessionData,
     updateJobState,
     upsertSession,

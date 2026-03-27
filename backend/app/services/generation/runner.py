@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.model_status import parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide, Theme
+from app.services.html_deck import normalize_html_deck
 from app.services.generation.agentic import (
     AgentBuilder,
     LiteLLMModelClient,
@@ -68,6 +69,11 @@ class _SubmitPresentationArgs(BaseModel):
     slides: list[dict[str, Any]]
 
     model_config = {"populate_by_name": True}
+
+
+class _SubmitHtmlDeckArgs(BaseModel):
+    title: str = ""
+    html: str
 
 
 AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
@@ -222,6 +228,7 @@ class GenerationRunner:
                 payload={
                     "mode": job.mode.value,
                     "num_pages": job.request.num_pages,
+                    "output_mode": job.output_mode.value,
                 },
             )
 
@@ -324,14 +331,29 @@ class GenerationRunner:
             )
             self._write_runner_trace(job, state)
             job.updated_at = now_iso()
-            await self._store.save_job(job)
             if job.request.session_id:
                 from app.services.sessions import session_store
-                await session_store.save_presentation(
+                html_output = state.document_metadata.get("agent_outputs", {}).get("html_deck")
+                saved = await session_store.save_presentation(
                     session_id=job.request.session_id,
                     payload=job.presentation,
                     is_snapshot=False,
+                    output_mode=job.output_mode.value,
+                    html_deck=(
+                        {
+                            "html": html_output.get("html"),
+                            "expected_slide_count": len(state.slides),
+                        }
+                        if job.output_mode.value == "html" and isinstance(html_output, dict)
+                        else None
+                    ),
                 )
+                if isinstance(saved.get("presentation"), dict):
+                    job.presentation = saved["presentation"]
+            await self._store.save_job(job)
+            if job.request.session_id:
+                from app.services.sessions import session_store
+
                 await session_store.update_generation_job_status(
                     job.job_id,
                     JobStatus.COMPLETED.value,
@@ -344,6 +366,8 @@ class GenerationRunner:
                 message="任务完成",
                 payload={
                     "presentation": job.presentation,
+                    "output_mode": job.output_mode.value,
+                    "artifacts": job.presentation.get("artifacts") if isinstance(job.presentation, dict) else {},
                     "issues": job.issues,
                     "failed_slide_indices": job.failed_slide_indices,
                     "elapsed_ms": elapsed_ms,
@@ -939,12 +963,19 @@ class GenerationRunner:
             presentation_id = f"pres-{uuid4().hex[:8]}"
         theme_payload = existing.get("theme") or generated.get("theme")
         theme = Theme.model_validate(theme_payload) if isinstance(theme_payload, dict) else None
-        return Presentation(
+        payload = Presentation(
             presentationId=presentation_id,
             title=title,
             theme=theme,
             slides=slides,
         ).model_dump(mode="json", by_alias=True, exclude_none=True)
+        output_mode = str(existing.get("outputMode") or job.output_mode.value).strip()
+        if output_mode:
+            payload["outputMode"] = output_mode
+        artifacts = existing.get("artifacts")
+        if isinstance(artifacts, dict) and artifacts:
+            payload["artifacts"] = deepcopy(artifacts)
+        return payload
 
     async def _persist_partial_presentation(
         self,
@@ -1120,43 +1151,76 @@ class GenerationRunner:
     ) -> None:
         if progress_hook:
             await progress_hook("slides", 1, 3, "Agent 正在生成完整演示内容...")
-        submitted_payload, presentation = await self._generate_presentation_with_agent(job, state)
-        audit = self._audit_generated_presentation(job, submitted_payload, presentation)
-        if audit["issues"]:
-            raise ValueError("Presentation audit failed: " + " | ".join(audit["issues"]))
-        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        if len(presentation.slides) != expected:
-            raise ValueError(
-                f"Presentation slide count mismatch after correction: expected {expected}, got {len(presentation.slides)}"
+        if job.output_mode.value == "html":
+            html_payload, presentation = await self._generate_html_deck_with_agent(job, state)
+            state.layout_selections = [
+                {
+                    "slide_number": index + 1,
+                    "layout_id": slide.layout_id or slide.layout_type,
+                }
+                for index, slide in enumerate(presentation.slides)
+            ]
+            state.slides = list(presentation.slides)
+            state.slide_contents = [
+                {
+                    "slide_number": index + 1,
+                    "layout_id": slide.layout_id or slide.layout_type,
+                    "content_data": slide.content_data or {},
+                }
+                for index, slide in enumerate(presentation.slides)
+            ]
+            state.document_metadata.setdefault("agent_outputs", {})
+            state.document_metadata["agent_outputs"]["html_deck"] = {
+                "title": html_payload["title"],
+                "html": html_payload["html"],
+                "meta": html_payload["meta"],
+            }
+            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
             )
-        state.layout_selections = [
-            {
-                "slide_number": index + 1,
-                "layout_id": slide.layout_id or slide.layout_type,
-            }
-            for index, slide in enumerate(presentation.slides)
-        ]
-        state.slides = list(presentation.slides)
-        state.slide_contents = [
-            {
-                "slide_number": int(str(slide.slide_id).replace("slide-", "") or "0"),
-                "layout_id": slide.layout_id or slide.layout_type,
-                "content_data": slide.content_data or {},
-            }
-            for slide in presentation.slides
-        ]
-        state.document_metadata.setdefault("agent_outputs", {})
-        state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
-            mode="json",
-            by_alias=True,
-            exclude_none=True,
-        )
-        state.document_metadata["agent_outputs"]["presentation_audit"] = audit
-        for key in ("deck", "deck_audit", "deck_metadata"):
-            state.document_metadata["agent_outputs"].pop(key, None)
-        for index, slide in enumerate(presentation.slides):
-            if slide_hook:
-                await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
+            for index, slide in enumerate(presentation.slides):
+                if slide_hook:
+                    await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
+        else:
+            submitted_payload, presentation = await self._generate_presentation_with_agent(job, state)
+            audit = self._audit_generated_presentation(job, submitted_payload, presentation)
+            if audit["issues"]:
+                raise ValueError("Presentation audit failed: " + " | ".join(audit["issues"]))
+            expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+            if len(presentation.slides) != expected:
+                raise ValueError(
+                    f"Presentation slide count mismatch after correction: expected {expected}, got {len(presentation.slides)}"
+                )
+            state.layout_selections = [
+                {
+                    "slide_number": index + 1,
+                    "layout_id": slide.layout_id or slide.layout_type,
+                }
+                for index, slide in enumerate(presentation.slides)
+            ]
+            state.slides = list(presentation.slides)
+            state.slide_contents = [
+                {
+                    "slide_number": int(str(slide.slide_id).replace("slide-", "") or "0"),
+                    "layout_id": slide.layout_id or slide.layout_type,
+                    "content_data": slide.content_data or {},
+                }
+                for slide in presentation.slides
+            ]
+            state.document_metadata.setdefault("agent_outputs", {})
+            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+            )
+            state.document_metadata["agent_outputs"]["presentation_audit"] = audit
+            for key in ("deck", "deck_audit", "deck_metadata"):
+                state.document_metadata["agent_outputs"].pop(key, None)
+            for index, slide in enumerate(presentation.slides):
+                if slide_hook:
+                    await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         if progress_hook:
             await progress_hook("slides", 3, 3, "Agent 已直接提交当前编辑器可用的演示结果。")
 
@@ -1547,7 +1611,7 @@ class GenerationRunner:
             prompt = (
                 self._build_agent_presentation_user_prompt(job, state)
                 if attempt == 0
-                else self._build_agent_presentation_retry_prompt(expected, last_issues)
+                else self._build_agent_presentation_retry_prompt(expected, last_issues, output_mode="structured")
             )
             result = await session.send(prompt)
             self._write_agent_run_debug(
@@ -1578,6 +1642,52 @@ class GenerationRunner:
         if last_issues:
             raise ValueError("Presentation audit failed: " + " | ".join(last_issues))
         raise ValueError(f"Presentation slide count mismatch: expected {expected}")
+
+    async def _generate_html_deck_with_agent(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+    ) -> tuple[dict[str, Any], Presentation]:
+        payload_holder: dict[str, Any] = {}
+        agent, traced_model = self._build_generation_agent(
+            job=job,
+            extra_tools=[self._make_html_deck_submit_tool(payload_holder)],
+            system_prompt=self._build_agent_presentation_prompt(job, state),
+            allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
+        )
+        session = agent.start_session()
+        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+        for attempt in range(3):
+            prompt = (
+                self._build_agent_presentation_user_prompt(job, state)
+                if attempt == 0
+                else self._build_agent_presentation_retry_prompt(
+                    expected,
+                    [
+                        "必须输出可直接播放的 Reveal HTML 文件。",
+                        f"必须严格包含 {expected} 个 <section> 页面。",
+                        "每个页面都要有稳定的 data-slide-id 和 data-slide-title。",
+                    ],
+                    output_mode="html",
+                )
+            )
+            result = await session.send(prompt)
+            self._write_agent_run_debug(
+                job,
+                state,
+                stage_name="presentation",
+                prompt=prompt,
+                session=session,
+                result=result,
+                traced_model=traced_model,
+                submitted_payload=payload_holder.get("html_deck"),
+                attempt=attempt + 1,
+            )
+            extracted = self._extract_html_deck_submission(job, payload_holder)
+            if extracted is not None and len(extracted[1].slides) == expected:
+                return extracted
+            payload_holder.clear()
+        raise RuntimeError("Agent did not submit a valid HTML deck.")
 
     def _build_generation_agent(
         self,
@@ -1673,6 +1783,43 @@ class GenerationRunner:
             source="embedded",
         )
 
+    def _make_html_deck_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitHtmlDeckArgs, context: ToolContext) -> dict[str, Any]:
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            normalized_html, meta, presentation = normalize_html_deck(
+                html=args.html,
+                fallback_title=args.title,
+            )
+            payload = {
+                "title": meta["title"],
+                "html": normalized_html,
+                "meta": meta,
+                "presentation": presentation,
+            }
+            payload_holder["html_deck"] = payload
+            (artifacts_dir / "presentation.html").write_text(
+                normalized_html,
+                encoding="utf-8",
+            )
+            (artifacts_dir / "presentation.meta.json").write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return {
+                "status": "ok",
+                "slide_count": meta["slide_count"],
+                "path": str((artifacts_dir / "presentation.html").resolve()),
+            }
+
+        return Tool(
+            name="submit_html_deck",
+            description="Submit the final Reveal-compatible HTML deck. Call this exactly once when the deck is ready.",
+            args_model=_SubmitHtmlDeckArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
     @staticmethod
     def _extract_outline_submission(payload_holder: dict[str, Any]) -> AgentOutline | None:
         payload = payload_holder.get("outline")
@@ -1691,6 +1838,21 @@ class GenerationRunner:
         hydrated_payload = self._hydrate_submitted_presentation(job, payload)
         normalized_payload, _changed, _report = normalize_presentation_payload(hydrated_payload)
         return hydrated_payload, Presentation.model_validate(normalized_payload)
+
+    def _extract_html_deck_submission(
+        self,
+        job: GenerationJob,
+        payload_holder: dict[str, Any],
+    ) -> tuple[dict[str, Any], Presentation] | None:
+        payload = payload_holder.get("html_deck")
+        if not isinstance(payload, dict):
+            return None
+        presentation = payload.get("presentation")
+        if not isinstance(presentation, dict):
+            return None
+        normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
+        validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
+        return payload, validated
 
     @staticmethod
     def _workspace_root_for_job(job: GenerationJob):
@@ -1764,6 +1926,24 @@ class GenerationRunner:
         outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
         source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
         palette = ", ".join(self._allowed_layout_palette(job))
+        if job.output_mode.value == "html":
+            return (
+                "你是 ZhiYan 当前创建页按钮背后的 HTML 演示生成内核。\n"
+                "请基于工作区素材和已确认的大纲，产出一个可直接播放、可后续继续编辑的 Reveal HTML deck。\n\n"
+                "工作方式：\n"
+                "- 先使用本地素材摘要判断叙事与风格，再按需补读原始 source 文本。\n"
+                "- 你只有 `read_file` 和 `submit_html_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+                "- 最终必须只通过 `submit_html_deck` 提交。\n\n"
+                "HTML 约束：\n"
+                f"- 严格输出 {state.num_pages} 页，且必须严格包含 {state.num_pages} 个 `<section>`。\n"
+                "- 每页必须是 16:9 演示页面，不要写成文档排版。\n"
+                "- 每个 `<section>` 都必须有稳定的 `data-slide-id=\"slide-N\"` 和 `data-slide-title=\"页面标题\"`。\n"
+                "- 必须体现强视觉设计：鲜明但克制的主题、明确的版式层级、面向展示的文案密度、符合主题的艺术风格。\n"
+                "- 优先做带艺术方向的 HTML PPT，不要退化成普通 markdown 页面。\n"
+                "- 内容要贴合素材，不要空泛，不要出现“待补充”“内容生成中”之类占位文本。\n\n"
+                f"本地素材摘要：\n{source_brief}\n\n"
+                f"已确认大纲：\n{outline_json}\n"
+            )
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 演示生成内核。\n"
             "请基于工作区素材和已确认的大纲/本地摘要，直接产出当前 editor 可消费的完整 presentation。\n\n"
@@ -1793,6 +1973,14 @@ class GenerationRunner:
 
     def _build_agent_presentation_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         del state
+        if job.output_mode.value == "html":
+            return (
+                "请生成完整 HTML deck。\n"
+                f"主题：{job.request.topic or job.request.title}\n"
+                f"补充指令：{job.request.content or '无'}\n"
+                f"目标页数：{job.request.num_pages}\n"
+                "完成后调用 `submit_html_deck`。"
+            )
         return (
             "请生成完整 presentation。\n"
             f"主题：{job.request.topic or job.request.title}\n"
@@ -1801,14 +1989,22 @@ class GenerationRunner:
             "完成后调用 `submit_presentation`。"
         )
 
-    def _build_agent_presentation_retry_prompt(self, expected: int, issues: list[str]) -> str:
+    def _build_agent_presentation_retry_prompt(
+        self,
+        expected: int,
+        issues: list[str],
+        *,
+        output_mode: str,
+    ) -> str:
         issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 presentation 未通过本地审计。"
+        submit_tool = "submit_html_deck" if output_mode == "html" else "submit_presentation"
+        label = "HTML deck" if output_mode == "html" else "presentation"
         return (
-            "请修正上一版 presentation 并重新提交。\n"
+            f"请修正上一版 {label} 并重新提交。\n"
             f"必须严格输出 {expected} 页。\n"
             "以下问题必须全部修正：\n"
             f"{issue_text}\n"
-            "修正后再次调用 `submit_presentation`。"
+            f"修正后再次调用 `{submit_tool}`。"
         )
 
     @staticmethod

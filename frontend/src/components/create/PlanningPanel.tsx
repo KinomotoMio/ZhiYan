@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   confirmPlanning,
   planningTurnStream,
+  type PresentationOutputMode,
   updatePlanningOutline,
   type PlanningOutlineItem,
   type PlanningState,
@@ -176,7 +177,9 @@ interface OutlineDraftBlockProps {
   onAdd: () => Promise<void>;
   onRemove: (index: number) => Promise<void>;
   onRefresh: () => Promise<void>;
-  onConfirm: () => Promise<void>;
+  generationMode: PresentationOutputMode;
+  onChangeGenerationMode: (mode: PresentationOutputMode) => void;
+  onConfirm: (mode: PresentationOutputMode) => Promise<void>;
   onFocusComposer: () => void;
 }
 
@@ -191,6 +194,8 @@ function OutlineDraftBlock({
   onAdd,
   onRemove,
   onRefresh,
+  generationMode,
+  onChangeGenerationMode,
   onConfirm,
   onFocusComposer,
 }: OutlineDraftBlockProps) {
@@ -440,20 +445,48 @@ function OutlineDraftBlock({
             继续调整
           </button>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void commitActiveEdit().then((ok) => {
-              if (!ok) return;
-              void onConfirm();
-            });
-          }}
-          disabled={outlineStale || items.length === 0 || savingOutline || confirming}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {(confirming || savingOutline) && <Loader2 className="h-4 w-4 animate-spin" />}
-          这版可以，开始生成
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="inline-flex rounded-full border border-slate-200 bg-white/70 p-1">
+            <button
+              type="button"
+              onClick={() => onChangeGenerationMode("html")}
+              className={cn(
+                "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                generationMode === "html"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              )}
+            >
+              HTML 美观模式
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeGenerationMode("structured")}
+              className={cn(
+                "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                generationMode === "structured"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              )}
+            >
+              结构化模式
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              void commitActiveEdit().then((ok) => {
+                if (!ok) return;
+                void onConfirm(generationMode);
+              });
+            }}
+            disabled={outlineStale || items.length === 0 || savingOutline || confirming}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {(confirming || savingOutline) && <Loader2 className="h-4 w-4 animate-spin" />}
+            这版可以，开始生成
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -574,6 +607,8 @@ export default function PlanningPanel() {
     setActiveGenerationCard,
     updateJobState,
     setIsGenerating,
+    planningOutputMode,
+    setPlanningOutputMode,
   } = useAppStore();
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -757,11 +792,11 @@ export default function PlanningPanel() {
     await persistOutline(next.length > 0 ? next : []);
   };
 
-  const handleConfirm = async () => {
+  const handleConfirm = async (outputMode: PresentationOutputMode) => {
     if (!currentSessionId || outlineStale || draftOutline.length === 0 || confirming) return;
     setConfirming(true);
     try {
-      const result = await confirmPlanning(currentSessionId);
+      const result = await confirmPlanning(currentSessionId, outputMode);
       setPlanningState(result.planning_state);
       setActiveGenerationCard({
         jobId: result.job_id,
@@ -824,13 +859,15 @@ export default function PlanningPanel() {
                 confirming={confirming}
                 onPatchItem={patchOutlineItem}
                 onPersist={persistOutline}
-                onMove={moveOutlineItem}
-                onAdd={addOutlineItem}
-                onRemove={removeOutlineItem}
-                onRefresh={() => sendPlanningMessage("请根据我刚更新的素材，重新整理一版提纲。")}
-                onConfirm={handleConfirm}
-                onFocusComposer={() => composerRef.current?.focus()}
-              />
+              onMove={moveOutlineItem}
+              onAdd={addOutlineItem}
+              onRemove={removeOutlineItem}
+              onRefresh={() => sendPlanningMessage("请根据我刚更新的素材，重新整理一版提纲。")}
+              generationMode={planningOutputMode}
+              onChangeGenerationMode={setPlanningOutputMode}
+              onConfirm={handleConfirm}
+              onFocusComposer={() => composerRef.current?.focus()}
+            />
             </AssistantBlock>
           )}
 

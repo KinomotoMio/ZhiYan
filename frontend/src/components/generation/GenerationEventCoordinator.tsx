@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {
+  getLatestSessionPresentationHtml,
   subscribeJobEvents,
   type GenerationErrorCode,
   type GenerationEvent,
+  type HtmlDeckArtifactMeta,
 } from "@/lib/api";
 import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
@@ -56,6 +58,7 @@ export default function GenerationEventCoordinator() {
     setPresentationTitle,
     updateSlideAtIndex,
     setPresentation,
+    setPresentationHtmlState,
     setIsGenerating,
     finishGeneration,
   } = useAppStore();
@@ -188,6 +191,27 @@ export default function GenerationEventCoordinator() {
             if (presentation) {
               setPresentation(presentation);
             }
+            if (payload.output_mode === "html" && currentSessionId) {
+              void getLatestSessionPresentationHtml(currentSessionId)
+                .then((html) => {
+                  const artifacts =
+                    payload.artifacts && typeof payload.artifacts === "object"
+                      ? (payload.artifacts as {
+                          html_deck?: HtmlDeckArtifactMeta;
+                        })
+                      : undefined;
+                  setPresentationHtmlState(
+                    "html",
+                    html,
+                    artifacts?.html_deck ?? null
+                  );
+                })
+                .catch(() => {
+                  setPresentationHtmlState("html", null, null);
+                });
+            } else {
+              setPresentationHtmlState("structured", null, null);
+            }
             const normalizedIssues = Array.isArray(payload.issues)
               ? (payload.issues as Array<Record<string, unknown>>)
               : [];
@@ -299,6 +323,7 @@ export default function GenerationEventCoordinator() {
     setIssueDecision,
     setFixPreviewSelection,
     setPresentation,
+    setPresentationHtmlState,
     setPresentationTitle,
     updateJobState,
     updateSlideAtIndex,

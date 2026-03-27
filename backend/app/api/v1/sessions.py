@@ -7,7 +7,7 @@ import json
 from contextlib import suppress
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -22,6 +22,7 @@ from app.models.generation import (
     GenerationJob,
     JobActionResponse,
     JobStatus,
+    PresentationOutputMode,
     StageStatus,
     now_iso,
 )
@@ -87,6 +88,10 @@ class PlanningConfirmResponse(BaseModel):
     status: str
     current_stage: str | None = None
     planning_state: PlanningState
+
+
+class PlanningConfirmRequest(BaseModel):
+    output_mode: PresentationOutputMode = PresentationOutputMode.HTML
 
 
 def _ensure_session_id(value: str) -> str:
@@ -474,7 +479,11 @@ async def update_session_planning_outline(
 
 
 @router.post("/{session_id}/planning/confirm", response_model=PlanningConfirmResponse)
-async def confirm_session_planning(session_id: str, request: Request):
+async def confirm_session_planning(
+    session_id: str,
+    request: Request,
+    req: PlanningConfirmRequest | None = None,
+):
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
@@ -494,6 +503,7 @@ async def confirm_session_planning(session_id: str, request: Request):
     approved_outline = normalize_planning_outline(current_state.get("outline") or {})
     if not approved_outline.get("items"):
         raise HTTPException(status_code=409, detail="当前会话还没有可确认的大纲")
+    confirm_req = req or PlanningConfirmRequest()
     brief = dict(current_state.get("brief") or {})
     topic = str(brief.get("topic") or "").strip()
     if not topic:
@@ -510,6 +520,7 @@ async def confirm_session_planning(session_id: str, request: Request):
                 template_id=None,
                 num_pages=len(approved_outline.get("items") or []),
                 approved_outline=approved_outline,
+                output_mode=confirm_req.output_mode,
             ),
         )
     except ValueError as exc:
@@ -611,6 +622,9 @@ async def accept_session_generation_outline(
 
     if req.outline is not None:
         job.outline = req.outline
+    if req.output_mode is not None:
+        job.output_mode = req.output_mode
+        job.request.output_mode = req.output_mode
     job.outline_accepted = True
     job.updated_at = now_iso()
     await job_store.save_job(job)
@@ -807,6 +821,30 @@ async def get_latest_presentation(session_id: str, request: Request):
     return latest
 
 
+@router.get("/{session_id}/presentations/latest/html")
+async def get_latest_presentation_html(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_html_deck(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
+    html, _meta = latest
+    return PlainTextResponse(content=html, media_type="text/html")
+
+
+@router.get("/{session_id}/presentations/latest/html/meta")
+async def get_latest_presentation_html_meta(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_html_deck(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
+    _html, meta = latest
+    return JSONResponse(content=meta)
+
+
 @router.put("/{session_id}/presentations/latest", response_model=SnapshotMeta)
 async def save_latest_presentation(
     session_id: str,
@@ -821,6 +859,8 @@ async def save_latest_presentation(
         payload=req.presentation,
         is_snapshot=False,
         snapshot_label=None,
+        output_mode=req.output_mode,
+        html_deck=req.html_deck,
     )
     return SnapshotMeta.model_validate(saved)
 

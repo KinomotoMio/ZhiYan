@@ -434,6 +434,7 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     confirm = client.post(
         f"/api/v1/sessions/{session_id}/planning/confirm",
         headers=headers,
+        json={"output_mode": "html"},
     )
     assert confirm.status_code == 200
     payload = confirm.json()
@@ -445,6 +446,7 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     assert req.session_id == session_id
     assert req.topic == "智能客服方案"
     assert req.num_pages == 3
+    assert req.output_mode.value == "html"
     assert req.approved_outline["items"][0]["title"] == "业务背景"
 
     detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
@@ -628,6 +630,67 @@ def test_put_latest_presentation_workspace_isolation(monkeypatch, tmp_path):
         json={"presentation": presentation, "source": "chat"},
     )
     assert denied.status_code == 404
+
+
+def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-html"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "html latest"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-html",
+        "title": "HTML 最新稿",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "封面", "_htmlDeck": True},
+                "components": [],
+            }
+        ],
+    }
+    html_deck = (
+        "<!DOCTYPE html><html><head><title>HTML 最新稿</title></head><body>"
+        '<section data-slide-id="slide-1" data-slide-title="封面">'
+        "<div><h1>封面</h1><p>支持预览与播放。</p></div>"
+        "</section>"
+        "</body></html>"
+    )
+
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={
+            "presentation": presentation,
+            "source": "chat",
+            "output_mode": "html",
+            "html_deck": {"html": html_deck},
+        },
+    )
+    assert saved.status_code == 200
+
+    latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
+    assert latest.status_code == 200
+    latest_payload = latest.json()
+    assert latest_payload["output_mode"] == "html"
+    assert latest_payload["artifacts"]["html_deck"]["slide_count"] == 1
+
+    html_resp = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/html", headers=headers)
+    assert html_resp.status_code == 200
+    assert html_resp.headers["content-type"].startswith("text/html")
+    assert "<section data-slide-id=\"slide-1\"" in html_resp.text
+
+    meta_resp = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/html/meta",
+        headers=headers,
+    )
+    assert meta_resp.status_code == 200
+    assert meta_resp.json()["slide_count"] == 1
 
 
 def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):

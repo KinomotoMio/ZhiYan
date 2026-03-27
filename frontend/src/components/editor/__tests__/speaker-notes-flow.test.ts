@@ -5,9 +5,10 @@ import {
   applySpeakerAudioMetaToSlides,
   applySpeakerNotesDraftToSlides,
 } from "@/components/editor/speaker-notes-flow";
+import type { Slide } from "@/types/slide";
 
 test("applySpeakerNotesDraftToSlides clears stale speaker audio when notes change", () => {
-  const slides = [
+  const slides: Slide[] = [
     {
       slideId: "slide-1",
       layoutId: "intro-slide",
@@ -33,7 +34,7 @@ test("applySpeakerNotesDraftToSlides clears stale speaker audio when notes chang
 });
 
 test("applySpeakerAudioMetaToSlides patches only the target slide", () => {
-  const slides = [
+  const slides: Slide[] = [
     {
       slideId: "slide-1",
       layoutId: "intro-slide",
@@ -42,8 +43,8 @@ test("applySpeakerAudioMetaToSlides patches only the target slide", () => {
     },
     {
       slideId: "slide-2",
-      layoutId: "summary",
-      layoutType: "summary",
+      layoutId: "thank-you",
+      layoutType: "thank-you",
       contentData: { title: "总结" },
     },
   ];

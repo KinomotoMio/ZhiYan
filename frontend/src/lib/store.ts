@@ -3,8 +3,10 @@ import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type {
+  HtmlDeckArtifactMeta,
   PlanningOutlineItem,
   PlanningState,
+  PresentationOutputMode,
   SessionSummary,
   WorkspaceId,
 } from "@/lib/api";
@@ -68,6 +70,9 @@ interface AppState {
 
   // Editor state
   presentation: Presentation | null;
+  presentationOutputMode: PresentationOutputMode;
+  presentationHtml: string | null;
+  presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
   currentSlideIndex: number;
   isGenerating: boolean;
   jobId: string | null;
@@ -89,6 +94,7 @@ interface AppState {
   draftOutline: PlanningOutlineItem[];
   outlineStale: boolean;
   activeGenerationCard: GenerationCardState | null;
+  planningOutputMode: PresentationOutputMode;
 
   // Create view state
   workspaceSources: SourceMeta[];
@@ -108,11 +114,19 @@ interface AppState {
     sources: SourceMeta[];
     chatMessages: ChatMessage[];
     presentation: Presentation | null;
+    presentationOutputMode?: PresentationOutputMode;
+    presentationHtml?: string | null;
+    presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
     planningState?: PlanningState | null;
   }) => void;
 
   // Editor actions
   setPresentation: (p: Presentation | null) => void;
+  setPresentationHtmlState: (
+    outputMode: PresentationOutputMode,
+    html: string | null,
+    artifact?: HtmlDeckArtifactMeta | null
+  ) => void;
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
@@ -144,6 +158,7 @@ interface AppState {
   setDraftOutline: (items: PlanningOutlineItem[]) => void;
   setOutlineStale: (value: boolean) => void;
   setActiveGenerationCard: (card: GenerationCardState | null) => void;
+  setPlanningOutputMode: (mode: PresentationOutputMode) => void;
   getCurrentSlide: () => Slide | null;
 
   // Progressive generation actions
@@ -180,6 +195,9 @@ export const useAppStore = create<AppState>()(
 
       // Editor state
       presentation: null,
+      presentationOutputMode: "structured",
+      presentationHtml: null,
+      presentationHtmlArtifact: null,
       currentSlideIndex: 0,
       isGenerating: false,
       jobId: null,
@@ -201,6 +219,7 @@ export const useAppStore = create<AppState>()(
       draftOutline: [],
       outlineStale: false,
       activeGenerationCard: null,
+      planningOutputMode: "html",
 
       // Create view state
       workspaceSources: [],
@@ -245,7 +264,15 @@ export const useAppStore = create<AppState>()(
           currentSessionId: id,
           topic: getSessionTopicDraft(state.sessionTopicDrafts, id),
         })),
-      setSessionData: ({ sources, chatMessages, presentation, planningState }) =>
+      setSessionData: ({
+        sources,
+        chatMessages,
+        presentation,
+        presentationOutputMode,
+        presentationHtml,
+        presentationHtmlArtifact,
+        planningState,
+      }) =>
         set((state) => ({
           selectedSourceIds: sources
             .filter((s) => s.status === "ready")
@@ -256,6 +283,9 @@ export const useAppStore = create<AppState>()(
           ),
           chatMessages,
           presentation,
+          presentationOutputMode: presentationOutputMode ?? "structured",
+          presentationHtml: presentationHtml ?? null,
+          presentationHtmlArtifact: presentationHtmlArtifact ?? null,
           planningState: planningState ?? null,
           draftOutline: Array.isArray(planningState?.outline?.items)
             ? planningState.outline.items
@@ -306,6 +336,12 @@ export const useAppStore = create<AppState>()(
                   )
                 : state.sessions,
           };
+        }),
+      setPresentationHtmlState: (outputMode, html, artifact) =>
+        set({
+          presentationOutputMode: outputMode,
+          presentationHtml: html,
+          presentationHtmlArtifact: artifact ?? null,
         }),
       updateSlides: (slides) =>
         set((state) => {
@@ -463,6 +499,7 @@ export const useAppStore = create<AppState>()(
             : state.planningState,
         })),
       setActiveGenerationCard: (card) => set({ activeGenerationCard: card }),
+      setPlanningOutputMode: (planningOutputMode) => set({ planningOutputMode }),
 
       getCurrentSlide: () => {
         const { presentation, currentSlideIndex } = get();

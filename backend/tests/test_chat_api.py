@@ -86,6 +86,21 @@ class _FakeNotesOnlyAgent:
         return SimpleNamespace(output="已补充演讲者注释")
 
 
+async def _fake_html_editor(**kwargs):  # noqa: ANN003
+    _ = kwargs
+    return SimpleNamespace(
+        assistant_reply="我已重做当前页的 HTML 表达。",
+        should_update=True,
+        html=(
+            "<!DOCTYPE html><html><head><title>HTML 改稿</title></head><body>"
+            '<section data-slide-id="slide-1" data-slide-title="封面">'
+            "<div><h1>封面</h1><p>新的视觉样式</p></div>"
+            "</section>"
+            "</body></html>"
+        ),
+    )
+
+
 def test_chat_stream_delta_no_duplication(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
@@ -213,6 +228,55 @@ def test_chat_action_hint_notes_only_is_no_op(monkeypatch, tmp_path):
     assert "no_op" in event_types
     text_events = [evt.get("content", "") for evt in events if evt.get("type") == "text"]
     assert any("未执行改稿" in content for content in text_events)
+
+
+def test_chat_html_mode_emits_html_update(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import chat as chat_api
+
+    monkeypatch.setattr(chat_api, "edit_html_deck", _fake_html_editor)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-chat"}
+    response = client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={
+            "message": "请把当前页做得更有设计感",
+            "messages": [],
+            "action_hint": "enrich_visual",
+            "current_slide_index": 0,
+            "presentation_context": {
+                "title": "HTML 演示",
+                "output_mode": "html",
+                "html_content": (
+                    "<!DOCTYPE html><html><head><title>HTML 演示</title></head><body>"
+                    '<section data-slide-id="slide-1" data-slide-title="封面">'
+                    "<div><h1>封面</h1></div>"
+                    "</section>"
+                    "</body></html>"
+                ),
+                "slides": [
+                    {
+                        "slideId": "slide-1",
+                        "layoutId": "blank",
+                        "contentData": {"title": "封面"},
+                    }
+                ],
+            },
+        },
+    )
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    text_events = [evt for evt in events if evt.get("type") == "text"]
+    assert any("HTML 表达" in evt.get("content", "") for evt in text_events)
+    html_updates = [evt for evt in events if evt.get("type") == "html_update"]
+    assert len(html_updates) == 1
+    html_update = html_updates[0]
+    assert html_update["presentation"]["title"] == "HTML 改稿"
+    assert html_update["presentation"]["slides"][0]["slideId"] == "slide-1"
+    assert "<section data-slide-id=\"slide-1\"" in html_update["html_content"]
 
 
 def test_put_latest_presentation_persists_non_snapshot(monkeypatch, tmp_path):

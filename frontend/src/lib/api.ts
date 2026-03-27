@@ -153,6 +153,30 @@ export interface SnapshotMeta {
   created_at: string;
 }
 
+export type PresentationOutputMode = "structured" | "html";
+
+export interface HtmlDeckArtifactMeta {
+  version: number;
+  slide_count: number;
+  updated_at: string;
+  storage_path?: string;
+  meta_storage_path?: string;
+}
+
+export interface LatestPresentationRecord {
+  id: string;
+  version_no: number;
+  is_snapshot: boolean;
+  snapshot_label: string | null;
+  created_at: string;
+  presentation: Presentation;
+  output_mode?: PresentationOutputMode;
+  artifacts?: {
+    html_deck?: HtmlDeckArtifactMeta;
+    [key: string]: unknown;
+  };
+}
+
 export interface SessionDetail {
   session: SessionSummary;
   sources: SourceMeta[];
@@ -162,14 +186,7 @@ export interface SessionDetail {
     status: JobStatus;
     updated_at: string;
   } | null;
-  latest_presentation: {
-    id: string;
-    version_no: number;
-    is_snapshot: boolean;
-    snapshot_label: string | null;
-    created_at: string;
-    presentation: Presentation;
-  } | null;
+  latest_presentation: LatestPresentationRecord | null;
   planning_state: PlanningState | null;
 }
 
@@ -293,10 +310,14 @@ export interface PlanningConfirmResult {
   planning_state: PlanningState;
 }
 
-export async function confirmPlanning(sessionId: string): Promise<PlanningConfirmResult> {
+export async function confirmPlanning(
+  sessionId: string,
+  outputMode: PresentationOutputMode = "html"
+): Promise<PlanningConfirmResult> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning/confirm`, {
     method: "POST",
-    headers: withWorkspaceHeaders(),
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ output_mode: outputMode }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -311,6 +332,26 @@ export async function getLatestSessionPresentation(sessionId: string): Promise<S
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`获取会话演示稿失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getLatestSessionPresentationHtml(sessionId: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 HTML 演示稿失败: ${res.statusText}`);
+  return res.text();
+}
+
+export async function getLatestSessionPresentationHtmlMeta(
+  sessionId: string
+): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/meta`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 HTML 演示稿元数据失败: ${res.statusText}`);
   return res.json();
 }
 
@@ -344,6 +385,29 @@ export async function saveLatestSessionPresentation(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `保存会话演示稿失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function saveLatestSessionHtmlPresentation(
+  sessionId: string,
+  presentation: Presentation,
+  htmlContent: string,
+  source: "chat" | "editor" = "chat"
+): Promise<SnapshotMeta> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
+    method: "PUT",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      presentation,
+      source,
+      output_mode: "html",
+      html_deck: { html: htmlContent },
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `保存 HTML 演示稿失败: ${res.statusText}`);
   }
   return res.json();
 }
@@ -562,6 +626,7 @@ export interface CreateJobRequest {
   num_pages?: number;
   mode?: GenerationMode;
   approved_outline?: Record<string, unknown>;
+  output_mode?: PresentationOutputMode;
 }
 
 export interface CreateJobResponse {
@@ -587,6 +652,7 @@ export interface GenerationRequestDataLite {
   num_pages?: number;
   title?: string;
   topic?: string;
+  output_mode?: PresentationOutputMode;
 }
 
 export interface GenerationJob {
@@ -594,6 +660,7 @@ export interface GenerationJob {
   status: JobStatus;
   current_stage: StageStatus | null;
   events_seq?: number;
+  output_mode?: PresentationOutputMode;
   request?: GenerationRequestDataLite;
   outline: Record<string, unknown>;
   layouts: Array<Record<string, unknown>>;
@@ -632,6 +699,7 @@ export async function createJob(sessionId: string, req: CreateJobRequest): Promi
       num_pages: req.num_pages ?? 5,
       mode: req.mode ?? "auto",
       approved_outline: req.approved_outline ?? null,
+      output_mode: req.output_mode ?? "structured",
     }),
   });
   if (!res.ok) {
@@ -861,6 +929,12 @@ interface SlideUpdateEvent {
   modifications: Record<string, unknown>[];
 }
 
+interface HtmlUpdateEvent {
+  html_content: string;
+  presentation: Presentation;
+  modifications?: Record<string, unknown>[];
+}
+
 export type ChatActionHint =
   | "refresh_layout"
   | "simplify"
@@ -880,7 +954,8 @@ export async function chatStream(
   onDone: () => void,
   onError?: (err: Error) => void,
   onSlideUpdate?: (update: SlideUpdateEvent) => void,
-  onNoOp?: (event: ChatNoOpEvent) => void
+  onNoOp?: (event: ChatNoOpEvent) => void,
+  onHtmlUpdate?: (update: HtmlUpdateEvent) => void
 ): Promise<void> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
@@ -921,6 +996,12 @@ export async function chatStream(
             } else if (parsed.type === "slide_update" && onSlideUpdate) {
               onSlideUpdate({
                 slides: parsed.slides,
+                modifications: parsed.modifications,
+              });
+            } else if (parsed.type === "html_update" && onHtmlUpdate) {
+              onHtmlUpdate({
+                html_content: parsed.html_content,
+                presentation: parsed.presentation,
                 modifications: parsed.modifications,
               });
             } else if (parsed.type === "no_op" && onNoOp) {

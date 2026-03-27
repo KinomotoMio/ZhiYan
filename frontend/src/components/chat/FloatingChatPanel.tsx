@@ -17,6 +17,7 @@ import MarkdownMessage from "@/components/chat/MarkdownMessage";
 import {
   chatStream,
   listSkills,
+  saveLatestSessionHtmlPresentation,
   saveLatestSessionPresentation,
   type ChatActionHint,
 } from "@/lib/api";
@@ -106,8 +107,11 @@ const QUICK_ACTIONS: QuickActionGroup[] = [
 ];
 
 interface PendingSlideChange {
+  mode: "structured" | "html";
   previousSlides: Slide[];
   proposedSlides: Slide[];
+  previousHtml: string | null;
+  proposedHtml: string | null;
   modifications: Record<string, unknown>[];
   saving: boolean;
 }
@@ -150,9 +154,13 @@ export default function FloatingChatPanel() {
     chatMessages,
     addChatMessage,
     presentation,
+    presentationOutputMode,
+    presentationHtml,
     currentSlideIndex,
     currentSessionId,
     updateSlides,
+    setPresentation,
+    setPresentationHtmlState,
   } = useAppStore();
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -182,7 +190,20 @@ export default function FloatingChatPanel() {
 
   const handleRollbackPending = () => {
     if (!pendingChange) return;
-    updateSlides(cloneSlides(pendingChange.previousSlides));
+    const currentPresentation = useAppStore.getState().presentation;
+    if (currentPresentation) {
+      setPresentation({
+        ...currentPresentation,
+        slides: cloneSlides(pendingChange.previousSlides),
+      });
+    } else {
+      updateSlides(cloneSlides(pendingChange.previousSlides));
+    }
+    setPresentationHtmlState(
+      pendingChange.mode,
+      pendingChange.previousHtml,
+      useAppStore.getState().presentationHtmlArtifact
+    );
     setPendingChange(null);
     const rollbackSeq = messageSeqRef.current++;
     addChatMessage({
@@ -206,7 +227,16 @@ export default function FloatingChatPanel() {
 
     setPendingChange((prev) => (prev ? { ...prev, saving: true } : prev));
     try {
-      await saveLatestSessionPresentation(currentSessionId, latestPresentation, "chat");
+      if (pendingChange.mode === "html") {
+        await saveLatestSessionHtmlPresentation(
+          currentSessionId,
+          latestPresentation,
+          pendingChange.proposedHtml || "",
+          "chat"
+        );
+      } else {
+        await saveLatestSessionPresentation(currentSessionId, latestPresentation, "chat");
+      }
       setPendingChange(null);
       toast.success("已应用并保存到当前会话");
     } catch (err) {
@@ -262,7 +292,12 @@ export default function FloatingChatPanel() {
         session_id: currentSessionId,
         messages: historyForApi,
         presentation_context: presentation
-          ? { slides: presentation.slides, title: presentation.title }
+          ? {
+              slides: presentation.slides,
+              title: presentation.title,
+              output_mode: presentationOutputMode,
+              html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
+            }
           : undefined,
         current_slide_index: currentSlideIndex,
         action_hint: actionHint,
@@ -293,13 +328,17 @@ export default function FloatingChatPanel() {
       },
       (slideUpdate) => {
         const currentSlides = useAppStore.getState().presentation?.slides ?? [];
+        const currentHtml = useAppStore.getState().presentationHtml;
         const previousSlidesSnapshot = pendingChange?.previousSlides
           ? cloneSlides(pendingChange.previousSlides)
           : cloneSlides(currentSlides);
         updateSlides(slideUpdate.slides);
         setPendingChange({
+          mode: "structured",
           previousSlides: previousSlidesSnapshot,
           proposedSlides: cloneSlides(slideUpdate.slides),
+          previousHtml: currentHtml,
+          proposedHtml: currentHtml,
           modifications: slideUpdate.modifications,
           saving: false,
         });
@@ -308,6 +347,29 @@ export default function FloatingChatPanel() {
       (noOp) => {
         setNoOpReason(noOp.reason);
         toast.warning(noOp.reason);
+      },
+      (htmlUpdate) => {
+        const currentSlides = useAppStore.getState().presentation?.slides ?? [];
+        const currentHtml = useAppStore.getState().presentationHtml;
+        const previousSlidesSnapshot = pendingChange?.previousSlides
+          ? cloneSlides(pendingChange.previousSlides)
+          : cloneSlides(currentSlides);
+        setPresentation(htmlUpdate.presentation);
+        setPresentationHtmlState(
+          "html",
+          htmlUpdate.html_content,
+          useAppStore.getState().presentationHtmlArtifact
+        );
+        setPendingChange({
+          mode: "html",
+          previousSlides: previousSlidesSnapshot,
+          proposedSlides: cloneSlides(htmlUpdate.presentation.slides),
+          previousHtml: currentHtml,
+          proposedHtml: htmlUpdate.html_content,
+          modifications: htmlUpdate.modifications || [],
+          saving: false,
+        });
+        toast.info("已生成 HTML 改稿预览，请确认应用或撤回");
       }
     );
   };
