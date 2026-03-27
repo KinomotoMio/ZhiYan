@@ -37,6 +37,7 @@ from app.models.source import SourceMeta
 from app.services.generation import event_bus, generation_runner, job_store
 from app.services.generation.job_factory import create_generation_job_record
 from app.services.planning import (
+    ensure_planning_opening,
     handle_planning_turn,
     normalize_planning_outline,
 )
@@ -133,7 +134,9 @@ async def _resolve_planning_state(
 ) -> dict | None:
     state = await session_store.get_planning_state(workspace_id, session_id)
     if not state:
-        return None
+        state = await ensure_planning_opening(workspace_id=workspace_id, session_id=session_id)
+        if not state:
+            return None
     latest = latest_generation_job or await session_store.get_latest_generation_job(
         workspace_id,
         session_id,
@@ -200,10 +203,10 @@ async def get_session_detail(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(e)) from e
     await session_store.touch_session(workspace_id, sid)
     sources = await session_store.list_sources(workspace_id, sid)
-    chats = await session_store.list_chat_messages(workspace_id, sid)
-    latest = await session_store.get_latest_presentation(workspace_id, sid)
     latest_generation_job = await session_store.get_latest_generation_job(workspace_id, sid)
     planning_state = await _resolve_planning_state(workspace_id, sid, latest_generation_job)
+    chats = await session_store.list_chat_messages(workspace_id, sid)
+    latest = await session_store.get_latest_presentation(workspace_id, sid)
     return SessionDetail(
         session=SessionSummary.model_validate(session),
         sources=[SourceMeta.model_validate(item) for item in sources],
@@ -351,86 +354,89 @@ async def create_planning_turn(session_id: str, req: PlanningTurnRequest, reques
     async def event_stream():
         try:
             current_state = await _resolve_planning_state(workspace_id, sid)
-            chats = await session_store.list_chat_messages(workspace_id, sid, limit=300)
-            planning_messages = _filter_planning_messages(chats)
-            ready_source_ids, ready_source_names = await _ready_source_ids_and_names(workspace_id, sid)
+            ready_source_ids, _ = await _ready_source_ids_and_names(workspace_id, sid)
             current_outline = (
                 dict(current_state.get("outline") or {})
                 if current_state and isinstance(current_state.get("outline"), dict)
                 else {}
             )
-            current_source_ids = list(current_state.get("source_ids") or []) if current_state else []
-            outline_stale = (
-                bool(current_state.get("outline_stale")) if current_state else False
-                or (bool(current_outline.get("items")) and current_source_ids != ready_source_ids)
-            )
-            if current_state and outline_stale and not bool(current_state.get("outline_stale")):
-                current_state = await session_store.save_planning_state(
-                    workspace_id=workspace_id,
-                    session_id=sid,
-                    status=str(current_state.get("status") or "outline_ready"),
-                    outline_stale=True,
-                )
-
-            await session_store.add_chat_message(
+            outcome = await handle_planning_turn(
                 workspace_id=workspace_id,
                 session_id=sid,
-                role="user",
-                content=message,
-                model_meta={
-                    "phase": "planning",
-                    "message_kind": "user_turn",
-                    "outline_version": int(current_state.get("outline_version") or 0) if current_state else 0,
-                },
-            )
-
-            if ready_source_ids:
-                content = await session_store.get_combined_source_content(
-                    workspace_id,
-                    sid,
-                    ready_source_ids,
-                )
-            else:
-                content = ""
-            recent_messages = [
-                {"role": str(item.get("role") or ""), "content": str(item.get("content") or "")}
-                for item in planning_messages[-8:]
-            ]
-            outcome = await handle_planning_turn(
-                current_brief=current_state.get("brief") if current_state else None,
-                current_outline=None if outline_stale else current_outline,
                 user_message=message,
-                recent_messages=recent_messages,
-                content=content or message,
-                source_names=ready_source_names,
-                source_ids=ready_source_ids,
             )
+            refreshed_state = await _resolve_planning_state(workspace_id, sid)
             next_outline = outcome.outline or current_outline or {}
-            next_outline_version = (
+            expected_outline_version = (
                 int(current_state.get("outline_version") or 0) if current_state else 0
             ) + int(outcome.outline_version_increment or 0)
-            next_state = await session_store.save_planning_state(
-                workspace_id=workspace_id,
-                session_id=sid,
-                status=outcome.status,
-                brief=outcome.brief,
-                outline=next_outline if next_outline else {},
-                outline_version=next_outline_version,
-                source_ids=ready_source_ids,
-                outline_stale=False if outcome.outline else outline_stale,
-                active_job_id=str(current_state.get("active_job_id") or "") if current_state else None,
+            needs_fallback_save = (
+                refreshed_state is None
+                or str(refreshed_state.get("status") or "") != str(outcome.status or "")
+                or int(refreshed_state.get("outline_version") or 0) < expected_outline_version
             )
-            await session_store.add_chat_message(
-                workspace_id=workspace_id,
-                session_id=sid,
-                role="assistant",
-                content=outcome.assistant_message,
-                model_meta={
-                    "phase": "planning",
-                    "message_kind": "assistant_reply",
-                    "outline_version": next_state.get("outline_version", 0),
-                },
-            )
+            if needs_fallback_save:
+                await session_store.add_chat_message(
+                    workspace_id=workspace_id,
+                    session_id=sid,
+                    role="user",
+                    content=message,
+                    model_meta={
+                        "phase": "planning",
+                        "message_kind": "user_turn",
+                        "outline_version": int(current_state.get("outline_version") or 0)
+                        if current_state
+                        else 0,
+                    },
+                )
+                next_state = await session_store.save_planning_state(
+                    workspace_id=workspace_id,
+                    session_id=sid,
+                    mode=str(refreshed_state.get("mode") or current_state.get("mode") or "agentic")
+                    if (refreshed_state or current_state)
+                    else "agentic",
+                    status=outcome.status,
+                    brief=outcome.brief,
+                    outline=next_outline if next_outline else {},
+                    outline_version=expected_outline_version,
+                    source_ids=ready_source_ids,
+                    source_digest=str(
+                        (refreshed_state or current_state or {}).get("source_digest") or ""
+                    ),
+                    outline_stale=bool(
+                        (refreshed_state or current_state or {}).get("outline_stale")
+                    )
+                    and not bool(outcome.outline),
+                    active_job_id=str(
+                        (refreshed_state or current_state or {}).get("active_job_id") or ""
+                    )
+                    or None,
+                    agent_workspace_root=(refreshed_state or current_state or {}).get(
+                        "agent_workspace_root"
+                    ),
+                    agent_session_version=int(
+                        (refreshed_state or current_state or {}).get("agent_session_version") or 0
+                    ),
+                    assistant_status=outcome.assistant_status
+                    or (refreshed_state or current_state or {}).get("assistant_status"),
+                    topic_suggestions=outcome.topic_suggestions
+                    or (refreshed_state or current_state or {}).get("topic_suggestions")
+                    or [],
+                )
+                if outcome.assistant_message:
+                    await session_store.add_chat_message(
+                        workspace_id=workspace_id,
+                        session_id=sid,
+                        role="assistant",
+                        content=outcome.assistant_message,
+                        model_meta={
+                            "phase": "planning",
+                            "message_kind": "assistant_reply",
+                            "outline_version": next_state.get("outline_version", 0),
+                        },
+                    )
+            else:
+                next_state = refreshed_state
             text_payload = json.dumps(
                 {"type": "text", "content": outcome.assistant_message},
                 ensure_ascii=False,
@@ -520,7 +526,7 @@ async def confirm_session_planning(session_id: str, request: Request):
             workspace_id=workspace_id,
             req=CreateJobRequest(
                 topic=topic,
-                content="",
+                content=str(brief.get("extra_requirements") or ""),
                 session_id=sid,
                 source_ids=ready_source_ids,
                 template_id=None,

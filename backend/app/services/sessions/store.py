@@ -122,13 +122,19 @@ class SessionStore:
 
                 CREATE TABLE IF NOT EXISTS session_planning_state (
                     session_id TEXT PRIMARY KEY,
+                    mode TEXT NOT NULL DEFAULT 'agentic',
                     status TEXT NOT NULL DEFAULT 'collecting_requirements',
                     brief_json TEXT NOT NULL DEFAULT '{}',
                     outline_json TEXT NOT NULL DEFAULT '{}',
                     outline_version INTEGER NOT NULL DEFAULT 0,
                     source_ids_json TEXT NOT NULL DEFAULT '[]',
+                    source_digest TEXT NOT NULL DEFAULT '',
                     outline_stale INTEGER NOT NULL DEFAULT 0,
                     active_job_id TEXT,
+                    agent_workspace_root TEXT,
+                    agent_session_version INTEGER NOT NULL DEFAULT 0,
+                    assistant_status TEXT,
+                    topic_suggestions_json TEXT NOT NULL DEFAULT '[]',
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
@@ -192,6 +198,22 @@ class SessionStore:
                 )
             if not _has_column("workspace_sources", "content_hash"):
                 conn.execute("ALTER TABLE workspace_sources ADD COLUMN content_hash TEXT")
+            if not _has_column("session_planning_state", "mode"):
+                conn.execute("ALTER TABLE session_planning_state ADD COLUMN mode TEXT NOT NULL DEFAULT 'agentic'")
+            if not _has_column("session_planning_state", "source_digest"):
+                conn.execute("ALTER TABLE session_planning_state ADD COLUMN source_digest TEXT NOT NULL DEFAULT ''")
+            if not _has_column("session_planning_state", "agent_workspace_root"):
+                conn.execute("ALTER TABLE session_planning_state ADD COLUMN agent_workspace_root TEXT")
+            if not _has_column("session_planning_state", "agent_session_version"):
+                conn.execute(
+                    "ALTER TABLE session_planning_state ADD COLUMN agent_session_version INTEGER NOT NULL DEFAULT 0"
+                )
+            if not _has_column("session_planning_state", "assistant_status"):
+                conn.execute("ALTER TABLE session_planning_state ADD COLUMN assistant_status TEXT")
+            if not _has_column("session_planning_state", "topic_suggestions_json"):
+                conn.execute(
+                    "ALTER TABLE session_planning_state ADD COLUMN topic_suggestions_json TEXT NOT NULL DEFAULT '[]'"
+                )
 
             conn.execute(
                 """
@@ -1478,13 +1500,19 @@ class SessionStore:
                 """
                 SELECT
                     ps.session_id,
+                    ps.mode,
                     ps.status,
                     ps.brief_json,
                     ps.outline_json,
                     ps.outline_version,
                     ps.source_ids_json,
+                    ps.source_digest,
                     ps.outline_stale,
                     ps.active_job_id,
+                    ps.agent_workspace_root,
+                    ps.agent_session_version,
+                    ps.assistant_status,
+                    ps.topic_suggestions_json,
                     ps.updated_at
                 FROM session_planning_state ps
                 JOIN sessions s ON s.id = ps.session_id
@@ -1496,13 +1524,19 @@ class SessionStore:
                 return None
             return {
                 "session_id": row["session_id"],
+                "mode": row["mode"] or "agentic",
                 "status": row["status"],
                 "brief": json.loads(row["brief_json"] or "{}"),
                 "outline": json.loads(row["outline_json"] or "{}"),
                 "outline_version": int(row["outline_version"] or 0),
                 "source_ids": json.loads(row["source_ids_json"] or "[]"),
+                "source_digest": row["source_digest"] or "",
                 "outline_stale": bool(row["outline_stale"]),
                 "active_job_id": row["active_job_id"],
+                "agent_workspace_root": row["agent_workspace_root"],
+                "agent_session_version": int(row["agent_session_version"] or 0),
+                "assistant_status": row["assistant_status"],
+                "topic_suggestions": json.loads(row["topic_suggestions_json"] or "[]"),
                 "updated_at": row["updated_at"],
             }
 
@@ -1516,8 +1550,14 @@ class SessionStore:
         outline: dict | None = None,
         outline_version: int | None = None,
         source_ids: list[str] | None = None,
+        source_digest: str | None = None,
         outline_stale: bool | None = None,
         active_job_id: str | None = None,
+        mode: str | None = None,
+        agent_workspace_root: str | None = None,
+        agent_session_version: int | None = None,
+        assistant_status: str | None = None,
+        topic_suggestions: list[dict] | None = None,
     ) -> dict:
         now = _now_iso()
         async with self._write_lock:
@@ -1530,8 +1570,14 @@ class SessionStore:
                 outline,
                 outline_version,
                 source_ids,
+                source_digest,
                 outline_stale,
                 active_job_id,
+                mode,
+                agent_workspace_root,
+                agent_session_version,
+                assistant_status,
+                topic_suggestions,
                 now,
             )
         state = await self.get_planning_state(workspace_id, session_id)
@@ -1548,8 +1594,14 @@ class SessionStore:
         outline: dict | None,
         outline_version: int | None,
         source_ids: list[str] | None,
+        source_digest: str | None,
         outline_stale: bool | None,
         active_job_id: str | None,
+        mode: str | None,
+        agent_workspace_root: str | None,
+        agent_session_version: int | None,
+        assistant_status: str | None,
+        topic_suggestions: list[dict] | None,
         now: str,
     ) -> None:
         with self._connect() as conn:
@@ -1565,12 +1617,15 @@ class SessionStore:
 
             current = conn.execute(
                 """
-                SELECT status, brief_json, outline_json, outline_version, source_ids_json, outline_stale, active_job_id
+                SELECT mode, status, brief_json, outline_json, outline_version, source_ids_json,
+                       source_digest, outline_stale, active_job_id, agent_workspace_root,
+                       agent_session_version, assistant_status, topic_suggestions_json
                 FROM session_planning_state
                 WHERE session_id=?
                 """,
                 (session_id,),
             ).fetchone()
+            merged_mode = mode or (current["mode"] if current else "agentic")
             merged_status = status or (current["status"] if current else "collecting_requirements")
             merged_brief = brief if brief is not None else json.loads(current["brief_json"] or "{}") if current else {}
             merged_outline = outline if outline is not None else json.loads(current["outline_json"] or "{}") if current else {}
@@ -1584,6 +1639,11 @@ class SessionStore:
                 if source_ids is not None
                 else json.loads(current["source_ids_json"] or "[]") if current else []
             )
+            merged_source_digest = (
+                str(source_digest)
+                if source_digest is not None
+                else str(current["source_digest"] or "") if current else ""
+            )
             merged_outline_stale = (
                 bool(outline_stale)
                 if outline_stale is not None
@@ -1594,31 +1654,65 @@ class SessionStore:
                 if active_job_id is not None
                 else current["active_job_id"] if current else None
             )
+            merged_agent_workspace_root = (
+                agent_workspace_root
+                if agent_workspace_root is not None
+                else current["agent_workspace_root"] if current else None
+            )
+            merged_agent_session_version = (
+                int(agent_session_version)
+                if agent_session_version is not None
+                else int(current["agent_session_version"] or 0) if current else 0
+            )
+            merged_assistant_status = (
+                assistant_status
+                if assistant_status is not None
+                else current["assistant_status"] if current else None
+            )
+            merged_topic_suggestions = (
+                list(topic_suggestions)
+                if topic_suggestions is not None
+                else json.loads(current["topic_suggestions_json"] or "[]") if current else []
+            )
             conn.execute(
                 """
                 INSERT INTO session_planning_state(
-                    session_id, status, brief_json, outline_json, outline_version,
-                    source_ids_json, outline_stale, active_job_id, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, mode, status, brief_json, outline_json, outline_version,
+                    source_ids_json, source_digest, outline_stale, active_job_id,
+                    agent_workspace_root, agent_session_version, assistant_status,
+                    topic_suggestions_json, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
+                    mode=excluded.mode,
                     status=excluded.status,
                     brief_json=excluded.brief_json,
                     outline_json=excluded.outline_json,
                     outline_version=excluded.outline_version,
                     source_ids_json=excluded.source_ids_json,
+                    source_digest=excluded.source_digest,
                     outline_stale=excluded.outline_stale,
                     active_job_id=excluded.active_job_id,
+                    agent_workspace_root=excluded.agent_workspace_root,
+                    agent_session_version=excluded.agent_session_version,
+                    assistant_status=excluded.assistant_status,
+                    topic_suggestions_json=excluded.topic_suggestions_json,
                     updated_at=excluded.updated_at
                 """,
                 (
                     session_id,
+                    merged_mode,
                     merged_status,
                     json.dumps(merged_brief, ensure_ascii=False),
                     json.dumps(merged_outline, ensure_ascii=False),
                     merged_outline_version,
                     json.dumps(merged_source_ids, ensure_ascii=False),
+                    merged_source_digest,
                     1 if merged_outline_stale else 0,
                     merged_active_job_id,
+                    merged_agent_workspace_root,
+                    merged_agent_session_version,
+                    merged_assistant_status,
+                    json.dumps(merged_topic_suggestions, ensure_ascii=False),
                     now,
                 ),
             )

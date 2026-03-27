@@ -112,8 +112,15 @@ export interface PlanningOutlineItem {
   note?: string;
 }
 
+export interface TopicSuggestion {
+  title: string;
+  reason?: string;
+  prompt?: string;
+}
+
 export interface PlanningState {
   session_id: string;
+  mode?: string;
   status:
     | "collecting_requirements"
     | "outline_ready"
@@ -128,8 +135,13 @@ export interface PlanningState {
   };
   outline_version: number;
   source_ids: string[];
+  source_digest?: string;
   outline_stale: boolean;
   active_job_id: string | null;
+  agent_workspace_root?: string | null;
+  agent_session_version?: number;
+  assistant_status?: string | null;
+  topic_suggestions?: TopicSuggestion[];
   updated_at: string;
 }
 
@@ -937,7 +949,10 @@ export interface PlanningStreamEvent {
     | "brief_updated"
     | "outline_drafted"
     | "outline_revised"
+    | "outline_updated"
     | "status_changed"
+    | "assistant_status"
+    | "topic_suggestions"
     | "planning_state"
     | "error";
   [key: string]: unknown;

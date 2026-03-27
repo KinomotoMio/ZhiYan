@@ -10,23 +10,13 @@ import {
   updatePlanningOutline,
   type PlanningOutlineItem,
   type PlanningState,
+  type TopicSuggestion,
 } from "@/lib/api";
 import { getSessionEditorPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { useAppStore, type ChatMessage } from "@/lib/store";
+import MarkdownMessage from "@/components/chat/MarkdownMessage";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-
-function buildOpeningMessage(): ChatMessage {
-  return {
-    id: "planning-opening",
-    role: "assistant",
-    content:
-      "你想做一份什么样的演示？\n\n可以直接告诉我主题、受众、目标，或者先勾选左侧素材，我会先帮你把结构理顺，再整理成一版可确认的提纲。",
-    timestamp: 0,
-    phase: "planning",
-    messageKind: "assistant_reply",
-  };
-}
 
 function isPlanningMessage(msg: ChatMessage): boolean {
   return msg.phase === "planning";
@@ -143,15 +133,10 @@ function PlanningMessageRow({
         <ChatAvatar role="assistant" />
         <div className="zy-chat-enter-body min-w-0 flex-1 pt-1 text-[15px] leading-8 text-slate-700">
           {msg.content ? (
-            <p className="whitespace-pre-wrap">
-              {msg.content}
-              {isStreaming && (
-                <>
-                  {" "}
-                  <TypingDots />
-                </>
-              )}
-            </p>
+            <div className="space-y-2">
+              <MarkdownMessage content={msg.content} />
+              {isStreaming ? <TypingDots /> : null}
+            </div>
           ) : (
             <TypingDots />
           )}
@@ -159,6 +144,25 @@ function PlanningMessageRow({
       </div>
     </div>
   );
+}
+
+export function shouldShowTopicSuggestionTemplate({
+  selectedSourceCount,
+  planningMessages,
+  hasOutline,
+  isGeneratingPhase,
+  hasBeenDismissed = false,
+}: {
+  selectedSourceCount: number;
+  planningMessages: ChatMessage[];
+  hasOutline: boolean;
+  isGeneratingPhase: boolean;
+  hasBeenDismissed?: boolean;
+}): boolean {
+  if (hasBeenDismissed || selectedSourceCount > 0 || hasOutline || isGeneratingPhase) {
+    return false;
+  }
+  return !planningMessages.some((message) => message.role === "user");
 }
 
 interface OutlineDraftBlockProps {
@@ -511,6 +515,46 @@ function AssistantBlock({
   );
 }
 
+function TopicSuggestionsBlock({
+  topics,
+  onPick,
+}: {
+  topics: TopicSuggestion[];
+  onPick: (prompt: string) => void;
+}) {
+  if (topics.length === 0) return null;
+  return (
+    <div className="zy-chat-enter-block space-y-4 border-t border-slate-200/70 pt-5">
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-slate-900">可以从这些方向开始</p>
+        <p className="text-sm leading-6 text-slate-500">
+          你可以点一个我继续展开，也可以直接说你想往哪个方向改。
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {topics.map((topic, index) => {
+          const prompt = (topic.prompt || topic.title || "").trim();
+          return (
+            <button
+              key={`${topic.title}-${index}`}
+              type="button"
+              onClick={() => {
+                if (prompt) onPick(prompt);
+              }}
+              className="max-w-[280px] rounded-[22px] border border-slate-200/80 bg-white/72 px-4 py-3 text-left shadow-[0_18px_40px_-34px_rgba(15,23,42,0.24)] transition hover:border-slate-300 hover:bg-white"
+            >
+              <p className="text-sm font-semibold leading-6 text-slate-900">{topic.title}</p>
+              {topic.reason ? (
+                <p className="mt-1 text-sm leading-6 text-slate-500">{topic.reason}</p>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function PlanningPanel() {
   const router = useRouter();
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -518,6 +562,7 @@ export default function PlanningPanel() {
     chatMessages,
     currentSessionId,
     sessions,
+    selectedSourceIds,
     addChatMessage,
     planningState,
     setPlanningState,
@@ -535,11 +580,12 @@ export default function PlanningPanel() {
   const [savingOutline, setSavingOutline] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [streamingReplyId, setStreamingReplyId] = useState<string | null>(null);
+  const [topicTemplateDismissed, setTopicTemplateDismissed] = useState(false);
   const messageSeqRef = useRef(1);
 
   const planningMessages = useMemo(() => {
     const items = chatMessages.filter(isPlanningMessage);
-    return items.length > 0 ? items : [buildOpeningMessage()];
+    return items;
   }, [chatMessages]);
 
   const currentSessionTitle =
@@ -548,6 +594,27 @@ export default function PlanningPanel() {
   const effectiveStatus = planningState?.status ?? "collecting_requirements";
   const isGeneratingPhase =
     effectiveStatus === "generating" || effectiveStatus === "completed";
+  const topicSuggestions = Array.isArray(planningState?.topic_suggestions)
+    ? planningState.topic_suggestions
+    : [];
+
+  useEffect(() => {
+    if (topicTemplateDismissed) return;
+    if (
+      selectedSourceIds.length > 0 ||
+      planningMessages.some((message) => message.role === "user")
+    ) {
+      setTopicTemplateDismissed(true);
+    }
+  }, [planningMessages, selectedSourceIds.length, topicTemplateDismissed]);
+
+  const showTopicSuggestionTemplate = shouldShowTopicSuggestionTemplate({
+    selectedSourceCount: selectedSourceIds.length,
+    planningMessages,
+    hasOutline: draftOutline.length > 0,
+    isGeneratingPhase,
+    hasBeenDismissed: topicTemplateDismissed,
+  });
 
   const updateMessageContent = (messageId: string, updater: (content: string) => string) => {
     useAppStore.setState((state) => ({
@@ -598,7 +665,9 @@ export default function PlanningPanel() {
           return;
         }
         if (
-          (event.type === "outline_drafted" || event.type === "outline_revised") &&
+          (event.type === "outline_drafted" ||
+            event.type === "outline_revised" ||
+            event.type === "outline_updated") &&
           event.outline &&
           typeof event.outline === "object"
         ) {
@@ -735,6 +804,17 @@ export default function PlanningPanel() {
             />
           ))}
 
+          {topicSuggestions.length > 0 && showTopicSuggestionTemplate && (
+            <AssistantBlock>
+              <TopicSuggestionsBlock
+                topics={topicSuggestions}
+                onPick={(prompt) => {
+                  void sendPlanningMessage(prompt);
+                }}
+              />
+            </AssistantBlock>
+          )}
+
           {draftOutline.length > 0 && !isGeneratingPhase && (
             <AssistantBlock>
               <OutlineDraftBlock
@@ -779,7 +859,9 @@ export default function PlanningPanel() {
                 placeholder={
                   draftOutline.length > 0
                     ? "继续告诉我这一版结构哪里还要调整..."
-                    : "比如：我想做一份给客户看的 AI 产品方案演示，重点讲价值、案例和落地路径。"
+                    : showTopicSuggestionTemplate && topicSuggestions.length > 0
+                      ? "也可以直接说：第三个方向不错，但我更想讲落地路径。"
+                      : "比如：我想做一份给客户看的 AI 产品方案演示，重点讲价值、案例和落地路径。"
                 }
                 className={cn(
                   "min-h-[92px] flex-1 resize-none rounded-[20px] border border-transparent bg-transparent px-3 py-2 text-sm leading-7 text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-200 focus:bg-white/50"

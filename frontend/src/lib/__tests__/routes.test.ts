@@ -27,6 +27,13 @@ test("getCreateSessionPath preserves the target create session", () => {
   assert.equal(getCreateSessionPath("sess-123"), "/create?session=sess-123");
 });
 
+test("getCreateSessionPath can preserve session while suppressing editor bounce-back", () => {
+  assert.equal(
+    getCreateSessionPath("sess-123", { fromEditor: true }),
+    "/create?session=sess-123&from=editor"
+  );
+});
+
 test("pickCreateLandingSessionId prefers current editable session", () => {
   const picked = pickCreateLandingSessionId(
     [
