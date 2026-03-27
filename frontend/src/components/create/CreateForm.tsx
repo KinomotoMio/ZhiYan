@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { createJob } from "@/lib/api";
+import { createJob, createSession } from "@/lib/api";
 import { buildLoadingTitle } from "@/lib/loading-title";
 import {
   canShowContinueEditorEntry,
@@ -86,10 +86,17 @@ export default function CreateForm() {
     setIsGenerating(true);
 
     try {
-      const created = await createJob({
+      let sessionId = currentSessionId;
+      if (!sessionId) {
+        const createdSession = await createSession(topic.trim() || "未命名会话");
+        sessionId = createdSession.id;
+        setCurrentSessionId(sessionId);
+      }
+
+      const created = await createJob(sessionId, {
         content: "",
         topic,
-        session_id: currentSessionId ?? undefined,
+        session_id: sessionId,
         source_ids: selectedReadySources.map((s) => s.id),
         template_id: selectedTemplateId,
         num_pages: numPages,
@@ -118,7 +125,7 @@ export default function CreateForm() {
 
       const targetPath = resolvePostCreateEditorPath(
         created.session_id ?? null,
-        currentSessionId,
+        sessionId,
         useAppStore.getState().currentSessionId
       );
       if (targetPath) {

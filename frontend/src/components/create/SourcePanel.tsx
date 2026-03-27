@@ -225,7 +225,7 @@ export default function SourcePanel() {
           resolvedJobStatus === "completed");
       if (shouldHydrateJob && detail.latest_generation_job?.job_id) {
         try {
-          const job = await getJob(detail.latest_generation_job.job_id);
+          const job = await getJob(sessionId, detail.latest_generation_job.job_id);
           hydratedJob = job as unknown as HydratedGenerationJob;
           if (!hydratedPresentation && Array.isArray(job.slides) && job.slides.length > 0) {
             hydratedPresentation = {

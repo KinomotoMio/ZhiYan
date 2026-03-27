@@ -95,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch_parser = subparsers.add_parser("watch", help="Watch a generation job SSE stream.")
     watch_parser.add_argument("job_id", help="Generation job id.")
+    watch_parser.add_argument("--session-id", required=True, help="Owning session id.")
     watch_parser.add_argument(
         "--after-seq",
         type=int,
@@ -146,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "create":
                 return _run_create(client, args)
             if args.command == "watch":
-                return _run_watch(client, args.job_id, args.after_seq)
+                return _run_watch(client, args.session_id, args.job_id, args.after_seq)
     except CliError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -182,27 +183,36 @@ def _run_config(
 
 
 def _run_create(client: httpx.Client, args: argparse.Namespace) -> int:
+    session_id = args.session_id
+    if not session_id:
+        created_session = _request_json(
+            client,
+            "POST",
+            "/api/v1/sessions",
+            json_body={"title": args.topic or "未命名会话"},
+        )
+        session_id = str(created_session["id"])
     payload = {
         "topic": args.topic,
         "content": args.content,
-        "session_id": args.session_id,
+        "session_id": session_id,
         "source_ids": args.source_ids,
         "template_id": args.template_id,
         "num_pages": args.num_pages,
         "mode": args.mode,
     }
-    created = _request_json(client, "POST", "/api/v2/generation/jobs", json_body=payload)
+    created = _request_json(client, "POST", f"/api/v1/sessions/{session_id}/generation/jobs", json_body=payload)
     if not args.watch:
         _print_json(created)
         return 0
 
-    summary = _watch_job(client, str(created["job_id"]), after_seq=0)
+    summary = _watch_job(client, session_id, str(created["job_id"]), after_seq=0)
     _print_json({"created": created, "watch": summary})
     return _watch_exit_code(summary)
 
 
-def _run_watch(client: httpx.Client, job_id: str, after_seq: int) -> int:
-    summary = _watch_job(client, job_id, after_seq=after_seq)
+def _run_watch(client: httpx.Client, session_id: str, job_id: str, after_seq: int) -> int:
+    summary = _watch_job(client, session_id, job_id, after_seq=after_seq)
     _print_json(summary)
     return _watch_exit_code(summary)
 
@@ -216,8 +226,8 @@ def _run_agentic(argv: list[str]) -> int:
     return agentic_cli.main(normalized)
 
 
-def _watch_job(client: httpx.Client, job_id: str, *, after_seq: int) -> dict[str, Any]:
-    path = f"/api/v2/generation/jobs/{job_id}/events"
+def _watch_job(client: httpx.Client, session_id: str, job_id: str, *, after_seq: int) -> dict[str, Any]:
+    path = f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}/events"
     if after_seq > 0:
         path = f"{path}?{urlencode({'after_seq': after_seq})}"
 

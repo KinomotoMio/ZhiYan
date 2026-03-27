@@ -1,6 +1,7 @@
 import json
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -11,18 +12,31 @@ from app.services.generation.agent_adapter import AgentDeck, AgentOutline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runner import GenerationRunner
+from app.services.sessions.store import SessionStore
+
+
+class RequestScopeStub:
+    def __init__(self, workspace_id: str = "workspace-local-default"):
+        self.headers = {"X-Workspace-Id": workspace_id}
+        self.state = SimpleNamespace()
 
 
 def _install_runtime(monkeypatch, tmp_path: Path) -> tuple[GenerationJobStore, GenerationRunner]:
     store = GenerationJobStore(tmp_path / "jobs")
     bus = GenerationEventBus()
     runner = GenerationRunner(store, bus)
+    session_store = SessionStore(tmp_path / "stream-test.db", tmp_path / "uploads")
+    asyncio.run(session_store.init())
+    asyncio.run(session_store.ensure_workspace("workspace-local-default"))
 
-    from app.api.v2 import generation as generation_api
+    import app.services.sessions as sessions_pkg
+    from app.api.v1 import sessions as sessions_api
 
-    monkeypatch.setattr(generation_api, "job_store", store)
-    monkeypatch.setattr(generation_api, "event_bus", bus)
-    monkeypatch.setattr(generation_api, "generation_runner", runner)
+    monkeypatch.setattr(sessions_pkg, "session_store", session_store)
+    monkeypatch.setattr(sessions_api, "session_store", session_store)
+    monkeypatch.setattr(sessions_api, "job_store", store)
+    monkeypatch.setattr(sessions_api, "event_bus", bus)
+    monkeypatch.setattr(sessions_api, "generation_runner", runner)
     return store, runner
 
 
@@ -78,7 +92,7 @@ def _patch_fast_agentloop(monkeypatch, runner: GenerationRunner):
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
 
 
-def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
+def test_generation_v1_stream_protocol_sequence(monkeypatch, tmp_path):
     _, runner = _install_runtime(monkeypatch, tmp_path)
     _patch_fast_agentloop(monkeypatch, runner)
     monkeypatch.setattr(settings, "project_root", tmp_path)
@@ -90,8 +104,11 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "start_job", run_inline)
 
     client = TestClient(app)
+    session_resp = client.post("/api/v1/sessions", json={"title": "测试主题"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
     create_resp = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         json={"topic": "测试主题", "content": "测试内容", "num_pages": 3, "mode": "auto"},
     )
     assert create_resp.status_code == 200
@@ -99,7 +116,7 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
 
     events: list[dict] = []
     done_count = 0
-    with client.stream("GET", f"/api/v2/generation/jobs/{job_id}/events") as resp:
+    with client.stream("GET", f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}/events") as resp:
         assert resp.status_code == 200
         for line in resp.iter_lines():
             if not line or not line.startswith("data: "):
@@ -124,14 +141,14 @@ def test_generation_v2_stream_protocol_sequence(monkeypatch, tmp_path):
     assert len(terminal) == 1
     assert terminal[0] == EventType.JOB_COMPLETED.value
 
-    snapshot = client.get(f"/api/v2/generation/jobs/{job_id}")
+    snapshot = client.get(f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}")
     assert snapshot.status_code == 200
     body = snapshot.json()
     assert body["status"] == "completed"
     assert len(body["slides"]) == 3
 
 
-def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):
+def test_generation_v1_stream_protocol_heartbeat(monkeypatch, tmp_path):
     store, runner = _install_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "sse_heartbeat_seconds", 0.1)
 
@@ -140,17 +157,24 @@ def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):
 
     monkeypatch.setattr(runner, "start_job", no_start)
 
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
     from app.models.generation import GenerationJob, GenerationRequestData
 
     async def _case():
+        session = await sessions_api.session_store.create_session("workspace-local-default", "心跳测试")
+        session_id = session["id"]
         job = GenerationJob(
             job_id="job-heartbeat",
-            request=GenerationRequestData(topic="心跳测试", resolved_content="测试内容"),
+            request=GenerationRequestData(topic="心跳测试", resolved_content="测试内容", session_id=session_id),
             outline_accepted=True,
         )
         await store.create_job(job)
-        response = await generation_api.stream_job_events(job.job_id)
+        response = await sessions_api.stream_session_generation_job_events(
+            session_id,
+            job.job_id,
+            RequestScopeStub(),
+            after_seq=0,
+        )
         chunk = await asyncio.wait_for(response.body_iterator.__anext__(), timeout=1.0)
         text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
         await response.body_iterator.aclose()
@@ -160,16 +184,18 @@ def test_generation_v2_stream_protocol_heartbeat(monkeypatch, tmp_path):
     assert EventType.HEARTBEAT.value in first_chunk
 
 
-def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tmp_path):
+def test_generation_v1_stream_after_seq_skips_old_terminal_event(monkeypatch, tmp_path):
     store, _runner = _install_runtime(monkeypatch, tmp_path)
 
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
     from app.models.generation import GenerationEvent, GenerationJob, GenerationRequestData, StageStatus
 
     async def _case():
+        session = await sessions_api.session_store.create_session("workspace-local-default", "续流测试")
+        session_id = session["id"]
         job = GenerationJob(
             job_id="job-after-seq",
-            request=GenerationRequestData(topic="续流测试", resolved_content="测试内容"),
+            request=GenerationRequestData(topic="续流测试", resolved_content="测试内容", session_id=session_id),
             outline_accepted=True,
         )
         await store.create_job(job)
@@ -177,7 +203,12 @@ def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tm
             GenerationEvent(seq=1, type=EventType.JOB_FAILED, job_id=job.job_id, message="old failure")
         )
 
-        response = await generation_api.stream_job_events(job.job_id, after_seq=1)
+        response = await sessions_api.stream_session_generation_job_events(
+            session_id,
+            job.job_id,
+            RequestScopeStub(),
+            after_seq=1,
+        )
 
         async def publish_live_events():
             await asyncio.sleep(0.05)
@@ -196,8 +227,8 @@ def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tm
             )
             await store.append_event(evt2)
             await store.append_event(evt3)
-            await generation_api.event_bus.publish(evt2)
-            await generation_api.event_bus.publish(evt3)
+            await sessions_api.event_bus.publish(evt2)
+            await sessions_api.event_bus.publish(evt3)
 
         publish_task = asyncio.create_task(publish_live_events())
         chunks: list[str] = []
@@ -221,16 +252,18 @@ def test_generation_v2_stream_after_seq_skips_old_terminal_event(monkeypatch, tm
     asyncio.run(_case())
 
 
-def test_generation_v2_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_path):
+def test_generation_v1_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_path):
     store, _runner = _install_runtime(monkeypatch, tmp_path)
 
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
     from app.models.generation import GenerationEvent, GenerationJob, GenerationRequestData, StageStatus
 
     async def _case():
+        session = await sessions_api.session_store.create_session("workspace-local-default", "待修复")
+        session_id = session["id"]
         job = GenerationJob(
             job_id="job-waiting-fix-stream",
-            request=GenerationRequestData(topic="待修复", resolved_content="测试内容"),
+            request=GenerationRequestData(topic="待修复", resolved_content="测试内容", session_id=session_id),
             outline_accepted=True,
         )
         await store.create_job(job)
@@ -254,7 +287,12 @@ def test_generation_v2_stream_waiting_fix_review_is_terminal(monkeypatch, tmp_pa
             )
         )
 
-        response = await generation_api.stream_job_events(job.job_id)
+        response = await sessions_api.stream_session_generation_job_events(
+            session_id,
+            job.job_id,
+            RequestScopeStub(),
+            after_seq=0,
+        )
         chunks: list[str] = []
         try:
             while True:

@@ -44,6 +44,7 @@ function toErrorMessage(evt: GenerationEvent): string {
 
 export default function GenerationEventCoordinator() {
   const {
+    currentSessionId,
     jobId,
     jobStatus,
     updateJobState,
@@ -60,7 +61,7 @@ export default function GenerationEventCoordinator() {
   } = useAppStore();
 
   useEffect(() => {
-    if (!jobId || jobStatus !== "running") {
+    if (!currentSessionId || !jobId || jobStatus !== "running") {
       return;
     }
     setIsGenerating(true);
@@ -68,6 +69,7 @@ export default function GenerationEventCoordinator() {
 
     const controller = new AbortController();
     void subscribeJobEvents(
+      currentSessionId,
       jobId,
       {
         onEvent: (evt) => {
@@ -287,6 +289,7 @@ export default function GenerationEventCoordinator() {
     };
   }, [
     finishGeneration,
+    currentSessionId,
     jobId,
     jobStatus,
     patchSlideTitlesFromOutline,

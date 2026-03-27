@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import suppress
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.models.generation import CreateJobRequest, JobStatus, StageStatus
+from app.core.config import settings
+from app.models.generation import (
+    AcceptOutlineRequest,
+    CreateJobRequest,
+    CreateJobResponse,
+    EventType,
+    FixApplyRequest,
+    FixPreviewRequest,
+    GenerationEvent,
+    GenerationJob,
+    JobActionResponse,
+    JobStatus,
+    StageStatus,
+    now_iso,
+)
 from app.models.session import (
     ChatRecord,
     LatestPresentationWriteRequest,
@@ -18,6 +34,7 @@ from app.models.session import (
     SnapshotMeta,
 )
 from app.models.source import SourceMeta
+from app.services.generation import event_bus, generation_runner, job_store
 from app.services.generation.job_factory import create_generation_job_record
 from app.services.planning import (
     handle_planning_turn,
@@ -76,6 +93,20 @@ def _ensure_session_id(value: str) -> str:
     if not sid:
         raise HTTPException(status_code=400, detail="缺少 session_id")
     return sid
+
+
+async def _get_generation_job_for_session(
+    workspace_id: str,
+    session_id: str,
+    job_id: str,
+) -> GenerationJob:
+    await _assert_session_access(workspace_id, session_id)
+    job = await job_store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.request.session_id != session_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 async def _assert_session_access(workspace_id: str, session_id: str) -> None:
@@ -531,6 +562,262 @@ async def confirm_session_planning(session_id: str, request: Request):
         status=JobStatus.RUNNING.value,
         current_stage=StageStatus.LAYOUT.value,
         planning_state=PlanningState.model_validate(next_state),
+    )
+
+
+@router.post("/{session_id}/generation/jobs", response_model=CreateJobResponse)
+async def create_session_generation_job(
+    session_id: str,
+    req: CreateJobRequest,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    try:
+        job, _ = await create_generation_job_record(
+            workspace_id=workspace_id,
+            req=CreateJobRequest(
+                topic=req.topic,
+                content=req.content,
+                session_id=sid,
+                source_ids=req.source_ids,
+                template_id=req.template_id,
+                num_pages=req.num_pages,
+                mode=req.mode,
+                approved_outline=req.approved_outline,
+            ),
+            session_store_override=session_store,
+            job_store_override=job_store,
+            generation_runner_override=generation_runner,
+        )
+    except ValueError as e:
+        message = str(e)
+        status_code = 422
+        if "已有演示稿" in message:
+            status_code = 409
+        elif "不存在" in message:
+            status_code = 404
+        raise HTTPException(status_code=status_code, detail=message) from e
+
+    return CreateJobResponse(
+        job_id=job.job_id,
+        session_id=sid,
+        status=job.status,
+        created_at=job.created_at,
+        event_stream_url=f"/api/v1/sessions/{sid}/generation/jobs/{job.job_id}/events",
+    )
+
+
+@router.get("/{session_id}/generation/jobs/{job_id}", response_model=GenerationJob)
+async def get_session_generation_job(
+    session_id: str,
+    job_id: str,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    return await _get_generation_job_for_session(workspace_id, sid, job_id)
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/outline/accept", response_model=JobActionResponse)
+async def accept_session_generation_outline(
+    session_id: str,
+    job_id: str,
+    req: AcceptOutlineRequest,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    job = await _get_generation_job_for_session(workspace_id, sid, job_id)
+
+    if job.status not in {JobStatus.WAITING_OUTLINE_REVIEW, JobStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail=f"当前状态不允许确认大纲: {job.status}")
+
+    if req.outline is not None:
+        job.outline = req.outline
+    job.outline_accepted = True
+    job.updated_at = now_iso()
+    await job_store.save_job(job)
+
+    await generation_runner.start_job(job_id, from_stage=StageStatus.LAYOUT)
+
+    return JobActionResponse(job_id=job.job_id, status=job.status, current_stage=job.current_stage)
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/run", response_model=JobActionResponse)
+async def run_session_generation_job(
+    session_id: str,
+    job_id: str,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    job = await _get_generation_job_for_session(workspace_id, sid, job_id)
+
+    if job.mode.value == "review_outline" and not job.outline_accepted:
+        raise HTTPException(status_code=409, detail="请先确认大纲后再继续")
+    if job.status == JobStatus.WAITING_FIX_REVIEW:
+        raise HTTPException(status_code=409, detail="当前任务正在等待修复决策，请先完成 fix 决策")
+
+    started = await generation_runner.start_job(job_id)
+    if not started and job.status == JobStatus.RUNNING:
+        return JobActionResponse(job_id=job.job_id, status=job.status, current_stage=job.current_stage)
+
+    refreshed = await _get_generation_job_for_session(workspace_id, sid, job_id)
+    return JobActionResponse(
+        job_id=refreshed.job_id,
+        status=refreshed.status,
+        current_stage=refreshed.current_stage,
+    )
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/fix/preview", response_model=GenerationJob)
+async def preview_session_generation_fix(
+    session_id: str,
+    job_id: str,
+    req: FixPreviewRequest,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _get_generation_job_for_session(workspace_id, sid, job_id)
+    try:
+        return await generation_runner.preview_fix(job_id, slide_ids=req.slide_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/fix/apply", response_model=GenerationJob)
+async def apply_session_generation_fix(
+    session_id: str,
+    job_id: str,
+    req: FixApplyRequest,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _get_generation_job_for_session(workspace_id, sid, job_id)
+    try:
+        return await generation_runner.apply_fix(job_id, slide_ids=req.slide_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/fix/skip", response_model=GenerationJob)
+async def skip_session_generation_fix(
+    session_id: str,
+    job_id: str,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _get_generation_job_for_session(workspace_id, sid, job_id)
+    try:
+        return await generation_runner.skip_fix(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/{session_id}/generation/jobs/{job_id}/cancel", response_model=JobActionResponse)
+async def cancel_session_generation_job(
+    session_id: str,
+    job_id: str,
+    request: Request,
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _get_generation_job_for_session(workspace_id, sid, job_id)
+
+    await generation_runner.cancel_job(job_id)
+    refreshed = await _get_generation_job_for_session(workspace_id, sid, job_id)
+    return JobActionResponse(
+        job_id=refreshed.job_id,
+        status=refreshed.status,
+        current_stage=refreshed.current_stage,
+    )
+
+
+@router.get("/{session_id}/generation/jobs/{job_id}/events")
+async def stream_session_generation_job_events(
+    session_id: str,
+    job_id: str,
+    request: Request,
+    after_seq: int = Query(default=0, ge=0),
+):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _get_generation_job_for_session(workspace_id, sid, job_id)
+
+    heartbeat = max(0.1, settings.sse_heartbeat_seconds)
+    terminal_events = {
+        EventType.JOB_COMPLETED,
+        EventType.JOB_FAILED,
+        EventType.JOB_CANCELLED,
+        EventType.JOB_WAITING_FIX_REVIEW,
+    }
+
+    async def event_generator():
+        queue = await event_bus.subscribe(job_id)
+        try:
+            replay = await job_store.list_events(job_id)
+            last_seq = max(0, after_seq)
+            terminal_seen = False
+
+            for event in replay:
+                if event.seq <= after_seq:
+                    continue
+                last_seq = max(last_seq, event.seq)
+                yield f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+                if event.type in terminal_events:
+                    terminal_seen = True
+
+            if terminal_seen:
+                yield "data: [DONE]\n\n"
+                return
+
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=heartbeat)
+                except asyncio.TimeoutError:
+                    hb = GenerationEvent(
+                        seq=last_seq,
+                        type=EventType.HEARTBEAT,
+                        job_id=job_id,
+                        message="heartbeat",
+                    )
+                    yield f"data: {json.dumps(hb.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+                    continue
+
+                if event.seq <= last_seq:
+                    continue
+
+                last_seq = max(last_seq, event.seq)
+                yield f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+
+                if event.type in terminal_events:
+                    yield "data: [DONE]\n\n"
+                    break
+        except asyncio.CancelledError:
+            raise
+        finally:
+            with suppress(Exception):
+                await event_bus.unsubscribe(job_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

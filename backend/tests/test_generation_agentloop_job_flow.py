@@ -21,7 +21,6 @@ def _install_temp_session_store(monkeypatch, tmp_path: Path):
     from app.api.v1 import sessions as sessions_api
     from app.api.v1 import workspaces as workspaces_api
     from app.api.v1 import workspace_sources as workspace_sources_api
-    from app.api.v2 import generation as generation_api
 
     store = SessionStore(tmp_path / "zhiyan-test.db", tmp_path / "uploads")
     asyncio.run(store.init())
@@ -31,20 +30,25 @@ def _install_temp_session_store(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(chat_api, "session_store", store)
     monkeypatch.setattr(workspace_sources_api, "session_store", store)
     monkeypatch.setattr(workspaces_api, "session_store", store)
-    monkeypatch.setattr(generation_api, "session_store", store)
     return store
 
 
 def _install_runtime(monkeypatch, tmp_path: Path) -> GenerationRunner:
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
 
     store = GenerationJobStore(tmp_path / "jobs")
     bus = GenerationEventBus()
     runner = GenerationRunner(store, bus)
-    monkeypatch.setattr(generation_api, "job_store", store)
-    monkeypatch.setattr(generation_api, "event_bus", bus)
-    monkeypatch.setattr(generation_api, "generation_runner", runner)
+    monkeypatch.setattr(sessions_api, "job_store", store)
+    monkeypatch.setattr(sessions_api, "event_bus", bus)
+    monkeypatch.setattr(sessions_api, "generation_runner", runner)
     return runner
+
+
+def _create_session(client: TestClient, headers: dict[str, str], title: str) -> str:
+    response = client.post("/api/v1/sessions", headers=headers, json={"title": title})
+    assert response.status_code == 200
+    return response.json()["id"]
 
 
 def _outline_payload(page_count: int) -> dict:
@@ -165,18 +169,19 @@ def _deck_model(page_count: int) -> FakeModel:
 def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
 
-    from app.api.v2 import generation as generation_api
+    from app.api.v1 import sessions as sessions_api
 
     class _NoopRunner:
         async def start_job(self, job_id: str, from_stage=None):  # noqa: ARG002
             return True
 
     monkeypatch.setattr(settings, "project_root", tmp_path)
-    monkeypatch.setattr(generation_api, "job_store", GenerationJobStore(tmp_path / "jobs"))
-    monkeypatch.setattr(generation_api, "generation_runner", _NoopRunner())
+    monkeypatch.setattr(sessions_api, "job_store", GenerationJobStore(tmp_path / "jobs"))
+    monkeypatch.setattr(sessions_api, "generation_runner", _NoopRunner())
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-workspace"}
+    session_id = _create_session(client, headers, "workspace")
 
     source_resp = client.post(
         "/api/v1/workspace/sources/text",
@@ -187,7 +192,7 @@ def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
     source_id = source_resp.json()["id"]
 
     create_resp = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=headers,
         json={
             "topic": "生成一个关于 AgentLoop 集成 ZhiYan 的演示稿",
@@ -199,7 +204,7 @@ def test_create_generation_job_builds_agent_workspace(monkeypatch, tmp_path):
     assert create_resp.status_code == 200
     job_id = create_resp.json()["job_id"]
 
-    job_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    job_detail = client.get(f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}", headers=headers)
     assert job_detail.status_code == 200
     workspace_meta = job_detail.json()["document_metadata"]["agent_workspace"]
     workspace_root = Path(workspace_meta["root"])
@@ -246,6 +251,7 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-agent-auto"}
+    session_id = _create_session(client, headers, "agent-auto")
 
     source_resp = client.post(
         "/api/v1/workspace/sources/text",
@@ -255,7 +261,7 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     assert source_resp.status_code == 200
 
     create_resp = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=headers,
         json={
             "topic": "讲清楚 AgentLoop 集成到 ZhiYan 创建页的价值",
@@ -266,7 +272,10 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     )
     assert create_resp.status_code == 200
 
-    job_detail = client.get(f"/api/v2/generation/jobs/{create_resp.json()['job_id']}", headers=headers)
+    job_detail = client.get(
+        f"/api/v1/sessions/{session_id}/generation/jobs/{create_resp.json()['job_id']}",
+        headers=headers,
+    )
     assert job_detail.status_code == 200
     body = job_detail.json()
     assert body["status"] == "completed"
@@ -322,6 +331,7 @@ def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_pa
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-agent-review"}
+    session_id = _create_session(client, headers, "agent-review")
 
     source_resp = client.post(
         "/api/v1/workspace/sources/text",
@@ -331,7 +341,7 @@ def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_pa
     assert source_resp.status_code == 200
 
     create_resp = client.post(
-        "/api/v2/generation/jobs",
+        f"/api/v1/sessions/{session_id}/generation/jobs",
         headers=headers,
         json={
             "topic": "需要 review_outline 的演示稿",
@@ -343,19 +353,19 @@ def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_pa
     assert create_resp.status_code == 200
     job_id = create_resp.json()["job_id"]
 
-    first_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    first_detail = client.get(f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}", headers=headers)
     assert first_detail.status_code == 200
     assert first_detail.json()["status"] == "waiting_outline_review"
     assert len(first_detail.json()["outline"]["items"]) == 4
 
     accept_resp = client.post(
-        f"/api/v2/generation/jobs/{job_id}/outline/accept",
+        f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}/outline/accept",
         headers=headers,
         json={},
     )
     assert accept_resp.status_code == 200
 
-    final_detail = client.get(f"/api/v2/generation/jobs/{job_id}", headers=headers)
+    final_detail = client.get(f"/api/v1/sessions/{session_id}/generation/jobs/{job_id}", headers=headers)
     assert final_detail.status_code == 200
     assert final_detail.json()["status"] == "completed"
     assert len(final_detail.json()["presentation"]["slides"]) == 4
