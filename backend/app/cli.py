@@ -121,12 +121,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replay only events after this sequence number.",
     )
 
+    agentic_parser = subparsers.add_parser(
+        "agentic",
+        help=argparse.SUPPRESS,
+        description="Dev-only project-native agentic runtime commands.",
+    )
+    agentic_parser.add_argument(
+        "agentic_args",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv and argv[0] == "agentic":
+        return _run_agentic(argv[1:])
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
     if not getattr(args, "command", None):
         parser.print_help(sys.stderr)
         return 2
@@ -138,6 +152,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
+        if args.command == "agentic":
+            forwarded = list(getattr(args, "agentic_args", []) or [])
+            if unknown:
+                forwarded.extend(unknown)
+            return _run_agentic(forwarded)
+        if unknown:
+            parser.error(f"unrecognized arguments: {' '.join(unknown)}")
         with _make_client(context) as client:
             if args.command == "config":
                 return _run_config(client, context, args)
@@ -231,6 +252,15 @@ def _run_watch(client: httpx.Client, job_id: str, after_seq: int) -> int:
     summary = _watch_job(client, job_id, after_seq=after_seq)
     _print_json(summary)
     return _watch_exit_code(summary)
+
+
+def _run_agentic(argv: list[str]) -> int:
+    from app.services.generation.agentic import cli as agentic_cli
+
+    normalized = list(argv)
+    if normalized and normalized[0] == "--":
+        normalized = normalized[1:]
+    return agentic_cli.main(normalized)
 
 
 def _watch_job(client: httpx.Client, job_id: str, *, after_seq: int) -> dict[str, Any]:

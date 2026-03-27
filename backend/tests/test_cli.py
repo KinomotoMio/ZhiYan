@@ -202,6 +202,21 @@ def test_cli_watch_treats_waiting_fix_review_as_success_terminal(monkeypatch, ca
     assert output["terminal_event"]["type"] == "job_waiting_fix_review"
 
 
+def test_cli_agentic_delegates_to_embedded_runtime(monkeypatch):
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(argv: list[str]) -> int:
+        seen["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setattr(cli, "_run_agentic", fake_run)
+
+    exit_code = cli.main(["agentic", "--project-root", "/tmp/demo", "inspect"])
+
+    assert exit_code == 0
+    assert seen["argv"] == ["--project-root", "/tmp/demo", "inspect"]
+
+
 def test_cli_slidev_mvp_posts_payload_and_prints_next_steps(monkeypatch, capsys):
     seen_payload: dict | None = None
 
