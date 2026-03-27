@@ -24,6 +24,7 @@ import {
   listSkills,
   saveLatestSessionHtmlPresentation,
   saveLatestSessionPresentation,
+  saveLatestSessionSlidevPresentation,
   type ChatActionHint,
   type ChatAssistantStatusEvent,
   type ChatToolCallEvent,
@@ -146,13 +147,20 @@ const QUICK_ACTIONS: QuickActionGroup[] = [
 ];
 
 interface PendingSlideChange {
-  mode: "structured" | "html";
+  mode: "structured" | "html" | "slidev";
   previousSlides: Slide[];
   proposedSlides: Slide[];
   previousHtml: string | null;
   proposedHtml: string | null;
   previousHtmlMeta: HtmlDeckMeta | null;
   proposedHtmlMeta: HtmlDeckMeta | null;
+  previousSlidevMarkdown?: string | null;
+  proposedSlidevMarkdown?: string | null;
+  previousSlidevMeta?: Record<string, unknown> | null;
+  proposedSlidevMeta?: Record<string, unknown> | null;
+  previousSlidevBuildUrl?: string | null;
+  proposedSlidevBuildUrl?: string | null;
+  selectedStyleId?: string | null;
   modifications: Record<string, unknown>[];
   saving: boolean;
 }
@@ -297,11 +305,16 @@ export default function FloatingChatPanel() {
     presentationOutputMode,
     presentationHtml,
     htmlDeckMeta,
+    presentationSlidevMarkdown,
+    presentationSlidevMeta,
+    presentationSlidevBuildUrl,
+    presentationSlidevDeckArtifact,
     currentSlideIndex,
     currentSessionId,
     updateSlides,
     setPresentation,
     setPresentationHtmlState,
+    setPresentationSlidevState,
   } = useAppStore();
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -367,6 +380,16 @@ export default function FloatingChatPanel() {
       useAppStore.getState().presentationHtmlArtifact,
       pendingChange.previousHtmlMeta
     );
+    if (pendingChange.mode === "slidev") {
+      setPresentationSlidevState({
+        outputMode: "slidev",
+        markdown: pendingChange.previousSlidevMarkdown ?? null,
+        meta: pendingChange.previousSlidevMeta ?? null,
+        deckArtifact: useAppStore.getState().presentationSlidevDeckArtifact,
+        buildArtifact: useAppStore.getState().presentationSlidevBuildArtifact,
+        buildUrl: pendingChange.previousSlidevBuildUrl ?? null,
+      });
+    }
     setPendingChange(null);
     const rollbackSeq = messageSeqRef.current++;
     addChatMessage({
@@ -400,6 +423,18 @@ export default function FloatingChatPanel() {
           currentSessionId,
           htmlPresentation,
           pendingChange.proposedHtml || "",
+          "chat"
+        );
+      } else if (pendingChange.mode === "slidev") {
+        if (!latestPresentation) {
+          throw new Error("当前没有可保存的演示稿");
+        }
+        await saveLatestSessionSlidevPresentation(
+          currentSessionId,
+          latestPresentation,
+          pendingChange.proposedSlidevMarkdown || "",
+          pendingChange.selectedStyleId ?? presentationSlidevDeckArtifact?.selected_style_id ?? null,
+          pendingChange.proposedSlidevMeta ?? undefined,
           "chat"
         );
       } else {
@@ -467,22 +502,29 @@ export default function FloatingChatPanel() {
         presentation_context:
           presentation || (presentationOutputMode === "html" && htmlDeckMeta)
             ? {
-                slides:
-                  presentationOutputMode === "html"
-                    ? buildHtmlPresentationShell(
-                        htmlDeckMeta?.title || presentation?.title || "新演示文稿",
-                        htmlDeckMeta,
-                        presentation
-                      ).slides
-                    : presentation?.slides ?? [],
-                title:
-                  presentationOutputMode === "html"
-                    ? htmlDeckMeta?.title || presentation?.title || "新演示文稿"
-                    : presentation?.title || "新演示文稿",
-                output_mode: presentationOutputMode,
-                html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
-              }
-            : undefined,
+              slides:
+                presentationOutputMode === "html"
+                  ? buildHtmlPresentationShell(
+                      htmlDeckMeta?.title || presentation?.title || "新演示文稿",
+                      htmlDeckMeta,
+                      presentation
+                    ).slides
+                  : presentation?.slides ?? [],
+              title:
+                presentationOutputMode === "html"
+                  ? htmlDeckMeta?.title || presentation?.title || "新演示文稿"
+                  : presentation?.title || "新演示文稿",
+              output_mode: presentationOutputMode,
+              html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
+              slidev_markdown:
+                presentationOutputMode === "slidev" ? presentationSlidevMarkdown : undefined,
+              slidev_meta: presentationOutputMode === "slidev" ? presentationSlidevMeta : undefined,
+              selected_style_id:
+                presentationOutputMode === "slidev"
+                  ? presentationSlidevDeckArtifact?.selected_style_id
+                  : undefined,
+            }
+          : undefined,
         current_slide_index: currentSlideIndex,
         action_hint: actionHint,
       },
@@ -525,6 +567,12 @@ export default function FloatingChatPanel() {
           proposedHtml: currentHtml,
           previousHtmlMeta: useAppStore.getState().htmlDeckMeta,
           proposedHtmlMeta: useAppStore.getState().htmlDeckMeta,
+          previousSlidevMarkdown: presentationSlidevMarkdown,
+          proposedSlidevMarkdown: presentationSlidevMarkdown,
+          previousSlidevMeta: presentationSlidevMeta,
+          proposedSlidevMeta: presentationSlidevMeta,
+          previousSlidevBuildUrl: presentationSlidevBuildUrl,
+          proposedSlidevBuildUrl: presentationSlidevBuildUrl,
           modifications: slideUpdate.modifications,
           saving: false,
         });
@@ -557,10 +605,52 @@ export default function FloatingChatPanel() {
           previousHtmlMeta: currentHtmlMeta,
           proposedHtmlMeta:
             htmlUpdate.html_meta ?? extractHtmlDeckMetaFromPresentation(htmlUpdate.presentation),
+          previousSlidevMarkdown: presentationSlidevMarkdown,
+          proposedSlidevMarkdown: presentationSlidevMarkdown,
+          previousSlidevMeta: presentationSlidevMeta,
+          proposedSlidevMeta: presentationSlidevMeta,
+          previousSlidevBuildUrl: presentationSlidevBuildUrl,
+          proposedSlidevBuildUrl: presentationSlidevBuildUrl,
           modifications: htmlUpdate.modifications || [],
           saving: false,
         });
         toast.info("已生成 HTML 改稿预览，请确认应用或撤回");
+      },
+      (slidevUpdate) => {
+        const currentSlides = useAppStore.getState().presentation?.slides ?? [];
+        const currentHtml = useAppStore.getState().presentationHtml;
+        const currentHtmlMeta = useAppStore.getState().htmlDeckMeta;
+        const previousSlidesSnapshot = pendingChange?.previousSlides
+          ? cloneSlides(pendingChange.previousSlides)
+          : cloneSlides(currentSlides);
+        setPresentation(slidevUpdate.presentation);
+        setPresentationSlidevState({
+          outputMode: "slidev",
+          markdown: slidevUpdate.markdown,
+          meta: slidevUpdate.meta,
+          deckArtifact: useAppStore.getState().presentationSlidevDeckArtifact,
+          buildArtifact: useAppStore.getState().presentationSlidevBuildArtifact,
+          buildUrl: slidevUpdate.preview_url,
+        });
+        setPendingChange({
+          mode: "slidev",
+          previousSlides: previousSlidesSnapshot,
+          proposedSlides: cloneSlides(slidevUpdate.presentation.slides),
+          previousHtml: currentHtml,
+          proposedHtml: currentHtml,
+          previousHtmlMeta: currentHtmlMeta,
+          proposedHtmlMeta: currentHtmlMeta,
+          previousSlidevMarkdown: presentationSlidevMarkdown,
+          proposedSlidevMarkdown: slidevUpdate.markdown,
+          previousSlidevMeta: presentationSlidevMeta,
+          proposedSlidevMeta: slidevUpdate.meta,
+          previousSlidevBuildUrl: presentationSlidevBuildUrl,
+          proposedSlidevBuildUrl: slidevUpdate.preview_url,
+          selectedStyleId: slidevUpdate.selected_style_id ?? presentationSlidevDeckArtifact?.selected_style_id ?? null,
+          modifications: slidevUpdate.modifications || [],
+          saving: false,
+        });
+        toast.info("已生成 Slidev 改稿预览，请确认应用或撤回");
       },
       (event: ChatAssistantStatusEvent) => {
         setAssistantStatus(event.assistant_status);

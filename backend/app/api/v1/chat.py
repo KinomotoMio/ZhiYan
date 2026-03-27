@@ -3,17 +3,18 @@
 import copy
 import json
 import logging
-
+from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.services.agents.editor_loop import EditorLoopRequest, editor_loop_service
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
+from app.services.slidev import get_slidev_preview_root
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,6 +59,28 @@ class ChatRequest(BaseModel):
     action_hint: ActionHint = "free_text"
 
 
+def _resolve_preview_asset(preview_id: str, asset_path: str) -> Path:
+    root = get_slidev_preview_root(preview_id)
+    candidate = (root / "dist" / asset_path).resolve()
+    if candidate != root / "dist" and (root / "dist") not in candidate.parents:
+        raise HTTPException(status_code=404, detail=f"Preview asset not found: {asset_path}")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail=f"Preview asset not found: {asset_path}")
+    return candidate
+
+
+@router.get("/slidev-previews/{preview_id}")
+async def get_slidev_preview_entry(preview_id: str):
+    path = _resolve_preview_asset(preview_id, "index.html")
+    return FileResponse(path, media_type="text/html")
+
+
+@router.get("/slidev-previews/{preview_id}/{asset_path:path}")
+async def get_slidev_preview_asset(preview_id: str, asset_path: str):
+    path = _resolve_preview_asset(preview_id, asset_path)
+    return FileResponse(path)
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request):
     """流式对话 — SSE 响应，支持幻灯片修改"""
@@ -80,9 +103,14 @@ async def chat(req: ChatRequest, request: Request):
     workspace_id = get_workspace_id_from_request(request)
     strict_tool_mode = req.action_hint != "free_text"
     provider = settings.strong_model.split(":", 1)[0] if settings.strong_model else ""
-    output_mode = str(req.presentation_context.get("output_mode") or "structured") if isinstance(req.presentation_context, dict) else "structured"
-    html_content = str(req.presentation_context.get("html_content") or "").strip() if isinstance(req.presentation_context, dict) else ""
-    presentation_title = str(req.presentation_context.get("title") or "新演示文稿").strip() if isinstance(req.presentation_context, dict) else "新演示文稿"
+    presentation_context = req.presentation_context if isinstance(req.presentation_context, dict) else {}
+    output_mode = str(presentation_context.get("output_mode") or "structured").strip() or "structured"
+    html_content = str(presentation_context.get("html_content") or "").strip() or None
+    slidev_markdown = str(presentation_context.get("slidev_markdown") or "").strip() or None
+    raw_slidev_meta = presentation_context.get("slidev_meta")
+    slidev_meta = dict(raw_slidev_meta) if isinstance(raw_slidev_meta, dict) else None
+    selected_style_id = str(presentation_context.get("selected_style_id") or "").strip() or None
+    presentation_title = str(presentation_context.get("title") or "新演示文稿").strip() or "新演示文稿"
 
     async def event_stream():
         no_op = False
@@ -92,6 +120,7 @@ async def chat(req: ChatRequest, request: Request):
         effective_modification_count = 0
         slide_update: dict[str, Any] | None = None
         html_update: dict[str, Any] | None = None
+        slidev_update: dict[str, Any] | None = None
 
         try:
             outcome = await editor_loop_service.run(
@@ -101,10 +130,13 @@ async def chat(req: ChatRequest, request: Request):
                     message=req.message,
                     action_hint=req.action_hint,
                     current_slide_index=req.current_slide_index,
-                    presentation_title=presentation_title or "新演示文稿",
+                    presentation_title=presentation_title,
                     slides=slides,
                     output_mode=output_mode,
-                    html_content=html_content or None,
+                    html_content=html_content,
+                    slidev_markdown=slidev_markdown,
+                    slidev_meta=slidev_meta,
+                    selected_style_id=selected_style_id,
                     history=[
                         {"role": msg.role, "content": msg.content}
                         for msg in history
@@ -123,6 +155,22 @@ async def chat(req: ChatRequest, request: Request):
                     "html_content": outcome.html_content,
                     "presentation": outcome.normalized_presentation,
                     "html_meta": outcome.normalized_html_meta,
+                    "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
+                }
+            elif (
+                output_mode == "slidev"
+                and outcome.slidev_markdown
+                and outcome.slidev_meta
+                and outcome.slidev_preview_url
+                and outcome.normalized_presentation
+            ):
+                slidev_update = {
+                    "type": "slidev_update",
+                    "markdown": outcome.slidev_markdown,
+                    "meta": outcome.slidev_meta,
+                    "presentation": outcome.normalized_presentation,
+                    "selected_style_id": outcome.selected_style_id,
+                    "preview_url": outcome.slidev_preview_url,
                     "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
                 }
             elif outcome.modifications:
@@ -149,6 +197,8 @@ async def chat(req: ChatRequest, request: Request):
                 yield f"data: {text_data}\n\n"
             if html_update is not None and not no_op:
                 yield f"data: {json.dumps(html_update, ensure_ascii=False)}\n\n"
+            elif slidev_update is not None and not no_op:
+                yield f"data: {json.dumps(slidev_update, ensure_ascii=False)}\n\n"
             elif slide_update is not None and effective_modification_count > 0:
                 yield f"data: {json.dumps(slide_update, ensure_ascii=False)}\n\n"
             elif strict_tool_mode:

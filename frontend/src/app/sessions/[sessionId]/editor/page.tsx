@@ -5,9 +5,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import {
+  buildLatestSessionPresentationSlidevUrl,
   getJob,
   getLatestSessionPresentationHtml,
   getLatestSessionPresentationHtmlMeta,
+  getLatestSessionPresentationSlidev,
   getSessionDetail,
   updateSession,
 } from "@/lib/api";
@@ -105,6 +107,7 @@ export default function SessionEditorPage() {
   const upsertSession = useAppStore((store) => store.upsertSession);
   const setSessionData = useAppStore((store) => store.setSessionData);
   const setPresentationHtmlState = useAppStore((store) => store.setPresentationHtmlState);
+  const setPresentationSlidevState = useAppStore((store) => store.setPresentationSlidevState);
   const setCurrentSlideIndex = useAppStore((store) => store.setCurrentSlideIndex);
   const updateJobState = useAppStore((store) => store.updateJobState);
   const setIsGenerating = useAppStore((store) => store.setIsGenerating);
@@ -137,6 +140,18 @@ export default function SessionEditorPage() {
         let presentationHtml =
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationHtml
+            : null;
+        let presentationSlidevMarkdown =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationSlidevMarkdown
+            : null;
+        let presentationSlidevMeta =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationSlidevMeta
+            : null;
+        let presentationSlidevBuildUrl =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationSlidevBuildUrl
             : null;
         const latestJob = detail.latest_generation_job;
         const resolvedJobStatus =
@@ -214,6 +229,18 @@ export default function SessionEditorPage() {
           } catch {
             presentationHtml = null;
           }
+        } else if (latestOutputMode === "slidev") {
+          try {
+            const slidev = await getLatestSessionPresentationSlidev(sessionId);
+            presentationSlidevMarkdown = slidev?.markdown ?? null;
+            presentationSlidevMeta = slidev?.meta ?? null;
+            presentationSlidevBuildUrl =
+              slidev?.build_url ?? buildLatestSessionPresentationSlidevUrl(sessionId);
+          } catch {
+            presentationSlidevMarkdown = null;
+            presentationSlidevMeta = null;
+            presentationSlidevBuildUrl = buildLatestSessionPresentationSlidevUrl(sessionId);
+          }
         }
 
         const initialSlideIndex = parseSlideQueryToIndex(
@@ -232,6 +259,11 @@ export default function SessionEditorPage() {
           presentationHtml,
           presentationHtmlArtifact: detail.latest_presentation?.artifacts?.html_deck ?? null,
           htmlDeckMeta,
+          presentationSlidevMarkdown,
+          presentationSlidevMeta,
+          presentationSlidevDeckArtifact: detail.latest_presentation?.artifacts?.slidev_deck ?? null,
+          presentationSlidevBuildArtifact: detail.latest_presentation?.artifacts?.slidev_build ?? null,
+          presentationSlidevBuildUrl,
           planningState: detail.planning_state ?? null,
         });
         setPresentationHtmlState(
@@ -240,6 +272,14 @@ export default function SessionEditorPage() {
           detail.latest_presentation?.artifacts?.html_deck ?? null,
           htmlDeckMeta
         );
+        setPresentationSlidevState({
+          outputMode: latestOutputMode,
+          markdown: presentationSlidevMarkdown,
+          meta: presentationSlidevMeta,
+          deckArtifact: detail.latest_presentation?.artifacts?.slidev_deck ?? null,
+          buildArtifact: detail.latest_presentation?.artifacts?.slidev_build ?? null,
+          buildUrl: presentationSlidevBuildUrl,
+        });
         if (latestJob?.job_id) {
           updateJobState({
             jobId: latestJob.job_id,
@@ -321,6 +361,7 @@ export default function SessionEditorPage() {
     setCurrentSlideIndex,
     setIsGenerating,
     setPresentationHtmlState,
+    setPresentationSlidevState,
     setSessionData,
     updateJobState,
     upsertSession,

@@ -21,6 +21,7 @@ class GenerationMode(str, Enum):
 class PresentationOutputMode(str, Enum):
     STRUCTURED = "structured"
     HTML = "html"
+    SLIDEV = "slidev"
 
 
 class JobStatus(str, Enum):
