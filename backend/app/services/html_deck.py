@@ -15,6 +15,10 @@ _SECTION_DATA_ATTR_RE = re.compile(
     r'\s*data-(?:slide-id|slide-title)\s*=\s*(?:"[^"]*"|\'[^\']*\')',
     re.IGNORECASE,
 )
+_NOTES_ASIDE_RE = re.compile(
+    r"<aside\b(?=[^>]*\bclass\s*=\s*(?:\"[^\"]*\bnotes\b[^\"]*\"|'[^']*\bnotes\b[^']*'))[^>]*>(.*?)</aside>",
+    re.IGNORECASE | re.DOTALL,
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 _HEADING_RE = re.compile(r"<h[1-3]\b[^>]*>(.*?)</h[1-3]>", re.IGNORECASE | re.DOTALL)
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -25,6 +29,7 @@ def normalize_html_deck(
     html: str,
     fallback_title: str,
     expected_slide_count: int | None = None,
+    existing_slides: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Normalize a raw deck into a stable Reveal-compatible HTML document."""
     raw_html = str(html or "").strip()
@@ -46,6 +51,7 @@ def normalize_html_deck(
 
     section_html_parts: list[str] = []
     slides_meta: list[dict[str, Any]] = []
+    existing_slide_by_id = _build_slide_lookup(existing_slides)
     for index, match in enumerate(raw_sections, start=1):
         attrs = match.group(1) or ""
         body = match.group(2) or ""
@@ -56,6 +62,9 @@ def normalize_html_deck(
             or f"第 {index} 页"
         )
         slide_title = _normalize_text(slide_title) or f"第 {index} 页"
+        existing_slide = existing_slide_by_id.get(slide_id)
+        requested_notes = _extract_slide_speaker_notes(existing_slide)
+        body, speaker_notes = _upsert_speaker_notes(body, requested_notes)
         section_attrs = _build_section_attrs(
             attrs,
             slide_id=slide_id,
@@ -69,6 +78,7 @@ def normalize_html_deck(
                 "index": index - 1,
                 "slide_id": slide_id,
                 "title": slide_title,
+                "speaker_notes": speaker_notes,
             }
         )
 
@@ -86,16 +96,7 @@ def normalize_html_deck(
         "presentationId": "pres-html",
         "title": title,
         "slides": [
-            {
-                "slideId": item["slide_id"],
-                "layoutType": "blank",
-                "layoutId": "blank",
-                "contentData": {
-                    "title": item["title"],
-                    "_htmlDeck": True,
-                },
-                "components": [],
-            }
+            _build_presentation_slide(item, existing_slide_by_id.get(item["slide_id"]))
             for item in slides_meta
         ],
     }
@@ -131,11 +132,72 @@ def _normalize_text(value: str) -> str:
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 
+def _extract_slide_speaker_notes(slide: dict[str, Any] | None) -> str | None:
+    if not isinstance(slide, dict):
+        return None
+    notes = str(slide.get("speakerNotes") or "").strip()
+    return notes if notes else ""
+
+
+def _build_slide_lookup(
+    existing_slides: list[dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for slide in existing_slides or []:
+        if not isinstance(slide, dict):
+            continue
+        slide_id = str(slide.get("slideId") or "").strip()
+        if not slide_id:
+            continue
+        lookup[slide_id] = slide
+    return lookup
+
+
+def _extract_existing_speaker_notes(section_body: str) -> str | None:
+    match = _NOTES_ASIDE_RE.search(section_body or "")
+    if not match:
+        return None
+    notes = _normalize_text(match.group(1))
+    return notes or None
+
+
+def _strip_existing_speaker_notes(section_body: str) -> str:
+    body = _NOTES_ASIDE_RE.sub("", section_body or "")
+    return body.rstrip()
+
+
+def _render_speaker_notes(notes: str) -> str:
+    return f'\n    <aside class="notes">{_escape_html(notes)}</aside>'
+
+
+def _upsert_speaker_notes(section_body: str, requested_notes: str | None) -> tuple[str, str | None]:
+    body_without_notes = _strip_existing_speaker_notes(section_body)
+    existing_notes = _extract_existing_speaker_notes(section_body)
+
+    if requested_notes is None:
+        final_notes = existing_notes
+    else:
+        final_notes = requested_notes.strip() or None
+
+    if final_notes:
+        return f"{body_without_notes}{_render_speaker_notes(final_notes)}", final_notes
+    return body_without_notes, None
+
+
 def _escape_attr(value: str) -> str:
     return (
         str(value)
         .replace("&", "&amp;")
         .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _escape_html(value: str) -> str:
+    return (
+        str(value)
+        .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
@@ -151,6 +213,30 @@ def _build_section_attrs(raw_attrs: str, *, slide_id: str, slide_title: str) -> 
     if preserved:
         return f" {preserved} {normalized}"
     return f" {normalized}"
+
+
+def _build_presentation_slide(
+    slide_meta: dict[str, Any],
+    existing_slide: dict[str, Any] | None,
+) -> dict[str, Any]:
+    slide = {
+        "slideId": slide_meta["slide_id"],
+        "layoutType": "blank",
+        "layoutId": "blank",
+        "contentData": {
+            "title": slide_meta["title"],
+            "_htmlDeck": True,
+        },
+        "components": [],
+    }
+    speaker_notes = slide_meta.get("speaker_notes")
+    if isinstance(speaker_notes, str) and speaker_notes.strip():
+        slide["speakerNotes"] = speaker_notes.strip()
+    if isinstance(existing_slide, dict):
+        speaker_audio = existing_slide.get("speakerAudio")
+        if isinstance(speaker_audio, dict):
+            slide["speakerAudio"] = speaker_audio
+    return slide
 
 
 def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str) -> str:
@@ -206,8 +292,15 @@ def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str
   <script>
     const revealElement = document.querySelector('.reveal');
     const deck = new Reveal(revealElement);
+    const query = new URLSearchParams(window.location.search);
+    const requestedSlide = Number.parseInt(query.get('slide') || '0', 10);
+    const initialSlide = Number.isFinite(requestedSlide) ? Math.max(0, requestedSlide) : 0;
+    const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';
+    const isInteractive = previewMode === 'interactive';
+    document.documentElement.dataset.previewMode = previewMode;
 
     const focusRevealSurface = () => {{
+      if (!isInteractive) return;
       try {{
         window.focus();
       }} catch {{
@@ -223,6 +316,7 @@ def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str
     }};
 
     const notifySlideChange = () => {{
+      if (!isInteractive) return;
       const {{ h }} = deck.getIndices();
       window.parent.postMessage(
         {{ type: 'reveal-preview-slidechange', slideIndex: h }},
@@ -231,13 +325,21 @@ def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str
     }};
 
     deck.on('ready', () => {{
-      notifySlideChange();
-      window.requestAnimationFrame(focusRevealSurface);
+      if (initialSlide > 0) {{
+        deck.slide(initialSlide);
+      }} else {{
+        notifySlideChange();
+      }}
+      if (isInteractive) {{
+        window.requestAnimationFrame(focusRevealSurface);
+      }}
     }});
-    deck.on('slidechanged', notifySlideChange);
+    if (isInteractive) {{
+      deck.on('slidechanged', notifySlideChange);
+    }}
 
     deck.initialize({{
-      hash: true,
+      hash: false,
       width: 1280,
       height: 720,
       margin: 0,

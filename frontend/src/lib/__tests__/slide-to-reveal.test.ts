@@ -37,7 +37,9 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.match(html, /<section data-slide-id="slide-1">/);
   assert.doesNotMatch(html, /<section data-slide-id="slide-1" style=/);
   assert.match(html, /class="slide-shell"/);
-  assert.ok(html.includes("hash: true"));
+  assert.ok(html.includes("const query = new URLSearchParams(window.location.search);"));
+  assert.ok(html.includes("const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';"));
+  assert.ok(html.includes("hash: false"));
   assert.ok(html.includes("margin: 0,"));
   assert.ok(html.includes("center: false,"));
   assert.ok(html.includes("padding: 0 !important;"));
@@ -48,12 +50,25 @@ test("presentationToRevealHTML keeps reveal section positioning intact and emits
   assert.ok(html.includes("reveal-preview-slidechange"));
   assert.ok(html.includes("window.requestAnimationFrame(focusRevealSurface)"));
   assert.ok(html.includes("deck.on('ready', () => {"));
-  assert.ok(html.includes("deck.on('slidechanged', notifySlideChange)"));
+  assert.ok(html.includes("deck.slide(initialSlide);"));
+  assert.ok(html.includes("deck.on('slidechanged', notifySlideChange);"));
   assert.ok(html.includes("window.location.origin"));
   assert.doesNotMatch(html, /margin: 0\.04,/);
-  assert.doesNotMatch(html, /const initialSlideIndex = 1/);
-  assert.doesNotMatch(html, /deck.slide\(initialSlideIndex\)/);
   assert.doesNotMatch(html, /reveal-preview-close/);
+});
+
+test("presentationToRevealHTML emits reveal speaker notes when slide notes exist", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        ...basePresentation.slides[0],
+        speakerNotes: "封面页讲稿",
+      },
+    ],
+  });
+
+  assert.match(html, /<aside class="notes">封面页讲稿<\/aside>/);
 });
 
 test("presentationToRevealHTML escapes slide identifiers and sanitizes theme colors", () => {

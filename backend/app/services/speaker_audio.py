@@ -173,12 +173,26 @@ async def ensure_speaker_audio_for_slide(
         "generatedAt": _utc_now_iso(),
     }
     target_slide["speakerAudio"] = next_audio
-    await session_store.save_presentation(
-        session_id=session_id,
-        payload=presentation,
-        is_snapshot=False,
-        snapshot_label=None,
-    )
+    output_mode = str(latest.get("output_mode") or "").strip()
+    artifacts = dict(latest.get("artifacts") or {}) if isinstance(latest.get("artifacts"), dict) else {}
+    if output_mode == "html":
+        presentation["outputMode"] = "html"
+        if artifacts:
+            presentation["artifacts"] = artifacts
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=presentation,
+            is_snapshot=False,
+            snapshot_label=None,
+            output_mode="html",
+        )
+    else:
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=presentation,
+            is_snapshot=False,
+            snapshot_label=None,
+        )
     return next_audio, presentation
 
 

@@ -4,21 +4,6 @@ import { useEffect, useRef } from "react";
 import type { Presentation } from "@/types/slide";
 import { presentationToRevealHTML } from "@/lib/slide-to-reveal";
 
-const THUMBNAIL_STYLE_MARKER = "data-reveal-preview-thumbnail";
-const THUMBNAIL_STYLE_BLOCK = `<style ${THUMBNAIL_STYLE_MARKER}>
-  html, body {
-    background: transparent !important;
-  }
-  .reveal {
-    background: transparent !important;
-  }
-  .reveal .controls,
-  .reveal .progress,
-  .reveal .slide-number {
-    display: none !important;
-  }
-</style>`;
-
 interface RevealPreviewProps {
   presentation?: Presentation | null;
   htmlContent?: string | null;
@@ -30,13 +15,20 @@ interface RevealPreviewProps {
   listenForSlideChange?: boolean;
 }
 
-export function buildRevealPreviewSrc(blobUrl: string, startSlide = 0): string {
+export function buildRevealPreviewSrc(
+  blobUrl: string,
+  options?: { startSlide?: number; thumbnailMode?: boolean }
+): string {
   const safeStartSlide =
-    typeof startSlide === "number" && Number.isFinite(startSlide)
-      ? Math.max(0, Math.trunc(startSlide))
+    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
+      ? Math.max(0, Math.trunc(options.startSlide))
       : 0;
+  const search = new URLSearchParams({
+    slide: String(safeStartSlide),
+    mode: options?.thumbnailMode ? "thumbnail" : "interactive",
+  });
 
-  return safeStartSlide > 0 ? `${blobUrl}#/${safeStartSlide}` : blobUrl;
+  return `${blobUrl}?${search.toString()}`;
 }
 
 export function getRevealPreviewSlideIndex(data: unknown): number | null {
@@ -55,13 +47,7 @@ export function buildRevealPreviewHtml(
   htmlContent: string,
   options?: { thumbnailMode?: boolean }
 ): string {
-  const html = String(htmlContent || "");
-  if (!options?.thumbnailMode || !html) return html;
-  if (html.includes(THUMBNAIL_STYLE_MARKER)) return html;
-  if (/<\/head>/i.test(html)) {
-    return html.replace(/<\/head>/i, `${THUMBNAIL_STYLE_BLOCK}\n</head>`);
-  }
-  return `${THUMBNAIL_STYLE_BLOCK}\n${html}`;
+  return String(htmlContent || "");
 }
 
 export function resolveRevealPreviewBehavior(options?: {
@@ -135,7 +121,7 @@ export default function RevealPreview({
     }
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
-    iframeRef.current.src = buildRevealPreviewSrc(url, startSlide);
+    iframeRef.current.src = buildRevealPreviewSrc(url, { startSlide, thumbnailMode });
     return () => URL.revokeObjectURL(url);
   }, [htmlContent, presentation, startSlide, thumbnailMode]);
 
