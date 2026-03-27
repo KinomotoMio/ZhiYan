@@ -10,8 +10,14 @@
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 LLM API Key 及其他配置
+# 编辑 .env，填入 LLM API Key、MiniMax TTS Key 及其他配置
 ```
+
+关键配置：
+
+- 文本生成模型：`DEFAULT_MODEL`、`STRONG_MODEL`、`VISION_MODEL`、`FAST_MODEL`
+- 文本模型密钥：`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY`
+- 演讲者注解朗读：`TTS_PROVIDER=minimax`、`TTS_API_KEY`、`TTS_BASE_URL`、`TTS_MODEL=speech-2.8-hd`、`TTS_VOICE_ID`
 
 ## 2. 启动后端
 

@@ -71,8 +71,11 @@ class Settings(BaseSettings):
     log_sse_debug: bool = False
 
     # TTS
-    tts_model: str = "tts-1"
-    tts_voice: str = "alloy"
+    tts_provider: str = "minimax"
+    tts_api_key: str = ""
+    tts_base_url: str = "https://api.minimaxi.com"
+    tts_model: str = "speech-2.8-hd"
+    tts_voice_id: str = "male-qn-qingse"
 
     # CORS
     cors_origins: list[str] = [

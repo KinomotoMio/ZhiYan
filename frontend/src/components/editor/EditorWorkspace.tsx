@@ -17,11 +17,14 @@ import { useAppStore } from "@/lib/store";
 import {
   acceptOutline,
   cancelJob,
+  ensureSpeakerAudio,
   exportPptx,
   exportPdf,
+  fetchSpeakerAudio,
   fixApply,
   fixPreview,
   fixSkip,
+  generateSpeakerNotes,
   saveLatestSessionPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
@@ -42,6 +45,12 @@ import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
+import {
+  applySpeakerAudioMetaToSlides,
+  applySpeakerNotesDraftToSlides,
+  buildSpeakerNotesDraftMap,
+} from "@/components/editor/speaker-notes-flow";
+import type { Presentation } from "@/types/slide";
 
 interface EditorWorkspaceProps {
   returnHref: string;
@@ -134,7 +143,9 @@ export default function EditorWorkspace({
   const [acceptingOutline, setAcceptingOutline] = useState(false);
   const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
-  const [generatingSpeakerNotes, setGeneratingSpeakerNotes] = useState(false);
+  const [generatingSpeakerNotesScope, setGeneratingSpeakerNotesScope] = useState<
+    "current" | "all" | null
+  >(null);
   const prevPresentationRef = useRef(presentation);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
@@ -500,19 +511,17 @@ export default function EditorWorkspace({
     }
   };
 
-  const handleSaveSpeakerNotes = async () => {
-    if (!presentation || !currentSlide || !currentSessionId) return;
+  const handleSaveSpeakerNotes = async (): Promise<Presentation | null> => {
+    if (!presentation || !currentSlide || !currentSessionId) return null;
 
     const currentNotes = currentSlide.speakerNotes ?? "";
-    if (speakerNotesDraft === currentNotes) return;
+    if (speakerNotesDraft === currentNotes) return presentation;
 
-    const nextSlides = presentation.slides.map((slide, index) => {
-      if (index !== currentSlideIndex) return slide;
-      return {
-        ...slide,
-        speakerNotes: speakerNotesDraft.trim().length > 0 ? speakerNotesDraft : undefined,
-      };
-    });
+    const nextSlides = applySpeakerNotesDraftToSlides(
+      presentation.slides,
+      currentSlideIndex,
+      speakerNotesDraft
+    );
     const nextPresentation = { ...presentation, slides: nextSlides };
 
     updateSlides(nextSlides);
@@ -520,22 +529,77 @@ export default function EditorWorkspace({
 
     try {
       await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      setSpeakerNotesDrafts((current) => ({
+        ...current,
+        [currentSlide.slideId]: nextSlides[currentSlideIndex]?.speakerNotes ?? "",
+      }));
       toast.success("已保存当前页演讲者注解");
+      return nextPresentation;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存演讲者注解失败");
+      return null;
     } finally {
       setSavingSpeakerNotes(false);
     }
   };
 
-  const handleGenerateSpeakerNotes = async () => {
-    if (generatingSpeakerNotes) return;
-    setGeneratingSpeakerNotes(true);
+  const handleGenerateSpeakerNotes = async (scope: "current" | "all") => {
+    if (generatingSpeakerNotesScope || !presentation || !currentSessionId) return;
+    const snapshot =
+      speakerNotesDraft !== (currentSlide?.speakerNotes ?? "")
+        ? {
+            ...presentation,
+            slides: applySpeakerNotesDraftToSlides(
+              presentation.slides,
+              currentSlideIndex,
+              speakerNotesDraft
+            ),
+          }
+        : presentation;
+
+    setGeneratingSpeakerNotesScope(scope);
     try {
-      toast.info("演讲者注解生成接口即将接入");
+      const response = await generateSpeakerNotes(currentSessionId, {
+        presentation: snapshot,
+        scope,
+        currentSlideIndex: currentSlideIndex,
+      });
+      setPresentation(response.presentation);
+      setSpeakerNotesDrafts(buildSpeakerNotesDraftMap(response.presentation.slides));
+      toast.success(
+        scope === "current"
+          ? "已生成并覆盖当前页演讲者注解"
+          : `已生成并覆盖 ${response.updatedSlideIds.length} 页演讲者注解`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生成演讲者注解失败");
     } finally {
-      setGeneratingSpeakerNotes(false);
+      setGeneratingSpeakerNotesScope(null);
     }
+  };
+
+  const handlePlaySpeakerAudio = async (signal: AbortSignal): Promise<Blob> => {
+    if (!currentSessionId || !currentSlide) {
+      throw new Error("当前没有可朗读的页面");
+    }
+    if (speakerNotesDraft !== (currentSlide.speakerNotes ?? "")) {
+      const saved = await handleSaveSpeakerNotes();
+      if (!saved) {
+        throw new Error("保存当前注解失败，无法生成录音");
+      }
+    }
+    const response = await ensureSpeakerAudio(currentSessionId, currentSlide.slideId);
+    const latestPresentation = useAppStore.getState().presentation;
+    if (latestPresentation) {
+      updateSlides(
+        applySpeakerAudioMetaToSlides(
+          latestPresentation.slides,
+          currentSlide.slideId,
+          response.speakerAudio
+        )
+      );
+    }
+    return fetchSpeakerAudio(currentSessionId, currentSlide.slideId, signal);
   };
 
   if (showReveal) {
@@ -784,11 +848,15 @@ export default function EditorWorkspace({
               onSave={() => {
                 void handleSaveSpeakerNotes();
               }}
-              onGenerate={() => {
-                void handleGenerateSpeakerNotes();
+              onGenerateCurrent={() => {
+                void handleGenerateSpeakerNotes("current");
               }}
+              onGenerateAll={() => {
+                void handleGenerateSpeakerNotes("all");
+              }}
+              onPlayAudio={handlePlaySpeakerAudio}
               isSaving={savingSpeakerNotes}
-              isGenerating={generatingSpeakerNotes}
+              generatingScope={generatingSpeakerNotesScope}
               canGenerate={Boolean(currentSlide)}
               canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
             />

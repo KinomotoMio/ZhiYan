@@ -73,6 +73,59 @@ def test_settings_api_persists_enable_vision_verification(tmp_path, monkeypatch)
         settings.content_type_confidence_threshold = original_confidence_threshold
 
 
+def test_settings_api_persists_tts_configuration(tmp_path, monkeypatch):
+    from app.core import settings_store
+    from app.core.config import settings
+
+    original_provider = settings.tts_provider
+    original_key = settings.tts_api_key
+    original_base_url = settings.tts_base_url
+    original_model = settings.tts_model
+    original_voice_id = settings.tts_voice_id
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(settings_store, "_SETTINGS_FILE", settings_path)
+
+    client = TestClient(app)
+
+    try:
+        resp = client.put(
+            "/api/v1/settings",
+            json={
+                "tts_provider": "minimax",
+                "tts_api_key": "tts-secret-key",
+                "tts_base_url": "https://api.minimaxi.com",
+                "tts_model": "speech-2.8-hd",
+                "tts_voice_id": "male-qn-qingse",
+            },
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["tts_provider"] == "minimax"
+        assert payload["tts_api_key"].startswith("tts-s...")
+        assert payload["tts_base_url"] == "https://api.minimaxi.com"
+        assert payload["tts_model"] == "speech-2.8-hd"
+        assert payload["tts_voice_id"] == "male-qn-qingse"
+        assert payload["has_tts_key"] is True
+
+        persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert persisted["tts_provider"] == "minimax"
+        assert persisted["tts_api_key"] == "tts-secret-key"
+        assert persisted["tts_base_url"] == "https://api.minimaxi.com"
+        assert persisted["tts_model"] == "speech-2.8-hd"
+        assert persisted["tts_voice_id"] == "male-qn-qingse"
+
+        get_resp = client.get("/api/v1/settings")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["has_tts_key"] is True
+        assert get_resp.json()["tts_voice_id"] == "male-qn-qingse"
+    finally:
+        settings.tts_provider = original_provider
+        settings.tts_api_key = original_key
+        settings.tts_base_url = original_base_url
+        settings.tts_model = original_model
+        settings.tts_voice_id = original_voice_id
+
+
 def test_export_pdf_returns_503_with_manual_install_hint(monkeypatch):
     from app.services.export import pdf_exporter
 
