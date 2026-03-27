@@ -14,12 +14,12 @@ from uuid import uuid4
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.model_status import parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
-from app.models.slide import Presentation, Slide
+from app.models.slide import Presentation, Slide, Theme
 from app.services.generation.agentic import (
     AgentBuilder,
     LiteLLMModelClient,
@@ -32,7 +32,6 @@ from app.services.generation.agentic import (
 )
 from app.services.generation.agentic.models import ModelClient, ModelResponse, normalize_litellm_model
 from app.services.generation.agent_adapter import AgentOutline, outline_to_job_outline
-from app.services.generation.legacy.deck_adapter import AgentDeck, deck_to_layout_selections, deck_to_slides
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
@@ -62,15 +61,16 @@ class _SubmitOutlineArgs(BaseModel):
     items: list[dict[str, Any]]
 
 
-class _SubmitDeckArgs(BaseModel):
+class _SubmitPresentationArgs(BaseModel):
+    presentation_id: str | None = Field(None, alias="presentationId")
     title: str = ""
-    subtitle: str = ""
-    storyline: str = ""
+    theme: dict[str, Any] | None = None
     slides: list[dict[str, Any]]
 
+    model_config = {"populate_by_name": True}
 
-# Deprecated transitional path until the runtime submits presentation directly.
-AUTO_DECK_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
+
+AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
 )
 
@@ -929,16 +929,22 @@ class GenerationRunner:
 
     @staticmethod
     def _build_presentation_payload(job: GenerationJob, slides: list[Slide]) -> dict:
-        title = job.request.title or "新演示文稿"
         existing = job.presentation if isinstance(job.presentation, dict) else {}
-        presentation_id = existing.get("presentationId")
+        agent_outputs = job.document_metadata.get("agent_outputs") if isinstance(job.document_metadata, dict) else {}
+        generated = agent_outputs.get("presentation") if isinstance(agent_outputs, dict) else {}
+
+        title = str(existing.get("title") or generated.get("title") or job.request.title or "新演示文稿")
+        presentation_id = existing.get("presentationId") or generated.get("presentationId")
         if not isinstance(presentation_id, str) or not presentation_id.strip():
             presentation_id = f"pres-{uuid4().hex[:8]}"
+        theme_payload = existing.get("theme") or generated.get("theme")
+        theme = Theme.model_validate(theme_payload) if isinstance(theme_payload, dict) else None
         return Presentation(
             presentationId=presentation_id,
             title=title,
+            theme=theme,
             slides=slides,
-        ).model_dump(mode="json", by_alias=True)
+        ).model_dump(mode="json", by_alias=True, exclude_none=True)
 
     async def _persist_partial_presentation(
         self,
@@ -953,16 +959,10 @@ class GenerationRunner:
         if not job.slides:
             return False, None
 
-        current = job.presentation if isinstance(job.presentation, dict) else {}
-        presentation_id = current.get("presentationId")
-        if not isinstance(presentation_id, str) or not presentation_id.strip():
-            presentation_id = f"pres-{uuid4().hex[:8]}"
-
-        presentation_payload = {
-            "presentationId": presentation_id,
-            "title": job.request.title or "新演示文稿",
-            "slides": list(job.slides),
-        }
+        presentation_payload = self._build_presentation_payload(
+            job,
+            [Slide.model_validate(slide) for slide in job.slides],
+        )
         job.presentation = presentation_payload
         job.updated_at = now_iso()
         await self._store.save_job(job)
@@ -1120,37 +1120,45 @@ class GenerationRunner:
     ) -> None:
         if progress_hook:
             await progress_hook("slides", 1, 3, "Agent 正在生成完整演示内容...")
-        deck = await self._generate_deck_with_agent(job, state)
-        slides = deck_to_slides(deck)
-        audit = self._audit_generated_deck(job, deck, slides)
+        submitted_payload, presentation = await self._generate_presentation_with_agent(job, state)
+        audit = self._audit_generated_presentation(job, submitted_payload, presentation)
         if audit["issues"]:
-            raise ValueError("Deck audit failed: " + " | ".join(audit["issues"]))
+            raise ValueError("Presentation audit failed: " + " | ".join(audit["issues"]))
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        if len(slides) != expected:
-            raise ValueError(f"Deck slide count mismatch after correction: expected {expected}, got {len(slides)}")
-        state.layout_selections = deck_to_layout_selections(deck)
-        state.slides = slides
+        if len(presentation.slides) != expected:
+            raise ValueError(
+                f"Presentation slide count mismatch after correction: expected {expected}, got {len(presentation.slides)}"
+            )
+        state.layout_selections = [
+            {
+                "slide_number": index + 1,
+                "layout_id": slide.layout_id or slide.layout_type,
+            }
+            for index, slide in enumerate(presentation.slides)
+        ]
+        state.slides = list(presentation.slides)
         state.slide_contents = [
             {
                 "slide_number": int(str(slide.slide_id).replace("slide-", "") or "0"),
                 "layout_id": slide.layout_id or slide.layout_type,
                 "content_data": slide.content_data or {},
             }
-            for slide in slides
+            for slide in presentation.slides
         ]
         state.document_metadata.setdefault("agent_outputs", {})
-        state.document_metadata["agent_outputs"]["deck"] = deck.model_dump(mode="json", by_alias=True)
-        state.document_metadata["agent_outputs"]["deck_audit"] = audit
-        state.document_metadata["agent_outputs"]["deck_metadata"] = {
-            "deprecated": True,
-            "path_kind": "legacy_deck",
-            "module": "app.services.generation.legacy.deck_adapter",
-        }
-        for index, slide in enumerate(slides):
+        state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        state.document_metadata["agent_outputs"]["presentation_audit"] = audit
+        for key in ("deck", "deck_audit", "deck_metadata"):
+            state.document_metadata["agent_outputs"].pop(key, None)
+        for index, slide in enumerate(presentation.slides):
             if slide_hook:
                 await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         if progress_hook:
-            await progress_hook("slides", 3, 3, "Agent 演示页已适配为当前编辑器结构。")
+            await progress_hook("slides", 3, 3, "Agent 已直接提交当前编辑器可用的演示结果。")
 
     def _build_state(self, job: GenerationJob) -> GenerationRuntimeState:
         state = GenerationRuntimeState(
@@ -1390,84 +1398,94 @@ class GenerationRunner:
             palette.extend(DATA_LAYOUTS)
         return sorted(set(palette))
 
-    def _audit_generated_deck(
+    def _audit_generated_presentation(
         self,
         job: GenerationJob,
-        deck: AgentDeck,
-        slides: list[Slide],
+        presentation_payload: dict[str, Any],
+        presentation: Presentation,
     ) -> dict[str, Any]:
         issues: list[str] = []
+        warnings: list[str] = []
+        slides = presentation.slides
+        raw_slides = list(presentation_payload.get("slides") or []) if isinstance(
+            presentation_payload.get("slides"),
+            list,
+        ) else []
         layout_ids = [slide.layout_id or slide.layout_type for slide in slides]
         layout_counts: dict[str, int] = {}
         for layout_id in layout_ids:
             layout_counts[layout_id] = layout_counts.get(layout_id, 0) + 1
         dominant_layout = max(layout_counts.values(), default=0)
         if job.request.num_pages >= 6 and dominant_layout > max(2, job.request.num_pages // 2):
-            issues.append("布局重复过多：请增加版式变化，不要让大多数页面都使用同一类 layout。")
+            warnings.append("布局重复过多：请增加版式变化，不要让大多数页面都使用同一类 layout。")
         if job.request.num_pages >= 5 and len(set(layout_ids)) < 3:
-            issues.append("布局种类过少：至少使用 3 种不同 layout。")
+            warnings.append("布局种类过少：至少使用 3 种不同 layout。")
 
         title_counts: dict[str, int] = {}
         subtitle_counts: dict[str, int] = {}
-        for slide in deck.slides:
-            title = slide.title.strip()
-            subtitle = slide.subtitle.strip()
+        for index, slide in enumerate(slides):
+            raw_slide = raw_slides[index] if index < len(raw_slides) and isinstance(raw_slides[index], dict) else {}
+            content = raw_slide.get("contentData") if isinstance(raw_slide.get("contentData"), dict) else {}
+            title = _text_field(content, "title")
+            subtitle = _text_field(content, "subtitle")
             if title:
                 title_counts[title] = title_counts.get(title, 0) + 1
             if subtitle:
                 subtitle_counts[subtitle] = subtitle_counts.get(subtitle, 0) + 1
-            layout_id = next(
-                (entry["layout_id"] for entry in deck_to_layout_selections(AgentDeck(slides=[slide]))),
-                None,
-            )
+            layout_id = slide.layout_id or slide.layout_type
             if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
-                bullet_items = list(slide.items)
+                bullet_items = _list_field(content, "items")
                 if len(bullet_items) < 3:
-                    issues.append(f"{slide.title}: bullet 类页面必须提供 3-4 个 items。")
-                if any(not item.description.strip() for item in bullet_items):
-                    issues.append(f"{slide.title}: bullet 类页面的 items.description 不能为空。")
+                    warnings.append(f"{title or slide.slide_id}: bullet 类页面最好提供 3-4 个 items。")
+                if any(not _text_field(item, "description") for item in bullet_items if isinstance(item, dict)):
+                    warnings.append(f"{title or slide.slide_id}: bullet 类页面的 items.description 为空。")
             if layout_id in {"outline-slide", "outline-slide-rail"}:
-                if any(not section.description.strip() for section in slide.sections):
-                    issues.append(f"{slide.title}: outline 类页面的 sections.description 不能为空。")
+                sections = _list_field(content, "sections")
+                if any(not _text_field(section, "description") for section in sections if isinstance(section, dict)):
+                    warnings.append(f"{title or slide.slide_id}: outline 类页面的 sections.description 为空。")
             if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
-                if len(slide.steps) < 3:
-                    issues.append(f"{slide.title}: process 类页面至少需要 3 个 steps。")
-                if any(not step.description.strip() for step in slide.steps):
-                    issues.append(f"{slide.title}: process 类页面的 steps.description 不能为空。")
+                items = _list_field(content, "items")
+                if len(items) < 3:
+                    warnings.append(f"{title or slide.slide_id}: process 类页面最好至少有 3 个 items。")
+                if any(not _text_field(item, "description") for item in items if isinstance(item, dict)):
+                    warnings.append(f"{title or slide.slide_id}: process 类页面的 items.description 为空。")
             if layout_id in {"thank-you", "thank-you-contact"} and not (
-                slide.subtitle.strip() or slide.contact.strip() or slide.takeaway.strip()
+                _text_field(content, "subtitle") or _text_field(content, "contact")
             ):
-                issues.append(f"{slide.title}: closing 页面不能只有标题。")
-            if layout_id in {"quote-slide", "quote-banner"} and not slide.quote.strip():
-                issues.append(f"{slide.title}: highlight 页面必须提供 quote。")
-            if layout_id == "two-column-compare" and not (slide.left and slide.right):
-                issues.append(f"{slide.title}: comparison 页面必须提供 left/right。")
-            if layout_id == "challenge-outcome" and len(slide.challenge_outcomes) < 2:
-                issues.append(f"{slide.title}: challenge-outcome 页面至少需要 2 组 challenge/outcome。")
+                warnings.append(f"{title or slide.slide_id}: closing 页面目前只有标题。")
+            if layout_id in {"quote-slide", "quote-banner"} and not _text_field(content, "quote"):
+                warnings.append(f"{title or slide.slide_id}: highlight 页面缺少 quote。")
+            if layout_id == "two-column-compare" and not (
+                isinstance(content.get("left"), dict) and isinstance(content.get("right"), dict)
+            ):
+                warnings.append(f"{title or slide.slide_id}: comparison 页面缺少 left/right。")
+            if layout_id == "challenge-outcome":
+                entries = _list_field(content, "items")
+                if len(entries) < 2:
+                    warnings.append(f"{title or slide.slide_id}: challenge-outcome 页面最好有 2 组以上 challenge/outcome。")
 
         repeated_titles = sorted(title for title, count in title_counts.items() if count > 1)
         if repeated_titles:
-            issues.append("标题重复过多：" + " / ".join(repeated_titles[:4]))
+            warnings.append("标题重复过多：" + " / ".join(repeated_titles[:4]))
         repeated_subtitles = sorted(title for title, count in subtitle_counts.items() if count > 1)
         if repeated_subtitles:
-            issues.append("副标题重复过多：" + " / ".join(repeated_subtitles[:4]))
+            warnings.append("副标题重复过多：" + " / ".join(repeated_subtitles[:4]))
 
-        payload = {
-            "presentationId": "pres-audit",
-            "title": deck.title or job.request.title or "生成审计",
-            "slides": [slide.model_dump(mode="json", by_alias=True) for slide in slides],
-        }
-        _normalized, _changed, report = normalize_presentation_payload(payload)
+        _normalized, _changed, report = normalize_presentation_payload(presentation_payload)
         repair_types = sorted(set(report.get("repair_types") or []))
+        invalid_slide_count = int(report.get("invalid_slide_count") or 0)
+        if invalid_slide_count > 0:
+            issues.append(f"存在 {invalid_slide_count} 页结构无效，无法安全落盘。")
         noisy = sorted(HARD_FAIL_REPAIR_TYPES.intersection(repair_types))
         if noisy:
-            issues.append("模板修复噪声过高：" + " / ".join(noisy))
+            warnings.append("模板修复噪声偏高：" + " / ".join(noisy))
 
         return {
             "issues": issues,
+            "warnings": warnings,
             "layout_ids": layout_ids,
             "repair_types": repair_types,
-            "invalid_slide_count": int(report.get("invalid_slide_count") or 0),
+            "invalid_slide_count": invalid_slide_count,
             "repaired_slide_count": int(report.get("repaired_slide_count") or 0),
         }
 
@@ -1510,49 +1528,56 @@ class GenerationRunner:
             payload_holder.clear()
         raise ValueError(f"Outline item count mismatch: expected {expected}")
 
-    async def _generate_deck_with_agent(self, job: GenerationJob, state: GenerationRuntimeState) -> AgentDeck:
+    async def _generate_presentation_with_agent(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+    ) -> tuple[dict[str, Any], Presentation]:
         payload_holder: dict[str, Any] = {}
         agent, traced_model = self._build_generation_agent(
             job=job,
-            extra_tools=[self._make_deck_submit_tool(payload_holder)],
-            system_prompt=self._build_agent_deck_prompt(job, state),
-            allowed_builtin_tools=AUTO_DECK_ALLOWED_BUILTIN_TOOLS,
+            extra_tools=[self._make_presentation_submit_tool(payload_holder)],
+            system_prompt=self._build_agent_presentation_prompt(job, state),
+            allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         last_issues: list[str] = []
         for attempt in range(3):
             prompt = (
-                self._build_agent_deck_user_prompt(job, state)
+                self._build_agent_presentation_user_prompt(job, state)
                 if attempt == 0
-                else self._build_agent_deck_retry_prompt(expected, last_issues)
+                else self._build_agent_presentation_retry_prompt(expected, last_issues)
             )
             result = await session.send(prompt)
             self._write_agent_run_debug(
                 job,
                 state,
-                stage_name="deck",
+                stage_name="presentation",
                 prompt=prompt,
                 session=session,
                 result=result,
                 traced_model=traced_model,
-                submitted_payload=payload_holder.get("deck"),
+                submitted_payload=payload_holder.get("presentation"),
                 attempt=attempt + 1,
             )
-            deck = self._extract_deck_submission(payload_holder)
-            if deck is None:
-                raise RuntimeError(result.error or "Agent did not submit a deck.")
-            slides = deck_to_slides(deck)
-            audit = self._audit_generated_deck(job, deck, slides)
-            if len(deck.slides) == expected and not audit["issues"]:
-                return deck
+            extracted = self._extract_presentation_submission(job, payload_holder)
+            if extracted is None:
+                raise RuntimeError(result.error or "Agent did not submit a presentation.")
+            presentation_payload, presentation = extracted
+            audit = self._audit_generated_presentation(job, presentation_payload, presentation)
+            if len(presentation.slides) == expected and not audit["issues"]:
+                return presentation_payload, presentation
             last_issues = list(audit["issues"])
-            if len(deck.slides) != expected:
-                last_issues.insert(0, f"页数错误：必须严格输出 {expected} 页，当前是 {len(deck.slides)} 页。")
+            if len(presentation.slides) != expected:
+                last_issues.insert(
+                    0,
+                    f"页数错误：必须严格输出 {expected} 页，当前是 {len(presentation.slides)} 页。",
+                )
             payload_holder.clear()
         if last_issues:
-            raise ValueError("Deck audit failed: " + " | ".join(last_issues))
-        raise ValueError(f"Deck slide count mismatch: expected {expected}")
+            raise ValueError("Presentation audit failed: " + " | ".join(last_issues))
+        raise ValueError(f"Presentation slide count mismatch: expected {expected}")
 
     def _build_generation_agent(
         self,
@@ -1624,28 +1649,26 @@ class GenerationRunner:
             source="embedded",
         )
 
-    def _make_deck_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
-        async def _handler(args: _SubmitDeckArgs, context: ToolContext) -> dict[str, Any]:
-            deck = AgentDeck.model_validate(args.model_dump(mode="python"))
-            payload = deck.model_dump(mode="json", by_alias=True)
-            payload_holder["deck"] = payload
+    def _make_presentation_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitPresentationArgs, context: ToolContext) -> dict[str, Any]:
+            payload = args.model_dump(mode="json", by_alias=True, exclude_none=True)
+            payload_holder["presentation"] = payload
             artifacts_dir = context.workspace_root / "artifacts"
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-            (artifacts_dir / "deck.json").write_text(
+            (artifacts_dir / "presentation.json").write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return {
                 "status": "ok",
-                "slide_count": len(deck.slides),
-                "path": str((artifacts_dir / "deck.json").resolve()),
-                "deprecated": True,
+                "slide_count": len(payload.get("slides") or []),
+                "path": str((artifacts_dir / "presentation.json").resolve()),
             }
 
         return Tool(
-            name="submit_deck",
-            description="Deprecated transitional tool: submit the generated legacy deck as structured JSON. Call this exactly once when the deck is complete.",
-            args_model=_SubmitDeckArgs,
+            name="submit_presentation",
+            description="Submit the final editor presentation as structured JSON. Call this exactly once when the presentation is complete.",
+            args_model=_SubmitPresentationArgs,
             handler=_handler,
             source="embedded",
         )
@@ -1657,12 +1680,17 @@ class GenerationRunner:
             return None
         return AgentOutline.model_validate(payload)
 
-    @staticmethod
-    def _extract_deck_submission(payload_holder: dict[str, Any]) -> AgentDeck | None:
-        payload = payload_holder.get("deck")
+    def _extract_presentation_submission(
+        self,
+        job: GenerationJob,
+        payload_holder: dict[str, Any],
+    ) -> tuple[dict[str, Any], Presentation] | None:
+        payload = payload_holder.get("presentation")
         if not isinstance(payload, dict):
             return None
-        return AgentDeck.model_validate(payload)
+        hydrated_payload = self._hydrate_submitted_presentation(job, payload)
+        normalized_payload, _changed, _report = normalize_presentation_payload(hydrated_payload)
+        return normalized_payload, Presentation.model_validate(normalized_payload)
 
     @staticmethod
     def _workspace_root_for_job(job: GenerationJob):
@@ -1673,10 +1701,43 @@ class GenerationRunner:
 
         return Path(workspace).resolve()
 
+    @staticmethod
+    def _hydrate_submitted_presentation(job: GenerationJob, payload: dict[str, Any]) -> dict[str, Any]:
+        hydrated = deepcopy(payload)
+        presentation_id = hydrated.get("presentationId")
+        if not isinstance(presentation_id, str) or not presentation_id.strip():
+            hydrated["presentationId"] = f"pres-{uuid4().hex[:8]}"
+
+        title = hydrated.get("title")
+        if not isinstance(title, str) or not title.strip():
+            hydrated["title"] = job.request.title or job.request.topic or "新演示文稿"
+
+        raw_slides = hydrated.get("slides")
+        slides = list(raw_slides) if isinstance(raw_slides, list) else []
+        for index, slide in enumerate(slides, start=1):
+            if not isinstance(slide, dict):
+                continue
+            slide_id = slide.get("slideId")
+            if not isinstance(slide_id, str) or not slide_id.strip():
+                slide["slideId"] = f"slide-{index}"
+            layout_type = slide.get("layoutType")
+            if not isinstance(layout_type, str) or not layout_type.strip():
+                slide["layoutType"] = "bullet-with-icons"
+            layout_id = slide.get("layoutId")
+            if not isinstance(layout_id, str) or not layout_id.strip():
+                slide["layoutId"] = str(slide["layoutType"])
+            if not isinstance(slide.get("contentData"), dict) and isinstance(slide.get("content"), dict):
+                slide["contentData"] = deepcopy(slide["content"])
+            slide.pop("content", None)
+            if not isinstance(slide.get("contentData"), dict):
+                slide["contentData"] = {}
+        hydrated["slides"] = slides
+        return hydrated
+
     def _build_agent_outline_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 生成内核。\n"
-            "你的工作不是解释，而是基于工作区素材，为后续 deck 生成提交一个严格结构化的大纲。\n\n"
+            "你的工作不是解释，而是基于工作区素材，为后续 final presentation 生成提交一个严格结构化的大纲。\n\n"
             "工作区约定：\n"
             "- `request.json` 包含 topic、页数、mode、source_ids。\n"
             "- `sources/manifest.json` 描述所有可用来源。\n"
@@ -1699,52 +1760,55 @@ class GenerationRunner:
             "现在开始工作，并在大纲准备好后调用 `submit_outline`。"
         )
 
-    def _build_agent_deck_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+    def _build_agent_presentation_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
         source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
         palette = ", ".join(self._allowed_layout_palette(job))
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 演示生成内核。\n"
-            "请基于工作区素材和已确认的大纲/本地摘要，产出一个结构化、强模板约束的 deck，再由系统适配到现有 editor presentation。\n\n"
+            "请基于工作区素材和已确认的大纲/本地摘要，直接产出当前 editor 可消费的完整 presentation。\n\n"
             "工作方式：\n"
             "- 先使用本地素材摘要判断故事线和页面结构，再按需要补读原始 source 文本。\n"
-            "- 你只有 `read_file` 和 `submit_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
-            "- 当前 deck 是 deprecated 的过渡结构；不要发明新字段，严格按现有 schema 提交。\n"
-            "- 不要输出解释文本；最终只通过 `submit_deck` 提交结构化 deck。\n\n"
-            "Deck 约束：\n"
+            "- 你只有 `read_file` 和 `submit_presentation` 两类工具，不要输出解释，也不要做仓库探索。\n"
+            "- 不要输出解释文本；最终只通过 `submit_presentation` 提交完整 presentation。\n\n"
+            "Presentation 约束：\n"
             f"- 严格输出 {state.num_pages} 页。\n"
-            f"- 仅使用这组 layoutHint：{palette}。\n"
+            f"- 仅使用这组 layoutId / layoutType：{palette}。\n"
+            "- 每页都必须提交 `slideId`、`layoutType`、`layoutId`、`contentData`；`layoutId` 默认与 `layoutType` 相同。\n"
             "- 禁止把页面写成提纲词条；每页都必须是可展示内容。\n"
-            "- bullet 类页面使用 `items[{title,description,iconQuery?}]`，并保证 description 非空。\n"
-            "- outline 类页面使用 `sections[{title,description}]`，并保证 description 非空。\n"
-            "- process 类页面优先使用 `steps[{title,description}]`，timeline 再用 `events[{date,title,description}]`。\n"
-            "- comparison 类页面使用 `left/right`；challenge 页面使用 `challengeOutcomes`。\n"
-            "- metrics 类页面使用 `metrics[{value,label,description}] + conclusion`。\n"
-            "- visual 类页面使用 `image{source,prompt,url?,alt} + description/bullets`。\n"
-            "- highlight 类页面优先使用 `quote/quoteAuthor/context`；closing 类页面补齐 `subtitle/contact`。\n"
-            "- 不要生成同一 slideNumber 的 section-header + 正文重复拆页。\n\n"
+            "- `bullet-with-icons` / `bullet-with-icons-cards`：`contentData = {title, items[{title,description,icon?}]}`，items 必须 3-4 个且 description 非空。\n"
+            "- `outline-slide` / `outline-slide-rail`：`contentData = {title, subtitle?, sections[{title,description}]}`。\n"
+            "- `numbered-bullets` / `numbered-bullets-track`：`contentData = {title, items[{title,description}]}`，items 至少 3 个。\n"
+            "- `metrics-slide` / `metrics-slide-band`：`contentData = {title, metrics[{value,label,description?}], conclusion?}`。\n"
+            "- `two-column-compare`：`contentData = {title, left{heading,items}, right{heading,items}}`。\n"
+            "- `challenge-outcome`：`contentData = {title, items[{challenge,outcome}]}`。\n"
+            "- `timeline`：`contentData = {title, events[{date,title,description}]}`。\n"
+            "- `quote-slide` / `quote-banner`：`contentData = {quote, author?, context?}`。\n"
+            "- `thank-you` / `thank-you-contact`：`contentData = {title, subtitle?, contact?}`，不能只有标题。\n"
+            "- `intro-slide` / `intro-slide-left`：`contentData = {title, subtitle?, author?, date?}`。\n"
+            "- 如果你拿不准某页，就退回文本安全 layout，不要发明 schema。\n\n"
             f"本地素材摘要：\n{source_brief}\n\n"
             f"已确认大纲：\n{outline_json}\n"
         )
 
-    def _build_agent_deck_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+    def _build_agent_presentation_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         del state
         return (
-            "请生成完整 deck。\n"
+            "请生成完整 presentation。\n"
             f"主题：{job.request.topic or job.request.title}\n"
             f"补充指令：{job.request.content or '无'}\n"
             f"目标页数：{job.request.num_pages}\n"
-            "完成后调用 `submit_deck`。"
+            "完成后调用 `submit_presentation`。"
         )
 
-    def _build_agent_deck_retry_prompt(self, expected: int, issues: list[str]) -> str:
-        issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 deck 未通过本地审计。"
+    def _build_agent_presentation_retry_prompt(self, expected: int, issues: list[str]) -> str:
+        issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 presentation 未通过本地审计。"
         return (
-            "请修正上一版 deck 并重新提交。\n"
+            "请修正上一版 presentation 并重新提交。\n"
             f"必须严格输出 {expected} 页。\n"
             "以下问题必须全部修正：\n"
             f"{issue_text}\n"
-            "修正后再次调用 `submit_deck`。"
+            "修正后再次调用 `submit_presentation`。"
         )
 
     @staticmethod
@@ -1836,6 +1900,16 @@ def _serialize_tool_result(item: Any) -> dict[str, Any]:
         "content": deepcopy(getattr(item, "content", None)),
         "metadata": deepcopy(getattr(item, "metadata", {}) or {}),
     }
+
+
+def _text_field(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _list_field(payload: dict[str, Any], key: str) -> list[Any]:
+    value = payload.get(key)
+    return list(value) if isinstance(value, list) else []
 
 
 def _extract_source_headings(text: str, limit: int = 6) -> list[str]:
