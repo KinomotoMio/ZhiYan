@@ -104,6 +104,13 @@
           "type": "string",
           "description": "Presenter notes"
         },
+        "speakerAudio": {
+          "anyOf": [
+            { "$ref": "#/$defs/SpeakerAudio" },
+            { "type": "null" }
+          ],
+          "description": "Local audio metadata for presenter notes narration"
+        },
         "templateSlotMapping": {
           "type": "object",
           "additionalProperties": {
@@ -111,6 +118,27 @@
           },
           "description": "Template slot name to component identifier map"
         }
+      }
+    },
+    "SpeakerAudio": {
+      "type": "object",
+      "required": [
+        "provider",
+        "model",
+        "voiceId",
+        "textHash",
+        "storagePath",
+        "mimeType",
+        "generatedAt"
+      ],
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "voiceId": { "type": "string" },
+        "textHash": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "generatedAt": { "type": "string" }
       }
     },
     "SceneBackground": {

@@ -266,10 +266,11 @@ interface KeyFieldProps {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  provider: "openai" | "anthropic" | "google" | "deepseek" | "openrouter";
+  provider: "openai" | "anthropic" | "google" | "deepseek" | "openrouter" | "minimax";
   baseUrl?: string;
   placeholder?: string;
   configured?: boolean;
+  showValidate?: boolean;
 }
 
 function KeyField({
@@ -280,6 +281,7 @@ function KeyField({
   baseUrl,
   placeholder,
   configured,
+  showValidate = true,
 }: KeyFieldProps) {
   const [visible, setVisible] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -335,21 +337,23 @@ function KeyField({
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={handleValidate}
-          disabled={validating || !value}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs border rounded-md hover:bg-muted disabled:opacity-50 shrink-0"
-        >
-          {validating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : status === "valid" ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-          ) : status === "invalid" ? (
-            <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
-          ) : null}
-          验证
-        </button>
+        {showValidate && (
+          <button
+            type="button"
+            onClick={handleValidate}
+            disabled={validating || !value}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs border rounded-md hover:bg-muted disabled:opacity-50 shrink-0"
+          >
+            {validating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : status === "valid" ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+            ) : status === "invalid" ? (
+              <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+            ) : null}
+            验证
+          </button>
+        )}
       </div>
     </div>
   );
@@ -371,6 +375,11 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
   const [providerKeyDrafts, setProviderKeyDrafts] =
     useState<Record<ApiKeyProvider, ProviderKeyDraft>>(EMPTY_PROVIDER_KEY_DRAFTS);
+  const [ttsProvider, setTtsProvider] = useState("minimax");
+  const [ttsBaseUrl, setTtsBaseUrl] = useState("https://api.minimaxi.com");
+  const [ttsModel, setTtsModel] = useState("speech-2.8-hd");
+  const [ttsVoiceId, setTtsVoiceId] = useState("male-qn-qingse");
+  const [ttsKeyDraft, setTtsKeyDraft] = useState<ProviderKeyDraft>(createProviderKeyDraft(""));
   const [enableVisionVerification, setEnableVisionVerification] = useState(true);
 
   const updateProviderKeyDraft = (provider: ApiKeyProvider, nextValue: string) => {
@@ -386,6 +395,15 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
 
   const clearProviderPlaintext = () => {
     setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
+  };
+
+  const clearTtsPlaintext = () => {
+    setTtsKeyDraft((prev) => ({
+      ...prev,
+      draftValue: "",
+      cachedPlainValue: null,
+      showMasked: Boolean(prev.maskedValue),
+    }));
   };
 
   const [modelDrafts, setModelDrafts] =
@@ -424,6 +442,11 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
       .then((settings) => {
         setOpenaiBaseUrl(settings.openai_base_url || "https://api.openai.com/v1");
         setProviderKeyDrafts(createProviderKeyDraftsFromSettings(settings));
+        setTtsProvider(settings.tts_provider || "minimax");
+        setTtsBaseUrl(settings.tts_base_url || "https://api.minimaxi.com");
+        setTtsModel(settings.tts_model || "speech-2.8-hd");
+        setTtsVoiceId(settings.tts_voice_id || "male-qn-qingse");
+        setTtsKeyDraft(createProviderKeyDraft(settings.tts_api_key || ""));
         setEnableVisionVerification(settings.enable_vision_verification);
         setProviderStatus({
           has_openai_key: settings.has_openai_key,
@@ -446,6 +469,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     if (!open) {
       setProviderEditorOpen(false);
       clearProviderPlaintext();
+      clearTtsPlaintext();
     }
   }, [open]);
 
@@ -473,6 +497,10 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         strong_model: modelValues.strong_model,
         vision_model: modelValues.vision_model,
         fast_model: modelValues.fast_model,
+        tts_provider: ttsProvider,
+        tts_base_url: ttsBaseUrl,
+        tts_model: ttsModel,
+        tts_voice_id: ttsVoiceId,
         enable_vision_verification: enableVisionVerification,
         ...Object.entries(providerKeyDrafts).reduce<Record<string, string>>((acc, [provider, state]) => {
           if (state.showMasked || !state.draftValue || state.draftValue.includes("...")) {
@@ -482,6 +510,9 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
           acc[field] = state.draftValue;
           return acc;
         }, {}),
+        ...(!ttsKeyDraft.showMasked && ttsKeyDraft.draftValue && !ttsKeyDraft.draftValue.includes("...")
+          ? { tts_api_key: ttsKeyDraft.draftValue }
+          : {}),
       });
 
       setProviderStatus({
@@ -497,8 +528,13 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         vision_model: parseModelDraft(response.vision_model),
         fast_model: parseModelDraft(response.fast_model),
       });
+      setTtsProvider(response.tts_provider || "minimax");
+      setTtsBaseUrl(response.tts_base_url || "https://api.minimaxi.com");
+      setTtsModel(response.tts_model || "speech-2.8-hd");
+      setTtsVoiceId(response.tts_voice_id || "male-qn-qingse");
       setEnableVisionVerification(response.enable_vision_verification);
       setProviderKeyDrafts(createProviderKeyDraftsFromSettings(response));
+      setTtsKeyDraft(createProviderKeyDraft(response.tts_api_key || ""));
 
       toast.success("设置已保存");
       window.dispatchEvent(new Event("settings:updated"));
@@ -532,6 +568,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     if (!nextOpen) {
       setProviderEditorOpen(false);
       clearProviderPlaintext();
+      clearTtsPlaintext();
     }
     onOpenChange(nextOpen);
   };
@@ -539,6 +576,7 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const handleProviderEditorOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       clearProviderPlaintext();
+      clearTtsPlaintext();
     }
     setProviderEditorOpen(nextOpen);
   };
@@ -708,6 +746,74 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                   );
                 })}
               </Tabs>
+
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">TTS 服务</p>
+                  <p className="text-xs text-muted-foreground">
+                    演讲者注解朗读使用独立语音服务配置，不复用上方文本模型 Provider。
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">服务商</Label>
+                  <select
+                    value={ttsProvider}
+                    onChange={(e) => setTtsProvider(e.target.value)}
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="minimax">MiniMax</option>
+                  </select>
+                </div>
+
+                <KeyField
+                  label="TTS API Key"
+                  value={ttsKeyDraft.showMasked ? "" : ttsKeyDraft.draftValue}
+                  onChange={(value) =>
+                    setTtsKeyDraft((prev) => ({
+                      ...prev,
+                      draftValue: value,
+                      showMasked: false,
+                    }))
+                  }
+                  provider="minimax"
+                  placeholder="Bearer API Key"
+                  configured={Boolean(ttsKeyDraft.maskedValue)}
+                  showValidate={false}
+                />
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Base URL</Label>
+                  <Input
+                    value={ttsBaseUrl}
+                    onChange={(e) => setTtsBaseUrl(e.target.value)}
+                    placeholder="https://api.minimaxi.com"
+                  />
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">模型</Label>
+                    <Input
+                      value={ttsModel}
+                      onChange={(e) => setTtsModel(e.target.value)}
+                      placeholder="speech-2.8-hd"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">音色 ID</Label>
+                    <Input
+                      value={ttsVoiceId}
+                      onChange={(e) => setTtsVoiceId(e.target.value)}
+                      placeholder="male-qn-qingse"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  当前朗读会在点击喇叭时才生成音频，并按注解文本 hash 本地缓存 mp3。
+                </p>
+              </div>
 
               <div className="rounded-lg border p-4 space-y-2">
                 <p className="text-sm font-medium">生成验证</p>

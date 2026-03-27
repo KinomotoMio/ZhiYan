@@ -60,6 +60,16 @@ export interface SceneBackground {
   colorToken?: SceneBackgroundColorToken;
 }
 
+export interface SpeakerAudio {
+  provider: string;
+  model: string;
+  voiceId: string;
+  textHash: string;
+  storagePath: string;
+  mimeType: string;
+  generatedAt: string;
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -96,6 +106,7 @@ export interface Slide {
   background?: SceneBackground | null;
   components?: Component[];
   speakerNotes?: string;
+  speakerAudio?: SpeakerAudio;
   templateSlotMapping?: Record<string, string>;
 }
 

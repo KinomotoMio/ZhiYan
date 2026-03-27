@@ -132,6 +132,18 @@ class SceneBackground(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class SpeakerAudio(BaseModel):
+    provider: str
+    model: str
+    voice_id: str = Field(alias="voiceId")
+    text_hash: str = Field(alias="textHash")
+    storage_path: str = Field(alias="storagePath")
+    mime_type: str = Field(alias="mimeType")
+    generated_at: str = Field(alias="generatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
 class Slide(BaseModel):
     slide_id: str = Field(alias="slideId")
     layout_type: str = Field(alias="layoutType")
@@ -140,6 +152,7 @@ class Slide(BaseModel):
     background: SceneBackground | None = None
     components: list[Component] = Field(default_factory=list)
     speaker_notes: str | None = Field(None, alias="speakerNotes")
+    speaker_audio: SpeakerAudio | None = Field(None, alias="speakerAudio")
     template_slot_mapping: dict[str, str] | None = Field(
         None, alias="templateSlotMapping"
     )

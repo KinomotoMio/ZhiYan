@@ -23,8 +23,11 @@ _ALLOWED_FIELDS = {
     "strong_model",
     "vision_model",
     "fast_model",
+    "tts_provider",
+    "tts_api_key",
+    "tts_base_url",
     "tts_model",
-    "tts_voice",
+    "tts_voice_id",
     "enable_vision_verification",
     "content_type_primary_strategy",
     "content_type_shadow_enabled",
@@ -57,8 +60,11 @@ class SettingsResponse(BaseModel):
     strong_model: str = ""
     vision_model: str = ""
     fast_model: str = ""
+    tts_provider: str = "minimax"
+    tts_api_key: str = ""
+    tts_base_url: str = ""
     tts_model: str = ""
-    tts_voice: str = ""
+    tts_voice_id: str = ""
     enable_vision_verification: bool = True
     content_type_primary_strategy: str = "rules"
     content_type_shadow_enabled: bool = True
@@ -68,6 +74,7 @@ class SettingsResponse(BaseModel):
     has_google_key: bool = False
     has_deepseek_key: bool = False
     has_openrouter_key: bool = False
+    has_tts_key: bool = False
     default_model_status: ModelStatus = Field(default_factory=ModelStatus)
     strong_model_status: ModelStatus = Field(default_factory=ModelStatus)
     vision_model_status: ModelStatus = Field(default_factory=ModelStatus)
@@ -85,8 +92,11 @@ class SettingsUpdate(BaseModel):
     strong_model: str | None = None
     vision_model: str | None = None
     fast_model: str | None = None
+    tts_provider: str | None = None
+    tts_api_key: str | None = None
+    tts_base_url: str | None = None
     tts_model: str | None = None
-    tts_voice: str | None = None
+    tts_voice_id: str | None = None
     enable_vision_verification: bool | None = None
     content_type_primary_strategy: str | None = None
     content_type_shadow_enabled: bool | None = None
@@ -126,8 +136,11 @@ async def get_settings():
         strong_model=settings.strong_model,
         vision_model=settings.vision_model,
         fast_model=settings.fast_model,
+        tts_provider=settings.tts_provider,
+        tts_api_key=_mask_key(settings.tts_api_key),
+        tts_base_url=settings.tts_base_url,
         tts_model=settings.tts_model,
-        tts_voice=settings.tts_voice,
+        tts_voice_id=settings.tts_voice_id,
         enable_vision_verification=settings.enable_vision_verification,
         content_type_primary_strategy=settings.content_type_primary_strategy,
         content_type_shadow_enabled=settings.content_type_shadow_enabled,
@@ -137,6 +150,7 @@ async def get_settings():
         has_google_key=bool(settings.google_api_key),
         has_deepseek_key=bool(settings.deepseek_api_key),
         has_openrouter_key=bool(settings.openrouter_api_key),
+        has_tts_key=bool(settings.tts_api_key),
         default_model_status=default_model_status,
         strong_model_status=strong_model_status,
         vision_model_status=vision_model_status,

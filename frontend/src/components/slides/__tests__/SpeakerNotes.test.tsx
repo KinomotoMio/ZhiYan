@@ -10,7 +10,8 @@ test("speaker notes panel renders placeholder and keeps read-aloud disabled when
       value=""
       onChange={() => {}}
       onSave={() => {}}
-      onGenerate={() => {}}
+      onGenerateCurrent={() => {}}
+      onGenerateAll={() => {}}
     />
   );
 
@@ -18,7 +19,8 @@ test("speaker notes panel renders placeholder and keeps read-aloud disabled when
   assert.match(html, /演讲者注解/);
   assert.match(html, /placeholder="输入当前页的演讲提示/);
   assert.match(html, />保存</);
-  assert.match(html, />生成</);
+  assert.match(html, />生成当前页</);
+  assert.match(html, />生成全部</);
   assert.match(html, /title="朗读注解"/);
   assert.match(html, /<button type="button" disabled=""/);
   assert.match(html, /当前页还没有演讲者注解/);
@@ -30,9 +32,11 @@ test("speaker notes panel renders note content and status copy", () => {
       value="demo note"
       onChange={() => {}}
       onSave={() => {}}
-      onGenerate={() => {}}
+      onGenerateCurrent={() => {}}
+      onGenerateAll={() => {}}
+      onPlayAudio={async () => new Blob(["audio"], { type: "audio/mpeg" })}
       isSaving
-      isGenerating
+      generatingScope="all"
     />
   );
 

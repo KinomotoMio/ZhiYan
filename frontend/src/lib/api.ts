@@ -1060,14 +1060,18 @@ export interface AppSettings {
   strong_model: string;
   vision_model: string;
   fast_model: string;
+  tts_provider: string;
+  tts_api_key: string;
+  tts_base_url: string;
   tts_model: string;
-  tts_voice: string;
+  tts_voice_id: string;
   enable_vision_verification: boolean;
   has_openai_key: boolean;
   has_anthropic_key: boolean;
   has_google_key: boolean;
   has_deepseek_key: boolean;
   has_openrouter_key: boolean;
+  has_tts_key: boolean;
   default_model_status: ModelStatus;
   strong_model_status: ModelStatus;
   vision_model_status: ModelStatus;
@@ -1098,6 +1102,7 @@ export async function updateSettings(
       | "has_google_key"
       | "has_deepseek_key"
       | "has_openrouter_key"
+      | "has_tts_key"
       | "default_model_status"
       | "strong_model_status"
       | "vision_model_status"
@@ -1127,19 +1132,65 @@ export async function validateApiKey(
   if (!res.ok) throw new Error(`验证失败: ${res.statusText}`);
   return res.json();
 }
-// ---------- TTS ----------
+export interface SpeakerNotesGenerateResponse {
+  presentation: Presentation;
+  updatedSlideIds: string[];
+  workspaceRoot: string;
+}
 
-export async function synthesizeSpeech(
-  text: string,
-  voice?: string,
-  signal?: AbortSignal
-): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/api/v1/tts`, {
+export interface SpeakerAudioEnsureResponse {
+  slideId: string;
+  speakerAudio: NonNullable<Slide["speakerAudio"]>;
+  playbackPath: string;
+}
+
+export async function generateSpeakerNotes(
+  sessionId: string,
+  payload: {
+    presentation: Presentation;
+    scope: "current" | "all";
+    currentSlideIndex: number;
+  }
+): Promise<SpeakerNotesGenerateResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/speaker-notes/generate`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `生成演讲者注解失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function ensureSpeakerAudio(
+  sessionId: string,
+  slideId: string
+): Promise<SpeakerAudioEnsureResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/slides/${slideId}/speaker-audio`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `生成录音失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchSpeakerAudio(
+  sessionId: string,
+  slideId: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/slides/${slideId}/speaker-audio`, {
+    headers: withWorkspaceHeaders(),
     signal,
   });
-  if (!res.ok) throw new Error(`TTS 失败: ${res.statusText}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取录音失败: ${res.statusText}`);
+  }
   return res.blob();
 }

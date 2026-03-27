@@ -14,6 +14,11 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
                 "default_model": "openrouter:moonshotai/kimi-k2.5",
                 "strong_model": "openrouter:moonshotai/kimi-k2.5",
                 "vision_model": "openrouter:moonshotai/kimi-k2.5",
+                "tts_provider": "minimax",
+                "tts_api_key": "tts-secret-key",
+                "tts_base_url": "https://api.minimaxi.com",
+                "tts_model": "speech-2.8-hd",
+                "tts_voice_id": "male-qn-qingse",
                 "openrouter_api_key": "sk-or-test",
                 "enable_vision_verification": False,
                 "content_type_primary_strategy": "semantic",
@@ -38,6 +43,11 @@ def test_reload_settings_updates_existing_import_references(tmp_path, monkeypatc
     assert config.settings.content_type_primary_strategy == "semantic"
     assert config.settings.content_type_shadow_enabled is False
     assert config.settings.content_type_confidence_threshold == 0.62
+    assert config.settings.tts_provider == "minimax"
+    assert config.settings.tts_api_key == "tts-secret-key"
+    assert config.settings.tts_base_url == "https://api.minimaxi.com"
+    assert config.settings.tts_model == "speech-2.8-hd"
+    assert config.settings.tts_voice_id == "male-qn-qingse"
 
 
 def test_build_model_status_for_known_and_unknown_providers():
