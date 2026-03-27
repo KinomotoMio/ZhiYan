@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -15,6 +15,9 @@ from app.services.agents.html_deck_editor import edit_html_deck
 from app.services.html_deck import normalize_html_deck
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
+
+if TYPE_CHECKING:
+    from app.services.agents.chat_agent import ChatDeps
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -112,7 +115,7 @@ async def chat(req: ChatRequest, request: Request):
         prompt = _build_prompt(req, slides, force_tool=False)
         chat_agent = structured_chat_agent
 
-    async def _run_once(current_prompt: str, run_deps) -> str:
+    async def _run_once(current_prompt: str, run_deps: "ChatDeps") -> str:
         result = await chat_agent.run(
             current_prompt,
             deps=run_deps,
