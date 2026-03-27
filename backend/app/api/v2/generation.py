@@ -33,6 +33,7 @@ from app.models.generation import (
     now_iso,
 )
 from app.services.generation import event_bus, generation_runner, job_store
+from app.services.generation.agent_workspace import build_agent_workspace
 from app.services.generation.loading_title import DEFAULT_LOADING_TITLE, build_loading_title
 from app.services.generation.slidev_mvp import (
     SlidevMvpBuildError,
@@ -107,6 +108,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
 
     if req.source_ids:
         source_metas = await session_store.get_workspace_sources_by_ids(workspace_id, req.source_ids)
+        source_records = await session_store.get_workspace_source_records_by_ids(workspace_id, req.source_ids)
         source_hints = _build_source_hints(source_ids=req.source_ids, source_metas=source_metas)
         source_content = await session_store.get_combined_source_content(
             workspace_id,
@@ -117,6 +119,7 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
     else:
         source_hints = {}
         source_metas = []
+        source_records = []
 
     if not combined and not req.topic:
         raise HTTPException(status_code=422, detail="请提供来源文档或主题描述")
@@ -151,6 +154,25 @@ async def create_generation_job(req: CreateJobRequest, request: Request):
         ),
         outline_accepted=req.mode == GenerationMode.AUTO,
     )
+    workspace_bundle = build_agent_workspace(
+        root=settings.project_root / "data" / "agentic-runs" / job_id,
+        request_payload={
+            "job_id": job_id,
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "topic": req.topic,
+            "content": req.content,
+            "source_ids": list(req.source_ids),
+            "template_id": req.template_id,
+            "num_pages": max(3, min(req.num_pages, settings.max_slide_pages)),
+            "mode": req.mode.value,
+            "title": loading_title,
+        },
+        source_records=source_records,
+    )
+    job.document_metadata["agent_workspace"] = workspace_bundle.to_metadata()
+    job.document_metadata["agent_workspace"]["workspace_id"] = workspace_id
+    job.document_metadata["agent_workspace"]["source_hints"] = source_hints
 
     await job_store.create_job(job)
     await session_store.save_generation_job(job.job_id, session_id, job.status.value)

@@ -670,6 +670,15 @@ class SessionStore:
             self._get_workspace_sources_by_ids_sync, workspace_id, source_ids
         )
 
+    async def get_workspace_source_records_by_ids(
+        self, workspace_id: str, source_ids: list[str]
+    ) -> list[dict]:
+        """Fetch richer source records for internal generation/runtime workspace use."""
+
+        return await asyncio.to_thread(
+            self._get_workspace_source_records_by_ids_sync, workspace_id, source_ids
+        )
+
     def _get_combined_source_content_sync(
         self, workspace_id: str, source_ids: list[str]
     ) -> str:
@@ -711,6 +720,41 @@ class SessionStore:
         # Preserve caller-provided ordering for deterministic counts/prompt text.
         ordered = [meta_by_id[sid] for sid in source_ids if sid in meta_by_id]
         return ordered
+
+    def _get_workspace_source_records_by_ids_sync(
+        self, workspace_id: str, source_ids: list[str]
+    ) -> list[dict]:
+        if not source_ids:
+            return []
+        placeholders = ",".join("?" for _ in source_ids)
+        params: list[object] = [workspace_id, *source_ids]
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT ws.*
+                FROM workspace_sources ws
+                WHERE ws.workspace_id=? AND ws.id IN ({placeholders})
+                """,
+                tuple(params),
+            ).fetchall()
+        records_by_id: dict[str, dict] = {}
+        for row in rows:
+            records_by_id[str(row["id"])] = {
+                "id": row["id"],
+                "name": row["name"],
+                "type": row["source_type"],
+                "fileCategory": row["file_category"],
+                "size": row["size"],
+                "status": row["status"],
+                "previewSnippet": row["preview_snippet"],
+                "storage_path": row["storage_path"],
+                "parsed_content": row["parsed_content"] or "",
+                "metadata": json.loads(row["metadata_json"] or "{}"),
+                "error": row["error"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        return [records_by_id[sid] for sid in source_ids if sid in records_by_id]
 
     # ---- Workspace-level source methods ----
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import suppress
@@ -12,18 +13,19 @@ from uuid import uuid4
 from typing import Any
 
 import httpx
+from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.model_status import build_model_status, parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide
 from app.services.generation.agentic import (
-    ToolDef,
-    ToolExecutionResult,
-    ToolRegistry,
-    agentic_loop,
-    dispatch_tool_calls,
-    summarize_state,
+    AgentBuilder,
+    LiteLLMModelClient,
+    Tool,
+    ToolContext,
 )
+from app.services.generation.agent_adapter import AgentDeck, AgentOutline, deck_to_layout_selections, deck_to_slides, outline_to_job_outline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.loop_planner import GenerationLoopPlanner, LoopHistoryItem
@@ -61,6 +63,20 @@ class ClassifiedError:
     error_code: str
     error_message: str
     retriable: bool
+
+
+class _SubmitOutlineArgs(BaseModel):
+    title: str = ""
+    subtitle: str = ""
+    storyline: str = ""
+    items: list[dict[str, Any]]
+
+
+class _SubmitDeckArgs(BaseModel):
+    title: str = ""
+    subtitle: str = ""
+    storyline: str = ""
+    slides: list[dict[str, Any]]
 
 
 class GenerationRunner:
@@ -1051,12 +1067,8 @@ class GenerationRunner:
 
     @staticmethod
     def _should_use_agentic_loop() -> bool:
-        if not settings.enable_agentic_loop:
-            return False
-        model_name = str(settings.strong_model or "").strip().lower()
-        if model_name.startswith("openai:"):
-            return bool(str(settings.openai_api_key or "").strip())
-        return False
+        status = build_model_status(str(settings.strong_model or ""), settings)
+        return status.ready
 
     async def _run_selected_runtime(
         self,
@@ -1067,7 +1079,7 @@ class GenerationRunner:
         progress_hook,
         slide_hook,
     ) -> bool:
-        if self._should_use_agentic_loop():
+        if self._should_use_agentic_loop() and self._job_has_agent_workspace(job):
             return await self._run_agentic_job(
                 job,
                 state,
@@ -1092,56 +1104,22 @@ class GenerationRunner:
         progress_hook,
         slide_hook,
     ) -> bool:
-        registry = self._build_tool_registry()
-        agentic_registry = self._build_agentic_tool_registry(
-            registry=registry,
-            job=job,
-            state=state,
-            progress_hook=progress_hook,
-            slide_hook=slide_hook,
-        )
         try:
-            loop_result = await agentic_loop(
-                user_prompt=self._build_agentic_runtime_prompt(
-                    job=job,
-                    state=state,
-                    start_stage=start_stage,
-                    registry=registry,
-                ),
-                state=state,
-                tool_definitions=agentic_registry.to_model_tools(),
-                dispatch_tools=lambda calls: dispatch_tool_calls(calls, agentic_registry),
-                max_turns=settings.agentic_max_turns,
+            return await self._run_embedded_agentic_job(
+                job,
+                state,
+                start_stage=start_stage,
+                progress_hook=progress_hook,
+                slide_hook=slide_hook,
             )
         except Exception:
             logger.warning(
-                "agentic runtime failed; falling back to pipeline",
+                "embedded agent runtime failed; falling back to pipeline",
                 extra={
                     "job_id": job.job_id,
                     "start_stage": start_stage.value,
                 },
                 exc_info=True,
-            )
-        else:
-            if self._agentic_runtime_completed(job):
-                logger.info(
-                    "agentic runtime completed",
-                    extra={
-                        "job_id": job.job_id,
-                        "turns": loop_result.turns,
-                        "stop_reason": loop_result.stop_reason,
-                    },
-                )
-                return True
-
-            logger.warning(
-                "agentic runtime incomplete; falling back to pipeline",
-                extra={
-                    "job_id": job.job_id,
-                    "start_stage": start_stage.value,
-                    "turns": loop_result.turns,
-                    "stop_reason": loop_result.stop_reason,
-                },
             )
         return await self._run_pipeline_job(
             job,
@@ -1151,93 +1129,144 @@ class GenerationRunner:
             slide_hook=slide_hook,
         )
 
-    def _build_agentic_tool_registry(
-        self,
-        *,
-        registry: GenerationToolRegistry,
-        job: GenerationJob,
-        state: PipelineState,
-        progress_hook,
-        slide_hook,
-    ) -> ToolRegistry:
-        tool_registry = ToolRegistry()
-
-        for tool in registry.list_tools():
-            async def _handler(_args: dict[str, Any], *, generation_tool: GenerationTool = tool) -> Any:
-                await self._ensure_not_cancelled(job)
-                is_verify_stage = generation_tool.stage == StageStatus.VERIFY
-
-                if self._stage_already_completed(job, generation_tool.stage):
-                    result: dict[str, Any] = {
-                        "stage": generation_tool.stage.value,
-                        "status": "skipped",
-                        "reason": "stage already completed",
-                    }
-                else:
-                    await self._run_stage(
-                        job,
-                        state,
-                        stage=generation_tool.stage,
-                        timeout=generation_tool.timeout_seconds(),
-                        stage_coro=generation_tool.runner(state, progress_hook, slide_hook),
-                    )
-                    result = {"stage": generation_tool.stage.value, "status": "completed"}
-
-                if is_verify_stage:
-                    return ToolExecutionResult(
-                        content=result,
-                        stop_loop=True,
-                        metadata={"stop_reason": "verification-complete"},
-                    )
-                return result
-
-            tool_registry.register(
-                ToolDef(
-                    name=tool.name,
-                    description=tool.description,
-                    input_schema={
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": False,
-                    },
-                    handler=_handler,
-                )
-            )
-
-        return tool_registry
-
-    def _build_agentic_runtime_prompt(
-        self,
-        *,
-        job: GenerationJob,
-        state: PipelineState,
-        start_stage: StageStatus,
-        registry: GenerationToolRegistry,
-    ) -> str:
-        completed_stages = [
-            sr.stage.value
-            for sr in job.stage_results
-            if sr.status == "completed"
-        ]
-        tool_order = ", ".join(tool.name for tool in registry.list_tools())
-        return (
-            "你正在控制 generation/jobs 的主运行时，需要尽量直接把当前任务推进到验证完成。\n\n"
-            f"当前 start_stage：{start_stage.value}\n"
-            f"已完成阶段：{', '.join(completed_stages) or 'none'}\n"
-            f"可用工具顺序：{tool_order}\n"
-            f"state summary：{summarize_state(state)}\n\n"
-            "操作原则：\n"
-            "- 优先调用尚未完成的阶段工具，避免重复执行已经完成的阶段。\n"
-            "- 只要 verify_slides 完成，就停止并让控制器接管收尾。\n"
-            "- 如果当前状态不足以继续，仍然尽量推进到下一个合理阶段；系统会在必要时回退到 pipeline。\n"
-        )
-
     @staticmethod
     def _stage_already_completed(job: GenerationJob, stage: StageStatus) -> bool:
         return any(result.stage == stage and result.status == "completed" for result in job.stage_results)
 
     def _agentic_runtime_completed(self, job: GenerationJob) -> bool:
         return self._stage_already_completed(job, StageStatus.VERIFY)
+
+    @staticmethod
+    def _job_has_agent_workspace(job: GenerationJob) -> bool:
+        root = (job.document_metadata.get("agent_workspace") or {}).get("root")
+        return isinstance(root, str) and bool(root.strip())
+
+    async def _run_embedded_agentic_job(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        start_stage: StageStatus,
+        progress_hook,
+        slide_hook,
+    ) -> bool:
+        if start_stage in {StageStatus.PARSE}:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.PARSE,
+                timeout=float(settings.outline_timeout_seconds),
+                stage_coro=self._stage_prepare_agent_workspace(job, state, progress_hook=progress_hook),
+            )
+
+        if start_stage in {StageStatus.PARSE, StageStatus.OUTLINE}:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.OUTLINE,
+                timeout=float(settings.outline_timeout_seconds),
+                stage_coro=self._stage_generate_agent_outline(job, state, progress_hook=progress_hook),
+            )
+            should_stop = await self._after_tool_completed(job, state, StageStatus.OUTLINE)
+            if should_stop:
+                return False
+
+        if start_stage in {
+            StageStatus.PARSE,
+            StageStatus.OUTLINE,
+            StageStatus.LAYOUT,
+            StageStatus.SLIDES,
+            StageStatus.ASSETS,
+            StageStatus.VERIFY,
+        }:
+            await self._run_stage(
+                job,
+                state,
+                stage=StageStatus.SLIDES,
+                timeout=float(settings.job_timeout_seconds),
+                stage_coro=self._stage_generate_agent_slides(
+                    job,
+                    state,
+                    progress_hook=progress_hook,
+                    slide_hook=slide_hook,
+                ),
+            )
+            await self._sync_state_to_job(job, state)
+
+        await self._run_stage(
+            job,
+            state,
+            stage=StageStatus.VERIFY,
+            timeout=float(settings.verify_timeout_seconds),
+            stage_coro=stage_verify_slides(
+                state,
+                progress=progress_hook,
+                enable_vision=settings.enable_vision_verification,
+            ),
+        )
+        await self._sync_state_to_job(job, state)
+        return True
+
+    async def _stage_prepare_agent_workspace(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        progress_hook,
+    ) -> None:
+        workspace_meta = dict(job.document_metadata.get("agent_workspace") or {})
+        state.document_metadata.setdefault("agent_workspace", workspace_meta)
+        if progress_hook:
+            await progress_hook("parse", 1, 3, "准备 Agent 工作区与素材清单...")
+
+    async def _stage_generate_agent_outline(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        progress_hook,
+    ) -> None:
+        if progress_hook:
+            await progress_hook("outline", 1, 3, "Agent 正在阅读素材并规划演示结构...")
+        outline = await self._generate_outline_with_agent(job, state)
+        state.outline = outline_to_job_outline(outline)
+        state.document_metadata.setdefault("agent_outputs", {})
+        state.document_metadata["agent_outputs"]["outline"] = outline.model_dump(mode="json", by_alias=True)
+        if progress_hook:
+            await progress_hook("outline", 3, 3, "Agent 大纲已提交。")
+
+    async def _stage_generate_agent_slides(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+        *,
+        progress_hook,
+        slide_hook,
+    ) -> None:
+        if progress_hook:
+            await progress_hook("slides", 1, 3, "Agent 正在生成完整演示内容...")
+        deck = await self._generate_deck_with_agent(job, state)
+        slides = deck_to_slides(deck)
+        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+        if len(slides) != expected:
+            raise ValueError(f"Deck slide count mismatch after correction: expected {expected}, got {len(slides)}")
+        state.layout_selections = deck_to_layout_selections(deck)
+        state.slides = slides
+        state.slide_contents = [
+            {
+                "slide_number": int(str(slide.slide_id).replace("slide-", "") or "0"),
+                "layout_id": slide.layout_id or slide.layout_type,
+                "content_data": slide.content_data or {},
+            }
+            for slide in slides
+        ]
+        state.document_metadata.setdefault("agent_outputs", {})
+        state.document_metadata["agent_outputs"]["deck"] = deck.model_dump(mode="json", by_alias=True)
+        for index, slide in enumerate(slides):
+            if slide_hook:
+                await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
+        if progress_hook:
+            await progress_hook("slides", 3, 3, "Agent 演示页已适配为当前编辑器结构。")
 
     async def _run_pipeline_job(
         self,
@@ -1308,6 +1337,233 @@ class GenerationRunner:
         if job.slides:
             state.slides = [Slide.model_validate(slide) for slide in job.slides]
         return state
+
+    async def _generate_outline_with_agent(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+    ) -> AgentOutline:
+        payload_holder: dict[str, Any] = {}
+        agent = self._build_generation_agent(
+            job=job,
+            extra_tools=[self._make_outline_submit_tool(payload_holder)],
+            system_prompt=self._build_agent_outline_prompt(job, state),
+        )
+        session = agent.start_session()
+        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+        for attempt in range(2):
+            prompt = (
+                self._build_agent_outline_user_prompt(job)
+                if attempt == 0
+                else (
+                    f"上一次提交的大纲页数不正确。请重新提交，必须严格输出 {expected} 页，并再次调用 submit_outline。"
+                )
+            )
+            result = await session.send(prompt)
+            outline = self._extract_outline_submission(payload_holder)
+            if outline is None:
+                raise RuntimeError(result.error or "Agent did not submit an outline.")
+            if len(outline.items) == expected:
+                return outline
+            payload_holder.clear()
+        raise ValueError(f"Outline item count mismatch: expected {expected}")
+
+    async def _generate_deck_with_agent(
+        self,
+        job: GenerationJob,
+        state: PipelineState,
+    ) -> AgentDeck:
+        payload_holder: dict[str, Any] = {}
+        agent = self._build_generation_agent(
+            job=job,
+            extra_tools=[self._make_deck_submit_tool(payload_holder)],
+            system_prompt=self._build_agent_deck_prompt(job, state),
+        )
+        session = agent.start_session()
+        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
+        for attempt in range(2):
+            prompt = (
+                self._build_agent_deck_user_prompt(job, state)
+                if attempt == 0
+                else f"上一次提交的 deck 页数不正确。请重新提交，必须严格输出 {expected} 页，并再次调用 submit_deck。"
+            )
+            result = await session.send(prompt)
+            deck = self._extract_deck_submission(payload_holder)
+            if deck is None:
+                raise RuntimeError(result.error or "Agent did not submit a deck.")
+            if len(deck.slides) == expected:
+                return deck
+            payload_holder.clear()
+        raise ValueError(f"Deck slide count mismatch: expected {expected}")
+
+    def _build_generation_agent(
+        self,
+        *,
+        job: GenerationJob,
+        extra_tools: list[Tool],
+        system_prompt: str,
+    ):
+        workspace_root = self._workspace_root_for_job(job)
+        builder = AgentBuilder.from_project(workspace_root)
+        builder.with_model_client(self._create_agent_model_client())
+        builder.with_system_prompt(system_prompt)
+        builder.with_max_turns(settings.agentic_max_turns)
+        builder.with_auto_compact(True)
+        builder.with_compact_token_threshold(6000)
+        builder.with_compact_tail_turns(2)
+        builder.with_permissive_tools(False)
+        builder.discover_skills()
+        builder.load_mcp_config()
+        for tool in extra_tools:
+            builder.register_tool(tool)
+        return builder.build()
+
+    def _create_agent_model_client(self):
+        model_name = str(settings.strong_model or "").strip()
+        provider = parse_provider(model_name)
+        api_key: str | None = None
+        api_base: str | None = None
+        if provider == "openai":
+            api_key = str(settings.openai_api_key or "").strip() or None
+            api_base = str(settings.openai_base_url or "").strip() or None
+        elif provider == "anthropic":
+            api_key = str(settings.anthropic_api_key or "").strip() or None
+        elif provider == "google-gla":
+            api_key = str(settings.google_api_key or "").strip() or None
+        elif provider == "deepseek":
+            api_key = str(settings.deepseek_api_key or "").strip() or None
+        elif provider == "openrouter":
+            api_key = str(settings.openrouter_api_key or "").strip() or None
+        return LiteLLMModelClient(
+            model=model_name,
+            api_key=api_key,
+            api_base=api_base,
+        )
+
+    def _make_outline_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitOutlineArgs, context: ToolContext) -> dict[str, Any]:
+            outline = AgentOutline.model_validate(args.model_dump(mode="python"))
+            payload = outline.model_dump(mode="json", by_alias=True)
+            payload_holder["outline"] = payload
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "outline.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return {
+                "status": "ok",
+                "item_count": len(outline.items),
+                "path": str((artifacts_dir / "outline.json").resolve()),
+            }
+
+        return Tool(
+            name="submit_outline",
+            description="Submit the reviewed outline as structured JSON. Call this exactly once when the outline is ready.",
+            args_model=_SubmitOutlineArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
+    def _make_deck_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitDeckArgs, context: ToolContext) -> dict[str, Any]:
+            deck = AgentDeck.model_validate(args.model_dump(mode="python"))
+            payload = deck.model_dump(mode="json", by_alias=True)
+            payload_holder["deck"] = payload
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "deck.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return {
+                "status": "ok",
+                "slide_count": len(deck.slides),
+                "path": str((artifacts_dir / "deck.json").resolve()),
+            }
+
+        return Tool(
+            name="submit_deck",
+            description="Submit the generated deck as structured JSON. Call this exactly once when the deck is complete.",
+            args_model=_SubmitDeckArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
+    @staticmethod
+    def _extract_outline_submission(payload_holder: dict[str, Any]) -> AgentOutline | None:
+        payload = payload_holder.get("outline")
+        if not isinstance(payload, dict):
+            return None
+        return AgentOutline.model_validate(payload)
+
+    @staticmethod
+    def _extract_deck_submission(payload_holder: dict[str, Any]) -> AgentDeck | None:
+        payload = payload_holder.get("deck")
+        if not isinstance(payload, dict):
+            return None
+        return AgentDeck.model_validate(payload)
+
+    @staticmethod
+    def _workspace_root_for_job(job: GenerationJob):
+        workspace = (job.document_metadata.get("agent_workspace") or {}).get("root")
+        if not isinstance(workspace, str) or not workspace.strip():
+            raise ValueError("Agent workspace is not initialized for this job.")
+        from pathlib import Path
+
+        return Path(workspace).resolve()
+
+    def _build_agent_outline_prompt(self, job: GenerationJob, state: PipelineState) -> str:
+        return (
+            "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 生成内核。\n"
+            "你的工作不是解释，而是基于工作区素材，为后续 deck 生成提交一个严格结构化的大纲。\n\n"
+            "工作区约定：\n"
+            "- `request.json` 包含 topic、页数、mode、source_ids。\n"
+            "- `sources/manifest.json` 描述所有可用来源。\n"
+            "- `sources/*.md` 是来源解析文本；优先阅读这些文件，而不是只凭记忆生成。\n"
+            "- 可以使用 `task_create` / `task_update` 跟踪步骤，也可以用 `subagent_run` 并行处理长素材。\n\n"
+            "大纲要求：\n"
+            f"- 必须严格提交 {state.num_pages} 页。\n"
+            "- `role` 仅使用：cover, agenda, section-divider, narrative, evidence, process, highlight, closing。\n"
+            "- 这是一个故事化演示，不是文档摘抄；每页标题要清晰、可展示。\n"
+            "- 最终只通过 `submit_outline` 提交结构化结果，不要只输出自然语言。\n"
+        )
+
+    def _build_agent_outline_user_prompt(self, job: GenerationJob) -> str:
+        return (
+            "请阅读工作区素材并提交大纲。\n"
+            f"主题：{job.request.topic or job.request.title}\n"
+            f"补充指令：{job.request.content or '无'}\n"
+            f"目标页数：{job.request.num_pages}\n"
+            "现在开始工作，并在大纲准备好后调用 `submit_outline`。"
+        )
+
+    def _build_agent_deck_prompt(self, job: GenerationJob, state: PipelineState) -> str:
+        outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2)
+        return (
+            "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 演示生成内核。\n"
+            "请基于工作区素材和已确认的大纲，产出一个中间 deck IR，再由系统适配到现有 editor presentation。\n\n"
+            "工作方式：\n"
+            "- 必须优先阅读 `request.json`、`sources/manifest.json` 和相关 `sources/*.md`。\n"
+            "- 可以使用 `subagent_run` 做并行整理，但最终由主 agent 提交结果。\n"
+            "- 不要输出解释文本；最终只通过 `submit_deck` 提交结构化 deck。\n\n"
+            "Deck 约束：\n"
+            f"- 严格输出 {state.num_pages} 页。\n"
+            "- `layoutHint` 尽量使用：intro-slide, outline-slide, section-header, bullet-with-icons, metrics-slide, timeline, quote-slide, thank-you。\n"
+            "- `points` 适合 narrative 页，`metrics` 适合 evidence 页，`events` 适合 timeline 页。\n"
+            "- 每页都要能直接用于演示，避免空泛标题和重复段落。\n\n"
+            f"已确认大纲：\n{outline_json}\n"
+        )
+
+    def _build_agent_deck_user_prompt(self, job: GenerationJob, state: PipelineState) -> str:
+        del state
+        return (
+            "请基于已确认大纲生成完整 deck。\n"
+            f"主题：{job.request.topic or job.request.title}\n"
+            f"补充指令：{job.request.content or '无'}\n"
+            f"目标页数：{job.request.num_pages}\n"
+            "完成后调用 `submit_deck`。"
+        )
 
     @staticmethod
     def _infer_start_stage(job: GenerationJob) -> StageStatus:
