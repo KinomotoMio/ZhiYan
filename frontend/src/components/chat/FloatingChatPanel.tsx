@@ -223,7 +223,7 @@ function ProcessTimeline({
   if (events.length === 0) {
     return (
       <div className="rounded-[22px] border border-white/70 bg-white/56 px-4 py-4 text-sm leading-6 text-slate-500">
-        这一轮的执行过程会显示在这里。我们会展示阶段状态、工具调用和结果摘要，但不会展示模型原始推理文本。
+        这里会显示本轮执行摘要。
       </div>
     );
   }
@@ -698,7 +698,6 @@ export default function FloatingChatPanel() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium text-slate-900">本轮执行过程</p>
-                  <p className="text-xs text-slate-500">展示阶段与工具摘要</p>
                 </div>
                 <ProcessTimeline events={loopEvents} />
               </div>
