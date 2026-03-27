@@ -1,7 +1,7 @@
-from app.services.generation.agent_adapter import AgentDeck, deck_to_layout_selections, deck_to_slides
+from app.services.generation.legacy.deck_adapter import AgentDeck, deck_to_layout_selections, deck_to_slides
 
 
-def test_deck_to_slides_maps_richer_layouts_without_guessing():
+def test_legacy_deck_to_slides_maps_richer_layouts_without_guessing():
     deck = AgentDeck.model_validate(
         {
             "title": "Richer Layouts",
@@ -61,7 +61,7 @@ def test_deck_to_slides_maps_richer_layouts_without_guessing():
     assert slides[3].content_data["contact"] == "zhiyan@example.com"
 
 
-def test_deck_to_slides_prefers_card_layout_for_dense_bullet_items():
+def test_legacy_deck_to_slides_prefers_card_layout_for_dense_bullet_items():
     deck = AgentDeck.model_validate(
         {
             "title": "Cards",

@@ -31,7 +31,8 @@ from app.services.generation.agentic import (
     create_builtin_registry,
 )
 from app.services.generation.agentic.models import ModelClient, ModelResponse, normalize_litellm_model
-from app.services.generation.agent_adapter import AgentDeck, AgentOutline, deck_to_layout_selections, deck_to_slides, outline_to_job_outline
+from app.services.generation.agent_adapter import AgentOutline, outline_to_job_outline
+from app.services.generation.legacy.deck_adapter import AgentDeck, deck_to_layout_selections, deck_to_slides
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
@@ -68,6 +69,7 @@ class _SubmitDeckArgs(BaseModel):
     slides: list[dict[str, Any]]
 
 
+# Deprecated transitional path until the runtime submits presentation directly.
 AUTO_DECK_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
 )
@@ -1139,6 +1141,11 @@ class GenerationRunner:
         state.document_metadata.setdefault("agent_outputs", {})
         state.document_metadata["agent_outputs"]["deck"] = deck.model_dump(mode="json", by_alias=True)
         state.document_metadata["agent_outputs"]["deck_audit"] = audit
+        state.document_metadata["agent_outputs"]["deck_metadata"] = {
+            "deprecated": True,
+            "path_kind": "legacy_deck",
+            "module": "app.services.generation.legacy.deck_adapter",
+        }
         for index, slide in enumerate(slides):
             if slide_hook:
                 await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
@@ -1632,11 +1639,12 @@ class GenerationRunner:
                 "status": "ok",
                 "slide_count": len(deck.slides),
                 "path": str((artifacts_dir / "deck.json").resolve()),
+                "deprecated": True,
             }
 
         return Tool(
             name="submit_deck",
-            description="Submit the generated deck as structured JSON. Call this exactly once when the deck is complete.",
+            description="Deprecated transitional tool: submit the generated legacy deck as structured JSON. Call this exactly once when the deck is complete.",
             args_model=_SubmitDeckArgs,
             handler=_handler,
             source="embedded",
@@ -1701,6 +1709,7 @@ class GenerationRunner:
             "工作方式：\n"
             "- 先使用本地素材摘要判断故事线和页面结构，再按需要补读原始 source 文本。\n"
             "- 你只有 `read_file` 和 `submit_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+            "- 当前 deck 是 deprecated 的过渡结构；不要发明新字段，严格按现有 schema 提交。\n"
             "- 不要输出解释文本；最终只通过 `submit_deck` 提交结构化 deck。\n\n"
             "Deck 约束：\n"
             f"- 严格输出 {state.num_pages} 页。\n"

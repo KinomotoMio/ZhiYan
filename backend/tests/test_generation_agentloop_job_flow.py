@@ -295,6 +295,8 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
         "tool-trace.ndjson",
     ]
     assert agent_debug["runs"]["deck"]["stop_reason"] == "completed"
+    assert body["document_metadata"]["agent_outputs"]["deck_metadata"]["deprecated"] is True
+    assert body["document_metadata"]["agent_outputs"]["deck_metadata"]["path_kind"] == "legacy_deck"
     assert (workspace_root / "artifacts" / "debug" / "session-deck.json").exists()
     assert (workspace_root / "artifacts" / "debug" / "runner-trace.json").exists()
     assert set(tool["name"] for tool in deck_model.seen_tools[0]) == {"read_file", "submit_deck"}
