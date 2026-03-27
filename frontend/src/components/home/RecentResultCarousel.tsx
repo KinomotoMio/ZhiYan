@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type Dispatch, type FocusEvent, type SetStateAction } from "react";
 import type { Presentation } from "@/types/slide";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import SlidePreview from "@/components/slides/SlidePreview";
 import RevealPreview from "@/components/slides/RevealPreview";
 import type { PresentationOutputMode } from "@/lib/api";
@@ -10,6 +11,7 @@ interface RecentResultCarouselProps {
   presentation: Presentation;
   outputMode?: PresentationOutputMode;
   htmlContent?: string | null;
+  htmlMeta?: HtmlDeckMeta | null;
   previewSlideIndex: number;
   setPreviewSlideIndex: Dispatch<SetStateAction<number>>;
   isPreviewHovered: boolean;
@@ -21,6 +23,7 @@ export default function RecentResultCarousel({
   presentation,
   outputMode = "structured",
   htmlContent = null,
+  htmlMeta = null,
   previewSlideIndex,
   setPreviewSlideIndex,
   isPreviewHovered,
@@ -29,12 +32,18 @@ export default function RecentResultCarousel({
 }: RecentResultCarouselProps) {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const [isFocusWithin, setIsFocusWithin] = useState(false);
-  const slides = presentation.slides ?? [];
-  const slideCount = slides.length;
+  const isHtmlMode = outputMode === "html" && Boolean(htmlContent);
+  const structuredSlides = presentation.slides ?? [];
+  const htmlSlides = htmlMeta?.slides ?? [];
+  const slideCount = isHtmlMode ? htmlSlides.length : structuredSlides.length;
   const normalizedSlideIndex =
     slideCount > 0 ? Math.min(previewSlideIndex, slideCount - 1) : 0;
-  const currentSlide = slides[normalizedSlideIndex];
-  const isHtmlMode = outputMode === "html" && Boolean(htmlContent);
+  const currentSlide = isHtmlMode
+    ? htmlSlides[normalizedSlideIndex]
+    : structuredSlides[normalizedSlideIndex];
+  const currentStructuredSlide = !isHtmlMode
+    ? structuredSlides[normalizedSlideIndex] ?? null
+    : null;
 
   useEffect(() => {
     if (slideCount === 0) {
@@ -113,7 +122,9 @@ export default function RecentResultCarousel({
             />
           </div>
         ) : (
-          <SlidePreview slide={currentSlide} className="w-full border-0 shadow-none" />
+          currentStructuredSlide ? (
+            <SlidePreview slide={currentStructuredSlide} className="w-full border-0 shadow-none" />
+          ) : null
         )}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/55 via-slate-900/10 to-transparent px-3 py-2">
           <p className="text-xs font-medium text-white/90">
@@ -124,8 +135,9 @@ export default function RecentResultCarousel({
 
       <div className="overflow-x-auto pb-1">
         <div className="flex min-w-max gap-2 pr-1">
-          {slides.map((slide, index) => {
+          {(isHtmlMode ? htmlSlides : structuredSlides).map((slide, index) => {
             const isActive = index === normalizedSlideIndex;
+            const structuredSlide = !isHtmlMode ? structuredSlides[index] ?? null : null;
             return (
               <button
                 key={slide.slideId}
@@ -150,7 +162,9 @@ export default function RecentResultCarousel({
                       />
                     </div>
                   ) : (
-                    <SlidePreview slide={slide} className="w-full border-0 shadow-none" />
+                    structuredSlide ? (
+                      <SlidePreview slide={structuredSlide} className="w-full border-0 shadow-none" />
+                    ) : null
                   )}
                 </div>
               </button>

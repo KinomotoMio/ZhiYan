@@ -153,7 +153,7 @@ def _build_system_prompt() -> str:
     return (
         "You are the speaker notes generation agent for ZhiYan.\n"
         "You must read the workspace files before you write notes.\n"
-        "Use read_file to inspect artifacts/current-presentation.md and relevant source files.\n"
+        "Use read_file to inspect artifacts/current-presentation.md and, when available, artifacts/current-presentation.html, then relevant source files.\n"
         "Then call submit_speaker_notes exactly once with notes for the requested slides.\n\n"
         "Rules:\n"
         "- Notes must be grounded in the current slide content and workspace source files.\n"
@@ -266,6 +266,11 @@ async def generate_speaker_notes_for_session(
         _render_presentation_markdown(normalized),
         encoding="utf-8",
     )
+    if output_mode == "html" and latest_html is not None:
+        (artifacts_dir / "current-presentation.html").write_text(
+            latest_html[0],
+            encoding="utf-8",
+        )
 
     payload_holder: dict[str, object] = {}
     builder = AgentBuilder.from_project(workspace_root)

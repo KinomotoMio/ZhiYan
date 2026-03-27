@@ -154,6 +154,7 @@ async def chat(req: ChatRequest, request: Request):
                     "type": "html_update",
                     "html_content": outcome.html_content,
                     "presentation": outcome.normalized_presentation,
+                    "html_meta": outcome.normalized_html_meta,
                     "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
                 }
             elif (

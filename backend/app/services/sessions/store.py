@@ -1363,7 +1363,7 @@ class SessionStore:
             ).fetchone()
             version_no = int(row["next_no"]) if row else 1
             if html_deck is not None:
-                artifact_meta = self._persist_html_deck_artifact_sync(
+                artifact_meta, normalized_html_payload = self._persist_html_deck_artifact_sync(
                     session_id=session_id,
                     presentation_id=presentation_id,
                     version_no=version_no,
@@ -1372,6 +1372,8 @@ class SessionStore:
                     fallback_title=normalized_title or "新演示文稿",
                     now=now,
                 )
+                if output_mode == "html":
+                    stored_payload = normalized_html_payload
                 artifacts = stored_payload.get("artifacts")
                 artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
                 artifacts_dict["html_deck"] = artifact_meta
@@ -1793,12 +1795,12 @@ class SessionStore:
         presentation_payload: dict | None,
         fallback_title: str,
         now: str,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         raw_html = str(html_deck.get("html") or "").strip()
         if not raw_html:
             raise ValueError("HTML deck content is empty.")
         expected_slide_count = html_deck.get("expected_slide_count")
-        normalized_html, meta, _presentation = normalize_html_deck(
+        normalized_html, meta, presentation = normalize_html_deck(
             html=raw_html,
             fallback_title=fallback_title,
             expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
@@ -1817,13 +1819,20 @@ class SessionStore:
             json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        return {
-            "version": version_no,
-            "slide_count": meta["slide_count"],
-            "updated_at": now,
-            "storage_path": str(html_path.resolve()),
-            "meta_storage_path": str(meta_path.resolve()),
-        }
+        if isinstance(presentation_payload, dict):
+            existing_id = str(presentation_payload.get("presentationId") or "").strip()
+            if existing_id:
+                presentation["presentationId"] = existing_id
+        return (
+            {
+                "version": version_no,
+                "slide_count": meta["slide_count"],
+                "updated_at": now,
+                "storage_path": str(html_path.resolve()),
+                "meta_storage_path": str(meta_path.resolve()),
+            },
+            presentation,
+        )
 
     def _persist_slidev_deck_artifact_sync(
         self,

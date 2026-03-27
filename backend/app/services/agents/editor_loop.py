@@ -123,6 +123,7 @@ class EditorLoopOutcome:
     slides: list[dict[str, Any]]
     html_content: str | None = None
     normalized_presentation: dict[str, Any] | None = None
+    normalized_html_meta: dict[str, Any] | None = None
     slidev_markdown: str | None = None
     slidev_meta: dict[str, Any] | None = None
     slidev_preview_url: str | None = None
@@ -151,6 +152,7 @@ class _EditorRuntimeState:
     selected_style_id: str | None = None
     submitted_html: str | None = None
     normalized_presentation: dict[str, Any] | None = None
+    normalized_html_meta: dict[str, Any] | None = None
     modifications: list[SlideModification] = field(default_factory=list)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -412,6 +414,7 @@ class EditorLoopService:
             slides=runtime.slides,
             html_content=runtime.submitted_html,
             normalized_presentation=runtime.normalized_presentation,
+            normalized_html_meta=runtime.normalized_html_meta,
             slidev_markdown=runtime.slidev_markdown,
             slidev_meta=runtime.slidev_meta,
             slidev_preview_url=runtime.slidev_preview_url,
@@ -724,13 +727,15 @@ class EditorLoopService:
             return {"message": f"已更新第 {args.slide_index + 1} 页双栏要点"}
 
         async def _submit_html_revision(args: _SubmitHtmlRevisionArgs, _context: ToolContext) -> dict[str, Any]:
-            normalized_html, _meta, presentation = normalize_html_deck(
+            normalized_html, meta, presentation = normalize_html_deck(
                 html=args.html,
                 fallback_title=runtime.request.presentation_title,
                 expected_slide_count=len(runtime.slides) if runtime.slides else None,
+                existing_slides=runtime.slides,
             )
             runtime.submitted_html = normalized_html
             runtime.normalized_presentation = presentation
+            runtime.normalized_html_meta = meta
             runtime.modifications.append(
                 SlideModification(
                     slide_index=max(0, runtime.current_slide_index),
@@ -739,6 +744,35 @@ class EditorLoopService:
                 )
             )
             return {"message": "已提交并校验 HTML 改稿"}
+
+        if runtime.request.output_mode == "html":
+            registry.extend(
+                [
+                    Tool(
+                        name="get_current_html_slide_info",
+                        description="Read the current HTML slide summary for the active page.",
+                        args_model=_NoArgs,
+                        handler=_get_current_html_slide_info,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="modify_slide_speaker_notes",
+                        description="Update speaker notes for one slide.",
+                        args_model=_ModifyNotesArgs,
+                        handler=_modify_slide_speaker_notes,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="submit_html_revision",
+                        description="Submit the full revised HTML deck after editing.",
+                        args_model=_SubmitHtmlRevisionArgs,
+                        handler=_submit_html_revision,
+                        source="editor",
+                    ),
+                    getattr(todo, "__agentloop_tool__"),
+                ]
+            )
+            return registry
 
         registry.extend(
             [
@@ -754,13 +788,6 @@ class EditorLoopService:
                     description="Read a compact summary of the current deck.",
                     args_model=_NoArgs,
                     handler=_get_deck_summary,
-                    source="editor",
-                ),
-                Tool(
-                    name="get_current_html_slide_info",
-                    description="Read the current HTML slide summary for the active page.",
-                    args_model=_NoArgs,
-                    handler=_get_current_html_slide_info,
                     source="editor",
                 ),
                 Tool(
@@ -791,13 +818,6 @@ class EditorLoopService:
                     handler=_update_two_column_compare,
                     source="editor",
                 ),
-                Tool(
-                    name="submit_html_revision",
-                    description="Submit the full revised HTML deck after editing.",
-                    args_model=_SubmitHtmlRevisionArgs,
-                    handler=_submit_html_revision,
-                    source="editor",
-                ),
                 getattr(todo, "__agentloop_tool__"),
             ]
         )
@@ -825,6 +845,52 @@ class EditorLoopService:
         )
 
     def _build_prompt(self, *, request: EditorLoopRequest, runtime: _EditorRuntimeState) -> str:
+        if request.output_mode == "html":
+            html_slides = _html_slide_summaries(runtime.html_content or "")
+            current_meta = (
+                runtime.slides[runtime.current_slide_index]
+                if 0 <= runtime.current_slide_index < len(runtime.slides)
+                else {}
+            )
+            current_html_slide = (
+                html_slides[runtime.current_slide_index]
+                if 0 <= runtime.current_slide_index < len(html_slides)
+                else None
+            )
+            deck_summary = []
+            for index, slide in enumerate(html_slides[:12]):
+                meta = runtime.slides[index] if index < len(runtime.slides) else {}
+                deck_summary.append(
+                    {
+                        "index": slide.get("index"),
+                        "slide_id": slide.get("slide_id"),
+                        "title": slide.get("title"),
+                        "body_summary": slide.get("body_summary"),
+                        "speaker_notes": str(meta.get("speakerNotes") or ""),
+                    }
+                )
+            current_title = (
+                str((current_html_slide or {}).get("title") or "")
+                or str(current_meta.get("contentData", {}).get("title") or "")
+                or f"第 {runtime.current_slide_index + 1} 页"
+            )
+            current_summary = str((current_html_slide or {}).get("body_summary") or "HTML 页面摘要为空")
+            current_notes = str(current_meta.get("speakerNotes") or "")
+            history = request.history[-8:]
+            return (
+                f"当前会话 output_mode: {request.output_mode}\n"
+                f"操作意图: {request.action_hint}\n"
+                f"演示标题: {request.presentation_title}\n"
+                f"当前页索引: {runtime.current_slide_index}\n"
+                f"当前页标题: {current_title}\n"
+                f"当前页 HTML 摘要: {current_summary}\n"
+                f"当前页演讲者注释: {current_notes}\n"
+                f"整份 HTML 演示概览: {_safe_json_dumps(deck_summary)}\n"
+                f"最近对话: {_safe_json_dumps(history)}\n\n"
+                f"用户消息:\n{request.message.strip()}\n\n"
+                "如需修改页面可见内容，直接改完整 HTML 并通过 submit_html_revision 提交；不要输出结构化 slide 修改方案。"
+            )
+
         current_slide = runtime.current_slide or {}
         current_layout = str(current_slide.get("layoutId") or current_slide.get("layoutType") or "unknown")
         current_title = _extract_title(current_slide) or f"第 {runtime.current_slide_index + 1} 页"
@@ -946,6 +1012,7 @@ class EditorLoopService:
                     "modifications": [item.model_dump(mode="json") for item in runtime.modifications],
                     "submitted_html": runtime.submitted_html or "",
                     "normalized_presentation": runtime.normalized_presentation,
+                    "normalized_html_meta": runtime.normalized_html_meta,
                     "slidev_markdown": runtime.slidev_markdown or "",
                     "slidev_meta": runtime.slidev_meta or {},
                     "slidev_preview_url": runtime.slidev_preview_url,

@@ -31,8 +31,13 @@ import {
   type ChatToolResultEvent,
 } from "@/lib/api";
 import { sanitizeAssistantText } from "@/lib/chat-sanitize";
+import {
+  buildHtmlPresentationShell,
+  extractHtmlDeckMetaFromPresentation,
+} from "@/lib/html-deck";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import type { Slide } from "@/types/slide";
 
 function ChatAvatar({ role }: { role: "assistant" | "user" }) {
@@ -147,6 +152,8 @@ interface PendingSlideChange {
   proposedSlides: Slide[];
   previousHtml: string | null;
   proposedHtml: string | null;
+  previousHtmlMeta: HtmlDeckMeta | null;
+  proposedHtmlMeta: HtmlDeckMeta | null;
   previousSlidevMarkdown?: string | null;
   proposedSlidevMarkdown?: string | null;
   previousSlidevMeta?: Record<string, unknown> | null;
@@ -297,6 +304,7 @@ export default function FloatingChatPanel() {
     presentation,
     presentationOutputMode,
     presentationHtml,
+    htmlDeckMeta,
     presentationSlidevMarkdown,
     presentationSlidevMeta,
     presentationSlidevBuildUrl,
@@ -350,7 +358,15 @@ export default function FloatingChatPanel() {
   const handleRollbackPending = () => {
     if (!pendingChange) return;
     const currentPresentation = useAppStore.getState().presentation;
-    if (currentPresentation) {
+    if (pendingChange.mode === "html") {
+      setPresentation(
+        buildHtmlPresentationShell(
+          pendingChange.previousHtmlMeta?.title || currentPresentation?.title || "新演示文稿",
+          pendingChange.previousHtmlMeta,
+          currentPresentation
+        )
+      );
+    } else if (currentPresentation) {
       setPresentation({
         ...currentPresentation,
         slides: cloneSlides(pendingChange.previousSlides),
@@ -361,7 +377,8 @@ export default function FloatingChatPanel() {
     setPresentationHtmlState(
       pendingChange.mode,
       pendingChange.previousHtml,
-      useAppStore.getState().presentationHtmlArtifact
+      useAppStore.getState().presentationHtmlArtifact,
+      pendingChange.previousHtmlMeta
     );
     if (pendingChange.mode === "slidev") {
       setPresentationSlidevState({
@@ -389,7 +406,7 @@ export default function FloatingChatPanel() {
   const handleApplyPending = async () => {
     if (!pendingChange || !currentSessionId) return;
     const latestPresentation = useAppStore.getState().presentation;
-    if (!latestPresentation) {
+    if (!latestPresentation && pendingChange.mode !== "html") {
       toast.error("当前没有可保存的演示稿");
       return;
     }
@@ -397,13 +414,21 @@ export default function FloatingChatPanel() {
     setPendingChange((prev) => (prev ? { ...prev, saving: true } : prev));
     try {
       if (pendingChange.mode === "html") {
+        const htmlPresentation = buildHtmlPresentationShell(
+          latestPresentation?.title || pendingChange.proposedHtmlMeta?.title || "新演示文稿",
+          pendingChange.proposedHtmlMeta,
+          latestPresentation
+        );
         await saveLatestSessionHtmlPresentation(
           currentSessionId,
-          latestPresentation,
+          htmlPresentation,
           pendingChange.proposedHtml || "",
           "chat"
         );
       } else if (pendingChange.mode === "slidev") {
+        if (!latestPresentation) {
+          throw new Error("当前没有可保存的演示稿");
+        }
         await saveLatestSessionSlidevPresentation(
           currentSessionId,
           latestPresentation,
@@ -413,6 +438,9 @@ export default function FloatingChatPanel() {
           "chat"
         );
       } else {
+        if (!latestPresentation) {
+          throw new Error("当前没有可保存的演示稿");
+        }
         await saveLatestSessionPresentation(currentSessionId, latestPresentation, "chat");
       }
       setPendingChange(null);
@@ -471,10 +499,21 @@ export default function FloatingChatPanel() {
         message: text,
         session_id: currentSessionId,
         messages: historyForApi,
-        presentation_context: presentation
-          ? {
-              slides: presentation.slides,
-              title: presentation.title,
+        presentation_context:
+          presentation || (presentationOutputMode === "html" && htmlDeckMeta)
+            ? {
+              slides:
+                presentationOutputMode === "html"
+                  ? buildHtmlPresentationShell(
+                      htmlDeckMeta?.title || presentation?.title || "新演示文稿",
+                      htmlDeckMeta,
+                      presentation
+                    ).slides
+                  : presentation?.slides ?? [],
+              title:
+                presentationOutputMode === "html"
+                  ? htmlDeckMeta?.title || presentation?.title || "新演示文稿"
+                  : presentation?.title || "新演示文稿",
               output_mode: presentationOutputMode,
               html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
               slidev_markdown:
@@ -526,6 +565,8 @@ export default function FloatingChatPanel() {
           proposedSlides: cloneSlides(slideUpdate.slides),
           previousHtml: currentHtml,
           proposedHtml: currentHtml,
+          previousHtmlMeta: useAppStore.getState().htmlDeckMeta,
+          proposedHtmlMeta: useAppStore.getState().htmlDeckMeta,
           previousSlidevMarkdown: presentationSlidevMarkdown,
           proposedSlidevMarkdown: presentationSlidevMarkdown,
           previousSlidevMeta: presentationSlidevMeta,
@@ -544,6 +585,7 @@ export default function FloatingChatPanel() {
       (htmlUpdate) => {
         const currentSlides = useAppStore.getState().presentation?.slides ?? [];
         const currentHtml = useAppStore.getState().presentationHtml;
+        const currentHtmlMeta = useAppStore.getState().htmlDeckMeta;
         const previousSlidesSnapshot = pendingChange?.previousSlides
           ? cloneSlides(pendingChange.previousSlides)
           : cloneSlides(currentSlides);
@@ -551,7 +593,8 @@ export default function FloatingChatPanel() {
         setPresentationHtmlState(
           "html",
           htmlUpdate.html_content,
-          useAppStore.getState().presentationHtmlArtifact
+          useAppStore.getState().presentationHtmlArtifact,
+          htmlUpdate.html_meta ?? extractHtmlDeckMetaFromPresentation(htmlUpdate.presentation)
         );
         setPendingChange({
           mode: "html",
@@ -559,6 +602,9 @@ export default function FloatingChatPanel() {
           proposedSlides: cloneSlides(htmlUpdate.presentation.slides),
           previousHtml: currentHtml,
           proposedHtml: htmlUpdate.html_content,
+          previousHtmlMeta: currentHtmlMeta,
+          proposedHtmlMeta:
+            htmlUpdate.html_meta ?? extractHtmlDeckMetaFromPresentation(htmlUpdate.presentation),
           previousSlidevMarkdown: presentationSlidevMarkdown,
           proposedSlidevMarkdown: presentationSlidevMarkdown,
           previousSlidevMeta: presentationSlidevMeta,
@@ -573,6 +619,7 @@ export default function FloatingChatPanel() {
       (slidevUpdate) => {
         const currentSlides = useAppStore.getState().presentation?.slides ?? [];
         const currentHtml = useAppStore.getState().presentationHtml;
+        const currentHtmlMeta = useAppStore.getState().htmlDeckMeta;
         const previousSlidesSnapshot = pendingChange?.previousSlides
           ? cloneSlides(pendingChange.previousSlides)
           : cloneSlides(currentSlides);
@@ -591,6 +638,8 @@ export default function FloatingChatPanel() {
           proposedSlides: cloneSlides(slidevUpdate.presentation.slides),
           previousHtml: currentHtml,
           proposedHtml: currentHtml,
+          previousHtmlMeta: currentHtmlMeta,
+          proposedHtmlMeta: currentHtmlMeta,
           previousSlidevMarkdown: presentationSlidevMarkdown,
           proposedSlidevMarkdown: slidevUpdate.markdown,
           previousSlidevMeta: presentationSlidevMeta,

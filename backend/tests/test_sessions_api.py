@@ -684,6 +684,9 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     latest_payload = latest.json()
     assert latest_payload["output_mode"] == "html"
     assert latest_payload["artifacts"]["html_deck"]["slide_count"] == 1
+    assert latest_payload["presentation"]["htmlDeckMeta"]["slideCount"] == 1
+    assert latest_payload["presentation"]["htmlDeckMeta"]["slides"][0]["speakerNotes"] == "这是封面页注解"
+    assert latest_payload["presentation"]["slides"][0]["layoutType"] == "html-meta"
 
     html_resp = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/html", headers=headers)
     assert html_resp.status_code == 200
@@ -695,6 +698,7 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     assert 'style="background:#111827"' in html_resp.text
     assert '<aside class="notes">这是封面页注解</aside>' in html_resp.text
     assert "hash: false" in html_resp.text
+    assert "window.__ZY_REVEAL_PREVIEW__" in html_resp.text
     assert "const query = new URLSearchParams(window.location.search);" in html_resp.text
 
     meta_resp = client.get(

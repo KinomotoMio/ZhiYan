@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Presentation, Slide } from "@/types/slide";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import type { SourceMeta } from "@/types/source";
 import type {
   HtmlDeckArtifactMeta,
@@ -80,6 +81,7 @@ interface AppState {
   presentationOutputMode: PresentationOutputMode;
   presentationHtml: string | null;
   presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
+  htmlDeckMeta: HtmlDeckMeta | null;
   presentationSlidevMarkdown: string | null;
   presentationSlidevMeta: Record<string, unknown> | null;
   presentationSlidevDeckArtifact: SlidevDeckArtifactMeta | null;
@@ -129,6 +131,7 @@ interface AppState {
     presentationOutputMode?: PresentationOutputMode;
     presentationHtml?: string | null;
     presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
+    htmlDeckMeta?: HtmlDeckMeta | null;
     presentationSlidevMarkdown?: string | null;
     presentationSlidevMeta?: Record<string, unknown> | null;
     presentationSlidevDeckArtifact?: SlidevDeckArtifactMeta | null;
@@ -142,8 +145,10 @@ interface AppState {
   setPresentationHtmlState: (
     outputMode: PresentationOutputMode,
     html: string | null,
-    artifact?: HtmlDeckArtifactMeta | null
+    artifact?: HtmlDeckArtifactMeta | null,
+    htmlDeckMeta?: HtmlDeckMeta | null
   ) => void;
+  setHtmlDeckMeta: (meta: HtmlDeckMeta | null) => void;
   setPresentationSlidevState: (payload: {
     outputMode: PresentationOutputMode;
     markdown: string | null;
@@ -223,6 +228,7 @@ export const useAppStore = create<AppState>()(
       presentationOutputMode: "structured",
       presentationHtml: null,
       presentationHtmlArtifact: null,
+      htmlDeckMeta: null,
       presentationSlidevMarkdown: null,
       presentationSlidevMeta: null,
       presentationSlidevDeckArtifact: null,
@@ -301,6 +307,7 @@ export const useAppStore = create<AppState>()(
         presentationOutputMode,
         presentationHtml,
         presentationHtmlArtifact,
+        htmlDeckMeta,
         presentationSlidevMarkdown,
         presentationSlidevMeta,
         presentationSlidevDeckArtifact,
@@ -321,6 +328,9 @@ export const useAppStore = create<AppState>()(
           presentationOutputMode: presentationOutputMode ?? "structured",
           presentationHtml: presentationHtml ?? null,
           presentationHtmlArtifact: presentationHtmlArtifact ?? null,
+          htmlDeckMeta:
+            htmlDeckMeta ??
+            ((presentation as Presentation | null)?.htmlDeckMeta ?? null),
           presentationSlidevMarkdown: presentationSlidevMarkdown ?? null,
           presentationSlidevMeta: presentationSlidevMeta ?? null,
           presentationSlidevDeckArtifact: presentationSlidevDeckArtifact ?? null,
@@ -367,6 +377,7 @@ export const useAppStore = create<AppState>()(
             p.title.trim().length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
           return {
             presentation: p,
+            htmlDeckMeta: p.htmlDeckMeta ?? state.htmlDeckMeta,
             sessions:
               shouldSyncSessionTitle && state.currentSessionId
                 ? state.sessions.map((session) =>
@@ -377,11 +388,12 @@ export const useAppStore = create<AppState>()(
                 : state.sessions,
           };
         }),
-      setPresentationHtmlState: (outputMode, html, artifact) =>
+      setPresentationHtmlState: (outputMode, html, artifact, htmlDeckMeta) =>
         set({
           presentationOutputMode: outputMode,
           presentationHtml: html,
           presentationHtmlArtifact: artifact ?? null,
+          htmlDeckMeta: outputMode === "slidev" ? get().htmlDeckMeta : (htmlDeckMeta ?? null),
           presentationSlidevMarkdown: outputMode === "slidev" ? get().presentationSlidevMarkdown : null,
           presentationSlidevMeta: outputMode === "slidev" ? get().presentationSlidevMeta : null,
           presentationSlidevDeckArtifact: outputMode === "slidev" ? get().presentationSlidevDeckArtifact : null,
@@ -400,12 +412,14 @@ export const useAppStore = create<AppState>()(
           presentationOutputMode: outputMode,
           presentationHtml: outputMode === "slidev" ? get().presentationHtml : null,
           presentationHtmlArtifact: outputMode === "slidev" ? get().presentationHtmlArtifact : null,
+          htmlDeckMeta: outputMode === "slidev" ? get().htmlDeckMeta : null,
           presentationSlidevMarkdown: markdown,
           presentationSlidevMeta: meta ?? null,
           presentationSlidevDeckArtifact: deckArtifact ?? null,
           presentationSlidevBuildArtifact: buildArtifact ?? null,
           presentationSlidevBuildUrl: buildUrl ?? null,
         }),
+      setHtmlDeckMeta: (meta) => set({ htmlDeckMeta: meta }),
       updateSlides: (slides) =>
         set((state) => {
           if (!state.presentation) return {};

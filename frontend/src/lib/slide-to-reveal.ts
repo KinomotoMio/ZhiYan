@@ -1073,10 +1073,18 @@ ${sections}
   <script>
     const revealElement = document.querySelector('.reveal');
     const deck = new Reveal(revealElement);
+    const embeddedPreview =
+      window.__ZY_REVEAL_PREVIEW__ && typeof window.__ZY_REVEAL_PREVIEW__ === 'object'
+        ? window.__ZY_REVEAL_PREVIEW__
+        : {};
     const query = new URLSearchParams(window.location.search);
-    const requestedSlide = Number.parseInt(query.get('slide') || '0', 10);
+    const requestedSlide = Number.parseInt(
+      String(embeddedPreview.slide ?? query.get('slide') ?? '0'),
+      10
+    );
     const initialSlide = Number.isFinite(requestedSlide) ? Math.max(0, requestedSlide) : 0;
-    const previewMode = query.get('mode') === 'thumbnail' ? 'thumbnail' : 'interactive';
+    const requestedMode = embeddedPreview.mode ?? query.get('mode');
+    const previewMode = requestedMode === 'thumbnail' ? 'thumbnail' : 'interactive';
     const isInteractive = previewMode === 'interactive';
     document.documentElement.dataset.previewMode = previewMode;
 

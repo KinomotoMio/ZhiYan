@@ -16,6 +16,7 @@ import {
   getCurrentWorkspace,
   getLatestSessionPresentation,
   getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlMeta,
   listSessions,
   listWorkspaceSources,
   removeSession,
@@ -23,12 +24,17 @@ import {
   type PresentationOutputMode,
   type SessionSummary,
 } from "@/lib/api";
+import {
+  buildHtmlPresentationShell,
+  extractHtmlDeckMetaFromPresentation,
+} from "@/lib/html-deck";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
 import SessionListDialog from "@/components/home/SessionListDialog";
 import UserMenu from "@/components/settings/UserMenu";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
 import { useAppStore } from "@/lib/store";
 import { getSessionEditorPath } from "@/lib/routes";
+import type { HtmlDeckMeta } from "@/types/html-deck";
 import type { Presentation as PresentationModel } from "@/types/slide";
 
 const DESKTOP_BREAKPOINT = 1024;
@@ -131,6 +137,7 @@ export default function HomeView() {
   const [latestResultOutputMode, setLatestResultOutputMode] =
     useState<PresentationOutputMode>("structured");
   const [latestResultHtml, setLatestResultHtml] = useState<string | null>(null);
+  const [latestResultHtmlMeta, setLatestResultHtmlMeta] = useState<HtmlDeckMeta | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
   const [isPreviewHovered, setIsPreviewHovered] = useState(false);
   const [resultPreviewCount, setResultPreviewCount] =
@@ -315,6 +322,7 @@ export default function HomeView() {
       setLatestResultPresentation(null);
       setLatestResultOutputMode("structured");
       setLatestResultHtml(null);
+      setLatestResultHtmlMeta(null);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
       return () => {
@@ -325,20 +333,27 @@ export default function HomeView() {
     setLatestResultPresentation(null);
     setLatestResultOutputMode("structured");
     setLatestResultHtml(null);
+    setLatestResultHtmlMeta(null);
     setPreviewSlideIndex(0);
     setIsPreviewHovered(false);
 
     const run = async () => {
       const latest = await getLatestSessionPresentation(latestResultSession.id);
       const outputMode = latest?.output_mode ?? "structured";
-      const html =
+      const [html, htmlMeta] =
         outputMode === "html"
-          ? await getLatestSessionPresentationHtml(latestResultSession.id)
-          : null;
+          ? await Promise.all([
+              getLatestSessionPresentationHtml(latestResultSession.id),
+              getLatestSessionPresentationHtmlMeta(latestResultSession.id),
+            ])
+          : [null, null];
       if (cancelled) return;
       setLatestResultPresentation(latest?.presentation ?? null);
       setLatestResultOutputMode(outputMode);
       setLatestResultHtml(html);
+      setLatestResultHtmlMeta(
+        htmlMeta ?? extractHtmlDeckMetaFromPresentation(latest?.presentation ?? null)
+      );
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
     };
@@ -643,12 +658,22 @@ export default function HomeView() {
                 <p className="text-xs leading-5 text-slate-600">
                   更新时间：{formatUpdatedAt(latestResultSession.updated_at)}
                 </p>
-                {latestResultPresentation?.slides?.length ? (
+                {(latestResultOutputMode === "html"
+                  ? latestResultHtmlMeta?.slides.length
+                  : latestResultPresentation?.slides?.length) ? (
                   <div className="min-h-0 flex-1">
                     <RecentResultCarousel
-                      presentation={latestResultPresentation}
+                      presentation={
+                        latestResultPresentation ??
+                        buildHtmlPresentationShell(
+                          latestResultSession.title || "未命名会话",
+                          latestResultHtmlMeta,
+                          null
+                        )
+                      }
                       outputMode={latestResultOutputMode}
                       htmlContent={latestResultHtml}
+                      htmlMeta={latestResultHtmlMeta}
                       previewSlideIndex={previewSlideIndex}
                       setPreviewSlideIndex={setPreviewSlideIndex}
                       isPreviewHovered={isPreviewHovered}
