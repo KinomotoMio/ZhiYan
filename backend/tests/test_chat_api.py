@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
-from app.services.agents.editor_loop import editor_loop_service
+from app.services.agents.chat_agent import SlideModification
+from app.services.agents.editor_loop import EditorLoopOutcome, editor_loop_service
 from app.services.generation.agentic.models import ModelUsage
 from app.services.generation.agentic.types import AssistantMessage, ToolCall
 from tests.conftest import FakeModel
@@ -340,6 +341,132 @@ def test_chat_snapshot_reuses_history_until_base_signature_changes(monkeypatch, 
     assert len(fake_model.seen_messages) == 3
     assert len(fake_model.seen_messages[1]) > len(fake_model.seen_messages[0])
     assert len(fake_model.seen_messages[2]) <= len(fake_model.seen_messages[1])
+
+
+def test_chat_slidev_mode_emits_slidev_update(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    async def _fake_run(request):  # noqa: ANN001
+        assert request.output_mode == "slidev"
+        return EditorLoopOutcome(
+            assistant_reply="我已把这一页改成更适合 Slidev 播放的结构。",
+            events=[
+                {"type": "assistant_status", "assistant_status": "thinking"},
+                {
+                    "type": "tool_call",
+                    "tool_name": "edit_slidev_deck",
+                    "call_id": "slidev-edit",
+                    "summary": "改写整份 Slidev deck",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_name": "build_slidev_preview",
+                    "call_id": "slidev-build",
+                    "ok": True,
+                    "summary": "已生成可预览的 Slidev deck",
+                },
+                {"type": "assistant_status", "assistant_status": "ready"},
+            ],
+            modifications=[
+                SlideModification(
+                    slide_index=0,
+                    action="update_slidev_deck",
+                    data={"selected_style_id": "tech-launch"},
+                )
+            ],
+            slides=[
+                {
+                    "slideId": "slide-1",
+                    "layoutType": "blank",
+                    "layoutId": "blank",
+                    "contentData": {"title": "新封面"},
+                    "components": [],
+                },
+                {
+                    "slideId": "slide-2",
+                    "layoutType": "blank",
+                    "layoutId": "blank",
+                    "contentData": {"title": "新结尾"},
+                    "components": [],
+                },
+            ],
+            normalized_presentation={
+                "presentationId": "pres-slidev-chat",
+                "title": "Slidev 改稿",
+                "slides": [
+                    {
+                        "slideId": "slide-1",
+                        "layoutType": "blank",
+                        "layoutId": "blank",
+                        "contentData": {"title": "新封面"},
+                        "components": [],
+                    },
+                    {
+                        "slideId": "slide-2",
+                        "layoutType": "blank",
+                        "layoutId": "blank",
+                        "contentData": {"title": "新结尾"},
+                        "components": [],
+                    },
+                ],
+            },
+            slidev_markdown="---\ntitle: Slidev 改稿\n---\n\n# 新封面\n\n---\n\n# 新结尾\n",
+            slidev_meta={
+                "title": "Slidev 改稿",
+                "slide_count": 2,
+                "slides": [
+                    {"index": 0, "slide_id": "slide-1", "title": "新封面", "role": "cover"},
+                    {"index": 1, "slide_id": "slide-2", "title": "新结尾", "role": "closing"},
+                ],
+            },
+            slidev_preview_url="/api/v1/slidev-previews/spv-test-1",
+            selected_style_id="tech-launch",
+        )
+
+    monkeypatch.setattr(editor_loop_service, "run", _fake_run)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-chat"}
+    response = client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={
+            "message": "把第 1 页做得更像产品发布会开场",
+            "messages": [],
+            "session_id": "sess-slidev-chat",
+            "action_hint": "enrich_visual",
+            "current_slide_index": 0,
+            "presentation_context": {
+                "title": "Slidev 演示",
+                "output_mode": "slidev",
+                "slidev_markdown": "---\ntitle: Slidev 演示\n---\n\n# 封面\n",
+                "slidev_meta": {
+                    "slides": [
+                        {"index": 0, "slide_id": "slide-1", "title": "封面", "role": "cover"},
+                    ]
+                },
+                "selected_style_id": "tech-launch",
+                "slides": [
+                    {
+                        "slideId": "slide-1",
+                        "layoutId": "blank",
+                        "contentData": {"title": "封面"},
+                    }
+                ],
+            },
+        },
+    )
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    text_events = [evt for evt in events if evt.get("type") == "text"]
+    assert any("Slidev" in evt.get("content", "") for evt in text_events)
+    slidev_updates = [evt for evt in events if evt.get("type") == "slidev_update"]
+    assert len(slidev_updates) == 1
+    slidev_update = slidev_updates[0]
+    assert slidev_update["presentation"]["title"] == "Slidev 改稿"
+    assert slidev_update["meta"]["slides"][0]["title"] == "新封面"
+    assert slidev_update["selected_style_id"] == "tech-launch"
+    assert slidev_update["preview_url"] == "/api/v1/slidev-previews/spv-test-1"
 
 
 def test_put_latest_presentation_persists_non_snapshot(monkeypatch, tmp_path):

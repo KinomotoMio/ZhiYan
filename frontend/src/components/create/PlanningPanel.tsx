@@ -471,6 +471,18 @@ function OutlineDraftBlock({
             >
               结构化模式
             </button>
+            <button
+              type="button"
+              onClick={() => onChangeGenerationMode("slidev")}
+              className={cn(
+                "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                generationMode === "slidev"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              )}
+            >
+              Slidev 模式
+            </button>
           </div>
           <button
             type="button"

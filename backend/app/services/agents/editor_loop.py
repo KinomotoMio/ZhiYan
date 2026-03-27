@@ -17,6 +17,7 @@ from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Sk
 from app.services.generation.agentic.tools import todo
 from app.services.generation.agentic.types import AssistantMessage, Message, ToolMessage, ToolResult
 from app.services.html_deck import normalize_html_deck
+from app.services.slidev import create_slidev_preview
 
 from .chat_agent import (
     DEFAULT_COMPARE_FILLER,
@@ -24,6 +25,7 @@ from .chat_agent import (
     DEFAULT_COMPARE_RIGHT_HEADING,
     SlideModification,
 )
+from .slidev_deck_editor import edit_slidev_deck
 
 
 _THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
@@ -107,6 +109,9 @@ class EditorLoopRequest:
     slides: list[dict[str, Any]]
     output_mode: str
     html_content: str | None = None
+    slidev_markdown: str | None = None
+    slidev_meta: dict[str, Any] | None = None
+    selected_style_id: str | None = None
     history: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -118,6 +123,10 @@ class EditorLoopOutcome:
     slides: list[dict[str, Any]]
     html_content: str | None = None
     normalized_presentation: dict[str, Any] | None = None
+    slidev_markdown: str | None = None
+    slidev_meta: dict[str, Any] | None = None
+    slidev_preview_url: str | None = None
+    selected_style_id: str | None = None
 
     @property
     def modification_count(self) -> int:
@@ -136,6 +145,10 @@ class _EditorRuntimeState:
     current_slide_index: int
     slides: list[dict[str, Any]]
     html_content: str | None
+    slidev_markdown: str | None = None
+    slidev_meta: dict[str, Any] | None = None
+    slidev_preview_url: str | None = None
+    selected_style_id: str | None = None
     submitted_html: str | None = None
     normalized_presentation: dict[str, Any] | None = None
     modifications: list[SlideModification] = field(default_factory=list)
@@ -255,6 +268,48 @@ def _html_slide_summaries(html: str) -> list[dict[str, Any]]:
     return slides
 
 
+def _derive_slidev_meta_from_slides(
+    slides: list[dict[str, Any]],
+    *,
+    title: str,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "slides": [
+            {
+                "index": index,
+                "slide_id": str(slide.get("slideId") or f"slide-{index + 1}"),
+                "title": _extract_title(slide) or f"第 {index + 1} 页",
+                "role": str(
+                    ((slide.get("contentData") or {}) if isinstance(slide, dict) else {}).get("role")
+                    or "narrative"
+                ),
+            }
+            for index, slide in enumerate(slides)
+            if isinstance(slide, dict)
+        ],
+    }
+
+
+def _slidev_outline_items(slide_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    slides = slide_meta.get("slides") if isinstance(slide_meta, dict) else None
+    if not isinstance(slides, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for index, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            continue
+        items.append(
+            {
+                "slide_number": index,
+                "title": str(slide.get("title") or f"第 {index} 页"),
+                "suggested_slide_role": str(slide.get("role") or "narrative"),
+                "objective": "",
+            }
+        )
+    return items
+
+
 def _tool_call_summary(tool_name: str, args: dict[str, Any]) -> str:
     if tool_name == "todo":
         return "整理本轮执行步骤"
@@ -300,12 +355,18 @@ class EditorLoopService:
         self._model_client_factory = self._create_model_client
 
     async def run(self, request: EditorLoopRequest) -> EditorLoopOutcome:
+        if request.output_mode == "slidev":
+            return await self._run_slidev(request)
+
         workspace_bundle = self._prepare_workspace(request)
         runtime = _EditorRuntimeState(
             request=request,
             current_slide_index=request.current_slide_index,
             slides=json.loads(json.dumps(request.slides, ensure_ascii=False)),
             html_content=request.html_content,
+            slidev_markdown=request.slidev_markdown,
+            slidev_meta=dict(request.slidev_meta) if isinstance(request.slidev_meta, dict) else None,
+            selected_style_id=request.selected_style_id,
         )
         self._write_debug_artifacts(workspace_bundle["artifacts_dir"], request, runtime)
 
@@ -351,6 +412,10 @@ class EditorLoopService:
             slides=runtime.slides,
             html_content=runtime.submitted_html,
             normalized_presentation=runtime.normalized_presentation,
+            slidev_markdown=runtime.slidev_markdown,
+            slidev_meta=runtime.slidev_meta,
+            slidev_preview_url=runtime.slidev_preview_url,
+            selected_style_id=runtime.selected_style_id,
         )
 
     def _prepare_workspace(self, request: EditorLoopRequest) -> dict[str, Any]:
@@ -365,6 +430,9 @@ class EditorLoopService:
             "output_mode": request.output_mode,
             "slides": request.slides,
             "html_content": request.html_content or "",
+            "slidev_markdown": request.slidev_markdown or "",
+            "slidev_meta": request.slidev_meta or {},
+            "selected_style_id": request.selected_style_id or "",
         }
         base_signature = hashlib.sha256(_safe_json_dumps(base_payload).encode("utf-8")).hexdigest()
         snapshot_path = state_dir / "agent-session.json"
@@ -384,6 +452,128 @@ class EditorLoopService:
             "snapshot": snapshot,
             "base_signature": base_signature,
         }
+
+    async def _run_slidev(self, request: EditorLoopRequest) -> EditorLoopOutcome:
+        workspace_bundle = self._prepare_workspace(request)
+        slidev_meta = (
+            dict(request.slidev_meta)
+            if isinstance(request.slidev_meta, dict)
+            else _derive_slidev_meta_from_slides(request.slides, title=request.presentation_title)
+        )
+        runtime = _EditorRuntimeState(
+            request=request,
+            current_slide_index=request.current_slide_index,
+            slides=json.loads(json.dumps(request.slides, ensure_ascii=False)),
+            html_content=request.html_content,
+            slidev_markdown=request.slidev_markdown,
+            slidev_meta=slidev_meta,
+            selected_style_id=request.selected_style_id,
+        )
+        self._write_debug_artifacts(workspace_bundle["artifacts_dir"], request, runtime)
+
+        events: list[dict[str, Any]] = [{"type": "assistant_status", "assistant_status": "thinking"}]
+        assistant_reply = ""
+        error: str | None = None
+        stop_reason = "completed"
+
+        try:
+            result = await edit_slidev_deck(
+                message=request.message,
+                action_hint=request.action_hint,
+                markdown=request.slidev_markdown or "",
+                current_slide_index=request.current_slide_index,
+                slide_meta=slidev_meta,
+                selected_style_id=request.selected_style_id,
+                history=request.history,
+            )
+            assistant_reply = result.assistant_reply.strip()
+            if result.should_update and result.markdown.strip():
+                events.extend(
+                    [
+                        {"type": "assistant_status", "assistant_status": "applying_change"},
+                        {
+                            "type": "tool_call",
+                            "tool_name": "edit_slidev_deck",
+                            "call_id": "slidev-edit",
+                            "summary": "改写整份 Slidev deck",
+                        },
+                    ]
+                )
+                preview = await create_slidev_preview(
+                    markdown=result.markdown,
+                    fallback_title=request.presentation_title,
+                    selected_style_id=result.selected_style_id or request.selected_style_id,
+                    topic=request.presentation_title,
+                    outline_items=_slidev_outline_items(slidev_meta),
+                    expected_pages=max(1, len((slidev_meta or {}).get("slides") or request.slides)),
+                    preview_id=f"spv-{request.session_id or 'anon'}-{abs(hash(result.markdown)) % 10**10}",
+                )
+                runtime.slidev_markdown = preview["markdown"]
+                runtime.slidev_meta = preview["meta"]
+                runtime.slidev_preview_url = f"/api/v1/slidev-previews/{preview['preview_id']}"
+                runtime.selected_style_id = preview["selected_style_id"]
+                runtime.normalized_presentation = preview["presentation"]
+                runtime.slides = json.loads(
+                    json.dumps(preview["presentation"].get("slides") or [], ensure_ascii=False)
+                )
+                runtime.modifications.append(
+                    SlideModification(
+                        slide_index=max(0, request.current_slide_index),
+                        action="update_slidev_deck",
+                        data={"selected_style_id": runtime.selected_style_id},
+                    )
+                )
+                events.extend(
+                    [
+                        {
+                            "type": "tool_result",
+                            "tool_name": "edit_slidev_deck",
+                            "call_id": "slidev-edit",
+                            "ok": True,
+                            "summary": "已完成 Slidev deck 改稿",
+                        },
+                        {
+                            "type": "tool_call",
+                            "tool_name": "build_slidev_preview",
+                            "call_id": "slidev-build",
+                            "summary": "构建 Slidev 预览",
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_name": "build_slidev_preview",
+                            "call_id": "slidev-build",
+                            "ok": True,
+                            "summary": "已生成可预览的 Slidev deck",
+                        },
+                    ]
+                )
+            if assistant_reply:
+                events.append({"type": "assistant_status", "assistant_status": "ready"})
+        except Exception as exc:
+            error = str(exc)
+            stop_reason = "error"
+            events.append({"type": "assistant_status", "assistant_status": "error"})
+            raise
+        finally:
+            self._write_result_artifact(
+                workspace_bundle["artifacts_dir"],
+                assistant_reply=assistant_reply,
+                runtime=runtime,
+                stop_reason=stop_reason,
+                error=error,
+            )
+
+        return EditorLoopOutcome(
+            assistant_reply=assistant_reply,
+            events=events,
+            modifications=list(runtime.modifications),
+            slides=runtime.slides,
+            normalized_presentation=runtime.normalized_presentation,
+            slidev_markdown=runtime.slidev_markdown,
+            slidev_meta=runtime.slidev_meta,
+            slidev_preview_url=runtime.slidev_preview_url,
+            selected_style_id=runtime.selected_style_id,
+        )
 
     def _build_tool_registry(self, *, runtime: _EditorRuntimeState) -> ToolRegistry:
         registry = ToolRegistry()
@@ -617,6 +807,8 @@ class EditorLoopService:
         mode_line = (
             "当前工作模式是 HTML deck 全稿改写，必须在准备好后使用 submit_html_revision 提交完整 HTML。"
             if request.output_mode == "html"
+            else "当前工作模式是 Slidev deck 全稿改写，必须直接修改完整 markdown deck，并保持 deck 可被 slidev build 编译。"
+            if request.output_mode == "slidev"
             else "当前工作模式是结构化 slide 改稿，优先直接修改当前页对应的结构化字段。"
         )
         return (
@@ -656,6 +848,7 @@ class EditorLoopService:
             f"当前页内容摘要: {current_summary}\n"
             f"整份演示概览: {_safe_json_dumps(deck_summary)}\n"
             f"最近对话: {_safe_json_dumps(history)}\n\n"
+            f"当前 Slidev deck 是否存在: {'yes' if request.slidev_markdown else 'no'}\n\n"
             f"用户消息:\n{request.message.strip()}\n\n"
             "请结合工具决定下一步，并在必要时完成真实改稿。"
         )
@@ -716,6 +909,7 @@ class EditorLoopService:
             "output_mode": request.output_mode,
             "current_slide_index": request.current_slide_index,
             "history": request.history,
+            "selected_style_id": request.selected_style_id,
         }
         (artifacts_dir / "request.json").write_text(
             json.dumps(request_payload, ensure_ascii=False, indent=2),
@@ -727,6 +921,8 @@ class EditorLoopService:
                     "title": request.presentation_title,
                     "slides": runtime.slides,
                     "html_content": request.html_content or "",
+                    "slidev_markdown": request.slidev_markdown or "",
+                    "slidev_meta": request.slidev_meta or {},
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -750,6 +946,10 @@ class EditorLoopService:
                     "modifications": [item.model_dump(mode="json") for item in runtime.modifications],
                     "submitted_html": runtime.submitted_html or "",
                     "normalized_presentation": runtime.normalized_presentation,
+                    "slidev_markdown": runtime.slidev_markdown or "",
+                    "slidev_meta": runtime.slidev_meta or {},
+                    "slidev_preview_url": runtime.slidev_preview_url,
+                    "selected_style_id": runtime.selected_style_id,
                     "stop_reason": stop_reason,
                     "error": error,
                 },
@@ -784,4 +984,3 @@ class EditorLoopService:
 
 
 editor_loop_service = EditorLoopService()
-

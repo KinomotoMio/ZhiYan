@@ -8,6 +8,8 @@ import type {
   PlanningState,
   PresentationOutputMode,
   SessionSummary,
+  SlidevBuildArtifactMeta,
+  SlidevDeckArtifactMeta,
   WorkspaceId,
 } from "@/lib/api";
 import type { LayoutRole } from "@/lib/layout-role";
@@ -78,6 +80,11 @@ interface AppState {
   presentationOutputMode: PresentationOutputMode;
   presentationHtml: string | null;
   presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
+  presentationSlidevMarkdown: string | null;
+  presentationSlidevMeta: Record<string, unknown> | null;
+  presentationSlidevDeckArtifact: SlidevDeckArtifactMeta | null;
+  presentationSlidevBuildArtifact: SlidevBuildArtifactMeta | null;
+  presentationSlidevBuildUrl: string | null;
   currentSlideIndex: number;
   isGenerating: boolean;
   jobId: string | null;
@@ -122,6 +129,11 @@ interface AppState {
     presentationOutputMode?: PresentationOutputMode;
     presentationHtml?: string | null;
     presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
+    presentationSlidevMarkdown?: string | null;
+    presentationSlidevMeta?: Record<string, unknown> | null;
+    presentationSlidevDeckArtifact?: SlidevDeckArtifactMeta | null;
+    presentationSlidevBuildArtifact?: SlidevBuildArtifactMeta | null;
+    presentationSlidevBuildUrl?: string | null;
     planningState?: PlanningState | null;
   }) => void;
 
@@ -132,6 +144,14 @@ interface AppState {
     html: string | null,
     artifact?: HtmlDeckArtifactMeta | null
   ) => void;
+  setPresentationSlidevState: (payload: {
+    outputMode: PresentationOutputMode;
+    markdown: string | null;
+    meta?: Record<string, unknown> | null;
+    deckArtifact?: SlidevDeckArtifactMeta | null;
+    buildArtifact?: SlidevBuildArtifactMeta | null;
+    buildUrl?: string | null;
+  }) => void;
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
@@ -203,6 +223,11 @@ export const useAppStore = create<AppState>()(
       presentationOutputMode: "structured",
       presentationHtml: null,
       presentationHtmlArtifact: null,
+      presentationSlidevMarkdown: null,
+      presentationSlidevMeta: null,
+      presentationSlidevDeckArtifact: null,
+      presentationSlidevBuildArtifact: null,
+      presentationSlidevBuildUrl: null,
       currentSlideIndex: 0,
       isGenerating: false,
       jobId: null,
@@ -276,6 +301,11 @@ export const useAppStore = create<AppState>()(
         presentationOutputMode,
         presentationHtml,
         presentationHtmlArtifact,
+        presentationSlidevMarkdown,
+        presentationSlidevMeta,
+        presentationSlidevDeckArtifact,
+        presentationSlidevBuildArtifact,
+        presentationSlidevBuildUrl,
         planningState,
       }) =>
         set((state) => ({
@@ -291,6 +321,11 @@ export const useAppStore = create<AppState>()(
           presentationOutputMode: presentationOutputMode ?? "structured",
           presentationHtml: presentationHtml ?? null,
           presentationHtmlArtifact: presentationHtmlArtifact ?? null,
+          presentationSlidevMarkdown: presentationSlidevMarkdown ?? null,
+          presentationSlidevMeta: presentationSlidevMeta ?? null,
+          presentationSlidevDeckArtifact: presentationSlidevDeckArtifact ?? null,
+          presentationSlidevBuildArtifact: presentationSlidevBuildArtifact ?? null,
+          presentationSlidevBuildUrl: presentationSlidevBuildUrl ?? null,
           planningState: planningState ?? null,
           draftOutline: Array.isArray(planningState?.outline?.items)
             ? planningState.outline.items
@@ -347,6 +382,29 @@ export const useAppStore = create<AppState>()(
           presentationOutputMode: outputMode,
           presentationHtml: html,
           presentationHtmlArtifact: artifact ?? null,
+          presentationSlidevMarkdown: outputMode === "slidev" ? get().presentationSlidevMarkdown : null,
+          presentationSlidevMeta: outputMode === "slidev" ? get().presentationSlidevMeta : null,
+          presentationSlidevDeckArtifact: outputMode === "slidev" ? get().presentationSlidevDeckArtifact : null,
+          presentationSlidevBuildArtifact: outputMode === "slidev" ? get().presentationSlidevBuildArtifact : null,
+          presentationSlidevBuildUrl: outputMode === "slidev" ? get().presentationSlidevBuildUrl : null,
+        }),
+      setPresentationSlidevState: ({
+        outputMode,
+        markdown,
+        meta,
+        deckArtifact,
+        buildArtifact,
+        buildUrl,
+      }) =>
+        set({
+          presentationOutputMode: outputMode,
+          presentationHtml: outputMode === "slidev" ? get().presentationHtml : null,
+          presentationHtmlArtifact: outputMode === "slidev" ? get().presentationHtmlArtifact : null,
+          presentationSlidevMarkdown: markdown,
+          presentationSlidevMeta: meta ?? null,
+          presentationSlidevDeckArtifact: deckArtifact ?? null,
+          presentationSlidevBuildArtifact: buildArtifact ?? null,
+          presentationSlidevBuildUrl: buildUrl ?? null,
         }),
       updateSlides: (slides) =>
         set((state) => {

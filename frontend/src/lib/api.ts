@@ -154,7 +154,7 @@ export interface SnapshotMeta {
   created_at: string;
 }
 
-export type PresentationOutputMode = "structured" | "html";
+export type PresentationOutputMode = "structured" | "html" | "slidev";
 
 export interface HtmlDeckArtifactMeta {
   version: number;
@@ -162,6 +162,24 @@ export interface HtmlDeckArtifactMeta {
   updated_at: string;
   storage_path?: string;
   meta_storage_path?: string;
+}
+
+export interface SlidevDeckArtifactMeta {
+  version: number;
+  slide_count: number;
+  updated_at: string;
+  storage_path?: string;
+  meta_storage_path?: string;
+  selected_style_id?: string | null;
+}
+
+export interface SlidevBuildArtifactMeta {
+  version: number;
+  slide_count: number;
+  updated_at: string;
+  build_root?: string;
+  entry_storage_path?: string;
+  entry_relative_path?: string;
 }
 
 export interface LatestPresentationRecord {
@@ -174,6 +192,8 @@ export interface LatestPresentationRecord {
   output_mode?: PresentationOutputMode;
   artifacts?: {
     html_deck?: HtmlDeckArtifactMeta;
+    slidev_deck?: SlidevDeckArtifactMeta;
+    slidev_build?: SlidevBuildArtifactMeta;
     [key: string]: unknown;
   };
 }
@@ -369,6 +389,36 @@ export async function getLatestSessionPresentationHtmlMeta(
   return res.json();
 }
 
+export interface SlidevDeckResponse {
+  markdown: string;
+  meta: Record<string, unknown>;
+  build_url: string;
+  assets?: {
+    slidev_deck?: SlidevDeckArtifactMeta;
+    slidev_build?: SlidevBuildArtifactMeta;
+    [key: string]: unknown;
+  };
+}
+
+export async function getLatestSessionPresentationSlidev(
+  sessionId: string
+): Promise<SlidevDeckResponse | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/slidev`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 Slidev 演示稿失败: ${res.statusText}`);
+  const payload = (await res.json()) as SlidevDeckResponse;
+  return {
+    ...payload,
+    build_url: payload.build_url.startsWith("http") ? payload.build_url : `${API_BASE}${payload.build_url}`,
+  };
+}
+
+export function buildLatestSessionPresentationSlidevUrl(sessionId: string): string {
+  return `${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/slidev/build`;
+}
+
 export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/share-link`, {
     method: "POST",
@@ -464,6 +514,35 @@ export async function saveLatestSessionHtmlPresentation(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `保存 HTML 演示稿失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function saveLatestSessionSlidevPresentation(
+  sessionId: string,
+  presentation: Presentation,
+  markdown: string,
+  selectedStyleId?: string | null,
+  meta?: Record<string, unknown>,
+  source: "chat" | "editor" = "chat"
+): Promise<SnapshotMeta> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
+    method: "PUT",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      presentation,
+      source,
+      output_mode: "slidev",
+      slidev_deck: {
+        markdown,
+        selected_style_id: selectedStyleId ?? null,
+        meta: meta ?? null,
+      },
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `保存 Slidev 演示稿失败: ${res.statusText}`);
   }
   return res.json();
 }
@@ -991,6 +1070,15 @@ interface HtmlUpdateEvent {
   modifications?: Record<string, unknown>[];
 }
 
+interface SlidevUpdateEvent {
+  markdown: string;
+  meta: Record<string, unknown>;
+  presentation: Presentation;
+  selected_style_id?: string | null;
+  preview_url: string;
+  modifications?: Record<string, unknown>[];
+}
+
 export interface ChatAssistantStatusEvent {
   assistant_status:
     | "thinking"
@@ -1036,6 +1124,7 @@ export async function chatStream(
   onSlideUpdate?: (update: SlideUpdateEvent) => void,
   onNoOp?: (event: ChatNoOpEvent) => void,
   onHtmlUpdate?: (update: HtmlUpdateEvent) => void,
+  onSlidevUpdate?: (update: SlidevUpdateEvent) => void,
   onAssistantStatus?: (event: ChatAssistantStatusEvent) => void,
   onToolCall?: (event: ChatToolCallEvent) => void,
   onToolResult?: (event: ChatToolResultEvent) => void
@@ -1102,6 +1191,18 @@ export async function chatStream(
               onHtmlUpdate({
                 html_content: parsed.html_content,
                 presentation: parsed.presentation,
+                modifications: parsed.modifications,
+              });
+            } else if (parsed.type === "slidev_update" && onSlidevUpdate) {
+              onSlidevUpdate({
+                markdown: parsed.markdown,
+                meta: parsed.meta,
+                presentation: parsed.presentation,
+                selected_style_id: parsed.selected_style_id,
+                preview_url:
+                  typeof parsed.preview_url === "string" && parsed.preview_url.startsWith("http")
+                    ? parsed.preview_url
+                    : `${API_BASE}${parsed.preview_url}`,
                 modifications: parsed.modifications,
               });
             } else if (parsed.type === "no_op" && onNoOp) {
