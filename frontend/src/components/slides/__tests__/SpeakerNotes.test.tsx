@@ -17,6 +17,7 @@ test("speaker notes panel renders placeholder and keeps read-aloud disabled when
   assert.match(html, /Speaker Notes/);
   assert.match(html, /演讲者注解/);
   assert.match(html, /placeholder="输入当前页的演讲提示/);
+  assert.match(html, />保存</);
   assert.match(html, />生成</);
   assert.match(html, /title="朗读注解"/);
   assert.match(html, /<button type="button" disabled=""/);
@@ -38,6 +39,7 @@ test("speaker notes panel renders note content and status copy", () => {
   assert.match(html, />demo note</);
   assert.match(html, /正在保存/);
   assert.match(html, /生成中/);
+  assert.match(html, /保存中/);
   assert.match(html, /9 字/);
   assert.doesNotMatch(html, /title="朗读注解" disabled=""/);
 });
