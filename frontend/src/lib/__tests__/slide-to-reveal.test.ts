@@ -148,6 +148,75 @@ test("presentationToRevealHTML splits outline-slide-rail into two columns after 
   assert.match(html, /05/);
 });
 
+test("presentationToRevealHTML keeps bullet-with-icons content mapping coverage", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-icons",
+        layoutType: "bullet-with-icons",
+        layoutId: "bullet-with-icons",
+        contentData: {
+          title: "Capabilities",
+          items: [
+            {
+              icon: { query: "zap" },
+              title: "Automation",
+              description: "Automates repeated work",
+            },
+            {
+              icon: { query: "shield" },
+              title: "Governance",
+              description: "Keeps workflows compliant",
+            },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Capabilities/);
+  assert.match(html, /Automation/);
+  assert.match(html, /Automates repeated work/);
+  assert.match(html, /Governance/);
+  assert.match(html, /Keeps workflows compliant/);
+  assert.match(html, />\s*01\s*<\/div>/);
+  assert.match(html, />\s*02\s*<\/div>/);
+});
+
+test("presentationToRevealHTML keeps bullet-with-icons-cards content cards intact", () => {
+  const html = presentationToRevealHTML({
+    ...basePresentation,
+    slides: [
+      {
+        slideId: "slide-icons-cards",
+        layoutType: "bullet-with-icons-cards",
+        layoutId: "bullet-with-icons-cards",
+        contentData: {
+          title: "Solution Modules",
+          items: [
+            { icon: { query: "shield" }, title: "Layered Defense", description: "Protect endpoints and identities." },
+            { icon: { query: "lock" }, title: "Identity Verification", description: "Require stronger sign-in checks." },
+            { icon: { query: "database" }, title: "Data Protection", description: "Reduce exposure across systems." },
+            { icon: { query: "triangle-alert" }, title: "Incident Response", description: "Recover quickly from attacks." },
+          ],
+        },
+        components: [],
+      },
+    ],
+  });
+
+  assert.match(html, /Solution Modules/);
+  assert.match(html, /Layered Defense/);
+  assert.match(html, /Protect endpoints and identities\./);
+  assert.match(html, /Identity Verification/);
+  assert.match(html, /Incident Response/);
+  assert.equal((html.match(/<article style=/g) ?? []).length, 4);
+  assert.match(html, />\s*01\s*<\/div>/);
+  assert.match(html, />\s*04\s*<\/div>/);
+});
+
 
 test("presentationToRevealHTML preserves icon-bearing compare columns and section decorations", () => {
   const html = presentationToRevealHTML({
