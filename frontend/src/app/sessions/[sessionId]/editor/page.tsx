@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import { getJob, getSessionDetail, updateSession } from "@/lib/api";
 import { DEFAULT_LOADING_TITLE, resolveGenerationRequestTitle } from "@/lib/loading-title";
+import { getCreateSessionPath } from "@/lib/routes";
 import {
   buildShellSlides,
   mergeGeneratedSlide,
@@ -81,6 +82,10 @@ export default function SessionEditorPage() {
     return typeof value === "string" ? value : "";
   }, [params]);
   const requestedSlide = searchParams.get("slide");
+  const createSessionPath = useMemo(
+    () => getCreateSessionPath(sessionId || null),
+    [sessionId]
+  );
 
   const [state, setState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("会话不存在或无权限访问。");
@@ -284,10 +289,10 @@ export default function SessionEditorPage() {
         <div className="text-center space-y-4">
           <p className="text-muted-foreground">会话参数缺失。</p>
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push(createSessionPath)}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回主页
+            返回创建页
           </button>
         </div>
       </div>
@@ -311,10 +316,10 @@ export default function SessionEditorPage() {
         <div className="text-center space-y-4">
           <p className="text-muted-foreground">{errorMessage}</p>
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push(createSessionPath)}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回主页
+            返回创建页
           </button>
         </div>
       </div>
@@ -327,10 +332,10 @@ export default function SessionEditorPage() {
         <div className="text-center space-y-4">
           <p className="text-muted-foreground">该会话暂无生成结果</p>
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push(createSessionPath)}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
           >
-            返回主页
+            返回创建页
           </button>
         </div>
       </div>
@@ -346,8 +351,8 @@ export default function SessionEditorPage() {
 
   return (
     <EditorWorkspace
-      returnHref="/"
-      returnLabel="返回主页"
+      returnHref={createSessionPath}
+      returnLabel="返回创建页"
       sessionTitle={displaySessionTitle}
       onRenameSessionTitle={handleRenameSessionTitle}
     />
