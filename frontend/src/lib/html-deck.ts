@@ -29,42 +29,48 @@ function normalizeSpeakerAudio(value: unknown): SpeakerAudio | undefined {
   };
 }
 
+function normalizeHtmlDeckSlide(raw: unknown, index: number): HtmlDeckSlideMeta | null {
+  const slide = asRecord(raw);
+  if (!slide) return null;
+
+  const slideId =
+    typeof slide.slideId === "string"
+      ? slide.slideId.trim()
+      : typeof slide.slide_id === "string"
+        ? slide.slide_id.trim()
+        : "";
+  if (!slideId) return null;
+
+  const title =
+    typeof slide.title === "string" && slide.title.trim()
+      ? slide.title.trim()
+      : `第 ${index + 1} 页`;
+  const rawIndex =
+    typeof slide.index === "number" && Number.isFinite(slide.index) ? slide.index : index;
+  const speakerNotes =
+    typeof slide.speakerNotes === "string"
+      ? slide.speakerNotes
+      : typeof slide.speaker_notes === "string"
+        ? slide.speaker_notes
+        : "";
+
+  return {
+    index: Math.max(0, Math.trunc(rawIndex)),
+    slideId,
+    title,
+    speakerNotes: speakerNotes || undefined,
+    speakerAudio: normalizeSpeakerAudio(slide.speakerAudio ?? slide.speaker_audio),
+  };
+}
+
 export function normalizeHtmlDeckMeta(raw: unknown): HtmlDeckMeta | null {
   const record = asRecord(raw);
   if (!record) return null;
 
   const rawSlides = Array.isArray(record.slides) ? record.slides : [];
-  const slides = rawSlides.reduce<HtmlDeckSlideMeta[]>((acc, item, index) => {
-      const slide = asRecord(item);
-      if (!slide) return acc;
-      const slideId =
-        typeof slide.slideId === "string"
-          ? slide.slideId.trim()
-          : typeof slide.slide_id === "string"
-            ? slide.slide_id.trim()
-            : "";
-      if (!slideId) return acc;
-      const title =
-        typeof slide.title === "string" && slide.title.trim()
-          ? slide.title.trim()
-          : `第 ${index + 1} 页`;
-      const rawIndex =
-        typeof slide.index === "number" && Number.isFinite(slide.index) ? slide.index : index;
-      const speakerNotes =
-        typeof slide.speakerNotes === "string"
-          ? slide.speakerNotes
-          : typeof slide.speaker_notes === "string"
-            ? slide.speaker_notes
-            : "";
-      acc.push({
-        index: Math.max(0, Math.trunc(rawIndex)),
-        slideId,
-        title,
-        speakerNotes: speakerNotes || undefined,
-        speakerAudio: normalizeSpeakerAudio(slide.speakerAudio ?? slide.speaker_audio),
-      });
-      return acc;
-    }, []);
+  const slides = rawSlides
+    .map((item, index) => normalizeHtmlDeckSlide(item, index))
+    .filter((slide): slide is HtmlDeckSlideMeta => slide !== null);
 
   const title =
     typeof record.title === "string" && record.title.trim() ? record.title.trim() : "新演示文稿";
