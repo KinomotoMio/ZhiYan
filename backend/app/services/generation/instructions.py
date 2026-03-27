@@ -7,11 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.core.config import settings
 from app.services.skill_runtime.registry import SkillRegistry
 
 
-INSTRUCTIONS_ROOT = settings.project_root / "harness" / "generation"
+INSTRUCTIONS_ROOT = Path(__file__).resolve().parent / "instructions_assets"
 
 
 @dataclass(frozen=True)
@@ -63,7 +62,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def load_generation_harness_config(root: Path | None = None) -> GenerationInstructionsConfig:
+def load_generation_instructions_config(root: Path | None = None) -> GenerationInstructionsConfig:
     root = root or INSTRUCTIONS_ROOT
     raw = _read_json(root / "config.json")
     planner = raw.get("planner") or {}
@@ -136,7 +135,7 @@ def compose_outline_instructions(
     config: GenerationInstructionsConfig | None = None,
     root: Path | None = None,
 ) -> str:
-    config = config or load_generation_harness_config(root=root)
+    config = config or load_generation_instructions_config(root=root)
     template = load_prompt_template("outline_synthesizer", root=root)
     if not template:
         return ""
@@ -157,7 +156,7 @@ def compose_planner_instructions(
     config: GenerationInstructionsConfig | None = None,
     root: Path | None = None,
 ) -> str:
-    config = config or load_generation_harness_config(root=root)
+    config = config or load_generation_instructions_config(root=root)
     template = load_prompt_template("loop_planner", root=root)
     if not template:
         return ""

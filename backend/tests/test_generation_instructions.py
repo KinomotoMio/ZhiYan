@@ -3,12 +3,12 @@ from pathlib import Path
 from app.services.generation.instructions import (
     compose_outline_instructions,
     compose_planner_instructions,
-    load_generation_harness_config,
+    load_generation_instructions_config,
 )
 
 
-def test_load_generation_harness_config_reads_defaults():
-    cfg = load_generation_harness_config()
+def test_load_generation_instructions_config_reads_defaults():
+    cfg = load_generation_instructions_config()
     assert cfg.planner.mode == "deterministic"
     assert cfg.outline.agenda_page_index == 2
     assert "ppt-health-check" in cfg.skills.enabled

@@ -1,8 +1,8 @@
-# Harness Engineering Principles
+# Generation Instructions Principles
 
 ## 1. 先隔离实验场，再扩大影响面
 
-所以我们先做 `slidev-mvp` 这条 dev-only 路径，而不是直接替换生产导出链路。
+所以我们先让 instructions 成为可维护的控制面，而不是把所有策略都硬编码在 Python 里。
 
 ## 2. 工具契约比实现细节更重要
 
@@ -25,8 +25,8 @@ agentic loop 不是“随便跑”，而是：
 如果只是想改“第几页更适合 agenda”，不应该要求开发者改 Python。
 
 这类策略应优先落到：
-- `harness/generation/config.json`
-- `harness/generation/agents/*.md`
+- `backend/app/services/generation/instructions_assets/config.json`
+- `backend/app/services/generation/instructions_assets/agents/*.md`
 
 ## 5. 团队可维护性是最终验收标准
 

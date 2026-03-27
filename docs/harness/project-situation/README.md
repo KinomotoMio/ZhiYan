@@ -99,8 +99,7 @@ When the team needs to answer "what is actually in Slidev mainline now?", use th
 
 1. `main` branch code and tests
 2. This project-situation document
-3. `/Users/qizhi_dong/Projects/Zhiyan-mainline/design/slidev-mvp/README.md`
-4. Merged PRs `#223` to `#226`
+3. Merged PRs `#223` to `#226`
 
 The following are not source-of-truth inputs for current acceptance:
 
@@ -110,15 +109,7 @@ The following are not source-of-truth inputs for current acceptance:
 
 ## Acceptance Baseline
 
-The canonical maintenance and acceptance instructions live in `/Users/qizhi_dong/Projects/Zhiyan-mainline/design/slidev-mvp/README.md`.
-
-That document defines:
-
-- one short-deck smoke command
-- one long-deck smoke command
-- one Slidev build verification path
-- success criteria for artifact/review/validate/build
-- failure attribution buckets for provider noise vs mainline regression vs local environment problems
+The old local `design/slidev-mvp` sandbox has been retired. Treat the merged code, tests, and this document as the maintained baseline instead of any external design sandbox instructions.
 
 ## Mainline vs Experimental Boundary
 
