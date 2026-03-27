@@ -2,6 +2,15 @@ interface EditorPathOptions {
   slide?: number;
 }
 
+export function getCreateSessionPath(sessionId?: string | null): string {
+  if (!sessionId) {
+    return "/create";
+  }
+
+  const params = new URLSearchParams({ session: sessionId });
+  return `/create?${params.toString()}`;
+}
+
 export function resolvePostCreateEditorPath(
   createdSessionId: string | null,
   currentSessionId: string | null,

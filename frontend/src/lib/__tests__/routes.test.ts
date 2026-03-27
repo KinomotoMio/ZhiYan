@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   canResumeGenerationJob,
+  getCreateSessionPath,
   getSessionEditorPath,
   pickCreateLandingSessionId,
   resolvePostCreateEditorPath,
@@ -15,6 +16,15 @@ test("getSessionEditorPath returns canonical session editor route", () => {
 
 test("getSessionEditorPath appends one-based slide query when provided", () => {
   assert.equal(getSessionEditorPath("abc", { slide: 3 }), "/sessions/abc/editor?slide=3");
+});
+
+test("getCreateSessionPath returns bare create route without session", () => {
+  assert.equal(getCreateSessionPath(), "/create");
+  assert.equal(getCreateSessionPath(null), "/create");
+});
+
+test("getCreateSessionPath preserves the target create session", () => {
+  assert.equal(getCreateSessionPath("sess-123"), "/create?session=sess-123");
 });
 
 test("pickCreateLandingSessionId prefers current editable session", () => {
