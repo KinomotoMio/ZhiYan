@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from app.services.generation.agentic.todo import TodoManager, build_todo_nag, build_update_todo_tool
-from app.services.generation.agentic.tools import ToolRegistry, dispatch_tool_calls
-from app.services.generation.agentic.types import ToolCall
+from app.services.generation.agentic_legacy.todo import TodoManager, build_todo_nag, build_update_todo_tool
+from app.services.generation.agentic_legacy.tools import ToolRegistry, dispatch_tool_calls
+from app.services.generation.agentic_legacy.types import ToolCall
 
 
 def test_todo_manager_updates_and_formats_items():

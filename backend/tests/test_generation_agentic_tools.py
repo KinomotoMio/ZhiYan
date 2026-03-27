@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
-from app.services.generation.agentic.tools import (
+from app.services.generation.agentic_legacy.tools import (
     ToolDef,
     ToolExecutionResult,
     ToolRegistry,
     dispatch_tool_calls,
 )
-from app.services.generation.agentic.types import ToolCall
+from app.services.generation.agentic_legacy.types import ToolCall
 
 
 def test_tool_registry_exports_model_tools():

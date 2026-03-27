@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from app.core.config import settings
-from app.services.generation.agentic.skills import build_load_skill_tool, build_run_skill_tool, build_skill_summaries
-from app.services.generation.agentic.tools import ToolRegistry, dispatch_tool_calls
-from app.services.generation.agentic.types import ToolCall
+from app.services.generation.agentic_legacy.skills import build_load_skill_tool, build_run_skill_tool, build_skill_summaries
+from app.services.generation.agentic_legacy.tools import ToolRegistry, dispatch_tool_calls
+from app.services.generation.agentic_legacy.types import ToolCall
 from app.services.skill_runtime.registry import SkillRegistry
 
 

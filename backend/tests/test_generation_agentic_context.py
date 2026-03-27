@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.models.slide import Slide
-from app.services.generation.agentic.context import attach_state_summary, compact_context, summarize_state
-from app.services.generation.agentic.types import AssistantMessage, ToolCall, ToolResult, UserMessage
+from app.services.generation.agentic_legacy.context import attach_state_summary, compact_context, summarize_state
+from app.services.generation.agentic_legacy.types import AssistantMessage, ToolCall, ToolResult, UserMessage
 from app.services.pipeline.graph import PipelineState
 
 

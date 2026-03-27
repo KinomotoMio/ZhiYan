@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError, Unexpecte
 
 from app.core.config import settings
 from app.main import app
-from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
+from app.services.generation.agentic_legacy.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
 from app.services.generation.slidev_mvp import (
     SlidevMvpArtifacts,
     SlidevMvpProviderError,
@@ -2618,7 +2618,7 @@ def test_slidev_deck_review_blocks_unfenced_slide_frontmatter(monkeypatch, tmp_p
 
 def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
@@ -2657,7 +2657,7 @@ def test_slidev_mvp_service_requires_quality_review_before_save(monkeypatch, tmp
 
 def test_slidev_mvp_service_allows_save_when_only_warnings_remain(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
@@ -2716,7 +2716,7 @@ def test_slidev_mvp_service_allows_save_when_only_warnings_remain(monkeypatch, t
 
 def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
@@ -2788,7 +2788,7 @@ def test_slidev_mvp_service_persists_normalized_first_slide(monkeypatch, tmp_pat
 
 def test_slidev_mvp_service_persists_normalized_double_separator_frontmatter(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
@@ -2859,7 +2859,7 @@ def test_slidev_mvp_service_persists_normalized_double_separator_frontmatter(mon
 
 def test_slidev_review_tools_pull_context_from_state(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)
@@ -3767,7 +3767,7 @@ def test_slidev_mvp_service_exposes_failed_chunk_reasons_in_long_deck_mode(monke
 
 def test_set_slidev_outline_requires_continuous_unique_numbers(monkeypatch, tmp_path):
     from app.services.generation import slidev_mvp as slidev_mvp_mod
-    from app.services.generation.agentic.todo import TodoManager
+    from app.services.generation.agentic_legacy.todo import TodoManager
     from app.services.pipeline.graph import PipelineState
 
     skill_registry = _copy_slidev_skills(tmp_path, monkeypatch)

@@ -4,9 +4,9 @@ import asyncio
 from dataclasses import dataclass
 
 from app.services.generation.agentic.loop import agentic_loop
-from app.services.generation.agentic.todo import TodoManager
-from app.services.generation.agentic.tools import ToolDispatchResult
-from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
+from app.services.generation.agentic_legacy.todo import TodoManager
+from app.services.generation.agentic_legacy.tools import ToolDispatchResult
+from app.services.generation.agentic_legacy.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall, ToolResult, UserMessage
 from app.services.pipeline.graph import PipelineState
 
 

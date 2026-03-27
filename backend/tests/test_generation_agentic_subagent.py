@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from app.services.generation.agentic.subagent import (
+from app.services.generation.agentic_legacy.subagent import (
     SubagentSpec,
     build_dispatch_subagent_tool,
     filter_registry,
     run_parallel_subagents,
     run_subagent,
 )
-from app.services.generation.agentic.tools import ToolDef, ToolRegistry, dispatch_tool_calls
-from app.services.generation.agentic.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall
+from app.services.generation.agentic_legacy.tools import ToolDef, ToolRegistry, dispatch_tool_calls
+from app.services.generation.agentic_legacy.types import AgenticMessage, AgenticModelClient, AssistantMessage, ToolCall
 
 
 @dataclass

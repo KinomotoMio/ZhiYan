@@ -6,7 +6,7 @@ from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError, Unexpecte
 from pydantic_ai.messages import ModelResponse, TextPart
 
 from app.services.generation.agentic.pydantic_ai_adapter import PydanticAIModelClient
-from app.services.generation.agentic.types import UserMessage
+from app.services.generation.agentic_legacy.types import UserMessage
 
 
 def test_pydantic_ai_adapter_retries_transient_model_http_errors(monkeypatch):
