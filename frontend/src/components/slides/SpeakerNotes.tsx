@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Volume2, Square, Loader2, Sparkles } from "lucide-react";
+import { Volume2, Square, Loader2, Sparkles, Save } from "lucide-react";
 import { toast } from "sonner";
 import { synthesizeSpeech } from "@/lib/api";
 
@@ -13,6 +13,7 @@ interface SpeakerNotesProps {
   isSaving?: boolean;
   isGenerating?: boolean;
   canGenerate?: boolean;
+  canSave?: boolean;
   placeholder?: string;
 }
 
@@ -24,6 +25,7 @@ export default function SpeakerNotes({
   isSaving = false,
   isGenerating = false,
   canGenerate = true,
+  canSave = true,
   placeholder = "输入当前页的演讲提示，帮助演示时更顺畅地衔接内容。",
 }: SpeakerNotesProps) {
   const [playing, setPlaying] = useState(false);
@@ -79,13 +81,29 @@ export default function SpeakerNotes({
   return (
     <div className="flex shrink-0 flex-col border-t border-white/70 bg-white/44">
       <div className="flex items-center justify-between gap-3 px-5 py-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">演讲者注解</h3>
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
             Speaker Notes
           </p>
-          <h3 className="mt-1 text-sm font-semibold text-slate-900">演讲者注解</h3>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              void onSave?.();
+            }}
+            disabled={!canSave || isSaving}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white/88 px-3 text-xs font-medium text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-sm disabled:opacity-50"
+            title="保存当前页演讲者注解"
+          >
+            {isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {isSaving ? "保存中..." : "保存"}
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -125,10 +143,8 @@ export default function SpeakerNotes({
           <textarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            onBlur={() => {
-              void onSave?.();
-            }}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                 event.preventDefault();
                 void onSave?.();
@@ -140,7 +156,7 @@ export default function SpeakerNotes({
         </div>
 
         <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
-          <span>{isSaving ? "正在保存..." : "失焦自动保存，Cmd/Ctrl + Enter 也可保存"}</span>
+          <span>{isSaving ? "正在保存..." : "点击保存，或使用 Cmd/Ctrl + Enter"}</span>
           <span>{hasNotes ? `${value.trim().length} 字` : "当前页还没有演讲者注解"}</span>
         </div>
       </div>

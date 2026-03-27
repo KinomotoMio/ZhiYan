@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -41,6 +41,7 @@ import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
+import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
 
 interface EditorWorkspaceProps {
   returnHref: string;
@@ -131,9 +132,10 @@ export default function EditorWorkspace({
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
   const [acceptingOutline, setAcceptingOutline] = useState(false);
-  const [speakerNotesDraft, setSpeakerNotesDraft] = useState("");
+  const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
   const [generatingSpeakerNotes, setGeneratingSpeakerNotes] = useState(false);
+  const prevPresentationRef = useRef(presentation);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
@@ -375,10 +377,36 @@ export default function EditorWorkspace({
       : currentSlide && groupedIssues.has(currentSlide.slideId)
         ? currentSlide.slideId
         : issueSlideIds[0] ?? null;
+  const speakerNotesDraft = currentSlide
+    ? speakerNotesDrafts[currentSlide.slideId] ?? currentSlide.speakerNotes ?? ""
+    : "";
+  const hasUnsavedSpeakerNotes = currentSlide
+    ? speakerNotesDraft !== (currentSlide.speakerNotes ?? "")
+    : false;
 
   useEffect(() => {
-    setSpeakerNotesDraft(currentSlide?.speakerNotes ?? "");
-  }, [currentSlide?.slideId, currentSlide?.speakerNotes]);
+    if (!presentation) {
+      setSpeakerNotesDrafts({});
+      prevPresentationRef.current = presentation;
+      return;
+    }
+
+    setSpeakerNotesDrafts((current) => {
+      const next = mergeSpeakerNotesDrafts({
+        currentDrafts: current,
+        previousSlides: prevPresentationRef.current?.slides,
+        currentSlides: presentation.slides,
+      });
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      const unchanged =
+        currentKeys.length === nextKeys.length &&
+        nextKeys.every((key) => current[key] === next[key]);
+      return unchanged ? current : next;
+    });
+
+    prevPresentationRef.current = presentation;
+  }, [presentation]);
 
   useEffect(() => {
     const missingSlideIds = issueSlideIds.filter(
@@ -664,11 +692,11 @@ export default function EditorWorkspace({
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
         <aside className="zy-card-glass flex w-64 shrink-0 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-white/70 px-4 py-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">页面目录</h2>
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
                 Slides
               </p>
-              <h2 className="mt-1 text-sm font-semibold text-slate-900">页面目录</h2>
             </div>
             <div className="rounded-full border border-white/80 bg-white/75 px-2 py-1 text-xs font-medium text-slate-600">
               {totalCount} 页
@@ -718,11 +746,11 @@ export default function EditorWorkspace({
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <section className="zy-card-glass flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/70 px-5 py-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-slate-900">当前画布</h2>
+                <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
                   Preview
                 </p>
-                <h2 className="mt-1 text-sm font-semibold text-slate-900">当前画布</h2>
               </div>
               <div className="rounded-full border border-white/80 bg-white/75 px-3 py-1 text-xs font-medium text-slate-600">
                 第 {Math.min(currentSlideIndex + 1, totalCount)} / {totalCount} 页
@@ -746,7 +774,13 @@ export default function EditorWorkspace({
             </div>
             <SpeakerNotes
               value={speakerNotesDraft}
-              onChange={setSpeakerNotesDraft}
+              onChange={(nextValue) => {
+                if (!currentSlide) return;
+                setSpeakerNotesDrafts((current) => ({
+                  ...current,
+                  [currentSlide.slideId]: nextValue,
+                }));
+              }}
               onSave={() => {
                 void handleSaveSpeakerNotes();
               }}
@@ -756,6 +790,7 @@ export default function EditorWorkspace({
               isSaving={savingSpeakerNotes}
               isGenerating={generatingSpeakerNotes}
               canGenerate={Boolean(currentSlide)}
+              canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
             />
           </section>
         </main>
