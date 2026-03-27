@@ -68,10 +68,10 @@ export default function SpeakerNotes({
       await audio.play();
       setPlaying(true);
     } catch (err) {
+      abortRef.current = null;
       if (err instanceof DOMException && err.name === "AbortError") return;
       toast.error("语音合成失败");
     } finally {
-      abortRef.current = null;
       setLoading(false);
     }
   };
