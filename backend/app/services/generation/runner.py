@@ -350,11 +350,14 @@ class GenerationRunner:
                 )
                 if isinstance(saved.get("presentation"), dict):
                     job.presentation = saved["presentation"]
+            await self._store.save_job(job)
+            if job.request.session_id:
+                from app.services.sessions import session_store
+
                 await session_store.update_generation_job_status(
                     job.job_id,
                     JobStatus.COMPLETED.value,
                 )
-            await self._store.save_job(job)
 
             await self._emit_event(
                 job,
