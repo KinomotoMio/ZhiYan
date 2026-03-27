@@ -96,7 +96,7 @@ async def chat(req: ChatRequest, request: Request):
 
     if html_context is None:
         from app.services.agents.chat_agent import ChatDeps, chat_agent as structured_chat_agent
-        from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+        from pydantic_ai.messages import ModelRequest, ModelResponse
         from pydantic_ai.messages import TextPart, UserPromptPart
 
         deps = ChatDeps(
