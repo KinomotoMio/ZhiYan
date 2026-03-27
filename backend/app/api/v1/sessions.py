@@ -577,16 +577,7 @@ async def create_session_generation_job(
     try:
         job, _ = await create_generation_job_record(
             workspace_id=workspace_id,
-            req=CreateJobRequest(
-                topic=req.topic,
-                content=req.content,
-                session_id=sid,
-                source_ids=req.source_ids,
-                template_id=req.template_id,
-                num_pages=req.num_pages,
-                mode=req.mode,
-                approved_outline=req.approved_outline,
-            ),
+            req=req.model_copy(update={"session_id": sid}),
             session_store_override=session_store,
             job_store_override=job_store,
             generation_runner_override=generation_runner,
