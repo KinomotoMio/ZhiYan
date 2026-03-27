@@ -142,7 +142,6 @@ export default function AssetsView() {
               返回创建页
             </button>
             <h1 className="text-lg font-semibold">Workspace 素材库</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Workspace 级素材管理</p>
           </div>
 
           <div className="grid gap-3 rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 md:grid-cols-[2fr_1fr_1fr_1fr_auto]">
@@ -211,9 +210,7 @@ export default function AssetsView() {
               className="h-4 w-4 rounded border-gray-300 accent-primary"
               aria-label="全选删除"
             />
-            <span className="text-sm text-slate-500 dark:text-slate-400">
-              已选 {selectedForDelete.length} 条用于批量删除
-            </span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">已选 {selectedForDelete.length} 条</span>
             <button
               onClick={() => {
                 void handleBulkDelete();
