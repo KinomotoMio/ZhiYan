@@ -33,6 +33,10 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
       const role = item.role === "assistant" ? "assistant" : "user";
       const content = typeof item.content === "string" ? item.content : "";
       const createdAt = typeof item.created_at === "string" ? item.created_at : "";
+      const modelMeta =
+        item.model_meta && typeof item.model_meta === "object"
+          ? (item.model_meta as Record<string, unknown>)
+          : {};
       return {
         id:
           typeof item.id === "string"
@@ -41,6 +45,16 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
         role,
         content,
         timestamp: Date.parse(createdAt) || Date.now(),
+        phase: typeof modelMeta.phase === "string" ? modelMeta.phase : undefined,
+        messageKind:
+          typeof modelMeta.message_kind === "string"
+            ? modelMeta.message_kind
+            : undefined,
+        outlineVersion:
+          typeof modelMeta.outline_version === "number"
+            ? modelMeta.outline_version
+            : null,
+        jobId: typeof modelMeta.job_id === "string" ? modelMeta.job_id : null,
       } as ChatMessage;
     })
     .filter((item) => item.content.trim().length > 0);
@@ -177,6 +191,7 @@ export default function SessionEditorPage() {
           sources: detail.sources,
           chatMessages,
           presentation,
+          planningState: detail.planning_state ?? null,
         });
         if (latestJob?.job_id) {
           updateJobState({

@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  FileOutput,
+  LayoutPanelLeft,
+  Loader2,
+  Play,
+} from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
 import {
@@ -38,6 +46,46 @@ interface EditorWorkspaceProps {
   returnLabel?: string;
   sessionTitle: string;
   onRenameSessionTitle: (nextTitle: string) => Promise<void>;
+}
+
+function getJobStatusBadge(jobStatus: string | null, isGenerating: boolean) {
+  if (isGenerating || jobStatus === "running") {
+    return {
+      label: "生成进行中",
+      className: "border-cyan-200 bg-cyan-50 text-cyan-700",
+    };
+  }
+  if (jobStatus === "waiting_outline_review") {
+    return {
+      label: "等待确认大纲",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  if (jobStatus === "waiting_fix_review") {
+    return {
+      label: "等待处理校验问题",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+    };
+  }
+  if (jobStatus === "completed") {
+    return {
+      label: "已完成",
+      className: "border-slate-200 bg-white/80 text-slate-600",
+    };
+  }
+  if (jobStatus === "failed") {
+    return {
+      label: "生成失败",
+      className: "border-rose-200 bg-rose-50 text-rose-700",
+    };
+  }
+  if (jobStatus === "cancelled") {
+    return {
+      label: "已取消",
+      className: "border-slate-200 bg-slate-100 text-slate-600",
+    };
+  }
+  return null;
 }
 
 export default function EditorWorkspace({
@@ -300,6 +348,7 @@ export default function EditorWorkspace({
   const totalCount = slides.length;
   const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
   const waitingFixReview = jobStatus === "waiting_fix_review";
+  const statusBadge = getJobStatusBadge(jobStatus, isGenerating);
   const groupedIssues = groupIssuesBySlide(issues);
   const issueSlideIds = Array.from(groupedIssues.keys());
   const totalIssueCount = Array.from(groupedIssues.values()).reduce(
@@ -332,27 +381,41 @@ export default function EditorWorkspace({
 
   if (!presentation) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <p className="text-slate-500 dark:text-slate-400">尚未生成演示文稿</p>
+      <div className="zy-bg-page flex min-h-screen items-center justify-center p-6">
+        <div className="zy-card-glass w-full max-w-xl p-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/80 bg-white/75 text-slate-700 shadow-sm">
+            <LayoutPanelLeft className="h-5 w-5" />
+          </div>
+          <div className="mt-5 space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+              还没有可编辑的演示稿
+            </h1>
+            <p className="text-sm leading-6 text-slate-600">
+              当前会话还没有生成出可进入编辑器的结果。你可以继续任务，或者回到创建页继续整理素材与指令。
+            </p>
+          </div>
           {canResume && (
             <button
               onClick={() => {
                 void handleResume();
               }}
               disabled={resuming}
-              className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-60 transition-all duration-200 inline-flex items-center gap-2"
+              className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-4 text-sm font-medium text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
             >
               {resuming && <Loader2 className="h-4 w-4 animate-spin" />}
               {resuming ? "继续中..." : "继续任务"}
             </button>
           )}
-          <button
-            onClick={() => router.push(returnHref)}
-            className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
-          >
-            返回创建
-          </button>
+
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <button
+              onClick={() => router.push(returnHref)}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              返回创建
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -411,154 +474,220 @@ export default function EditorWorkspace({
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      {isGenerating && (
-        <div className="shrink-0">
-          <Progress value={genPct} className="h-1 rounded-none" />
-        </div>
-      )}
-
-      <header className="h-12 border-b border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push(returnHref)}
-            className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
-          >
-            &larr; {returnLabel}
-          </button>
-          <SessionTitleInlineEditor
-            title={sessionTitle}
-            onSave={onRenameSessionTitle}
-            className="min-w-0"
-          />
-          {isGenerating && (
-            <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              生成中 ({loadedCount}/{totalCount})
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <UserMenu compact />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                disabled={exporting || isGenerating}
-                className="flex items-center gap-1.5 px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50 transition-all duration-200"
-              >
-                {exporting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {exporting ? "正在导出..." : "导出"}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleExport("pptx")}>
-                导出 PPTX
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport("pdf")}>
-                导出 PDF
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {canResume && (
+    <div className="zy-bg-page flex h-screen flex-col overflow-hidden">
+      <header className="shrink-0 border-b border-slate-200/70 bg-white/75 backdrop-blur-xl">
+        <div className="flex min-h-12 items-center justify-between gap-4 px-4 py-2">
+          <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => {
-                void handleResume();
-              }}
-              disabled={resuming || isGenerating}
-              className="px-3 py-1 text-sm rounded-lg border border-cyan-300 bg-cyan-50 text-cyan-700 hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 transition-all duration-200 inline-flex items-center gap-1.5"
+              onClick={() => router.push(returnHref)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
             >
-              {resuming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {resuming ? "继续中..." : "继续任务"}
+              <ArrowLeft className="h-4 w-4" />
+              {returnLabel}
             </button>
-          )}
-          {waitingOutlineReview && (
-            <button
-              onClick={() => {
-                void handleAcceptOutline();
-              }}
-              disabled={acceptingOutline || isGenerating}
-              className="px-3 py-1 text-sm rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 transition-all duration-200 inline-flex items-center gap-1.5"
-            >
-              {acceptingOutline && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {acceptingOutline ? "确认中..." : "确认大纲并继续"}
-            </button>
-          )}
-          {isGenerating && (
-            <button
-              onClick={() => {
-                void handleCancelGeneration();
-              }}
-              className="px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 hover:shadow-sm transition-all duration-200"
-            >
-              取消生成
-            </button>
-          )}
-          {totalIssueCount > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                if (activeIssueSlideId) {
-                  openIssuePanelForSlide(activeIssueSlideId);
-                } else {
-                  setIssuePanelOpen(true);
-                }
-              }}
-              className="px-3 py-1 text-sm rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:shadow-sm transition-all duration-200"
-            >
-              校验问题（{totalIssueCount}）
-            </button>
-          )}
-          <button
-            onClick={() => {
-              setRevealSlideIndex(currentSlideIndex);
-              setShowReveal(true);
-            }}
-            disabled={isGenerating}
-            className="px-3 py-1 text-sm bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-lg hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50 transition-all duration-200"
-          >
-            演示
-          </button>
-        </div>
-      </header>
-
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-48 border-r border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900/40 overflow-y-auto p-3 space-y-2 shrink-0">
-          {presentation.slides.map((slide, i) => (
-            <SlideThumbnail
-              key={slide.slideId}
-              slide={slide}
-              index={i}
-              isActive={i === currentSlideIndex}
-              onClick={() => setCurrentSlideIndex(i)}
-              issueMeta={
-                groupedIssues.has(slide.slideId)
-                  ? {
-                      hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
-                      advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
-                      total: groupedIssues.get(slide.slideId)?.total ?? 0,
-                      decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
-                    }
-                  : undefined
-              }
-              onIssueClick={
-                groupedIssues.has(slide.slideId)
-                  ? () => {
-                      setCurrentSlideIndex(i);
-                      openIssuePanelForSlide(slide.slideId);
-                    }
-                  : undefined
-              }
+            <div className="h-4 w-px bg-slate-200" />
+            <SessionTitleInlineEditor
+              title={sessionTitle}
+              onSave={onRenameSessionTitle}
+              className="min-w-0"
             />
-          ))}
-        </aside>
-
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 flex items-center justify-center p-6 bg-slate-50/30 dark:bg-slate-900/30">
-            <div className="w-full max-w-4xl">
-              <SlidePreview slide={currentSlide} className="shadow-xl" />
+            {statusBadge && (
+              <span
+                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${statusBadge.className}`}
+              >
+                {statusBadge.label}
+              </span>
+            )}
+            {isGenerating && totalCount > 0 && (
+              <span className="hidden items-center gap-1.5 text-xs text-slate-500 lg:inline-flex">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                生成中 ({loadedCount}/{totalCount})
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  disabled={exporting || isGenerating}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FileOutput className="h-3.5 w-3.5" />
+                  )}
+                  {exporting ? "正在导出..." : "导出"}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleExport("pptx")}>
+                  导出 PPTX
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("pdf")}>
+                  导出 PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {canResume && (
+              <button
+                onClick={() => {
+                  void handleResume();
+                }}
+                disabled={resuming || isGenerating}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-sm font-medium text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50"
+              >
+                {resuming && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {resuming ? "继续中..." : "继续任务"}
+              </button>
+            )}
+            {waitingOutlineReview && (
+              <button
+                onClick={() => {
+                  void handleAcceptOutline();
+                }}
+                disabled={acceptingOutline || isGenerating}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium text-emerald-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50"
+              >
+                {acceptingOutline ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                {acceptingOutline ? "确认中..." : "确认大纲并继续"}
+              </button>
+            )}
+            {isGenerating && (
+              <button
+                onClick={() => {
+                  void handleCancelGeneration();
+                }}
+                className="inline-flex h-9 items-center rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:bg-white hover:shadow-sm"
+              >
+                取消生成
+              </button>
+            )}
+            {totalIssueCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeIssueSlideId) {
+                    openIssuePanelForSlide(activeIssueSlideId);
+                  } else {
+                    setIssuePanelOpen(true);
+                  }
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-medium text-amber-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm"
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                校验问题（{totalIssueCount}）
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setRevealSlideIndex(currentSlideIndex);
+                setShowReveal(true);
+              }}
+              disabled={isGenerating}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50"
+            >
+              <Play className="h-3.5 w-3.5" />
+              演示
+            </button>
+            <UserMenu compact />
+          </div>
+        </div>
+        {isGenerating && (
+          <div className="px-4 pb-3">
+            <div className="overflow-hidden rounded-full border border-white/70 bg-white/60 shadow-sm">
+              <Progress value={genPct} className="h-1.5 rounded-none" />
             </div>
           </div>
-          <SpeakerNotes notes={currentSlide?.speakerNotes} />
+        )}
+      </header>
+
+      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
+        <aside className="zy-card-glass flex w-64 shrink-0 flex-col overflow-hidden">
+          <div className="flex items-center justify-between border-b border-white/70 px-4 py-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                Slides
+              </p>
+              <h2 className="mt-1 text-sm font-semibold text-slate-900">页面目录</h2>
+            </div>
+            <div className="rounded-full border border-white/80 bg-white/75 px-2 py-1 text-xs font-medium text-slate-600">
+              {totalCount} 页
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            <div className="space-y-2">
+              {presentation.slides.map((slide, i) => (
+                <div
+                  key={slide.slideId}
+                  className={`zy-list-item p-2 ${
+                    i === currentSlideIndex
+                      ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
+                      : ""
+                  }`}
+                >
+                  <SlideThumbnail
+                    slide={slide}
+                    index={i}
+                    isActive={i === currentSlideIndex}
+                    onClick={() => setCurrentSlideIndex(i)}
+                    issueMeta={
+                      groupedIssues.has(slide.slideId)
+                        ? {
+                            hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
+                            advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
+                            total: groupedIssues.get(slide.slideId)?.total ?? 0,
+                            decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
+                          }
+                        : undefined
+                    }
+                    onIssueClick={
+                      groupedIssues.has(slide.slideId)
+                        ? () => {
+                            setCurrentSlideIndex(i);
+                            openIssuePanelForSlide(slide.slideId);
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+          <section className="zy-card-glass flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/70 px-5 py-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                  Preview
+                </p>
+                <h2 className="mt-1 text-sm font-semibold text-slate-900">当前画布</h2>
+              </div>
+              <div className="rounded-full border border-white/80 bg-white/75 px-3 py-1 text-xs font-medium text-slate-600">
+                第 {Math.min(currentSlideIndex + 1, totalCount)} / {totalCount} 页
+              </div>
+            </div>
+            <div className="flex flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
+              <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
+                <div className="w-full max-w-4xl">
+                  <SlidePreview
+                    slide={currentSlide}
+                    className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="overflow-hidden rounded-2xl">
+            <SpeakerNotes notes={currentSlide?.speakerNotes} />
+          </div>
         </main>
       </div>
 

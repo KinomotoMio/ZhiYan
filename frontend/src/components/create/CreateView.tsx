@@ -7,7 +7,7 @@ import { useAppStore } from "@/lib/store";
 import { removeSession, updateSession } from "@/lib/api";
 import { getSessionEditorPath } from "@/lib/routes";
 import SourcePanel from "./SourcePanel";
-import CreateForm from "./CreateForm";
+import PlanningPanel from "./PlanningPanel";
 import RenameDialog from "./RenameDialog";
 import DeleteConfirmDialog from "./DeleteConfirmDialog";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
@@ -70,7 +70,7 @@ export default function CreateView() {
   }, [currentSessionId, router]);
 
   return (
-    <div className="flex min-h-screen flex-col zy-bg-page">
+    <div className="flex h-screen overflow-hidden flex-col zy-bg-page">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-white/80 px-4 backdrop-blur-sm">
         <button
           onClick={() => router.push("/")}
@@ -139,9 +139,9 @@ export default function CreateView() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <SourcePanel />
-        <CreateForm />
+        <PlanningPanel />
       </div>
 
       <RenameDialog

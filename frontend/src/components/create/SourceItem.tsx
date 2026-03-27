@@ -231,7 +231,7 @@ export default function SourceItem({
           <div className="pointer-events-none fixed inset-0 z-[70]">
             <div
               ref={hoverCardRef}
-              className="pointer-events-auto fixed overflow-hidden rounded-xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800/95"
+              className="pointer-events-auto fixed overflow-hidden rounded-[24px] border border-white/85 bg-white/96 p-4 shadow-[0_26px_60px_-36px_rgba(15,23,42,0.42)] backdrop-blur-xl dark:border-slate-700 dark:bg-slate-800/95"
               style={hoverPreviewPosition}
               onMouseEnter={openHoverPreview}
               onMouseLeave={scheduleHoverPreviewClose}
@@ -267,12 +267,14 @@ export default function SourceItem({
     <div
       ref={triggerRef}
       className={cn(
-        "group relative flex items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors",
+        "group relative flex items-center gap-3 rounded-[22px] border px-3.5 py-3 transition-all duration-200",
         isError
-          ? "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
+          ? "border-red-200 bg-red-50/90 dark:border-red-800 dark:bg-red-950/30"
           : isReady
-            ? "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 hover:-translate-y-0.5 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-white dark:hover:bg-slate-800 hover:shadow-md cursor-pointer transition-all duration-200"
-            : "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80"
+            ? isSelected
+              ? "cursor-pointer border-[rgba(var(--zy-brand-blue),0.18)] bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(241,246,255,0.95))] shadow-[0_20px_42px_-34px_rgba(15,23,42,0.45)]"
+              : "cursor-pointer border-white/85 bg-white/78 hover:-translate-y-0.5 hover:border-slate-200 hover:bg-white/92 hover:shadow-[0_18px_36px_-30px_rgba(15,23,42,0.4)] dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            : "border-white/80 bg-white/70 dark:border-slate-700 dark:bg-slate-800/80"
       )}
       onClick={() => isReady && onPreview(source)}
       onMouseEnter={openHoverPreview}
@@ -285,12 +287,17 @@ export default function SourceItem({
           checked={isSelected}
           onChange={() => onToggleSelect(source.id)}
           onClick={(e) => e.stopPropagation()}
-          className="h-4 w-4 shrink-0 rounded border-gray-300 text-primary accent-primary cursor-pointer"
+          className="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300 accent-[rgb(var(--zy-brand-blue))]"
         />
       )}
 
       {/* 图标 */}
-      <div className="shrink-0 text-slate-400 dark:text-slate-500">
+      <div
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl text-slate-500",
+          isSelected ? "bg-[rgba(var(--zy-brand-blue),0.08)]" : "bg-slate-100/85"
+        )}
+      >
         {isParsing || isUploading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : isError ? (
@@ -302,8 +309,8 @@ export default function SourceItem({
 
       {/* 名称和状态 */}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{source.name}</p>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+        <p className="truncate text-sm font-medium text-slate-800">{source.name}</p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
           {isError && source.error ? (
             <span className="text-red-500">{source.error}</span>
           ) : isParsing ? (
@@ -311,7 +318,7 @@ export default function SourceItem({
           ) : isUploading ? (
             "上传中..."
           ) : (
-            formatSize(source.size)
+            [formatSize(source.size), extraMeta].filter(Boolean).join(" · ")
           )}
         </p>
       </div>
@@ -323,7 +330,7 @@ export default function SourceItem({
             e.stopPropagation();
             onRemove(source.id);
           }}
-          className="shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
+          className="shrink-0 rounded-full p-1.5 opacity-0 transition hover:bg-destructive/10 group-hover:opacity-100"
           aria-label="删除来源"
         >
           <X className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500 hover:text-destructive" />

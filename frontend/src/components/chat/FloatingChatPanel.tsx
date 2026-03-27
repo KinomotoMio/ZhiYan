@@ -132,6 +132,10 @@ export function shouldDisableChatActions(
   return isStreaming || hasPendingChange;
 }
 
+function isEditorVisibleMessage(msg: ChatMessage): boolean {
+  return msg.phase !== "planning";
+}
+
 export default function FloatingChatPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const {
@@ -154,10 +158,11 @@ export default function FloatingChatPanel() {
 
   const hasPendingChange = pendingChange !== null;
   const disableActions = shouldDisableChatActions(isStreaming, hasPendingChange);
+  const visibleChatMessages = chatMessages.filter(isEditorVisibleMessage);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, pendingChange, noOpReason]);
+  }, [visibleChatMessages, pendingChange, noOpReason]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -177,6 +182,8 @@ export default function FloatingChatPanel() {
       role: "assistant",
       content: "已撤回上一次预览改稿，当前页面恢复为撤回前状态。",
       timestamp: rollbackSeq,
+      phase: "editor",
+      messageKind: "assistant_reply",
     });
     toast.info("已撤回本次预览修改");
   };
@@ -218,6 +225,8 @@ export default function FloatingChatPanel() {
       role: "user",
       content: text,
       timestamp: userSeq,
+      phase: "editor",
+      messageKind: "user_turn",
     });
 
     setIsStreaming(true);
@@ -230,9 +239,13 @@ export default function FloatingChatPanel() {
       role: "assistant",
       content: "",
       timestamp: replySeq,
+      phase: "editor",
+      messageKind: "assistant_reply",
     });
 
-    const currentMessages = useAppStore.getState().chatMessages;
+    const currentMessages = useAppStore
+      .getState()
+      .chatMessages.filter(isEditorVisibleMessage);
     const historyForApi = buildHistoryForApi(currentMessages, replyId, text);
 
     await chatStream(
@@ -344,12 +357,12 @@ export default function FloatingChatPanel() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-[120px] max-h-[240px]">
-              {chatMessages.length === 0 && (
+              {visibleChatMessages.length === 0 && (
                 <div className="text-center text-slate-500 dark:text-slate-400 text-xs mt-4">
                   <p>输入消息或使用下方快捷操作</p>
                 </div>
               )}
-              {chatMessages.map((msg) => (
+              {visibleChatMessages.map((msg) => (
                 <MessageBubble key={msg.id} msg={msg} />
               ))}
               {isStreaming && (

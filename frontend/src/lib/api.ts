@@ -101,6 +101,38 @@ export interface ChatRecord {
   model_meta: Record<string, unknown>;
 }
 
+export interface PlanningOutlineItem {
+  slide_number: number;
+  title: string;
+  content_brief?: string;
+  key_points?: string[];
+  content_hints?: string[];
+  source_references?: string[];
+  suggested_slide_role?: string;
+  note?: string;
+}
+
+export interface PlanningState {
+  session_id: string;
+  status:
+    | "collecting_requirements"
+    | "outline_ready"
+    | "generating"
+    | "completed"
+    | string;
+  brief: Record<string, unknown>;
+  outline: {
+    narrative_arc?: string;
+    items?: PlanningOutlineItem[];
+    [key: string]: unknown;
+  };
+  outline_version: number;
+  source_ids: string[];
+  outline_stale: boolean;
+  active_job_id: string | null;
+  updated_at: string;
+}
+
 export interface SnapshotMeta {
   id: string;
   version_no: number;
@@ -126,6 +158,7 @@ export interface SessionDetail {
     created_at: string;
     presentation: Presentation;
   } | null;
+  planning_state: PlanningState | null;
 }
 
 export async function createSession(title?: string): Promise<SessionSummary> {
@@ -209,6 +242,54 @@ export async function appendSessionChat(
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`写入会话聊天失败: ${res.statusText}`);
+  return res.json();
+}
+
+export interface SessionPlanningDetail {
+  planning_state: PlanningState | null;
+  planning_messages: ChatRecord[];
+}
+
+export async function getSessionPlanning(sessionId: string): Promise<SessionPlanningDetail> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) throw new Error(`获取 planning 状态失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updatePlanningOutline(
+  sessionId: string,
+  outline: Record<string, unknown>
+): Promise<PlanningState> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning/outline`, {
+    method: "PATCH",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ outline }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `保存大纲失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export interface PlanningConfirmResult {
+  job_id: string;
+  status: JobStatus;
+  current_stage: StageStatus | null;
+  planning_state: PlanningState;
+}
+
+export async function confirmPlanning(sessionId: string): Promise<PlanningConfirmResult> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning/confirm`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `确认大纲失败: ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -468,6 +549,7 @@ export interface CreateJobRequest {
   template_id?: string;
   num_pages?: number;
   mode?: GenerationMode;
+  approved_outline?: Record<string, unknown>;
 }
 
 export interface CreateJobResponse {
@@ -537,6 +619,7 @@ export async function createJob(req: CreateJobRequest): Promise<CreateJobRespons
       template_id: req.template_id ?? null,
       num_pages: req.num_pages ?? 5,
       mode: req.mode ?? "auto",
+      approved_outline: req.approved_outline ?? null,
     }),
   });
   if (!res.ok) {
@@ -833,6 +916,65 @@ export async function chatStream(
           } catch {
             // 跳过无法解析的行
           }
+        }
+      }
+    }
+    onDone();
+  } catch (err) {
+    onError?.(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+export interface PlanningStreamEvent {
+  type:
+    | "text"
+    | "brief_updated"
+    | "outline_drafted"
+    | "outline_revised"
+    | "status_changed"
+    | "planning_state"
+    | "error";
+  [key: string]: unknown;
+}
+
+export async function planningTurnStream(
+  sessionId: string,
+  message: string,
+  onEvent: (event: PlanningStreamEvent) => void,
+  onDone: () => void,
+  onError?: (err: Error) => void
+): Promise<void> {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning/turns`, {
+      method: "POST",
+      headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ message }),
+    });
+    if (!res.ok) {
+      throw new Error(`planning 请求失败: ${res.statusText}`);
+    }
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("无法读取 planning 响应流");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") {
+          onDone();
+          return;
+        }
+        try {
+          onEvent(JSON.parse(data) as PlanningStreamEvent);
+        } catch {
+          // Skip malformed lines.
         }
       }
     }

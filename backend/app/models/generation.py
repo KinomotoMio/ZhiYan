@@ -187,6 +187,7 @@ class CreateJobRequest(BaseModel):
     template_id: str | None = None
     num_pages: int = 5
     mode: GenerationMode = GenerationMode.AUTO
+    approved_outline: dict[str, Any] | None = None
 
 
 class SlidevMvpRequest(BaseModel):

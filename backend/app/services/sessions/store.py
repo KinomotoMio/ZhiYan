@@ -120,6 +120,19 @@ class SessionStore:
                     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS session_planning_state (
+                    session_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'collecting_requirements',
+                    brief_json TEXT NOT NULL DEFAULT '{}',
+                    outline_json TEXT NOT NULL DEFAULT '{}',
+                    outline_version INTEGER NOT NULL DEFAULT 0,
+                    source_ids_json TEXT NOT NULL DEFAULT '[]',
+                    outline_stale INTEGER NOT NULL DEFAULT 0,
+                    active_job_id TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sessions_workspace_updated
                 ON sessions(workspace_id, updated_at DESC);
 
@@ -1443,6 +1456,174 @@ class SessionStore:
             is_snapshot=True,
             snapshot_label=snapshot_label,
         )
+
+    async def get_planning_state(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict | None:
+        return await asyncio.to_thread(
+            self._get_planning_state_sync,
+            workspace_id,
+            session_id,
+        )
+
+    def _get_planning_state_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    ps.session_id,
+                    ps.status,
+                    ps.brief_json,
+                    ps.outline_json,
+                    ps.outline_version,
+                    ps.source_ids_json,
+                    ps.outline_stale,
+                    ps.active_job_id,
+                    ps.updated_at
+                FROM session_planning_state ps
+                JOIN sessions s ON s.id = ps.session_id
+                WHERE ps.session_id=? AND s.workspace_id=? AND s.archived_at IS NULL
+                """,
+                (session_id, workspace_id),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "session_id": row["session_id"],
+                "status": row["status"],
+                "brief": json.loads(row["brief_json"] or "{}"),
+                "outline": json.loads(row["outline_json"] or "{}"),
+                "outline_version": int(row["outline_version"] or 0),
+                "source_ids": json.loads(row["source_ids_json"] or "[]"),
+                "outline_stale": bool(row["outline_stale"]),
+                "active_job_id": row["active_job_id"],
+                "updated_at": row["updated_at"],
+            }
+
+    async def save_planning_state(
+        self,
+        *,
+        workspace_id: str,
+        session_id: str,
+        status: str,
+        brief: dict | None = None,
+        outline: dict | None = None,
+        outline_version: int | None = None,
+        source_ids: list[str] | None = None,
+        outline_stale: bool | None = None,
+        active_job_id: str | None = None,
+    ) -> dict:
+        now = _now_iso()
+        async with self._write_lock:
+            await asyncio.to_thread(
+                self._save_planning_state_sync,
+                workspace_id,
+                session_id,
+                status,
+                brief,
+                outline,
+                outline_version,
+                source_ids,
+                outline_stale,
+                active_job_id,
+                now,
+            )
+        state = await self.get_planning_state(workspace_id, session_id)
+        if state is None:
+            raise ValueError("会话 planning state 保存失败")
+        return state
+
+    def _save_planning_state_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+        status: str,
+        brief: dict | None,
+        outline: dict | None,
+        outline_version: int | None,
+        source_ids: list[str] | None,
+        outline_stale: bool | None,
+        active_job_id: str | None,
+        now: str,
+    ) -> None:
+        with self._connect() as conn:
+            exists = conn.execute(
+                """
+                SELECT 1 FROM sessions
+                WHERE id=? AND workspace_id=? AND archived_at IS NULL
+                """,
+                (session_id, workspace_id),
+            ).fetchone()
+            if not exists:
+                raise ValueError("会话不存在")
+
+            current = conn.execute(
+                """
+                SELECT status, brief_json, outline_json, outline_version, source_ids_json, outline_stale, active_job_id
+                FROM session_planning_state
+                WHERE session_id=?
+                """,
+                (session_id,),
+            ).fetchone()
+            merged_status = status or (current["status"] if current else "collecting_requirements")
+            merged_brief = brief if brief is not None else json.loads(current["brief_json"] or "{}") if current else {}
+            merged_outline = outline if outline is not None else json.loads(current["outline_json"] or "{}") if current else {}
+            merged_outline_version = (
+                int(outline_version)
+                if outline_version is not None
+                else int(current["outline_version"] or 0) if current else 0
+            )
+            merged_source_ids = (
+                list(source_ids)
+                if source_ids is not None
+                else json.loads(current["source_ids_json"] or "[]") if current else []
+            )
+            merged_outline_stale = (
+                bool(outline_stale)
+                if outline_stale is not None
+                else bool(current["outline_stale"]) if current else False
+            )
+            merged_active_job_id = (
+                active_job_id
+                if active_job_id is not None
+                else current["active_job_id"] if current else None
+            )
+            conn.execute(
+                """
+                INSERT INTO session_planning_state(
+                    session_id, status, brief_json, outline_json, outline_version,
+                    source_ids_json, outline_stale, active_job_id, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    status=excluded.status,
+                    brief_json=excluded.brief_json,
+                    outline_json=excluded.outline_json,
+                    outline_version=excluded.outline_version,
+                    source_ids_json=excluded.source_ids_json,
+                    outline_stale=excluded.outline_stale,
+                    active_job_id=excluded.active_job_id,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    session_id,
+                    merged_status,
+                    json.dumps(merged_brief, ensure_ascii=False),
+                    json.dumps(merged_outline, ensure_ascii=False),
+                    merged_outline_version,
+                    json.dumps(merged_source_ids, ensure_ascii=False),
+                    1 if merged_outline_stale else 0,
+                    merged_active_job_id,
+                    now,
+                ),
+            )
+            conn.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, session_id))
+            conn.commit()
 
     async def save_generation_job(
         self, job_id: str, session_id: str, status: str
