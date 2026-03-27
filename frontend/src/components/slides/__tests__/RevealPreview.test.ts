@@ -10,16 +10,28 @@ import {
 } from "@/components/slides/RevealPreview";
 
 test("buildRevealPreviewSrc keeps the blob URL unchanged for the first slide", () => {
-  assert.equal(buildRevealPreviewSrc("blob:test-url", 0), "blob:test-url");
+  assert.equal(
+    buildRevealPreviewSrc("blob:test-url", { startSlide: 0 }),
+    "blob:test-url?slide=0&mode=interactive"
+  );
 });
 
-test("buildRevealPreviewSrc appends a reveal hash for later slides", () => {
-  assert.equal(buildRevealPreviewSrc("blob:test-url", 1), "blob:test-url#/1");
+test("buildRevealPreviewSrc uses query params for slide selection and thumbnail mode", () => {
+  assert.equal(
+    buildRevealPreviewSrc("blob:test-url", { startSlide: 1, thumbnailMode: true }),
+    "blob:test-url?slide=1&mode=thumbnail"
+  );
 });
 
 test("buildRevealPreviewSrc normalizes invalid slide indexes", () => {
-  assert.equal(buildRevealPreviewSrc("blob:test-url", -3), "blob:test-url");
-  assert.equal(buildRevealPreviewSrc("blob:test-url", 2.8), "blob:test-url#/2");
+  assert.equal(
+    buildRevealPreviewSrc("blob:test-url", { startSlide: -3 }),
+    "blob:test-url?slide=0&mode=interactive"
+  );
+  assert.equal(
+    buildRevealPreviewSrc("blob:test-url", { startSlide: 2.8 }),
+    "blob:test-url?slide=2&mode=interactive"
+  );
 });
 
 test("getRevealPreviewSlideIndex accepts only reveal slidechange messages", () => {
@@ -32,14 +44,13 @@ test("getRevealPreviewSlideIndex accepts only reveal slidechange messages", () =
   assert.equal(getRevealPreviewSlideIndex(null), null);
 });
 
-test("buildRevealPreviewHtml injects thumbnail-only styles when requested", () => {
+test("buildRevealPreviewHtml leaves document content intact", () => {
   const html = buildRevealPreviewHtml(
     "<!DOCTYPE html><html><head></head><body><div>deck</div></body></html>",
     { thumbnailMode: true }
   );
 
-  assert.match(html, /data-reveal-preview-thumbnail/);
-  assert.match(html, /\.reveal \.controls,/);
+  assert.equal(html, "<!DOCTYPE html><html><head></head><body><div>deck</div></body></html>");
 });
 
 test("resolveRevealPreviewBehavior disables focus and slide sync for thumbnails", () => {

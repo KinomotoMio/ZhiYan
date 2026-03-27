@@ -650,6 +650,7 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
                 "layoutType": "blank",
                 "layoutId": "blank",
                 "contentData": {"title": "封面", "_htmlDeck": True},
+                "speakerNotes": "这是封面页注解",
                 "components": [],
             }
         ],
@@ -689,6 +690,9 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     assert 'class="slide-cover"' in html_resp.text
     assert 'id="slide-cover-1"' in html_resp.text
     assert 'style="background:#111827"' in html_resp.text
+    assert '<aside class="notes">这是封面页注解</aside>' in html_resp.text
+    assert "hash: false" in html_resp.text
+    assert "const query = new URLSearchParams(window.location.search);" in html_resp.text
 
     meta_resp = client.get(
         f"/api/v1/sessions/{session_id}/presentations/latest/html/meta",
@@ -696,6 +700,7 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     )
     assert meta_resp.status_code == 200
     assert meta_resp.json()["slide_count"] == 1
+    assert meta_resp.json()["slides"][0]["speaker_notes"] == "这是封面页注解"
 
 
 def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):

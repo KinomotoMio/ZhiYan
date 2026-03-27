@@ -156,6 +156,7 @@ async def chat(req: ChatRequest, request: Request):
                     normalized_html, _meta, normalized_presentation = normalize_html_deck(
                         html=result.html,
                         fallback_title=html_context.title,
+                        existing_slides=slides,
                     )
                     html_update = {
                         "type": "html_update",
@@ -470,6 +471,7 @@ def _extract_html_context(
                 "index": index,
                 "slide_id": str(slide.get("slideId") or f"slide-{index + 1}"),
                 "title": _extract_title(slide) or f"第 {index + 1} 页",
+                "speaker_notes": str(slide.get("speakerNotes") or "").strip() or None,
             }
             for index, slide in enumerate(slides)
             if isinstance(slide, dict)

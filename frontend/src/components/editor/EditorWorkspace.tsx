@@ -25,7 +25,10 @@ import {
   fixPreview,
   fixSkip,
   generateSpeakerNotes,
+  getLatestSessionPresentation,
+  getLatestSessionPresentationHtml,
   saveLatestSessionPresentation,
+  saveLatestSessionHtmlPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -40,6 +43,7 @@ import SlidePreview from "@/components/slides/SlidePreview";
 import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
+import HtmlPreviewSurface from "@/components/slides/HtmlPreviewSurface";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
@@ -110,6 +114,7 @@ export default function EditorWorkspace({
     presentation,
     presentationOutputMode,
     presentationHtml,
+    presentationHtmlArtifact,
     currentSessionId,
     currentSlideIndex,
     setCurrentSlideIndex,
@@ -133,6 +138,7 @@ export default function EditorWorkspace({
     issuePanelSlideId,
     issueDecisionBySlideId,
     setPresentation,
+    setPresentationHtmlState,
     updateSlides,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
@@ -153,6 +159,19 @@ export default function EditorWorkspace({
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
+
+  const refreshHtmlPreviewState = async () => {
+    if (!currentSessionId) return;
+    const [latestPresentation, latestHtml] = await Promise.all([
+      getLatestSessionPresentation(currentSessionId),
+      getLatestSessionPresentationHtml(currentSessionId),
+    ]);
+    setPresentationHtmlState(
+      "html",
+      latestHtml,
+      latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
+    );
+  };
 
   const handleResume = async () => {
     if (!jobId || resuming) return;
@@ -531,7 +550,20 @@ export default function EditorWorkspace({
     setSavingSpeakerNotes(true);
 
     try {
-      await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      if (isHtmlMode) {
+        if (!presentationHtml) {
+          throw new Error("HTML 演示稿尚未加载完成，暂时无法保存演讲者注解");
+        }
+        await saveLatestSessionHtmlPresentation(
+          currentSessionId,
+          nextPresentation,
+          presentationHtml,
+          "editor"
+        );
+        await refreshHtmlPreviewState();
+      } else {
+        await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
+      }
       setSpeakerNotesDrafts((current) => ({
         ...current,
         [currentSlide.slideId]: nextSlides[currentSlideIndex]?.speakerNotes ?? "",
@@ -569,6 +601,9 @@ export default function EditorWorkspace({
       });
       setPresentation(response.presentation);
       setSpeakerNotesDrafts(buildSpeakerNotesDraftMap(response.presentation.slides));
+      if (isHtmlMode) {
+        await refreshHtmlPreviewState();
+      }
       toast.success(
         scope === "current"
           ? "已生成并覆盖当前页演讲者注解"
@@ -828,64 +863,63 @@ export default function EditorWorkspace({
             </div>
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
-                <div className="w-full max-w-4xl">
-                  {currentSlide ? (
-                    isHtmlMode ? (
-                      presentationHtml ? (
-                        <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
-                          <RevealPreview
-                            presentation={presentation}
-                            htmlContent={presentationHtml}
-                            startSlide={currentSlideIndex}
-                            onSlideChange={setCurrentSlideIndex}
-                            className="rounded-[20px]"
-                          />
-                        </div>
-                      ) : (
-                        <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
-                          HTML 演示稿还在生成中，完成后会自动切换到真实预览。
-                        </div>
-                      )
+                {currentSlide ? (
+                  isHtmlMode ? (
+                    presentationHtml ? (
+                      <HtmlPreviewSurface
+                        presentation={presentation}
+                        htmlContent={presentationHtml}
+                        startSlide={currentSlideIndex}
+                        onSlideChange={setCurrentSlideIndex}
+                        className="h-full min-h-0 w-full"
+                        frameClassName="border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
+                      />
                     ) : (
+                      <div className="flex aspect-[16/9] w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
+                        HTML 演示稿还在生成中，完成后会自动切换到真实预览。
+                      </div>
+                    )
+                  ) : (
+                    <div className="w-full max-w-4xl">
                       <SlidePreview
                         slide={currentSlide}
                         className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
                       />
-                    )
-                  ) : (
+                    </div>
+                  )
+                ) : (
+                  <div className="w-full max-w-4xl">
                     <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
                       当前没有可预览的页面
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
-            {!isHtmlMode && (
-              <SpeakerNotes
-                value={speakerNotesDraft}
-                onChange={(nextValue) => {
-                  if (!currentSlide) return;
-                  setSpeakerNotesDrafts((current) => ({
-                    ...current,
-                    [currentSlide.slideId]: nextValue,
-                  }));
-                }}
-                onSave={() => {
-                  void handleSaveSpeakerNotes();
-                }}
-                onGenerateCurrent={() => {
-                  void handleGenerateSpeakerNotes("current");
-                }}
-                onGenerateAll={() => {
-                  void handleGenerateSpeakerNotes("all");
-                }}
-                onPlayAudio={handlePlaySpeakerAudio}
-                isSaving={savingSpeakerNotes}
-                generatingScope={generatingSpeakerNotesScope}
-                canGenerate={Boolean(currentSlide)}
-                canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
-              />
-            )}
+            <SpeakerNotes
+              value={speakerNotesDraft}
+              onChange={(nextValue) => {
+                if (!currentSlide) return;
+                setSpeakerNotesDrafts((current) => ({
+                  ...current,
+                  [currentSlide.slideId]: nextValue,
+                }));
+              }}
+              onSave={() => {
+                void handleSaveSpeakerNotes();
+              }}
+              onGenerateCurrent={() => {
+                void handleGenerateSpeakerNotes("current");
+              }}
+              onGenerateAll={() => {
+                void handleGenerateSpeakerNotes("all");
+              }}
+              onPlayAudio={handlePlaySpeakerAudio}
+              isSaving={savingSpeakerNotes}
+              generatingScope={generatingSpeakerNotesScope}
+              canGenerate={Boolean(currentSlide)}
+              canSave={Boolean(currentSlide) && hasUnsavedSpeakerNotes}
+            />
           </section>
         </main>
       </div>

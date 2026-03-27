@@ -1347,6 +1347,7 @@ class SessionStore:
                     presentation_id=presentation_id,
                     version_no=version_no,
                     html_deck=html_deck,
+                    presentation_payload=stored_payload,
                     fallback_title=normalized_title or "新演示文稿",
                     now=now,
                 )
@@ -1574,6 +1575,7 @@ class SessionStore:
         presentation_id: str,
         version_no: int,
         html_deck: dict,
+        presentation_payload: dict | None,
         fallback_title: str,
         now: str,
     ) -> dict[str, Any]:
@@ -1585,6 +1587,11 @@ class SessionStore:
             html=raw_html,
             fallback_title=fallback_title,
             expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
+            existing_slides=(
+                list((presentation_payload or {}).get("slides") or [])
+                if isinstance(presentation_payload, dict)
+                else None
+            ),
         )
         artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
