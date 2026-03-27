@@ -11,6 +11,10 @@ _TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL
 _STYLE_RE = re.compile(r"<style\b[^>]*>(.*?)</style>", re.IGNORECASE | re.DOTALL)
 _SECTION_RE = re.compile(r"<section\b([^>]*)>(.*?)</section>", re.IGNORECASE | re.DOTALL)
 _DATA_ATTR_RE = re.compile(r'data-(slide-id|slide-title)\s*=\s*"([^"]*)"|data-(slide-id|slide-title)\s*=\s*\'([^\']*)\'', re.IGNORECASE)
+_SECTION_DATA_ATTR_RE = re.compile(
+    r'\s*data-(?:slide-id|slide-title)\s*=\s*(?:"[^"]*"|\'[^\']*\')',
+    re.IGNORECASE,
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 _HEADING_RE = re.compile(r"<h[1-3]\b[^>]*>(.*?)</h[1-3]>", re.IGNORECASE | re.DOTALL)
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -52,9 +56,13 @@ def normalize_html_deck(
             or f"第 {index} 页"
         )
         slide_title = _normalize_text(slide_title) or f"第 {index} 页"
+        section_attrs = _build_section_attrs(
+            attrs,
+            slide_id=slide_id,
+            slide_title=slide_title,
+        )
         section_html_parts.append(
-            f'<section data-slide-id="{_escape_attr(slide_id)}" '
-            f'data-slide-title="{_escape_attr(slide_title)}">{body}</section>'
+            f"<section{section_attrs}>{body}</section>"
         )
         slides_meta.append(
             {
@@ -131,6 +139,18 @@ def _escape_attr(value: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def _build_section_attrs(raw_attrs: str, *, slide_id: str, slide_title: str) -> str:
+    preserved = _SECTION_DATA_ATTR_RE.sub(" ", str(raw_attrs or ""))
+    preserved = _WHITESPACE_RE.sub(" ", preserved).strip()
+    normalized = (
+        f'data-slide-id="{_escape_attr(slide_id)}" '
+        f'data-slide-title="{_escape_attr(slide_title)}"'
+    )
+    if preserved:
+        return f" {preserved} {normalized}"
+    return f" {normalized}"
 
 
 def _build_reveal_document(*, title: str, sections_html: str, custom_styles: str) -> str:

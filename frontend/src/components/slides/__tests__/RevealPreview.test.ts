@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildRevealPreviewHtml,
   buildRevealPreviewSrc,
   focusRevealPreviewFrame,
   getRevealPreviewSlideIndex,
+  resolveRevealPreviewBehavior,
 } from "@/components/slides/RevealPreview";
 
 test("buildRevealPreviewSrc keeps the blob URL unchanged for the first slide", () => {
@@ -28,6 +30,31 @@ test("getRevealPreviewSlideIndex accepts only reveal slidechange messages", () =
   assert.equal(getRevealPreviewSlideIndex({ type: "other", slideIndex: 3 }), null);
   assert.equal(getRevealPreviewSlideIndex({ type: "reveal-preview-slidechange" }), null);
   assert.equal(getRevealPreviewSlideIndex(null), null);
+});
+
+test("buildRevealPreviewHtml injects thumbnail-only styles when requested", () => {
+  const html = buildRevealPreviewHtml(
+    "<!DOCTYPE html><html><head></head><body><div>deck</div></body></html>",
+    { thumbnailMode: true }
+  );
+
+  assert.match(html, /data-reveal-preview-thumbnail/);
+  assert.match(html, /\.reveal \.controls,/);
+});
+
+test("resolveRevealPreviewBehavior disables focus and slide sync for thumbnails", () => {
+  assert.deepEqual(
+    resolveRevealPreviewBehavior({
+      thumbnailMode: true,
+      autoFocusOnLoad: true,
+      listenForSlideChange: true,
+      hasSlideChangeHandler: true,
+    }),
+    {
+      autoFocusOnLoad: false,
+      listenForSlideChange: false,
+    }
+  );
 });
 
 test("focusRevealPreviewFrame focuses the iframe and its content window when available", () => {

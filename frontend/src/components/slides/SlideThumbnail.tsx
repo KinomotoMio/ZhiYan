@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import type { Slide } from "@/types/slide";
 import { Skeleton } from "@/components/ui/skeleton";
 import SlidePreview from "./SlidePreview";
+import RevealPreview from "./RevealPreview";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
 
 interface SlideIssueMeta {
@@ -18,8 +19,11 @@ interface SlideThumbnailProps {
   index: number;
   isActive: boolean;
   onClick: () => void;
+  htmlContent?: string | null;
+  htmlStartSlide?: number;
   issueMeta?: SlideIssueMeta;
   onIssueClick?: () => void;
+  forceVisible?: boolean;
 }
 
 export default function SlideThumbnail({
@@ -27,8 +31,11 @@ export default function SlideThumbnail({
   index,
   isActive,
   onClick,
+  htmlContent,
+  htmlStartSlide,
   issueMeta,
   onIssueClick,
+  forceVisible = false,
 }: SlideThumbnailProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -51,6 +58,7 @@ export default function SlideThumbnail({
   }, []);
 
   const hasIssue = Boolean(issueMeta && issueMeta.total > 0);
+  const visible = forceVisible || isVisible;
   const statusColor =
     issueMeta && issueMeta.hard > 0
       ? "bg-red-500"
@@ -84,13 +92,31 @@ export default function SlideThumbnail({
         )}
       </div>
       <div className="relative min-w-0 flex-1">
-        {isVisible ? (
-          <SlidePreview
-            slide={slide}
-            onClick={onClick}
-            isActive={isActive}
-            className="w-full"
-          />
+        {visible ? (
+          htmlContent ? (
+            <div
+              onClick={onClick}
+              className={`relative aspect-[16/9] cursor-pointer overflow-hidden rounded-lg border bg-white transition-shadow ${
+                isActive ? "ring-2 ring-primary shadow-lg" : "hover:shadow-md"
+              }`}
+            >
+              <div className="absolute inset-0">
+                <RevealPreview
+                  htmlContent={htmlContent}
+                  startSlide={htmlStartSlide ?? index}
+                  thumbnailMode
+                  className="pointer-events-none"
+                />
+              </div>
+            </div>
+          ) : (
+            <SlidePreview
+              slide={slide}
+              onClick={onClick}
+              isActive={isActive}
+              className="w-full"
+            />
+          )
         ) : (
           <Skeleton className="w-full aspect-[16/9] rounded" />
         )}
@@ -98,4 +124,3 @@ export default function SlideThumbnail({
     </div>
   );
 }
-
