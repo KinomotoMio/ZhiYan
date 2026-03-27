@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,5 +16,5 @@ const filesToSync = [
 for (const [sourceRelativePath, targetFileName] of filesToSync) {
   const sourcePath = path.resolve(__dirname, sourceRelativePath);
   const targetPath = path.join(targetDir, targetFileName);
-  cpSync(sourcePath, targetPath);
+  writeFileSync(targetPath, readFileSync(sourcePath));
 }
