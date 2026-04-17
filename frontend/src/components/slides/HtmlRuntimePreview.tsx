@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { HtmlRuntimeRenderPayload } from "@/lib/api";
 
@@ -84,8 +84,10 @@ function injectHtmlRuntimePreviewConfig(
         },
       };`;
 
-  let nextHtml = html.includes("</head>") ? html.replace("</head>", `${configScript}</head>`) : `${configScript}${html}`;
-  nextHtml = nextHtml.replace(
+  const nextHeadHtml = html.includes("</head>")
+    ? html.replace("</head>", `${configScript}</head>`)
+    : `${configScript}${html}`;
+  const nextHtml = nextHeadHtml.replace(
     "const params = new URLSearchParams(window.location.search);",
     paramsSnippet
   );
@@ -103,9 +105,34 @@ export default function HtmlRuntimePreview({
   autoFocusOnLoad = true,
   listenForSlideChange = true,
 }: HtmlRuntimePreviewProps) {
+  const THUMBNAIL_VIEWPORT_WIDTH = 1280;
+  const THUMBNAIL_VIEWPORT_HEIGHT = 720;
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const [thumbnailScale, setThumbnailScale] = useState(1);
   const resolvedDocumentHtml = renderPayload?.documentHtml ?? documentHtml ?? null;
+
+  useEffect(() => {
+    if (!thumbnailMode || !wrapperRef.current) return;
+    const element = wrapperRef.current;
+    const updateScale = () => {
+      const nextScale = Math.max(
+        0.01,
+        Math.min(
+          element.clientWidth / THUMBNAIL_VIEWPORT_WIDTH,
+          element.clientHeight / THUMBNAIL_VIEWPORT_HEIGHT
+        )
+      );
+      setThumbnailScale(nextScale);
+    };
+    updateScale();
+    const observer = new ResizeObserver(() => {
+      updateScale();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [thumbnailMode]);
 
   useEffect(() => {
     if (!iframeRef.current) return;
@@ -162,18 +189,30 @@ export default function HtmlRuntimePreview({
   }, [listenForSlideChange, thumbnailMode, onSlideChange]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      className={`w-full h-full border-0 ${className}`}
-      data-preview-mode={printMode ? "print" : thumbnailMode ? "thumbnail" : "interactive"}
-      title="HTML runtime preview"
-      sandbox="allow-scripts allow-same-origin"
-      loading={thumbnailMode || printMode ? "lazy" : undefined}
-      tabIndex={-1}
-      onLoad={() => {
-        if (!autoFocusOnLoad || thumbnailMode || printMode) return;
-        focusFrame(iframeRef.current);
-      }}
-    />
+    <div ref={wrapperRef} className="relative h-full w-full overflow-hidden">
+      <iframe
+        ref={iframeRef}
+        className={`border-0 ${thumbnailMode ? "absolute left-0 top-0" : "w-full h-full"} ${className}`}
+        style={
+          thumbnailMode
+            ? {
+                width: `${THUMBNAIL_VIEWPORT_WIDTH}px`,
+                height: `${THUMBNAIL_VIEWPORT_HEIGHT}px`,
+                transform: `scale(${thumbnailScale})`,
+                transformOrigin: "top left",
+              }
+            : undefined
+        }
+        data-preview-mode={printMode ? "print" : thumbnailMode ? "thumbnail" : "interactive"}
+        title="HTML runtime preview"
+        sandbox="allow-scripts allow-same-origin"
+        loading={thumbnailMode || printMode ? "lazy" : undefined}
+        tabIndex={-1}
+        onLoad={() => {
+          if (!autoFocusOnLoad || thumbnailMode || printMode) return;
+          focusFrame(iframeRef.current);
+        }}
+      />
+    </div>
   );
 }
