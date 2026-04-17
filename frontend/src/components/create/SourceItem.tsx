@@ -58,6 +58,10 @@ interface SourceItemProps {
   showSelectionCheckbox?: boolean;
   showRemove?: boolean;
   extraMeta?: string;
+  statusDetail?: string;
+  actionLabel?: string;
+  onAction?: (source: SourceMeta) => void;
+  actionDisabled?: boolean;
   hoverPreviewVariant?: "default" | "assets" | "create";
 }
 
@@ -77,6 +81,10 @@ export default function SourceItem({
   showSelectionCheckbox = true,
   showRemove = false,
   extraMeta,
+  statusDetail,
+  actionLabel,
+  onAction,
+  actionDisabled = false,
   hoverPreviewVariant = "default",
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
@@ -311,7 +319,9 @@ export default function SourceItem({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-slate-800">{source.name}</p>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          {isError && source.error ? (
+          {statusDetail ? (
+            isError ? <span className="text-red-500">{statusDetail}</span> : statusDetail
+          ) : isError && source.error ? (
             <span className="text-red-500">{source.error}</span>
           ) : isParsing ? (
             "解析中..."
@@ -322,6 +332,20 @@ export default function SourceItem({
           )}
         </p>
       </div>
+
+      {actionLabel && onAction ? (
+        <button
+          type="button"
+          disabled={actionDisabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            onAction(source);
+          }}
+          className="shrink-0 rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-600 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
+        >
+          {actionLabel}
+        </button>
+      ) : null}
 
       {/* 删除按钮 */}
       {showRemove && onRemove && (
