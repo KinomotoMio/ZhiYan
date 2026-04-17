@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
 import {
   addWorkspaceTextSource,
   bulkDeleteWorkspaceSources,
@@ -33,6 +34,12 @@ import {
   upsertPersistedSource,
 } from "@/components/assets/assets-view-model";
 
+const SHELL_INTRO_RESET_MS = 820;
+const CARD_INTRO_BASE_DELAY_MS = 180;
+const CARD_INTRO_STEP_MS = 32;
+const CARD_INTRO_MAX_STAGGER_MS = 224;
+const ASSETS_HOVER_PREVIEW_OPEN_DELAY_MS = 350;
+
 function isUrl(text: string): boolean {
   try {
     const parsed = new URL(text);
@@ -48,6 +55,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tag === "input" || tag === "textarea" || target.isContentEditable;
 }
 
+function createEnterStyle(delay: number, distance = 28, duration = 420): CSSProperties {
+  return {
+    animationDelay: `${delay}ms`,
+    animationDuration: `${duration}ms`,
+    ["--zy-enter-distance" as string]: `${distance}px`,
+  };
+}
+
 export default function AssetsView() {
   const router = useRouter();
   const setWorkspaceId = useAppStore((store) => store.setWorkspaceId);
@@ -58,10 +73,13 @@ export default function AssetsView() {
   const [typeFilter, setTypeFilter] = useState<"all" | "file" | "url" | "text">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "error" | "parsing" | "uploading">("all");
   const [sort, setSort] = useState<"created_desc" | "name_asc" | "linked_desc">("created_desc");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [selectedForDelete, setSelectedForDelete] = useState<string[]>([]);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [shellIntroActive, setShellIntroActive] = useState(true);
+  const [hasAnimatedCards, setHasAnimatedCards] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
 
   const refreshWorkspaceSources = useCallback(async () => {
     setLoading(true);
@@ -82,23 +100,36 @@ export default function AssetsView() {
 
   useEffect(() => {
     const run = async () => {
-      const workspace = await getCurrentWorkspace();
-      setWorkspaceId(workspace.id);
-      await refreshWorkspaceSources();
+      try {
+        const workspace = await getCurrentWorkspace();
+        setWorkspaceId(workspace.id);
+        await refreshWorkspaceSources();
+        setWorkspaceReady(true);
+      } catch (err) {
+        setLoading(false);
+        console.error("assets bootstrap failed", err);
+      }
     };
-    run().catch((err) => {
-      console.error("assets bootstrap failed", err);
-    });
+    void run();
   }, [refreshWorkspaceSources, setWorkspaceId]);
 
   useEffect(() => {
+    if (!workspaceReady) return;
+
     const timer = window.setTimeout(() => {
       refreshWorkspaceSources().catch((err) => {
         console.error("refresh workspace sources failed", err);
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [query, typeFilter, statusFilter, sort, refreshWorkspaceSources]);
+  }, [query, typeFilter, statusFilter, sort, refreshWorkspaceSources, workspaceReady]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setShellIntroActive(false);
+    }, SHELL_INTRO_RESET_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const displayedEntries = useMemo(
     () =>
@@ -112,6 +143,21 @@ export default function AssetsView() {
       }),
     [items, query, sort, statusFilter, tempEntries, typeFilter]
   );
+
+  const shouldAnimateCards = displayedEntries.length > 0 && !hasAnimatedCards;
+
+  useEffect(() => {
+    if (!shouldAnimateCards) return;
+    const totalStagger = Math.min(
+      CARD_INTRO_MAX_STAGGER_MS,
+      Math.max(displayedEntries.length - 1, 0) * CARD_INTRO_STEP_MS
+    );
+    const timer = window.setTimeout(() => {
+      setHasAnimatedCards(true);
+    }, CARD_INTRO_BASE_DELAY_MS + totalStagger + 380);
+
+    return () => window.clearTimeout(timer);
+  }, [displayedEntries.length, shouldAnimateCards]);
 
   const displayedDeletableIds = useMemo(
     () => getDeletableIds(displayedEntries),
@@ -291,7 +337,10 @@ export default function AssetsView() {
           onPaste={handlePaste}
           tabIndex={0}
         >
-          <div className="flex flex-wrap items-center gap-3">
+          <div
+            className={cn("flex flex-wrap items-center gap-3", shellIntroActive && "zy-assets-enter")}
+            style={createEnterStyle(0, 24, 340)}
+          >
             <button
               onClick={() => router.push("/create")}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-800/70 px-3 py-2 text-sm hover:shadow-md hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-cyan-500/60 transition-all duration-200"
@@ -302,7 +351,13 @@ export default function AssetsView() {
             <h1 className="text-lg font-semibold">Workspace 素材库</h1>
           </div>
 
-          <div className="grid gap-3 rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 md:grid-cols-[2fr_1fr_1fr_1fr_auto]">
+          <div
+            className={cn(
+              "grid overflow-hidden gap-3 rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 md:grid-cols-[2fr_1fr_1fr_1fr_auto]",
+              shellIntroActive && "zy-assets-enter"
+            )}
+            style={createEnterStyle(50, 28, 360)}
+          >
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -343,14 +398,19 @@ export default function AssetsView() {
               onClick={() => {
                 void refreshWorkspaceSources();
               }}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-3 text-sm hover:shadow-sm transition-all duration-200"
+              className="inline-flex h-10 items-center justify-center rounded-md border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-800/80 px-3 text-sm hover:shadow-sm transition-all duration-200"
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               刷新
             </button>
           </div>
 
-          <div className="relative rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 pb-10">
+          <div
+            className={cn(
+              "relative rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 pb-10",
+              shellIntroActive && "zy-assets-enter"
+            )}
+            style={createEnterStyle(105, 34, 420)}
+          >
             <AddSourceArea
               variant="assets"
               onFilesSelected={(files) => {
@@ -368,7 +428,10 @@ export default function AssetsView() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div
+            className={cn("flex items-center gap-3", shellIntroActive && "zy-assets-enter")}
+            style={createEnterStyle(150, 22, 340)}
+          >
             <CircleCheckbox
               checked={allDeleteSelected}
               onChange={toggleAllDeleteSelection}
@@ -391,14 +454,20 @@ export default function AssetsView() {
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {loading && displayedEntries.length === 0 ? (
-              <p className="col-span-full py-10 text-center text-sm text-slate-500 dark:text-slate-400">{emptyStateMessage}</p>
+              null
             ) : displayedEntries.length === 0 ? (
-              <div className="col-span-full rounded-2xl border border-dashed border-slate-200 bg-white/60 px-6 py-12 text-center dark:border-slate-700 dark:bg-slate-800/40">
+              <div
+                className={cn(
+                  "col-span-full rounded-2xl border border-dashed border-slate-200 bg-white/60 px-6 py-12 text-center dark:border-slate-700 dark:bg-slate-800/40",
+                  shellIntroActive && "zy-assets-enter"
+                )}
+                style={createEnterStyle(200, 22, 320)}
+              >
                 <p className="text-sm font-medium text-slate-700 dark:text-slate-200">素材库还是空的</p>
                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{emptyStateMessage}</p>
               </div>
             ) : (
-              displayedEntries.map((entry) => {
+              displayedEntries.map((entry, index) => {
                 const source = entry.source;
                 const canDelete = !entry.isTemp;
                 const statusDetail =
@@ -409,7 +478,19 @@ export default function AssetsView() {
                 return (
                   <div
                     key={entry.key}
-                    className="relative z-0 flex h-full min-h-[96px] items-center gap-3 rounded-2xl border border-slate-200 bg-white/85 p-3 transition-all duration-200 hover:z-30 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-28px_rgba(15,23,42,0.35)] focus-within:z-30 dark:border-slate-700 dark:bg-slate-800/85"
+                    className={cn(
+                      "relative z-0 flex h-full min-h-[96px] items-center gap-3 rounded-2xl border border-slate-200 bg-white/85 p-3 transition-all duration-200 hover:z-30 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-28px_rgba(15,23,42,0.35)] focus-within:z-30 dark:border-slate-700 dark:bg-slate-800/85",
+                      shouldAnimateCards && "zy-assets-enter-card"
+                    )}
+                    style={
+                      shouldAnimateCards
+                        ? createEnterStyle(
+                            CARD_INTRO_BASE_DELAY_MS + Math.min(index * CARD_INTRO_STEP_MS, CARD_INTRO_MAX_STAGGER_MS),
+                            26,
+                            320
+                          )
+                        : undefined
+                    }
                   >
                     {canDelete ? (
                       <CircleCheckbox
@@ -429,6 +510,7 @@ export default function AssetsView() {
                         showSelectionCheckbox={false}
                         showRemove={false}
                         hoverPreviewVariant="assets"
+                        hoverPreviewOpenDelayMs={ASSETS_HOVER_PREVIEW_OPEN_DELAY_MS}
                         statusDetail={statusDetail}
                         actionLabel={entry.isTemp && source.status === "error" ? "重试" : undefined}
                         onAction={
