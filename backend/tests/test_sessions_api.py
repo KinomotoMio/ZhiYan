@@ -1024,6 +1024,53 @@ def test_workspace_upload_rejects_dangerous_filename(monkeypatch, tmp_path):
     assert listed.json() == []
 
 
+def test_workspace_source_file_endpoint_serves_binary_asset(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-image-preview"}
+    source_id = "src-image-preview"
+    asyncio.run(store.ensure_workspace("ws-image-preview"))
+    asset_dir = store.uploads_dir / source_id
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    image_path = asset_dir / "preview.png"
+    image_bytes = bytes.fromhex(
+        "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C489"
+        "0000000A49444154789C6360000002000154A24F5D0000000049454E44AE426082"
+    )
+    image_path.write_bytes(image_bytes)
+
+    asyncio.run(
+        store.create_workspace_source(
+            workspace_id="ws-image-preview",
+            source_type="file",
+            name="preview.png",
+            file_category="image",
+            size=len(image_bytes),
+            status="ready",
+            content_hash="hash-image-preview",
+            preview_snippet=None,
+            storage_path=str(image_path.resolve()),
+            parsed_content="",
+            metadata={},
+            source_id=source_id,
+        )
+    )
+
+    response = client.get(
+        f"/api/v1/workspace/sources/{source_id}/file",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content == image_bytes
+
+    denied = client.get(
+        f"/api/v1/workspace/sources/{source_id}/file",
+        headers={"X-Workspace-Id": "ws-other"},
+    )
+    assert denied.status_code == 404
+
+
 def test_workspaces_current_and_owner_unique_index(monkeypatch, tmp_path):
     store = _install_temp_session_store(monkeypatch, tmp_path)
     client = TestClient(app)

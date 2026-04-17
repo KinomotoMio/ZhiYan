@@ -452,7 +452,11 @@ export default function AssetsView() {
       </div>
 
       {previewSource ? (
-        <SourcePreviewModal source={previewSource} onClose={() => setPreviewSource(null)} />
+        <SourcePreviewModal
+          key={previewSource.id}
+          source={previewSource}
+          onClose={() => setPreviewSource(null)}
+        />
       ) : null}
     </>
   );

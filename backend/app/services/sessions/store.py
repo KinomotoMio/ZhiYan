@@ -914,6 +914,34 @@ class SessionStore:
             ).fetchone()
         return None if row is None else (row["parsed_content"] or "")
 
+    async def get_workspace_source_file(self, workspace_id: str, source_id: str) -> dict:
+        record = await asyncio.to_thread(
+            self._get_workspace_source_file_sync, workspace_id, source_id
+        )
+        if record is None:
+            raise ValueError("来源不存在")
+        return record
+
+    def _get_workspace_source_file_sync(self, workspace_id: str, source_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, name, file_category, storage_path, status
+                FROM workspace_sources
+                WHERE id=? AND workspace_id=?
+                """,
+                (source_id, workspace_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "file_category": row["file_category"],
+            "storage_path": row["storage_path"],
+            "status": row["status"],
+        }
+
     async def get_workspace_source_by_hash(
         self,
         workspace_id: str,

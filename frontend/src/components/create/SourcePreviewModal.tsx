@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SourceMeta } from "@/types/source";
-import { getWorkspaceSourceContent } from "@/lib/api";
+import { fetchWorkspaceSourceFile, getWorkspaceSourceContent } from "@/lib/api";
+import { getSourcePreviewKind } from "@/components/create/source-preview";
 
 interface SourcePreviewModalProps {
   source: SourceMeta;
@@ -15,11 +17,35 @@ export default function SourcePreviewModal({
   source,
   onClose,
 }: SourcePreviewModalProps) {
+  const previewKind = getSourcePreviewKind(source);
   const [content, setContent] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let objectUrl: string | null = null;
+
+    if (previewKind === "image") {
+      const controller = new AbortController();
+      fetchWorkspaceSourceFile(source.id, controller.signal)
+        .then((blob) => {
+          if (cancelled) return;
+          objectUrl = URL.createObjectURL(blob);
+          setImageUrl(objectUrl);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err.message);
+        });
+      return () => {
+        cancelled = true;
+        controller.abort();
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+    }
+
     getWorkspaceSourceContent(source.id)
       .then((res) => {
         if (!cancelled) setContent(res.content);
@@ -29,8 +55,11 @@ export default function SourcePreviewModal({
       });
     return () => {
       cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
-  }, [source.id]);
+  }, [previewKind, source.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -67,6 +96,23 @@ export default function SourcePreviewModal({
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {error ? (
             <p className="text-sm text-red-500">{error}</p>
+          ) : previewKind === "image" ? (
+            imageUrl ? (
+              <div className="flex min-h-[320px] items-center justify-center">
+                <Image
+                  src={imageUrl}
+                  alt={source.name}
+                  width={1600}
+                  height={900}
+                  unoptimized
+                  className="max-h-[65vh] max-w-full rounded-lg object-contain"
+                />
+              </div>
+            ) : (
+              <div className="py-4">
+                <Skeleton className="h-[320px] w-full rounded-xl" />
+              </div>
+            )
           ) : content === null ? (
             <div className="space-y-3 py-4">
               <Skeleton className="h-4 w-3/4" />

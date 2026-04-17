@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { createPortal } from "react-dom";
 import {
   FileText,
@@ -14,7 +15,12 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { SourceMeta } from "@/types/source";
+import { fetchWorkspaceSourceFile } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import {
+  canHoverPreviewSource,
+  getSourcePreviewKind,
+} from "@/components/create/source-preview";
 
 const CATEGORY_ICON: Record<string, typeof FileText> = {
   pdf: FileText,
@@ -26,14 +32,15 @@ const CATEGORY_ICON: Record<string, typeof FileText> = {
   unknown: FileSpreadsheet,
 };
 
-const CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN = 12;
-const CREATE_HOVER_PREVIEW_GAP = 8;
-const CREATE_HOVER_PREVIEW_MAX_WIDTH = 420;
-const CREATE_HOVER_PREVIEW_MIN_WIDTH = 320;
-const CREATE_HOVER_PREVIEW_WIDTH_PADDING = 20;
-const CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT = 240;
-const CREATE_HOVER_PREVIEW_MIN_HEIGHT = 180;
-const CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS = 80;
+const HOVER_PREVIEW_VIEWPORT_MARGIN = 12;
+const HOVER_PREVIEW_GAP = 8;
+const HOVER_PREVIEW_MAX_WIDTH = 420;
+const HOVER_PREVIEW_MIN_WIDTH = 300;
+const HOVER_PREVIEW_WIDTH_PADDING = 20;
+const HOVER_PREVIEW_FALLBACK_HEIGHT = 240;
+const HOVER_PREVIEW_MIN_HEIGHT = 180;
+const HOVER_PREVIEW_CLOSE_DELAY_MS = 80;
+const HOVER_PREVIEW_MIN_VISIBLE_HEIGHT = 96;
 
 function formatSize(bytes: number | undefined): string {
   if (bytes == null) return "";
@@ -89,14 +96,19 @@ export default function SourceItem({
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
+  const [hoverImageUrl, setHoverImageUrl] = useState<string | null>(null);
+  const [hoverImageError, setHoverImageError] = useState<string | null>(null);
+  const [loadingHoverImage, setLoadingHoverImage] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
-  const hoverCardRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<number | null>(null);
+  const hoverImageObjectUrlRef = useRef<string | null>(null);
+  const hoverImageAbortRef = useRef<AbortController | null>(null);
   const isError = source.status === "error";
   const isParsing = source.status === "parsing";
   const isUploading = source.status === "uploading";
   const isReady = source.status === "ready";
-  const hasHoverPreview = isReady && Boolean(source.previewSnippet);
+  const previewKind = getSourcePreviewKind(source);
+  const hasHoverPreview = canHoverPreviewSource(source);
   const isAssetsHoverPreview = hoverPreviewVariant === "assets";
   const isCreateHoverPreview = hoverPreviewVariant === "create";
 
@@ -105,35 +117,51 @@ export default function SourceItem({
       if (closeTimeoutRef.current !== null) {
         window.clearTimeout(closeTimeoutRef.current);
       }
+      if (hoverImageAbortRef.current) {
+        hoverImageAbortRef.current.abort();
+      }
+      if (hoverImageObjectUrlRef.current) {
+        URL.revokeObjectURL(hoverImageObjectUrlRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (!isCreateHoverPreview || !showPopover || !hasHoverPreview) return;
+    if (!showPopover || !hasHoverPreview) return;
 
     const updateHoverPreviewPosition = () => {
       if (!triggerRef.current) return;
 
       const triggerRect = triggerRef.current.getBoundingClientRect();
-      const viewportMargin = CREATE_HOVER_PREVIEW_VIEWPORT_MARGIN;
-      const gap = CREATE_HOVER_PREVIEW_GAP;
-      const maxWidth = Math.min(CREATE_HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
+      const viewportMargin = HOVER_PREVIEW_VIEWPORT_MARGIN;
+      const gap = HOVER_PREVIEW_GAP;
+      const maxWidth = Math.min(HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
       const width = Math.min(
-        Math.max(triggerRect.width + CREATE_HOVER_PREVIEW_WIDTH_PADDING, CREATE_HOVER_PREVIEW_MIN_WIDTH),
+        Math.max(triggerRect.width + HOVER_PREVIEW_WIDTH_PADDING, HOVER_PREVIEW_MIN_WIDTH),
         maxWidth
       );
+      const belowSpace = Math.max(
+        0,
+        window.innerHeight - triggerRect.bottom - gap - viewportMargin
+      );
+      const aboveSpace = Math.max(0, triggerRect.top - gap - viewportMargin);
+      const placeBelow =
+        belowSpace >= HOVER_PREVIEW_MIN_HEIGHT || belowSpace >= aboveSpace;
+      const availableHeight = placeBelow ? belowSpace : aboveSpace;
       const left = Math.max(
         viewportMargin,
         Math.min(triggerRect.left, window.innerWidth - width - viewportMargin)
       );
-      const previewHeight = hoverCardRef.current?.offsetHeight ?? CREATE_HOVER_PREVIEW_FALLBACK_HEIGHT;
-      const fitsBelow = triggerRect.bottom + gap + previewHeight <= window.innerHeight - viewportMargin;
-      const top = fitsBelow
+      const maxHeight = Math.max(
+        Math.min(HOVER_PREVIEW_MIN_VISIBLE_HEIGHT, Math.max(belowSpace, aboveSpace)),
+        availableHeight
+      );
+      const top = placeBelow
         ? triggerRect.bottom + gap
-        : Math.max(viewportMargin, triggerRect.top - previewHeight - gap);
-      const maxHeight = fitsBelow
-        ? Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, window.innerHeight - top - viewportMargin)
-        : Math.max(CREATE_HOVER_PREVIEW_MIN_HEIGHT, triggerRect.top - gap - viewportMargin);
+        : Math.max(
+            viewportMargin,
+            triggerRect.top - gap - Math.min(HOVER_PREVIEW_FALLBACK_HEIGHT, maxHeight)
+          );
 
       setHoverPreviewPosition({
         top,
@@ -153,7 +181,11 @@ export default function SourceItem({
       window.removeEventListener("resize", updateHoverPreviewPosition);
       window.removeEventListener("scroll", updateHoverPreviewPosition, true);
     };
-  }, [hasHoverPreview, isCreateHoverPreview, showPopover]);
+  }, [
+    hasHoverPreview,
+    hoverPreviewVariant,
+    showPopover,
+  ]);
 
   const clearCloseTimeout = () => {
     if (closeTimeoutRef.current !== null) {
@@ -162,109 +194,167 @@ export default function SourceItem({
     }
   };
 
+  const ensureHoverImageLoaded = () => {
+    if (previewKind !== "image" || hoverImageUrl || loadingHoverImage) return;
+    if (hoverImageAbortRef.current) {
+      hoverImageAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    hoverImageAbortRef.current = controller;
+    setLoadingHoverImage(true);
+    setHoverImageError(null);
+    fetchWorkspaceSourceFile(source.id, controller.signal)
+      .then((blob) => {
+        if (controller.signal.aborted) return;
+        const objectUrl = URL.createObjectURL(blob);
+        if (hoverImageObjectUrlRef.current) {
+          URL.revokeObjectURL(hoverImageObjectUrlRef.current);
+        }
+        hoverImageObjectUrlRef.current = objectUrl;
+        setHoverImageUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setHoverImageError(err instanceof Error ? err.message : "图片加载失败");
+      })
+      .finally(() => {
+        if (hoverImageAbortRef.current === controller) {
+          hoverImageAbortRef.current = null;
+        }
+        if (!controller.signal.aborted) {
+          setLoadingHoverImage(false);
+        }
+      });
+  };
+
   const openHoverPreview = () => {
     if (!hasHoverPreview) return;
     clearCloseTimeout();
+    if (previewKind === "image") {
+      ensureHoverImageLoaded();
+    }
     setShowPopover(true);
   };
 
-  const closeHoverPreview = () => {
-    clearCloseTimeout();
-    setShowPopover(false);
-    setHoverPreviewPosition(null);
-  };
-
   const scheduleHoverPreviewClose = () => {
-    if (!isCreateHoverPreview) {
-      closeHoverPreview();
-      return;
-    }
-
     clearCloseTimeout();
     closeTimeoutRef.current = window.setTimeout(() => {
       setShowPopover(false);
       setHoverPreviewPosition(null);
       closeTimeoutRef.current = null;
-    }, CREATE_HOVER_PREVIEW_CLOSE_DELAY_MS);
+    }, HOVER_PREVIEW_CLOSE_DELAY_MS);
   };
 
-  const inlineHoverPreview =
-    !isCreateHoverPreview && showPopover && source.previewSnippet ? (
-      <div
-        className={cn(
-          "absolute left-0 top-full z-20 mt-1 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/90",
-          "w-full",
-          isAssetsHoverPreview && "space-y-2.5"
-        )}
-      >
-        {isAssetsHoverPreview ? (
-          <>
-            <div className="space-y-1">
-              <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
-                {source.name}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {formatSize(source.size)}
-              </p>
-            </div>
-            <p className="line-clamp-6 text-xs leading-5 text-slate-600 dark:text-slate-300">
-              {source.previewSnippet}
-            </p>
-            {extraMeta ? (
-              <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
-                {extraMeta}
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-4">
-              {source.previewSnippet}
-            </p>
-            {extraMeta ? (
-              <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p>
-            ) : null}
-          </>
-        )}
-      </div>
-    ) : null;
+  const renderImagePreview = (maxHeightClass: string, loaderHeightClass: string, radiusClass: string) => (
+    <div
+      className={cn(
+        "overflow-hidden border border-slate-200/80 bg-slate-50 dark:border-slate-700/80 dark:bg-slate-900/50",
+        radiusClass
+      )}
+    >
+      {hoverImageUrl ? (
+        <Image
+          src={hoverImageUrl}
+          alt={source.name}
+          width={1400}
+          height={1050}
+          unoptimized
+          className={cn("h-auto w-full object-contain", maxHeightClass)}
+        />
+      ) : loadingHoverImage ? (
+        <div className={cn("flex items-center justify-center", loaderHeightClass)}>
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+        </div>
+      ) : hoverImageError ? (
+        <p className="px-3 py-6 text-center text-xs text-red-500">{hoverImageError}</p>
+      ) : null}
+    </div>
+  );
 
-  const createHoverPreview =
-    isCreateHoverPreview &&
+  const hoverPreview =
     showPopover &&
-    source.previewSnippet &&
     hoverPreviewPosition &&
     typeof document !== "undefined"
       ? createPortal(
           <div className="pointer-events-none fixed inset-0 z-[70]">
             <div
-              ref={hoverCardRef}
-              className="pointer-events-auto fixed overflow-hidden rounded-[24px] border border-white/85 bg-white/96 p-4 shadow-[0_26px_60px_-36px_rgba(15,23,42,0.42)] backdrop-blur-xl dark:border-slate-700 dark:bg-slate-800/95"
+              className={cn(
+                "pointer-events-auto fixed overflow-hidden",
+                isCreateHoverPreview
+                  ? "rounded-[24px] border border-white/85 bg-white/96 p-4 shadow-[0_26px_60px_-36px_rgba(15,23,42,0.42)] backdrop-blur-xl dark:border-slate-700 dark:bg-slate-800/95"
+                  : "rounded-lg border border-slate-200 bg-white/92 p-3 shadow-lg backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/92"
+              )}
               style={hoverPreviewPosition}
               onMouseEnter={openHoverPreview}
               onMouseLeave={scheduleHoverPreviewClose}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="flex max-h-full flex-col gap-2.5">
-                <div className="space-y-1">
-                  <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
-                    {source.name}
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {formatSize(source.size)}
-                  </p>
+              {isCreateHoverPreview ? (
+                <div className="flex max-h-full flex-col gap-2.5">
+                  <div className="space-y-1">
+                    <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
+                      {source.name}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {formatSize(source.size)}
+                    </p>
+                  </div>
+                  <div className="overflow-y-auto">
+                    {previewKind === "image" ? (
+                      renderImagePreview("max-h-[50vh]", "h-52", "rounded-[18px]")
+                    ) : (
+                      <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                        {source.previewSnippet}
+                      </p>
+                    )}
+                  </div>
+                  {extraMeta ? (
+                    <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
+                      {extraMeta}
+                    </p>
+                  ) : null}
                 </div>
-                <div className="overflow-y-auto">
-                  <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
-                    {source.previewSnippet}
-                  </p>
+              ) : isAssetsHoverPreview ? (
+                <div className="flex max-h-full flex-col gap-2.5">
+                  <div className="space-y-1">
+                    <p className="break-words text-sm font-medium leading-5 text-slate-900 dark:text-slate-100">
+                      {source.name}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {formatSize(source.size)}
+                    </p>
+                  </div>
+                  <div className="overflow-y-auto">
+                    {previewKind === "image" ? (
+                      renderImagePreview("max-h-64", "h-40", "rounded-xl")
+                    ) : (
+                      <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                        {source.previewSnippet}
+                      </p>
+                    )}
+                  </div>
+                  {extraMeta ? (
+                    <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
+                      {extraMeta}
+                    </p>
+                  ) : null}
                 </div>
-                {extraMeta ? (
-                  <p className="border-t border-slate-200/80 pt-2 text-[11px] text-slate-500 dark:border-slate-700/80 dark:text-slate-400">
-                    {extraMeta}
-                  </p>
-                ) : null}
-              </div>
+              ) : (
+                <div className="flex max-h-full flex-col gap-2">
+                  <div className="overflow-y-auto">
+                    {previewKind === "image" ? (
+                      renderImagePreview("max-h-56", "h-36", "rounded-xl")
+                    ) : (
+                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                        {source.previewSnippet}
+                      </p>
+                    )}
+                  </div>
+                  {extraMeta ? (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">{extraMeta}</p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>,
           document.body
@@ -288,7 +378,6 @@ export default function SourceItem({
       onMouseEnter={openHoverPreview}
       onMouseLeave={scheduleHoverPreviewClose}
     >
-      {/* Checkbox — 仅 ready 状态显示 */}
       {isReady && showSelectionCheckbox && (
         <input
           type="checkbox"
@@ -299,7 +388,6 @@ export default function SourceItem({
         />
       )}
 
-      {/* 图标 */}
       <div
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl text-slate-500",
@@ -315,7 +403,6 @@ export default function SourceItem({
         )}
       </div>
 
-      {/* 名称和状态 */}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-slate-800">{source.name}</p>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -347,7 +434,6 @@ export default function SourceItem({
         </button>
       ) : null}
 
-      {/* 删除按钮 */}
       {showRemove && onRemove && (
         <button
           onClick={(e) => {
@@ -361,8 +447,7 @@ export default function SourceItem({
         </button>
       )}
 
-      {inlineHoverPreview}
-      {createHoverPreview}
+      {hoverPreview}
     </div>
   );
 }

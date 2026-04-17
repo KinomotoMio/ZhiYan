@@ -680,6 +680,18 @@ export async function getWorkspaceSourceContent(sourceId: string): Promise<{ con
   return res.json();
 }
 
+export async function fetchWorkspaceSourceFile(
+  sourceId: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/workspace/sources/${sourceId}/file`, {
+    headers: withWorkspaceHeaders(),
+    signal,
+  });
+  if (!res.ok) throw new Error(`获取来源文件失败: ${res.statusText}`);
+  return res.blob();
+}
+
 export async function deleteWorkspaceSource(sourceId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/workspace/sources/${sourceId}`, {
     method: "DELETE",

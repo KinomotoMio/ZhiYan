@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.models.source import SourceMeta
@@ -85,6 +87,24 @@ def _hash_bytes(payload: bytes) -> str:
 
 def _hash_text(payload: str) -> str:
     return _hash_bytes(payload.encode("utf-8"))
+
+
+def _resolve_workspace_source_storage(base_dir: Path, storage_path: str) -> Path:
+    candidate = Path(storage_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = (base_dir / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    uploads_root = base_dir.resolve()
+    try:
+        candidate.relative_to(uploads_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="来源文件不存在") from exc
+
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="来源文件不存在")
+    return candidate
 
 
 @router.get("", response_model=list[SourceMeta])
@@ -281,3 +301,24 @@ async def get_workspace_source_content(source_id: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return {"content": content}
+
+
+@router.get("/{source_id}/file")
+async def get_workspace_source_file(source_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    try:
+        record = await session_store.get_workspace_source_file(workspace_id, source_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    storage_path = str(record.get("storage_path") or "").strip()
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="来源文件不存在")
+
+    target = _resolve_workspace_source_storage(session_store.uploads_dir, storage_path)
+    media_type, _ = mimetypes.guess_type(target.name)
+    return FileResponse(
+        path=str(target),
+        media_type=media_type or "application/octet-stream",
+        filename=str(record.get("name") or target.name),
+    )
