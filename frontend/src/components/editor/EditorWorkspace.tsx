@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
   FileOutput,
   LayoutPanelLeft,
   Loader2,
@@ -21,6 +22,8 @@ import {
   ensureSpeakerAudio,
   exportPptx,
   exportPdf,
+  exportSessionPdf,
+  exportSessionPptx,
   fetchSpeakerAudio,
   fixApply,
   fixPreview,
@@ -28,7 +31,8 @@ import {
   generateSpeakerNotes,
   createOrGetSessionShareLink,
   getLatestSessionPresentation,
-  getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlManifest,
+  getLatestSessionPresentationHtmlRender,
   getLatestSessionPresentationSlidev,
   saveLatestSessionPresentation,
   saveLatestSessionHtmlPresentation,
@@ -41,12 +45,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { canResumeGenerationJob } from "@/lib/routes";
+import { canResumeGenerationJob, getSessionPresenterPath } from "@/lib/routes";
+import { useHtmlRuntimeRoomSync } from "@/lib/use-html-runtime-room-sync";
 import { resumeGenerationJob } from "@/components/editor/resume-job";
 import SlidePreview from "@/components/slides/SlidePreview";
 import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import RevealPreview from "@/components/slides/RevealPreview";
+import HtmlRuntimePreview from "@/components/slides/HtmlRuntimePreview";
 import SlidevPreview from "@/components/slides/SlidevPreview";
 import HtmlPreviewSurface from "@/components/slides/HtmlPreviewSurface";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
@@ -132,6 +138,8 @@ export default function EditorWorkspace({
     presentation,
     presentationOutputMode,
     presentationHtml,
+    presentationHtmlManifest,
+    presentationHtmlRender,
     presentationSlidevBuildUrl,
     presentationSlidevMeta,
     presentationSlidevMarkdown,
@@ -194,18 +202,45 @@ export default function EditorWorkspace({
     currentSessionId &&
       !isGenerating &&
       !isSlidevMode &&
-      (isHtmlMode ? presentationHtml : presentation && presentation.slides.length > 0)
+      (isHtmlMode
+        ? presentationHtmlRender?.documentHtml
+        : presentation && presentation.slides.length > 0)
   );
+  const canExport = Boolean(
+    currentSessionId &&
+      !isGenerating &&
+      !isSlidevMode &&
+      (isHtmlMode
+        ? presentationHtmlRender?.documentHtml
+        : presentation && presentation.slides.length > 0)
+  );
+  const syncedHtmlSlideIndex = isHtmlMode && showReveal ? revealSlideIndex : currentSlideIndex;
+  const { roomId: presenterRoomId, status: presenterRoomStatus } = useHtmlRuntimeRoomSync({
+    sessionId: isHtmlMode ? currentSessionId : null,
+    room: null,
+    slideIndex: syncedHtmlSlideIndex,
+    onRemoteSlideChange: (nextSlideIndex) => {
+      if (showReveal && isHtmlMode) {
+        setRevealSlideIndex(nextSlideIndex);
+        return;
+      }
+      setCurrentSlideIndex(nextSlideIndex);
+    },
+    enabled: isHtmlMode && Boolean(presentationHtmlRender?.documentHtml),
+  });
 
   const refreshHtmlPreviewState = async () => {
     if (!currentSessionId) return;
-    const [latestPresentation, latestHtml] = await Promise.all([
+    const [latestPresentation, latestManifest, latestRender] = await Promise.all([
       getLatestSessionPresentation(currentSessionId),
-      getLatestSessionPresentationHtml(currentSessionId),
+      getLatestSessionPresentationHtmlManifest(currentSessionId),
+      getLatestSessionPresentationHtmlRender(currentSessionId),
     ]);
     setPresentationHtmlState(
       "html",
-      latestHtml,
+      latestRender?.documentHtml ?? null,
+      latestManifest ?? null,
+      latestRender ?? null,
       latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
     );
   };
@@ -623,19 +658,23 @@ export default function EditorWorkspace({
   };
 
   const handleExport = async (format: "pptx" | "pdf") => {
-    if (!presentation || exporting) return;
+    if (exporting || !canExport || !currentSessionId) return;
     setExporting(true);
 
     try {
       const blob =
-        format === "pptx"
-          ? await exportPptx(presentation)
-          : await exportPdf(presentation);
+        isHtmlMode
+          ? format === "pptx"
+            ? await exportSessionPptx(currentSessionId)
+            : await exportSessionPdf(currentSessionId)
+          : format === "pptx"
+            ? await exportPptx(presentation as Presentation)
+            : await exportPdf(presentation as Presentation);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${presentation.title.slice(0, 30)}.${format}`;
+      a.download = `${(presentation?.title || sessionTitle || "presentation").slice(0, 30)}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -667,13 +706,13 @@ export default function EditorWorkspace({
 
     try {
       if (isHtmlMode) {
-        if (!presentationHtml) {
+        if (!presentationHtmlManifest) {
           throw new Error("HTML 演示稿尚未加载完成，暂时无法保存演讲者注解");
         }
         await saveLatestSessionHtmlPresentation(
           currentSessionId,
           nextPresentation,
-          presentationHtml,
+          presentationHtmlManifest,
           "editor"
         );
         await refreshHtmlPreviewState();
@@ -756,6 +795,15 @@ export default function EditorWorkspace({
     return fetchSpeakerAudio(currentSessionId, currentSlide.slideId, signal);
   };
 
+  const handleOpenPresenter = () => {
+    if (!currentSessionId || !isHtmlMode) return;
+    const href = getSessionPresenterPath(currentSessionId, {
+      slide: syncedHtmlSlideIndex + 1,
+      room: presenterRoomId,
+    });
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
   if (showReveal) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
@@ -768,14 +816,20 @@ export default function EditorWorkspace({
         {isSlidevMode ? (
           <SlidevPreview
             src={presentationSlidevBuildUrl}
-            startSlide={currentSlideIndex}
+            startSlide={revealSlideIndex}
+            onSlideChange={setRevealSlideIndex}
+          />
+        ) : isHtmlMode ? (
+          <HtmlRuntimePreview
+            renderPayload={presentationHtmlRender}
+            startSlide={revealSlideIndex}
             onSlideChange={setRevealSlideIndex}
           />
         ) : (
           <RevealPreview
             presentation={presentation}
-            htmlContent={isHtmlMode ? presentationHtml : null}
-            startSlide={currentSlideIndex}
+            htmlContent={null}
+            startSlide={revealSlideIndex}
             onSlideChange={setRevealSlideIndex}
           />
         )}
@@ -819,7 +873,7 @@ export default function EditorWorkspace({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  disabled={exporting || isGenerating || isHtmlMode || isSlidevMode}
+                  disabled={exporting || !canExport}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus-visible:ring-2 focus-visible:ring-cyan-500/60 disabled:opacity-50"
                 >
                   {exporting ? (
@@ -909,6 +963,21 @@ export default function EditorWorkspace({
                 校验问题（{totalIssueCount}）
               </button>
             )}
+            {isHtmlMode && currentSessionId && presentationHtmlRender?.documentHtml && (
+              <button
+                type="button"
+                onClick={handleOpenPresenter}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-sm"
+                title={
+                  presenterRoomStatus === "connected"
+                    ? "打开 Presenter 路由（房间同步已就绪）"
+                    : "打开 Presenter 路由"
+                }
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Presenter
+              </button>
+            )}
             <button
               onClick={() => {
                 setRevealSlideIndex(currentSlideIndex);
@@ -985,7 +1054,8 @@ export default function EditorWorkspace({
                       index={i}
                       isActive={i === currentSlideIndex}
                       onClick={() => setCurrentSlideIndex(i)}
-                      htmlContent={isHtmlMode ? presentationHtml : null}
+                      htmlRender={isHtmlMode ? presentationHtmlRender : null}
+                      htmlDocument={isHtmlMode ? presentationHtml : null}
                       htmlStartSlide={i}
                       issueMeta={
                         groupedIssues.has(slide.slideId)
@@ -1030,10 +1100,10 @@ export default function EditorWorkspace({
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
                 {currentSlide ? (
                   isHtmlMode ? (
-                    presentationHtml ? (
+                    presentationHtmlRender?.documentHtml ? (
                       <HtmlPreviewSurface
-                        presentation={presentation}
-                        htmlContent={presentationHtml}
+                        renderPayload={presentationHtmlRender}
+                        documentHtml={presentationHtml}
                         startSlide={currentSlideIndex}
                         onSlideChange={setCurrentSlideIndex}
                         className="h-full min-h-0 w-full"

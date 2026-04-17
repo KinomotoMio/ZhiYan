@@ -4,7 +4,8 @@ import { useRef, useState, useEffect } from "react";
 import type { Slide } from "@/types/slide";
 import { Skeleton } from "@/components/ui/skeleton";
 import SlidePreview from "./SlidePreview";
-import RevealPreview from "./RevealPreview";
+import HtmlRuntimePreview from "./HtmlRuntimePreview";
+import type { HtmlRuntimeRenderPayload } from "@/lib/api";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
 
 interface SlideIssueMeta {
@@ -19,7 +20,8 @@ interface SlideThumbnailProps {
   index: number;
   isActive: boolean;
   onClick: () => void;
-  htmlContent?: string | null;
+  htmlRender?: HtmlRuntimeRenderPayload | null;
+  htmlDocument?: string | null;
   htmlStartSlide?: number;
   issueMeta?: SlideIssueMeta;
   onIssueClick?: () => void;
@@ -31,7 +33,8 @@ export default function SlideThumbnail({
   index,
   isActive,
   onClick,
-  htmlContent,
+  htmlRender = null,
+  htmlDocument,
   htmlStartSlide,
   issueMeta,
   onIssueClick,
@@ -93,7 +96,7 @@ export default function SlideThumbnail({
       </div>
       <div className="relative min-w-0 flex-1">
         {visible ? (
-          htmlContent ? (
+          htmlRender || htmlDocument ? (
             <div
               onClick={onClick}
               className={`relative aspect-[16/9] cursor-pointer overflow-hidden rounded-lg border bg-white transition-shadow ${
@@ -101,8 +104,9 @@ export default function SlideThumbnail({
               }`}
             >
               <div className="absolute inset-0">
-                <RevealPreview
-                  htmlContent={htmlContent}
+                <HtmlRuntimePreview
+                  renderPayload={htmlRender}
+                  documentHtml={htmlDocument}
                   startSlide={htmlStartSlide ?? index}
                   thumbnailMode
                   className="pointer-events-none"

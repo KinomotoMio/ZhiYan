@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { Presentation } from "@/types/slide";
 import SlidePreview from "@/components/slides/SlidePreview";
-import RevealPreview from "@/components/slides/RevealPreview";
+import HtmlRuntimePreview from "@/components/slides/HtmlRuntimePreview";
 import { resolveAspectContainSize } from "@/components/slides/HtmlPreviewSurface";
 import type { PresentationOutputMode } from "@/lib/api";
 
@@ -154,8 +154,8 @@ export default function RecentResultCarousel({
         >
           {isHtmlMode ? (
             <div className="h-full w-full overflow-hidden">
-              <RevealPreview
-                htmlContent={htmlContent}
+              <HtmlRuntimePreview
+                documentHtml={htmlContent}
                 startSlide={normalizedSlideIndex}
                 className="w-full border-0 shadow-none"
               />
@@ -194,8 +194,8 @@ export default function RecentResultCarousel({
                 <div className="aspect-video w-full overflow-hidden rounded-md">
                   {isHtmlMode ? (
                     <div className="h-full w-full overflow-hidden">
-                      <RevealPreview
-                        htmlContent={htmlContent}
+                      <HtmlRuntimePreview
+                        documentHtml={htmlContent}
                         startSlide={index}
                         thumbnailMode
                         className="w-full border-0 shadow-none pointer-events-none"

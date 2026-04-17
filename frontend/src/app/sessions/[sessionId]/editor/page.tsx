@@ -7,7 +7,8 @@ import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import {
   buildLatestSessionPresentationSlidevUrl,
   getJob,
-  getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlManifest,
+  getLatestSessionPresentationHtmlRender,
   getLatestSessionPresentationSlidev,
   getSessionDetail,
   updateSession,
@@ -135,6 +136,14 @@ export default function SessionEditorPage() {
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationHtml
             : null;
+        let presentationHtmlManifest =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationHtmlManifest
+            : null;
+        let presentationHtmlRender =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationHtmlRender
+            : null;
         let presentationSlidevMarkdown =
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationSlidevMarkdown
@@ -222,9 +231,17 @@ export default function SessionEditorPage() {
 
         if (latestOutputMode === "html") {
           try {
-            presentationHtml = await getLatestSessionPresentationHtml(sessionId);
+            const [manifest, render] = await Promise.all([
+              getLatestSessionPresentationHtmlManifest(sessionId),
+              getLatestSessionPresentationHtmlRender(sessionId),
+            ]);
+            presentationHtml = render?.documentHtml ?? null;
+            presentationHtmlManifest = manifest;
+            presentationHtmlRender = render;
           } catch {
             presentationHtml = null;
+            presentationHtmlManifest = null;
+            presentationHtmlRender = null;
           }
         } else if (latestOutputMode === "slidev") {
           try {
@@ -252,6 +269,8 @@ export default function SessionEditorPage() {
           presentation,
           presentationOutputMode: latestOutputMode,
           presentationHtml,
+          presentationHtmlManifest,
+          presentationHtmlRender,
           presentationHtmlArtifact: detail.latest_presentation?.artifacts?.html_deck ?? null,
           presentationSlidevMarkdown,
           presentationSlidevMeta,
@@ -266,6 +285,8 @@ export default function SessionEditorPage() {
         setPresentationHtmlState(
           latestOutputMode,
           presentationHtml,
+          presentationHtmlManifest,
+          presentationHtmlRender,
           detail.latest_presentation?.artifacts?.html_deck ?? null
         );
         setPresentationSlidevState({

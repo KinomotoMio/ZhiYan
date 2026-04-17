@@ -78,3 +78,20 @@ async def get_public_share_html(token: str):
         media_type="text/html",
         headers=_NO_STORE_HEADERS,
     )
+
+
+@router.get("/{token}/html/render")
+async def get_public_share_html_render(token: str):
+    share, latest = await _resolve_shared_presentation(token)
+    if str(latest.get("output_mode") or "structured") != "html":
+        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
+
+    runtime = await session_store.get_latest_html_runtime(
+        str(share["workspace_id"]),
+        str(share["session_id"]),
+    )
+    if not runtime:
+        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
+
+    _manifest, render = runtime
+    return JSONResponse(content=render, headers=_NO_STORE_HEADERS)

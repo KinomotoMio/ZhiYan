@@ -1,0 +1,147 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+import type { HtmlRuntimeRenderPayload } from "@/lib/api";
+
+interface HtmlRuntimePreviewProps {
+  renderPayload?: HtmlRuntimeRenderPayload | null;
+  documentHtml?: string | null;
+  startSlide?: number;
+  className?: string;
+  onSlideChange?: (slideIndex: number) => void;
+  thumbnailMode?: boolean;
+  printMode?: boolean;
+  autoFocusOnLoad?: boolean;
+  listenForSlideChange?: boolean;
+}
+
+export function buildHtmlRuntimePreviewSrc(
+  blobUrl: string,
+  options?: { startSlide?: number; thumbnailMode?: boolean; printMode?: boolean }
+): string {
+  const safeStartSlide =
+    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
+      ? Math.max(0, Math.trunc(options.startSlide))
+      : 0;
+  const search = new URLSearchParams({
+    slide: String(safeStartSlide),
+    mode: options?.printMode ? "print" : options?.thumbnailMode ? "thumbnail" : "interactive",
+  });
+  return `${blobUrl}?${search.toString()}`;
+}
+
+export function getHtmlRuntimeSlideIndex(data: unknown): number | null {
+  if (!data || typeof data !== "object") return null;
+  const payload = data as { type?: unknown; slideIndex?: unknown };
+  if (payload.type !== "html-runtime-slidechange") return null;
+  if (typeof payload.slideIndex !== "number" || !Number.isFinite(payload.slideIndex)) return null;
+  return Math.max(0, Math.trunc(payload.slideIndex));
+}
+
+type FocusableFrame = {
+  focus?: (options?: FocusOptions) => void;
+  contentWindow?: {
+    focus?: () => void;
+  } | null;
+};
+
+function focusFrame(frame: FocusableFrame | null): void {
+  if (!frame) return;
+  try {
+    frame.focus?.({ preventScroll: true });
+  } catch {
+    try {
+      frame.focus?.();
+    } catch {
+      // Ignore focus failures for sandboxed or not-yet-ready frames.
+    }
+  }
+  try {
+    frame.contentWindow?.focus?.();
+  } catch {
+    // Ignore focus failures for sandboxed or not-yet-ready frames.
+  }
+}
+
+export default function HtmlRuntimePreview({
+  renderPayload = null,
+  documentHtml,
+  startSlide = 0,
+  className = "",
+  onSlideChange,
+  thumbnailMode = false,
+  printMode = false,
+  autoFocusOnLoad = true,
+  listenForSlideChange = true,
+}: HtmlRuntimePreviewProps) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const blobUrlRef = useRef<string | null>(null);
+  const resolvedDocumentHtml = renderPayload?.documentHtml ?? documentHtml ?? null;
+
+  useEffect(() => {
+    if (!iframeRef.current) return;
+    const html = String(resolvedDocumentHtml || "");
+    if (!html) {
+      iframeRef.current.removeAttribute("src");
+      return;
+    }
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    blobUrlRef.current = url;
+    iframeRef.current.src = buildHtmlRuntimePreviewSrc(url, {
+      startSlide,
+      thumbnailMode,
+      printMode,
+    });
+    return () => {
+      if (blobUrlRef.current === url) {
+        blobUrlRef.current = null;
+      }
+      URL.revokeObjectURL(url);
+    };
+  }, [printMode, resolvedDocumentHtml, thumbnailMode]);
+
+  useEffect(() => {
+    const frame = iframeRef.current;
+    if (!frame || !frame.contentWindow || !resolvedDocumentHtml || thumbnailMode || printMode) return;
+    frame.contentWindow.postMessage(
+      {
+        type: "html-runtime-go-to-slide",
+        slideIndex: Math.max(0, Math.trunc(startSlide)),
+      },
+      window.location.origin
+    );
+  }, [printMode, resolvedDocumentHtml, startSlide, thumbnailMode]);
+
+  useEffect(() => {
+    if (!listenForSlideChange || thumbnailMode || !onSlideChange) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.origin !== window.location.origin) return;
+      const slideIndex = getHtmlRuntimeSlideIndex(event.data);
+      if (slideIndex === null) return;
+      onSlideChange(slideIndex);
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [listenForSlideChange, thumbnailMode, onSlideChange]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      className={`w-full h-full border-0 ${className}`}
+      data-preview-mode={printMode ? "print" : thumbnailMode ? "thumbnail" : "interactive"}
+      title="HTML runtime preview"
+      sandbox="allow-scripts allow-same-origin"
+      loading={thumbnailMode || printMode ? "lazy" : undefined}
+      tabIndex={-1}
+      onLoad={() => {
+        if (!autoFocusOnLoad || thumbnailMode || printMode) return;
+        focusFrame(iframeRef.current);
+      }}
+    />
+  );
+}

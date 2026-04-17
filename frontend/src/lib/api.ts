@@ -162,8 +162,54 @@ export interface HtmlDeckArtifactMeta {
   version: number;
   slide_count: number;
   updated_at: string;
+  artifact_version?: "legacy" | "runtime_v2" | string;
   storage_path?: string;
   meta_storage_path?: string;
+  manifest_storage_path?: string;
+  render_storage_path?: string;
+  document_storage_path?: string;
+}
+
+export interface HtmlRuntimeManifestSlide {
+  slideId: string;
+  title: string;
+  bodyHtml: string;
+  scopedCss?: string | null;
+  speakerNotes?: string | null;
+  actions?: Array<Record<string, unknown>>;
+  drilldowns?: Array<Record<string, unknown>>;
+  background?: Record<string, unknown> | null;
+  transition?: string | null;
+}
+
+export interface HtmlRuntimeManifest {
+  version: string;
+  title: string;
+  theme?: Record<string, unknown> | null;
+  presenter?: Record<string, unknown> | null;
+  export?: Record<string, unknown> | null;
+  slides: HtmlRuntimeManifestSlide[];
+}
+
+export interface HtmlRuntimeRenderSlide {
+  index: number;
+  slideId: string;
+  title: string;
+  html: string;
+  css?: string;
+  speakerNotes?: string | null;
+}
+
+export interface HtmlRuntimeRenderPayload {
+  artifactVersion: string;
+  runtimeVersion: string;
+  title: string;
+  slideCount: number;
+  theme?: Record<string, unknown> | null;
+  slides: HtmlRuntimeRenderSlide[];
+  documentHtml: string;
+  presenterCapabilities?: Record<string, unknown>;
+  exportCapabilities?: Record<string, unknown>;
 }
 
 export interface SlidevDeckArtifactMeta {
@@ -408,6 +454,28 @@ export async function getLatestSessionPresentationHtmlMeta(
   return res.json();
 }
 
+export async function getLatestSessionPresentationHtmlManifest(
+  sessionId: string
+): Promise<HtmlRuntimeManifest | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/manifest`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 HTML runtime manifest 失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getLatestSessionPresentationHtmlRender(
+  sessionId: string
+): Promise<HtmlRuntimeRenderPayload | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/render`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 HTML runtime render payload 失败: ${res.statusText}`);
+  return res.json();
+}
+
 export interface SlidevDeckResponse {
   markdown: string;
   meta: Record<string, unknown>;
@@ -490,6 +558,17 @@ export async function getPublicShareHtml(token: string): Promise<string> {
   return res.text();
 }
 
+export async function getPublicShareHtmlRender(token: string): Promise<HtmlRuntimeRenderPayload> {
+  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}/html/render`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `获取分享 HTML render payload 失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 export async function createSessionSnapshot(
   sessionId: string,
   snapshotLabel: string,
@@ -527,7 +606,7 @@ export async function saveLatestSessionPresentation(
 export async function saveLatestSessionHtmlPresentation(
   sessionId: string,
   presentation: Presentation,
-  htmlContent: string,
+  manifest: HtmlRuntimeManifest,
   source: "chat" | "editor" = "chat"
 ): Promise<SnapshotMeta> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
@@ -537,7 +616,7 @@ export async function saveLatestSessionHtmlPresentation(
       presentation,
       source,
       output_mode: "html",
-      html_deck: { html: htmlContent },
+      html_deck: { manifest },
     }),
   });
   if (!res.ok) {
@@ -1116,11 +1195,35 @@ export async function exportPptx(presentation: Presentation): Promise<Blob> {
   return res.blob();
 }
 
+export async function exportSessionPptx(sessionId: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/export/pptx`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `PPTX 导出失败: ${res.statusText}`);
+  }
+  return res.blob();
+}
+
 export async function exportPdf(presentation: Presentation): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/v1/export/pdf`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ presentation }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `PDF 导出失败: ${res.statusText}`);
+  }
+  return res.blob();
+}
+
+export async function exportSessionPdf(sessionId: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/export/pdf`, {
+    method: "POST",
+    headers: withWorkspaceHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -1152,7 +1255,8 @@ interface SlideUpdateEvent {
 }
 
 interface HtmlUpdateEvent {
-  html_content: string;
+  html_manifest: HtmlRuntimeManifest;
+  html_render: HtmlRuntimeRenderPayload;
   presentation: Presentation;
   modifications?: Record<string, unknown>[];
 }
@@ -1285,7 +1389,8 @@ export async function chatStream(
               });
             } else if (parsed.type === "html_update" && onHtmlUpdate) {
               onHtmlUpdate({
-                html_content: parsed.html_content,
+                html_manifest: parsed.html_manifest,
+                html_render: parsed.html_render,
                 presentation: parsed.presentation,
                 modifications: parsed.modifications,
               });

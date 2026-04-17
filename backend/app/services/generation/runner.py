@@ -21,6 +21,7 @@ from app.core.model_status import parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, RunMetadata, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide, Theme
 from app.services.html_deck import normalize_html_deck
+from app.services.html_runtime import build_html_runtime_artifact
 from app.services.generation.agentic import (
     AgentBuilder,
     LiteLLMModelClient,
@@ -89,6 +90,14 @@ class _SubmitHtmlDeckArgs(BaseModel):
     html: str
 
 
+class _SubmitHtmlRuntimeDeckArgs(BaseModel):
+    title: str = ""
+    theme: dict[str, Any] | None = None
+    presenter: dict[str, Any] | None = None
+    export: dict[str, Any] | None = None
+    slides: list[dict[str, Any]]
+
+
 class _SubmitSlidevDeckArgs(BaseModel):
     title: str = ""
     markdown: str
@@ -101,6 +110,10 @@ AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
     "read_skill_resource",
     "load_skill",
+)
+
+HTML_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
+    "read_file",
 )
 
 REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
@@ -1112,7 +1125,8 @@ class GenerationRunner:
             output_mode=job.output_mode.value,
             html_deck=(
                 {
-                    "html": html_output.get("html"),
+                    "manifest": html_output.get("manifest"),
+                    "render": html_output.get("render"),
                     "expected_slide_count": len(job.slides),
                 }
                 if job.output_mode.value == "html" and isinstance(html_output, dict)
@@ -1373,6 +1387,9 @@ class GenerationRunner:
             )
             await self._sync_state_to_job(job, state)
 
+        if job.output_mode.value == "html":
+            return True
+
         await self._run_stage(
             job,
             state,
@@ -1397,10 +1414,20 @@ class GenerationRunner:
         state.document_metadata.setdefault("agent_workspace", workspace_meta)
         if progress_hook:
             await progress_hook("parse", 1, 3, "准备 Agent 工作区与素材清单...")
-        brief = self._build_local_source_brief(job)
-        state.document_metadata["source_brief"] = brief
+        if job.output_mode.value != "html":
+            brief = self._build_local_source_brief(job)
+            state.document_metadata["source_brief"] = brief
+        else:
+            state.document_metadata.pop("source_brief", None)
         if progress_hook:
-            await progress_hook("parse", 2, 3, "整理本地素材摘要与结构线索...")
+            await progress_hook(
+                "parse",
+                2,
+                3,
+                "整理 Agent 工作区输入与原始素材引用..."
+                if job.output_mode.value == "html"
+                else "整理本地素材摘要与结构线索...",
+            )
             await progress_hook("parse", 3, 3, "工作区已准备完成。")
 
     async def _stage_generate_agent_outline(
@@ -1450,8 +1477,14 @@ class GenerationRunner:
             state.document_metadata.setdefault("agent_outputs", {})
             state.document_metadata["agent_outputs"]["html_deck"] = {
                 "title": html_payload["title"],
-                "html": html_payload["html"],
-                "meta": html_payload["meta"],
+                "html": str((html_payload.get("render") or {}).get("documentHtml") or ""),
+                "meta": {
+                    "title": html_payload["title"],
+                    "slide_count": int((html_payload.get("render") or {}).get("slideCount") or 0),
+                    "slides": list((html_payload.get("render") or {}).get("slides") or []),
+                },
+                "manifest": html_payload["manifest"],
+                "render": html_payload["render"],
             }
             state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
                 mode="json",
@@ -2084,30 +2117,30 @@ class GenerationRunner:
         payload_holder: dict[str, Any] = {}
         agent, traced_model = self._build_generation_agent(
             job=job,
-            extra_tools=[self._make_html_deck_submit_tool(payload_holder)],
+            extra_tools=[
+                self._make_html_runtime_submit_tool(job, payload_holder),
+            ],
             system_prompt=self._build_agent_presentation_prompt(job, state),
-            allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
+            allowed_builtin_tools=HTML_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
-        preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        for attempt in range(3):
+        for attempt in range(2):
             prompt = (
                 self._build_agent_presentation_user_prompt(job, state)
                 if attempt == 0
                 else self._build_agent_presentation_retry_prompt(
                     expected,
                     [
-                        "必须输出可直接播放的 Reveal HTML 文件。",
-                        f"必须严格包含 {expected} 个 <section> 页面。",
-                        "每个页面都要有稳定的 data-slide-id 和 data-slide-title。",
+                        "必须提交完整的 HTML runtime manifest。",
+                        f"slides 数量必须严格等于 {expected}。",
+                        "每个页面都要有稳定的 slideId、title、bodyHtml。",
+                        "不要提交完整 HTML 文档壳，只提交页面片段。",
                     ],
                     output_mode="html",
                 )
             )
             result = await session.send(prompt)
-            if attempt == 0 and preload_tool_results:
-                result.tool_results = [*preload_tool_results, *result.tool_results]
             self._write_agent_run_debug(
                 job,
                 state,
@@ -2116,14 +2149,14 @@ class GenerationRunner:
                 session=session,
                 result=result,
                 traced_model=traced_model,
-                submitted_payload=payload_holder.get("html_deck"),
+                submitted_payload=payload_holder.get("html_runtime_deck") or payload_holder.get("html_deck"),
                 attempt=attempt + 1,
             )
             extracted = self._extract_html_deck_submission(job, payload_holder)
             if extracted is not None and len(extracted[1].slides) == expected:
                 return extracted
             payload_holder.clear()
-        raise RuntimeError("Agent did not submit a valid HTML deck.")
+        raise RuntimeError("Agent did not submit a valid HTML runtime manifest.")
 
     async def _generate_slidev_deck_with_agent(
         self,
@@ -2262,39 +2295,105 @@ class GenerationRunner:
             source="embedded",
         )
 
-    def _make_html_deck_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
-        async def _handler(args: _SubmitHtmlDeckArgs, context: ToolContext) -> dict[str, Any]:
+    def _make_html_runtime_submit_tool(self, job: GenerationJob, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitHtmlRuntimeDeckArgs, context: ToolContext) -> dict[str, Any]:
             artifacts_dir = context.workspace_root / "artifacts"
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-            normalized_html, meta, presentation = normalize_html_deck(
-                html=args.html,
-                fallback_title=args.title,
+            manifest, render, presentation = build_html_runtime_artifact(
+                manifest_payload={
+                    "version": "runtime_v2",
+                    "title": args.title or job.request.title or "新演示文稿",
+                    "theme": args.theme,
+                    "presenter": args.presenter,
+                    "export": args.export,
+                    "slides": args.slides,
+                },
+                fallback_title=args.title or job.request.title or "新演示文稿",
+                expected_slide_count=max(3, min(job.request.num_pages, settings.max_slide_pages)),
                 existing_slides=None,
             )
             payload = {
-                "title": meta["title"],
-                "html": normalized_html,
-                "meta": meta,
+                "title": manifest["title"],
+                "manifest": manifest,
+                "render": render,
                 "presentation": presentation,
             }
-            payload_holder["html_deck"] = payload
-            (artifacts_dir / "presentation.html").write_text(
-                normalized_html,
+            payload_holder["html_runtime_deck"] = payload
+            (artifacts_dir / "html-runtime.manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            (artifacts_dir / "html-runtime.render.json").write_text(
+                json.dumps(render, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            document_html = str(render.get("documentHtml") or "")
+            (artifacts_dir / "html-runtime.document.html").write_text(
+                document_html,
+                encoding="utf-8",
+            )
+            (artifacts_dir / "presentation.html").write_text(document_html, encoding="utf-8")
             (artifacts_dir / "presentation.meta.json").write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2),
+                json.dumps(render, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return {
                 "status": "ok",
-                "slide_count": meta["slide_count"],
-                "path": str((artifacts_dir / "presentation.html").resolve()),
+                "slide_count": int(render.get("slideCount") or 0),
+                "path": str((artifacts_dir / "html-runtime.document.html").resolve()),
+            }
+
+        return Tool(
+            name="submit_html_runtime_deck",
+            description="Submit the final HTML runtime manifest. Call this exactly once when the deck is ready.",
+            args_model=_SubmitHtmlRuntimeDeckArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
+    def _make_legacy_html_deck_submit_tool(self, job: GenerationJob, payload_holder: dict[str, Any]) -> Tool:
+        async def _handler(args: _SubmitHtmlDeckArgs, context: ToolContext) -> dict[str, Any]:
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            manifest, render, presentation = build_html_runtime_artifact(
+                legacy_html=args.html,
+                fallback_title=args.title or job.request.title or "新演示文稿",
+                expected_slide_count=max(3, min(job.request.num_pages, settings.max_slide_pages)),
+                existing_slides=None,
+            )
+            payload_holder["html_deck"] = {
+                "title": manifest["title"],
+                "manifest": manifest,
+                "render": render,
+                "presentation": presentation,
+            }
+            (artifacts_dir / "html-runtime.manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (artifacts_dir / "html-runtime.render.json").write_text(
+                json.dumps(render, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            document_html = str(render.get("documentHtml") or "")
+            (artifacts_dir / "html-runtime.document.html").write_text(
+                document_html,
+                encoding="utf-8",
+            )
+            (artifacts_dir / "presentation.html").write_text(document_html, encoding="utf-8")
+            (artifacts_dir / "presentation.meta.json").write_text(
+                json.dumps(render, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return {
+                "status": "ok",
+                "slide_count": int(render.get("slideCount") or 0),
+                "path": str((artifacts_dir / "html-runtime.document.html").resolve()),
             }
 
         return Tool(
             name="submit_html_deck",
-            description="Submit the final Reveal-compatible HTML deck. Call this exactly once when the deck is ready.",
+            description="Submit the final legacy HTML deck. This is kept for backward compatibility.",
             args_model=_SubmitHtmlDeckArgs,
             handler=_handler,
             source="embedded",
@@ -2386,15 +2485,26 @@ class GenerationRunner:
         job: GenerationJob,
         payload_holder: dict[str, Any],
     ) -> tuple[dict[str, Any], Presentation] | None:
-        payload = payload_holder.get("html_deck")
+        payload = payload_holder.get("html_runtime_deck")
+        if not isinstance(payload, dict):
+            payload = payload_holder.get("html_deck")
         if not isinstance(payload, dict):
             return None
+        manifest = payload.get("manifest")
+        render = payload.get("render")
         presentation = payload.get("presentation")
+        if not isinstance(manifest, dict) or not isinstance(render, dict):
+            return None
         if not isinstance(presentation, dict):
             return None
         normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
         validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
-        return payload, validated
+        return {
+            "title": str(manifest.get("title") or job.request.title or "新演示文稿"),
+            "manifest": manifest,
+            "render": render,
+            "presentation": normalized_payload,
+        }, validated
 
     async def _extract_slidev_deck_submission(
         self,
@@ -2527,22 +2637,19 @@ class GenerationRunner:
         )
         if job.output_mode.value == "html":
             return (
-                "你是 ZhiYan 当前创建页按钮背后的 HTML 演示生成内核。\n"
-                "请基于工作区素材和已确认的大纲，产出一个可直接播放、可后续继续编辑的 Reveal HTML deck。\n\n"
+                "你是 ZhiYan 当前创建页按钮背后的 HTML Runtime 生成内核。\n"
+                "请基于工作区素材和已确认的大纲，产出一个可直接播放、可后续继续编辑的 HTML runtime manifest。\n\n"
                 "工作方式：\n"
-                "- 先使用本地素材摘要判断叙事与风格，再按需补读原始 source 文本。\n"
-                "- 你有 `read_file`、`read_skill_resource`、`load_skill` 和 `submit_html_deck` 四类工具，不要输出解释，也不要做仓库探索。\n"
-                "- skill 下的 references/scripts/assets 必须通过 `read_skill_resource` 读取，不要对 skill 绝对路径使用 `read_file`。\n"
-                "- 最终必须只通过 `submit_html_deck` 提交。\n\n"
-                f"{skill_context}\n\n"
-                "HTML 约束：\n"
-                f"- 严格输出 {state.num_pages} 页，且必须严格包含 {state.num_pages} 个 `<section>`。\n"
-                "- 每页必须是 16:9 演示页面，不要写成文档排版。\n"
-                "- 每个 `<section>` 都必须有稳定的 `data-slide-id=\"slide-N\"` 和 `data-slide-title=\"页面标题\"`。\n"
-                "- 必须体现强视觉设计：鲜明但克制的主题、明确的版式层级、面向展示的文案密度、符合主题的艺术风格。\n"
-                "- 优先做带艺术方向的 HTML PPT，不要退化成普通 markdown 页面。\n"
-                "- 内容要贴合素材，不要空泛，不要出现“待补充”“内容生成中”之类占位文本。\n\n"
-                f"本地素材摘要：\n{source_brief}\n\n"
+                "- 优先阅读工作区里的 request.json、sources/manifest.json 和 sources/*.md，再按需补读原始 source 文本。\n"
+                "- 你只有 `read_file` 和 `submit_html_runtime_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+                "- 你的职责只有读取上下文并提交完整 manifest；不要尝试加载 skill，也不要提交 legacy HTML 文档壳。\n"
+                "- 最终必须只通过 `submit_html_runtime_deck` 提交。\n\n"
+                "提交 contract：\n"
+                f"- 严格输出 {state.num_pages} 页，slides 数量必须等于 {state.num_pages}。\n"
+                "- 每页必须提交 `slideId`、`title`、`bodyHtml`；可选 `scopedCss`、`speakerNotes`。\n"
+                "- 只提交页面片段，不要提交完整 HTML 文档壳，不要包含 <html>/<head>/<body>/<script>/<iframe>。\n"
+                "- 必须体现强视觉设计：鲜明但克制的主题、明确的版式层级、面向展示的文案密度、符合主题的艺术方向。\n"
+                "- 内容要贴合素材，不要空泛，不要出现“待补充”“内容生成中”等占位文本。\n\n"
                 f"已确认大纲：\n{outline_json}\n"
             )
         if job.output_mode.value == "slidev":
@@ -2601,11 +2708,11 @@ class GenerationRunner:
         del state
         if job.output_mode.value == "html":
             return (
-                "请生成完整 HTML deck。\n"
+                "请生成完整 HTML runtime manifest。\n"
                 f"主题：{job.request.topic or job.request.title}\n"
                 f"补充指令：{job.request.content or '无'}\n"
                 f"目标页数：{job.request.num_pages}\n"
-                "完成后调用 `submit_html_deck`。"
+                "完成后调用 `submit_html_runtime_deck`。"
             )
         if job.output_mode.value == "slidev":
             return (
@@ -2632,8 +2739,8 @@ class GenerationRunner:
     ) -> str:
         issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 presentation 未通过本地审计。"
         if output_mode == "html":
-            submit_tool = "submit_html_deck"
-            label = "HTML deck"
+            submit_tool = "submit_html_runtime_deck"
+            label = "HTML runtime manifest"
         elif output_mode == "slidev":
             submit_tool = "submit_slidev_deck"
             label = "Slidev deck"

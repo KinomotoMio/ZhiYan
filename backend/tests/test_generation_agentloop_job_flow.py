@@ -174,29 +174,29 @@ def _presentation_model(page_count: int) -> FakeModel:
 
 
 def _html_deck_payload(page_count: int) -> dict:
-    sections: list[str] = []
+    slides: list[dict[str, object]] = []
+    slide_css = (
+        ".slide-shell{display:grid;place-items:center;height:100%;"
+        "background:linear-gradient(135deg,#f8fafc,#dbeafe);color:#0f172a;}"
+    )
     for slide_number in range(1, page_count + 1):
         title = "AI Agent Runtime 架构演进" if slide_number == 1 else f"第 {slide_number} 页"
-        sections.append(
-            "<section "
-            f'data-slide-id="slide-{slide_number}" '
-            f'data-slide-title="{title}">'
-            "<div class='slide-shell'>"
-            f"<h2>{title}</h2>"
-            f"<p>这是第 {slide_number} 页的 HTML 演示内容。</p>"
-            "</div>"
-            "</section>"
+        slides.append(
+            {
+                "slideId": f"slide-{slide_number}",
+                "title": title,
+                "bodyHtml": (
+                    "<div class='slide-shell'>"
+                    f"<h2>{title}</h2>"
+                    f"<p>这是第 {slide_number} 页的 HTML 演示内容。</p>"
+                    "</div>"
+                ),
+                "scopedCss": slide_css,
+            }
         )
     return {
         "title": "AI Agent Runtime 架构演进",
-        "html": (
-            "<!DOCTYPE html><html><head><title>AI Agent Runtime 架构演进</title>"
-            "<style>.slide-shell{display:grid;place-items:center;height:100%;"
-            "background:linear-gradient(135deg,#f8fafc,#dbeafe);color:#0f172a;}</style>"
-            "</head><body>"
-            f"{''.join(sections)}"
-            "</body></html>"
-        ),
+        "slides": slides,
     }
 
 
@@ -207,9 +207,9 @@ def _html_deck_model(page_count: int) -> FakeModel:
             AssistantMessage(
                 tool_calls=[
                     ToolCall(
-                        tool_name="submit_html_deck",
+                        tool_name="submit_html_runtime_deck",
                         args=payload,
-                        tool_call_id="call-submit-html-deck",
+                        tool_call_id="call-submit-html-runtime-deck",
                     )
                 ]
             ),
@@ -445,7 +445,11 @@ def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
 
     from app.services.generation import runner as runner_mod
 
+    verify_called = False
+
     async def fake_verify(state, progress=None, enable_vision=True):  # noqa: ARG001
+        nonlocal verify_called
+        verify_called = True
         if progress:
             await progress("verify", 1, 1, "验证完成")
         state.verification_issues = []
@@ -523,11 +527,11 @@ def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
     )
     assert latest_meta.status_code == 200
     assert latest_meta.json()["slide_count"] == 4
+    assert verify_called is False
+    assert "source_brief" not in body["document_metadata"]
     assert set(tool["name"] for tool in html_model.seen_tools[0]) == {
         "read_file",
-        "read_skill_resource",
-        "load_skill",
-        "submit_html_deck",
+        "submit_html_runtime_deck",
     }
 
 

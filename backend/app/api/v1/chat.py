@@ -45,6 +45,28 @@ VISIBLE_CONTENT_ACTIONS: set[ActionHint] = {
 }
 
 
+def _legacy_html_preview_from_manifest(manifest: dict[str, Any]) -> str:
+    title = str(manifest.get("title") or "新演示文稿").strip() or "新演示文稿"
+    sections: list[str] = []
+    raw_slides = manifest.get("slides")
+    if isinstance(raw_slides, list):
+        for index, slide in enumerate(raw_slides, start=1):
+            if not isinstance(slide, dict):
+                continue
+            slide_id = str(slide.get("slideId") or f"slide-{index}")
+            slide_title = str(slide.get("title") or f"第 {index} 页")
+            body_html = str(slide.get("bodyHtml") or "")
+            notes = str(slide.get("speakerNotes") or "").strip()
+            notes_html = f'<aside class="notes">{notes}</aside>' if notes else ""
+            sections.append(
+                f'<section data-slide-id="{slide_id}" data-slide-title="{slide_title}">{body_html}{notes_html}</section>'
+            )
+    return (
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\" />"
+        f"<title>{title}</title></head><body>{''.join(sections)}</body></html>"
+    )
+
+
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
@@ -107,6 +129,10 @@ async def chat(req: ChatRequest, request: Request):
     presentation_context = req.presentation_context if isinstance(req.presentation_context, dict) else {}
     output_mode = str(presentation_context.get("output_mode") or "structured").strip() or "structured"
     html_content = str(presentation_context.get("html_content") or "").strip() or None
+    raw_html_manifest = presentation_context.get("html_manifest")
+    html_manifest = dict(raw_html_manifest) if isinstance(raw_html_manifest, dict) else None
+    raw_html_render = presentation_context.get("html_render")
+    html_render = dict(raw_html_render) if isinstance(raw_html_render, dict) else None
     slidev_markdown = str(presentation_context.get("slidev_markdown") or "").strip() or None
     raw_slidev_meta = presentation_context.get("slidev_meta")
     slidev_meta = dict(raw_slidev_meta) if isinstance(raw_slidev_meta, dict) else None
@@ -135,6 +161,8 @@ async def chat(req: ChatRequest, request: Request):
                     slides=slides,
                     output_mode=output_mode,
                     html_content=html_content,
+                    html_manifest=html_manifest,
+                    html_render=html_render,
                     slidev_markdown=slidev_markdown,
                     slidev_meta=slidev_meta,
                     selected_style_id=selected_style_id,
@@ -151,10 +179,12 @@ async def chat(req: ChatRequest, request: Request):
                 req.action_hint,
                 outcome.modifications,
             )
-            if output_mode == "html" and outcome.html_content and outcome.normalized_presentation:
+            if output_mode == "html" and outcome.html_manifest and outcome.html_render and outcome.normalized_presentation:
                 html_update = {
                     "type": "html_update",
-                    "html_content": outcome.html_content,
+                    "html_content": _legacy_html_preview_from_manifest(outcome.html_manifest),
+                    "html_manifest": outcome.html_manifest,
+                    "html_render": outcome.html_render,
                     "presentation": outcome.normalized_presentation,
                     "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
                 }

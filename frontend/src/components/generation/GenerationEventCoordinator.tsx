@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {
-  getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlManifest,
+  getLatestSessionPresentationHtmlRender,
   getLatestSessionPresentationSlidev,
   subscribeJobEvents,
   type GenerationErrorCode,
@@ -210,16 +211,25 @@ export default function GenerationEventCoordinator() {
                 typeof payload.render_error === "string" ? payload.render_error : null,
             });
             if (payload.output_mode === "html" && currentSessionId) {
-              void getLatestSessionPresentationHtml(currentSessionId)
-                .then((html) => {
+              void Promise.all([
+                getLatestSessionPresentationHtmlManifest(currentSessionId),
+                getLatestSessionPresentationHtmlRender(currentSessionId),
+              ])
+                .then(([manifest, render]) => {
                   const artifacts =
                     payload.artifacts && typeof payload.artifacts === "object"
                       ? (payload.artifacts as { html_deck?: HtmlDeckArtifactMeta })
                       : undefined;
-                  setPresentationHtmlState("html", html, artifacts?.html_deck ?? null);
+                  setPresentationHtmlState(
+                    "html",
+                    render?.documentHtml ?? null,
+                    manifest ?? null,
+                    render ?? null,
+                    artifacts?.html_deck ?? null
+                  );
                 })
                 .catch(() => {
-                  setPresentationHtmlState("html", null, null);
+                  setPresentationHtmlState("html", null, null, null, null);
                 });
             } else if (payload.output_mode === "slidev" && currentSessionId) {
               void getLatestSessionPresentationSlidev(currentSessionId)
@@ -273,8 +283,11 @@ export default function GenerationEventCoordinator() {
                 typeof payload.render_error === "string" ? payload.render_error : null,
             });
             if (payload.output_mode === "html" && currentSessionId) {
-              void getLatestSessionPresentationHtml(currentSessionId)
-                .then((html) => {
+              void Promise.all([
+                getLatestSessionPresentationHtmlManifest(currentSessionId),
+                getLatestSessionPresentationHtmlRender(currentSessionId),
+              ])
+                .then(([manifest, render]) => {
                   const artifacts =
                     payload.artifacts && typeof payload.artifacts === "object"
                       ? (payload.artifacts as {
@@ -283,12 +296,14 @@ export default function GenerationEventCoordinator() {
                       : undefined;
                   setPresentationHtmlState(
                     "html",
-                    html,
+                    render?.documentHtml ?? null,
+                    manifest ?? null,
+                    render ?? null,
                     artifacts?.html_deck ?? null
                   );
                 })
                 .catch(() => {
-                  setPresentationHtmlState("html", null, null);
+                  setPresentationHtmlState("html", null, null, null, null);
                 });
             } else if (payload.output_mode === "slidev" && currentSessionId) {
               void getLatestSessionPresentationSlidev(currentSessionId)
@@ -318,7 +333,7 @@ export default function GenerationEventCoordinator() {
                   });
                 });
             } else {
-              setPresentationHtmlState("structured", null, null);
+              setPresentationHtmlState("structured", null, null, null, null);
               setPresentationSlidevState({
                 outputMode: "structured",
                 markdown: null,

@@ -231,15 +231,16 @@ def test_chat_html_mode_emits_html_update(monkeypatch, tmp_path):
             AssistantMessage(
                 tool_calls=[
                     ToolCall(
-                        tool_name="submit_html_revision",
+                        tool_name="submit_html_runtime_revision",
                         args={
-                            "html": (
-                                "<!DOCTYPE html><html><head><title>HTML 改稿</title></head><body>"
-                                '<section data-slide-id="slide-1" data-slide-title="封面">'
-                                "<div><h1>封面</h1><p>新的视觉样式</p></div>"
-                                "</section>"
-                                "</body></html>"
-                            ),
+                            "title": "HTML 改稿",
+                            "slides": [
+                                {
+                                    "slideId": "slide-1",
+                                    "title": "封面",
+                                    "bodyHtml": "<div><h1>封面</h1><p>新的视觉样式</p></div>",
+                                }
+                            ],
                             "summary": "强化当前页视觉层次",
                         },
                         tool_call_id="call-1",

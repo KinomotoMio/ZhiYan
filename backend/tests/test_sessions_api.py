@@ -1,8 +1,9 @@
 import asyncio
 import json
 import sqlite3
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
@@ -842,6 +843,84 @@ def test_put_latest_html_presentation_persists_artifact_and_endpoints(monkeypatc
     assert meta_resp.status_code == 200
     assert meta_resp.json()["slide_count"] == 1
     assert meta_resp.json()["slides"][0]["speaker_notes"] == "这是封面页注解"
+
+
+def test_session_html_export_routes_use_runtime_viewer_and_projection(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.services.export import pdf_exporter
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-html-export"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "html export"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-html-export",
+        "title": "HTML 导出",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "封面", "_htmlDeck": True},
+                "speakerNotes": "导出注解",
+                "components": [],
+            }
+        ],
+    }
+    html_deck = (
+        "<!DOCTYPE html><html><head><title>HTML 导出</title></head><body>"
+        '<section data-slide-id="slide-1" data-slide-title="封面"><h1>封面</h1><p>导出链路验证。</p></section>'
+        "</body></html>"
+    )
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={
+            "presentation": presentation,
+            "source": "editor",
+            "output_mode": "html",
+            "html_deck": {"html": html_deck},
+        },
+    )
+    assert saved.status_code == 200
+
+    captured: dict[str, object] = {}
+
+    async def fake_export_runtime_viewer_pdf(*, document_html=None, viewer_path=None):
+        assert viewer_path is None
+        assert isinstance(document_html, str)
+        assert 'data-runtime-slide-id="slide-1"' in document_html
+        captured["pdf_document_html"] = document_html
+        return b"%PDF-1.4"
+
+    def fake_export_pptx(presentation_model):
+        captured["pptx_presentation"] = presentation_model.model_dump(mode="json", by_alias=True)
+        return b"PPTX"
+
+    monkeypatch.setattr(pdf_exporter, "export_runtime_viewer_pdf", fake_export_runtime_viewer_pdf)
+    fake_pptx_module = ModuleType("app.services.export.pptx_exporter")
+    fake_pptx_module.export_pptx = fake_export_pptx
+    monkeypatch.setitem(sys.modules, "app.services.export.pptx_exporter", fake_pptx_module)
+
+    pdf_resp = client.post(f"/api/v1/sessions/{session_id}/export/pdf", headers=headers)
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.content == b"%PDF-1.4"
+    assert pdf_resp.headers["content-type"] == "application/pdf"
+
+    pptx_resp = client.post(f"/api/v1/sessions/{session_id}/export/pptx", headers=headers)
+    assert pptx_resp.status_code == 200
+    assert pptx_resp.content == b"PPTX"
+    assert pptx_resp.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+
+    projection = captured["pptx_presentation"]
+    assert isinstance(projection, dict)
+    assert projection["slides"][0]["contentData"]["_htmlRuntime"] is True
+    assert projection["slides"][0]["speakerNotes"] == "导出注解"
 
 
 def test_latest_presentation_read_repair_and_write_back(monkeypatch, tmp_path):

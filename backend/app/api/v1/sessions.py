@@ -11,7 +11,7 @@ import tempfile
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -179,6 +179,29 @@ def _build_share_path(token: str) -> str:
 def _build_share_url(token: str) -> str:
     base = settings.public_app_url.rstrip("/")
     return f"{base}{_build_share_path(token)}"
+
+
+async def _resolve_latest_export_context(workspace_id: str, session_id: str) -> tuple[dict, dict, str]:
+    latest = await session_store.get_latest_presentation(workspace_id, session_id)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无可导出的演示稿")
+    presentation = dict(latest.get("presentation") or {})
+    output_mode = str(latest.get("output_mode") or "structured").strip() or "structured"
+    if output_mode == "html":
+        from app.services.html_runtime import build_html_runtime_artifact
+
+        runtime = await session_store.get_latest_html_runtime(workspace_id, session_id)
+        if not runtime:
+            raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
+        manifest, render = runtime
+        _normalized_manifest, _normalized_render, projection = build_html_runtime_artifact(
+            manifest_payload=manifest,
+            fallback_title=str(manifest.get("title") or presentation.get("title") or "新演示文稿"),
+            expected_slide_count=int(render.get("slideCount") or 0) or None,
+            existing_slides=list(presentation.get("slides") or []),
+        )
+        return projection, render, output_mode
+    return presentation, {}, output_mode
 
 
 async def _get_generation_job_for_session(
@@ -945,6 +968,82 @@ async def get_latest_presentation_html_meta(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
     _html, meta = latest
     return JSONResponse(content=meta)
+
+
+@router.get("/{session_id}/presentations/latest/html/manifest")
+async def get_latest_presentation_html_manifest(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_html_runtime(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
+    manifest, _render = latest
+    return JSONResponse(content=manifest)
+
+
+@router.get("/{session_id}/presentations/latest/html/render")
+async def get_latest_presentation_html_render(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_html_runtime(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
+    _manifest, render = latest
+    return JSONResponse(content=render)
+
+
+@router.post("/{session_id}/export/pptx")
+async def export_latest_session_pptx(session_id: str, request: Request):
+    from app.api.v1.export import _build_content_disposition
+    from app.models.slide import Presentation as PresentationModel
+    from app.services.export.pptx_exporter import export_pptx as do_export
+
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    presentation_payload, _html_render, _output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    presentation = PresentationModel.model_validate(presentation_payload)
+    pptx_bytes = do_export(presentation)
+
+    return Response(
+        content=pptx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": _build_content_disposition(presentation.title, "pptx")},
+    )
+
+
+@router.post("/{session_id}/export/pdf")
+async def export_latest_session_pdf(session_id: str, request: Request):
+    from app.api.v1.export import _build_content_disposition
+    from app.services.export.pdf_exporter import (
+        build_presentation_html,
+        export_pdf as do_export,
+        export_runtime_viewer_pdf,
+    )
+
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    presentation_payload, html_render, output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    title = str(presentation_payload.get("title") or "新演示文稿")
+
+    try:
+        if output_mode == "html":
+            pdf_bytes = await export_runtime_viewer_pdf(
+                document_html=str(html_render.get("documentHtml") or "")
+            )
+        else:
+            pdf_bytes = await do_export(build_presentation_html(presentation_payload))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _build_content_disposition(title, "pdf")},
+    )
 
 @router.get("/{session_id}/presentations/latest/slidev")
 async def get_latest_presentation_slidev(session_id: str, request: Request):

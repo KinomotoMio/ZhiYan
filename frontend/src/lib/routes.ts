@@ -2,6 +2,11 @@ interface EditorPathOptions {
   slide?: number;
 }
 
+interface PresenterPathOptions {
+  slide?: number;
+  room?: string | null;
+}
+
 interface CreatePathOptions {
   fromEditor?: boolean;
 }
@@ -59,6 +64,28 @@ export function getSessionEditorPath(
 
   const normalizedSlide = Math.max(1, Math.trunc(slide));
   return `${basePath}?slide=${normalizedSlide}`;
+}
+
+export function getHtmlRuntimeRoomId(sessionId: string, room?: string | null): string {
+  const normalized = typeof room === "string" ? room.trim() : "";
+  return normalized || `html-runtime:${sessionId}`;
+}
+
+export function getSessionPresenterPath(
+  sessionId: string,
+  options?: PresenterPathOptions
+): string {
+  const basePath = `/sessions/${sessionId}/presenter`;
+  const params = new URLSearchParams();
+  if (typeof options?.slide === "number" && Number.isFinite(options.slide)) {
+    params.set("slide", String(Math.max(1, Math.trunc(options.slide))));
+  }
+  const roomId = options?.room ? options.room.trim() : "";
+  if (roomId) {
+    params.set("room", roomId);
+  }
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
 }
 
 interface CreateRouteSession {

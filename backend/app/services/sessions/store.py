@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.services.html_deck import normalize_html_deck
+from app.services.html_runtime import build_html_runtime_artifact, build_legacy_html_document
 from app.services.presentations import normalize_presentation_payload
 from app.services.slidev import parse_slidev_markdown
 
@@ -1704,6 +1705,19 @@ class SessionStore:
         deck = artifacts.get("html_deck") if isinstance(artifacts, dict) else None
         if not isinstance(deck, dict):
             return None
+        if str(deck.get("artifact_version") or "").strip() == "runtime_v2":
+            runtime = self._get_latest_html_runtime_sync(workspace_id, session_id)
+            if not runtime:
+                return None
+            manifest, render = runtime
+            return (
+                build_legacy_html_document(manifest),
+                {
+                    "title": manifest.get("title") or latest.get("presentation", {}).get("title") or "新演示文稿",
+                    "slide_count": int(render.get("slideCount") or 0),
+                    "slides": list(render.get("slides") or []),
+                },
+            )
         storage_path = str(deck.get("storage_path") or "").strip()
         meta_path = str(deck.get("meta_storage_path") or "").strip()
         if not storage_path:
@@ -1725,6 +1739,50 @@ class SessionStore:
                 "slides": [],
             }
         return html, meta
+
+    async def get_latest_html_runtime(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_html_runtime_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_html_runtime_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        latest = self._get_latest_presentation_sync(workspace_id, session_id)
+        if not latest:
+            return None
+        artifacts = latest.get("artifacts")
+        deck = artifacts.get("html_deck") if isinstance(artifacts, dict) else None
+        if not isinstance(deck, dict):
+            return None
+        artifact_version = str(deck.get("artifact_version") or "").strip()
+        manifest_path = Path(str(deck.get("manifest_storage_path") or "").strip()) if deck.get("manifest_storage_path") else None
+        render_path = Path(str(deck.get("render_storage_path") or "").strip()) if deck.get("render_storage_path") else None
+        if artifact_version == "runtime_v2" and manifest_path and render_path and manifest_path.exists() and render_path.exists():
+            return (
+                json.loads(manifest_path.read_text(encoding="utf-8")),
+                json.loads(render_path.read_text(encoding="utf-8")),
+            )
+        html_path = Path(str(deck.get("storage_path") or "").strip())
+        if not html_path.exists():
+            return None
+        legacy_html = html_path.read_text(encoding="utf-8")
+        manifest, render, _presentation = build_html_runtime_artifact(
+            legacy_html=legacy_html,
+            fallback_title=latest.get("presentation", {}).get("title") or "新演示文稿",
+            expected_slide_count=int(deck.get("slide_count") or 0) or None,
+            existing_slides=list((latest.get("presentation") or {}).get("slides") or []),
+        )
+        return manifest, render
 
     async def get_latest_slidev_deck(
         self,
@@ -1861,22 +1919,50 @@ class SessionStore:
         fallback_title: str,
         now: str,
     ) -> dict[str, Any]:
+        expected_slide_count = html_deck.get("expected_slide_count")
+        existing_slides = (
+            list((presentation_payload or {}).get("slides") or [])
+            if isinstance(presentation_payload, dict)
+            else None
+        )
+        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "html-runtime"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_payload = html_deck.get("manifest")
+        if isinstance(manifest_payload, dict):
+            manifest, render, _presentation = build_html_runtime_artifact(
+                manifest_payload=manifest_payload,
+                fallback_title=fallback_title,
+                expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
+                existing_slides=existing_slides,
+            )
+            manifest_path = artifact_dir / "manifest.json"
+            render_path = artifact_dir / "render.json"
+            document_path = artifact_dir / "viewer.html"
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            render_path.write_text(json.dumps(render, ensure_ascii=False, indent=2), encoding="utf-8")
+            document_path.write_text(str(render.get("documentHtml") or ""), encoding="utf-8")
+            return {
+                "version": version_no,
+                "artifact_version": "runtime_v2",
+                "slide_count": int(render.get("slideCount") or 0),
+                "updated_at": now,
+                "manifest_storage_path": str(manifest_path.resolve()),
+                "render_storage_path": str(render_path.resolve()),
+                "document_storage_path": str(document_path.resolve()),
+                "storage_path": str(document_path.resolve()),
+                "meta_storage_path": str(render_path.resolve()),
+            }
+
         raw_html = str(html_deck.get("html") or "").strip()
         if not raw_html:
             raise ValueError("HTML deck content is empty.")
-        expected_slide_count = html_deck.get("expected_slide_count")
         normalized_html, meta, _presentation = normalize_html_deck(
             html=raw_html,
             fallback_title=fallback_title,
             expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
-            existing_slides=(
-                list((presentation_payload or {}).get("slides") or [])
-                if isinstance(presentation_payload, dict)
-                else None
-            ),
+            existing_slides=existing_slides,
         )
-        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id
-        artifact_dir.mkdir(parents=True, exist_ok=True)
         html_path = artifact_dir / "presentation.html"
         meta_path = artifact_dir / "presentation.meta.json"
         html_path.write_text(normalized_html, encoding="utf-8")
@@ -1886,6 +1972,7 @@ class SessionStore:
         )
         return {
             "version": version_no,
+            "artifact_version": "legacy",
             "slide_count": meta["slide_count"],
             "updated_at": now,
             "storage_path": str(html_path.resolve()),

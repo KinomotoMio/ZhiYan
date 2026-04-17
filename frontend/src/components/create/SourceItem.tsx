@@ -74,6 +74,7 @@ interface SourceItemProps {
   actionDisabled?: boolean;
   hoverPreviewVariant?: "default" | "assets" | "create";
   hoverPreviewPlacement?: HoverPreviewPlacement;
+  hoverPreviewOpenDelayMs?: number;
 }
 
 interface HoverPreviewPosition {
@@ -99,6 +100,7 @@ export default function SourceItem({
   actionDisabled = false,
   hoverPreviewVariant = "default",
   hoverPreviewPlacement = "auto",
+  hoverPreviewOpenDelayMs = 0,
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
@@ -107,6 +109,7 @@ export default function SourceItem({
   const [loadingHoverImage, setLoadingHoverImage] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<number | null>(null);
+  const openTimeoutRef = useRef<number | null>(null);
   const hoverImageObjectUrlRef = useRef<string | null>(null);
   const hoverImageAbortRef = useRef<AbortController | null>(null);
   const isError = source.status === "error";
@@ -122,6 +125,9 @@ export default function SourceItem({
     return () => {
       if (closeTimeoutRef.current !== null) {
         window.clearTimeout(closeTimeoutRef.current);
+      }
+      if (openTimeoutRef.current !== null) {
+        window.clearTimeout(openTimeoutRef.current);
       }
       if (hoverImageAbortRef.current) {
         hoverImageAbortRef.current.abort();
@@ -181,6 +187,13 @@ export default function SourceItem({
     }
   };
 
+  const clearOpenTimeout = () => {
+    if (openTimeoutRef.current !== null) {
+      window.clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = null;
+    }
+  };
+
   const ensureHoverImageLoaded = () => {
     if (previewKind !== "image" || hoverImageUrl || loadingHoverImage) return;
     if (hoverImageAbortRef.current) {
@@ -217,14 +230,24 @@ export default function SourceItem({
   const openHoverPreview = () => {
     if (!hasHoverPreview) return;
     clearCloseTimeout();
-    if (previewKind === "image") {
-      ensureHoverImageLoaded();
+    clearOpenTimeout();
+    const open = () => {
+      if (previewKind === "image") {
+        ensureHoverImageLoaded();
+      }
+      setShowPopover(true);
+      openTimeoutRef.current = null;
+    };
+    if (hoverPreviewOpenDelayMs > 0) {
+      openTimeoutRef.current = window.setTimeout(open, hoverPreviewOpenDelayMs);
+      return;
     }
-    setShowPopover(true);
+    open();
   };
 
   const scheduleHoverPreviewClose = () => {
     clearCloseTimeout();
+    clearOpenTimeout();
     closeTimeoutRef.current = window.setTimeout(() => {
       setShowPopover(false);
       setHoverPreviewPosition(null);

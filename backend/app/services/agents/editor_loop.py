@@ -16,7 +16,7 @@ from app.services.agents.modifications import SlideModification
 from app.services.generation.agentic import AgentBuilder, Tool, ToolContext, ToolRegistry
 from app.services.generation.agentic.tools import load_skill, read_skill_resource, todo
 from app.services.generation.agentic.types import AssistantMessage, Message, ToolMessage, ToolResult
-from app.services.html_deck import normalize_html_deck
+from app.services.html_runtime import build_html_runtime_artifact
 from app.services.model_clients import create_model_client
 from app.services.skill_runtime.contracts import build_skill_catalog_context, resolve_skill_name
 from app.services.skill_runtime.registry import build_skill_catalog
@@ -52,11 +52,7 @@ READ_ONLY_TOOLS = {
     "get_current_html_slide_info",
 }
 WRITE_TOOLS = {
-    "modify_slide_title",
-    "modify_slide_content",
-    "modify_slide_speaker_notes",
-    "update_two_column_compare",
-    "submit_html_revision",
+    "submit_html_runtime_revision",
     "submit_slidev_revision",
 }
 VISIBLE_CONTENT_ACTIONS = {
@@ -97,6 +93,16 @@ class _CompareArgs(BaseModel):
 
 
 class _SubmitHtmlRevisionArgs(BaseModel):
+    title: str = ""
+    theme: dict[str, Any] | None = None
+    presenter: dict[str, Any] | None = None
+    export: dict[str, Any] | None = None
+    slides: list[dict[str, Any]]
+    summary: str | None = None
+
+
+class _SubmitLegacyHtmlRevisionArgs(BaseModel):
+    title: str = ""
     html: str
     summary: str | None = None
 
@@ -118,6 +124,8 @@ class EditorLoopRequest:
     slides: list[dict[str, Any]]
     output_mode: str
     html_content: str | None = None
+    html_manifest: dict[str, Any] | None = None
+    html_render: dict[str, Any] | None = None
     slidev_markdown: str | None = None
     slidev_meta: dict[str, Any] | None = None
     selected_style_id: str | None = None
@@ -131,7 +139,8 @@ class EditorLoopOutcome:
     events: list[dict[str, Any]]
     modifications: list[SlideModification]
     slides: list[dict[str, Any]]
-    html_content: str | None = None
+    html_manifest: dict[str, Any] | None = None
+    html_render: dict[str, Any] | None = None
     normalized_presentation: dict[str, Any] | None = None
     slidev_markdown: str | None = None
     slidev_meta: dict[str, Any] | None = None
@@ -156,11 +165,14 @@ class _EditorRuntimeState:
     current_slide_index: int
     slides: list[dict[str, Any]]
     html_content: str | None
+    html_manifest: dict[str, Any] | None
+    html_render: dict[str, Any] | None
     slidev_markdown: str | None = None
     slidev_meta: dict[str, Any] | None = None
     slidev_preview_url: str | None = None
     selected_style_id: str | None = None
-    submitted_html: str | None = None
+    submitted_html_manifest: dict[str, Any] | None = None
+    submitted_html_render: dict[str, Any] | None = None
     normalized_presentation: dict[str, Any] | None = None
     modifications: list[SlideModification] = field(default_factory=list)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
@@ -334,15 +346,8 @@ def _tool_call_summary(tool_name: str, args: dict[str, Any]) -> str:
         return "读取整份演示摘要"
     if tool_name == "get_current_html_slide_info":
         return "读取当前 HTML 页面结构"
-    if tool_name == "modify_slide_title":
-        return f"修改第 {int(args.get('slide_index', 0)) + 1} 页标题"
-    if tool_name == "modify_slide_content":
-        field_name = str(args.get("field_path") or "字段")
-        return f"修改第 {int(args.get('slide_index', 0)) + 1} 页 {field_name}"
-    if tool_name == "modify_slide_speaker_notes":
-        return f"修改第 {int(args.get('slide_index', 0)) + 1} 页演讲者注释"
-    if tool_name == "update_two_column_compare":
-        return f"更新第 {int(args.get('slide_index', 0)) + 1} 页双栏要点"
+    if tool_name == "submit_html_runtime_revision":
+        return "提交整份 HTML runtime 改稿"
     if tool_name == "submit_html_revision":
         return "提交整份 HTML 改稿"
     if tool_name == "submit_slidev_revision":
@@ -384,6 +389,8 @@ class EditorLoopService:
             current_slide_index=request.current_slide_index,
             slides=json.loads(json.dumps(request.slides, ensure_ascii=False)),
             html_content=request.html_content,
+            html_manifest=dict(request.html_manifest) if isinstance(request.html_manifest, dict) else None,
+            html_render=dict(request.html_render) if isinstance(request.html_render, dict) else None,
             slidev_markdown=request.slidev_markdown,
             slidev_meta=dict(request.slidev_meta) if isinstance(request.slidev_meta, dict) else None,
             selected_style_id=request.selected_style_id,
@@ -406,7 +413,7 @@ class EditorLoopService:
             output_mode=request.output_mode,
         )
         preload_tool_results = []
-        if resolved_skill_id:
+        if resolved_skill_id and request.output_mode != "html":
             preload = await session.load_skill(resolved_skill_id)
             if preload.stop_reason != "completed":
                 raise RuntimeError(preload.error or f"Failed to activate base skill: {resolved_skill_id}")
@@ -442,7 +449,8 @@ class EditorLoopService:
             events=events,
             modifications=list(runtime.modifications),
             slides=runtime.slides,
-            html_content=runtime.submitted_html,
+            html_manifest=runtime.submitted_html_manifest,
+            html_render=runtime.submitted_html_render,
             normalized_presentation=runtime.normalized_presentation,
             slidev_markdown=runtime.slidev_markdown,
             slidev_meta=runtime.slidev_meta,
@@ -463,6 +471,8 @@ class EditorLoopService:
             "output_mode": request.output_mode,
             "slides": request.slides,
             "html_content": request.html_content or "",
+            "html_manifest": request.html_manifest or {},
+            "html_render": request.html_render or {},
             "slidev_markdown": request.slidev_markdown or "",
             "slidev_meta": request.slidev_meta or {},
             "selected_style_id": request.selected_style_id or "",
@@ -489,6 +499,7 @@ class EditorLoopService:
     def _build_tool_registry(self, *, runtime: _EditorRuntimeState) -> ToolRegistry:
         registry = ToolRegistry()
         is_slidev_mode = runtime.request.output_mode == "slidev"
+        is_html_mode = runtime.request.output_mode == "html"
 
         async def _get_current_slide_info(_args: _NoArgs, _context: ToolContext) -> dict[str, Any]:
             slide = runtime.current_slide
@@ -521,8 +532,26 @@ class EditorLoopService:
             }
 
         async def _get_current_html_slide_info(_args: _NoArgs, _context: ToolContext) -> dict[str, Any]:
-            html = runtime.submitted_html or runtime.html_content or ""
-            slides = _html_slide_summaries(html)
+            manifest = runtime.submitted_html_manifest or runtime.html_manifest or {}
+            raw_slides = manifest.get("slides") if isinstance(manifest, dict) else None
+            slides = []
+            if isinstance(raw_slides, list):
+                for index, slide in enumerate(raw_slides):
+                    if not isinstance(slide, dict):
+                        continue
+                    slides.append(
+                        {
+                            "index": index,
+                            "slide_id": str(slide.get("slideId") or f"slide-{index + 1}"),
+                            "title": str(slide.get("title") or f"第 {index + 1} 页"),
+                            "body_summary": _truncate(
+                                _WS_RE.sub(" ", _TAG_RE.sub(" ", str(slide.get("bodyHtml") or ""))).strip(),
+                                limit=160,
+                            ),
+                        }
+                    )
+            elif runtime.html_content:
+                slides = _html_slide_summaries(runtime.html_content)
             current = slides[runtime.current_slide_index] if 0 <= runtime.current_slide_index < len(slides) else None
             return {
                 "slide_count": len(slides),
@@ -635,22 +664,30 @@ class EditorLoopService:
             )
             return {"message": f"已更新第 {args.slide_index + 1} 页双栏要点"}
 
-        async def _submit_html_revision(args: _SubmitHtmlRevisionArgs, _context: ToolContext) -> dict[str, Any]:
-            normalized_html, _meta, presentation = normalize_html_deck(
-                html=args.html,
+        async def _submit_html_runtime_revision(args: _SubmitHtmlRevisionArgs, _context: ToolContext) -> dict[str, Any]:
+            manifest, render, presentation = build_html_runtime_artifact(
+                manifest_payload={
+                    "version": "runtime_v2",
+                    "title": args.title or runtime.request.presentation_title,
+                    "theme": args.theme,
+                    "presenter": args.presenter,
+                    "export": args.export,
+                    "slides": args.slides,
+                },
                 fallback_title=runtime.request.presentation_title,
                 expected_slide_count=len(runtime.slides) if runtime.slides else None,
             )
-            runtime.submitted_html = normalized_html
+            runtime.submitted_html_manifest = manifest
+            runtime.submitted_html_render = render
             runtime.normalized_presentation = presentation
             runtime.modifications.append(
                 SlideModification(
                     slide_index=max(0, runtime.current_slide_index),
-                    action="update_html_deck",
+                    action="update_html_runtime_manifest",
                     data={"summary": (args.summary or "").strip()},
                 )
             )
-            return {"message": "已提交并校验 HTML 改稿"}
+            return {"message": "已提交并校验 HTML runtime 改稿"}
 
         async def _submit_slidev_revision(args: _SubmitSlidevRevisionArgs, _context: ToolContext) -> dict[str, Any]:
             markdown = args.markdown.strip()
@@ -715,7 +752,7 @@ class EditorLoopService:
                     source="editor",
                 )
             )
-        else:
+        elif is_html_mode:
             tool_definitions.extend(
                 [
                     Tool(
@@ -725,6 +762,18 @@ class EditorLoopService:
                         handler=_get_current_html_slide_info,
                         source="editor",
                     ),
+                    Tool(
+                        name="submit_html_runtime_revision",
+                        description="Submit the full revised HTML runtime manifest after editing.",
+                        args_model=_SubmitHtmlRevisionArgs,
+                        handler=_submit_html_runtime_revision,
+                        source="editor",
+                    ),
+                ]
+            )
+        else:
+            tool_definitions.extend(
+                [
                     Tool(
                         name="modify_slide_title",
                         description="Update a slide title in the structured presentation.",
@@ -753,22 +802,16 @@ class EditorLoopService:
                         handler=_update_two_column_compare,
                         source="editor",
                     ),
-                    Tool(
-                        name="submit_html_revision",
-                        description="Submit the full revised HTML deck after editing.",
-                        args_model=_SubmitHtmlRevisionArgs,
-                        handler=_submit_html_revision,
-                        source="editor",
-                    ),
                 ]
             )
-        tool_definitions.extend(
-            [
-                getattr(todo, "__agentloop_tool__"),
-                getattr(load_skill, "__agentloop_tool__"),
-                getattr(read_skill_resource, "__agentloop_tool__"),
-            ]
-        )
+        if not is_html_mode:
+            tool_definitions.extend(
+                [
+                    getattr(todo, "__agentloop_tool__"),
+                    getattr(load_skill, "__agentloop_tool__"),
+                    getattr(read_skill_resource, "__agentloop_tool__"),
+                ]
+            )
         registry.extend(tool_definitions)
         return registry
 
@@ -782,7 +825,7 @@ class EditorLoopService:
             requested_skill=skill_id,
         )
         mode_line = (
-            "当前工作模式是 HTML deck 全稿改写，必须在准备好后使用 submit_html_revision 提交完整 HTML。"
+            "当前工作模式是 HTML runtime manifest 全稿改写，必须在准备好后使用 submit_html_runtime_revision 提交完整 manifest。"
             if request.output_mode == "html"
             else "当前工作模式是 Slidev deck 全稿改写，必须在准备好后使用 submit_slidev_revision 提交完整 markdown deck。"
             if request.output_mode == "slidev"
@@ -797,11 +840,12 @@ class EditorLoopService:
             "- 最终回复用中文，简洁说明做了什么；如果没有实际修改，要明确说明原因。\n"
             f"- {mode_line}\n"
             "- 当操作意图是 refresh_layout / simplify / add_detail / enrich_visual / change_theme 时，优先修改页面可见内容，而不是只改 speaker notes。\n"
-            "- two-column-compare 页面优先使用 update_two_column_compare。\n"
-            "- 当前 mode 的基础 skill 会由 harness 预先激活；如果任务需要额外 skill，再调用 load_skill。\n"
-            "- skill 下的 references/scripts/assets 必须通过 read_skill_resource 读取，不要对 skill 绝对路径使用 read_file。\n"
-            "- 可以使用 todo 先整理执行步骤，但不要把 todo 原文当成最终回复。\n\n"
-            f"{skill_context}"
+            "- HTML 模式下不要尝试修改结构化 slide 字段，只能提交完整 manifest 改稿。\n"
+            "- HTML 模式只有读取上下文和 submit_html_runtime_revision 两类工具；不要尝试加载 skill 或提交 legacy HTML。\n"
+            f"{'- 非 HTML mode 的基础 skill 会由 harness 预先激活；如果任务需要额外 skill，再调用 load_skill。\\n' if request.output_mode != 'html' else ''}"
+            f"{'- skill 下的 references/scripts/assets 必须通过 read_skill_resource 读取，不要对 skill 绝对路径使用 read_file。\\n' if request.output_mode != 'html' else ''}"
+            f"{'- 可以使用 todo 先整理执行步骤，但不要把 todo 原文当成最终回复。\\n\\n' if request.output_mode != 'html' else '\\n'}"
+            f"{'' if request.output_mode == 'html' else skill_context}"
         )
 
     def _build_prompt(self, *, request: EditorLoopRequest, runtime: _EditorRuntimeState) -> str:
@@ -908,6 +952,8 @@ class EditorLoopService:
                     "title": request.presentation_title,
                     "slides": runtime.slides,
                     "html_content": request.html_content or "",
+                    "html_manifest": request.html_manifest or {},
+                    "html_render": request.html_render or {},
                     "slidev_markdown": request.slidev_markdown or "",
                     "slidev_meta": request.slidev_meta or {},
                 },
@@ -931,7 +977,8 @@ class EditorLoopService:
                 {
                     "assistant_reply": assistant_reply,
                     "modifications": [item.model_dump(mode="json") for item in runtime.modifications],
-                    "submitted_html": runtime.submitted_html or "",
+                    "submitted_html_manifest": runtime.submitted_html_manifest or {},
+                    "submitted_html_render": runtime.submitted_html_render or {},
                     "normalized_presentation": runtime.normalized_presentation,
                     "slidev_markdown": runtime.slidev_markdown or "",
                     "slidev_meta": runtime.slidev_meta or {},

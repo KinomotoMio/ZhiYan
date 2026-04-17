@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   canResumeGenerationJob,
   getCreateSessionPath,
+  getHtmlRuntimeRoomId,
   getSharePlaybackPath,
   getSessionEditorPath,
+  getSessionPresenterPath,
   pickCreateLandingSessionId,
   resolvePostCreateEditorPath,
   shouldAutoRedirectToEditor,
@@ -17,6 +19,18 @@ test("getSessionEditorPath returns canonical session editor route", () => {
 
 test("getSessionEditorPath appends one-based slide query when provided", () => {
   assert.equal(getSessionEditorPath("abc", { slide: 3 }), "/sessions/abc/editor?slide=3");
+});
+
+test("getSessionPresenterPath appends slide and room query when provided", () => {
+  assert.equal(
+    getSessionPresenterPath("abc", { slide: 2, room: "room/a" }),
+    "/sessions/abc/presenter?slide=2&room=room%2Fa"
+  );
+});
+
+test("getHtmlRuntimeRoomId falls back to a session-scoped presenter room", () => {
+  assert.equal(getHtmlRuntimeRoomId("sess-1"), "html-runtime:sess-1");
+  assert.equal(getHtmlRuntimeRoomId("sess-1", " custom-room "), "custom-room");
 });
 
 test("getSharePlaybackPath returns canonical public share route", () => {

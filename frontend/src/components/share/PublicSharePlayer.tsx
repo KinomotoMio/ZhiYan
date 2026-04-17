@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { getPublicShareHtml, getPublicSharePlayback, type PublicSharePlayback } from "@/lib/api";
+import {
+  getPublicShareHtmlRender,
+  getPublicSharePlayback,
+  type HtmlRuntimeRenderPayload,
+  type PublicSharePlayback,
+} from "@/lib/api";
 import RevealPreview from "@/components/slides/RevealPreview";
+import HtmlRuntimePreview from "@/components/slides/HtmlRuntimePreview";
 
 interface PublicSharePlayerProps {
   token: string;
@@ -13,7 +19,7 @@ interface PublicSharePlayerViewProps {
   loading?: boolean;
   errorMessage?: string | null;
   playback?: PublicSharePlayback | null;
-  htmlContent?: string | null;
+  htmlRender?: HtmlRuntimeRenderPayload | null;
 }
 
 function FullscreenMessage({
@@ -42,7 +48,7 @@ export function PublicSharePlayerView({
   loading = false,
   errorMessage = null,
   playback = null,
-  htmlContent = null,
+  htmlRender = null,
 }: PublicSharePlayerViewProps) {
   if (loading) {
     return (
@@ -73,7 +79,7 @@ export function PublicSharePlayerView({
   }
 
   const isHtmlMode = playback.outputMode === "html";
-  const canRender = isHtmlMode ? Boolean(htmlContent) : Boolean(playback.presentation);
+  const canRender = isHtmlMode ? Boolean(htmlRender?.documentHtml) : Boolean(playback.presentation);
 
   if (!canRender) {
     return (
@@ -90,10 +96,11 @@ export function PublicSharePlayerView({
         <p className="text-sm font-medium tracking-[0.18em] text-cyan-200/90 uppercase">Shared Demo</p>
         <h1 className="mt-2 text-xl font-semibold text-white">{playback.title}</h1>
       </div>
-      <RevealPreview
-        presentation={isHtmlMode ? null : playback.presentation}
-        htmlContent={isHtmlMode ? htmlContent : null}
-      />
+      {isHtmlMode ? (
+        <HtmlRuntimePreview renderPayload={htmlRender} />
+      ) : (
+        <RevealPreview presentation={playback.presentation} />
+      )}
     </div>
   );
 }
@@ -102,7 +109,7 @@ export default function PublicSharePlayer({ token }: PublicSharePlayerProps) {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [playback, setPlayback] = useState<PublicSharePlayback | null>(null);
-  const [htmlContent, setHtmlContent] = useState<string | null>(null);
+  const [htmlRender, setHtmlRender] = useState<HtmlRuntimeRenderPayload | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,16 +123,16 @@ export default function PublicSharePlayer({ token }: PublicSharePlayerProps) {
         setPlayback(nextPlayback);
 
         if (nextPlayback.outputMode === "html") {
-          const nextHtml = await getPublicShareHtml(token);
+          const nextHtml = await getPublicShareHtmlRender(token);
           if (cancelled) return;
-          setHtmlContent(nextHtml);
+          setHtmlRender(nextHtml);
         } else {
-          setHtmlContent(null);
+          setHtmlRender(null);
         }
       } catch (error) {
         if (cancelled) return;
         setPlayback(null);
-        setHtmlContent(null);
+        setHtmlRender(null);
         setErrorMessage(
           error instanceof Error ? error.message : "分享链接无效、已失效，或当前暂无可播放内容。"
         );
@@ -147,7 +154,7 @@ export default function PublicSharePlayer({ token }: PublicSharePlayerProps) {
       loading={loading}
       errorMessage={errorMessage}
       playback={playback}
-      htmlContent={htmlContent}
+      htmlRender={htmlRender}
     />
   );
 }

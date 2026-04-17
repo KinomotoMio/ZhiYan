@@ -32,7 +32,7 @@ test("html mode renders a real reveal thumbnail iframe instead of the structured
       index={1}
       isActive={true}
       onClick={() => {}}
-      htmlContent="<!DOCTYPE html><html><head></head><body><section>HTML</section></body></html>"
+      htmlDocument="<!DOCTYPE html><html><head></head><body><section>HTML</section></body></html>"
       forceVisible
     />
   );

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { Presentation } from "@/types/slide";
-import RevealPreview from "@/components/slides/RevealPreview";
+import HtmlRuntimePreview from "@/components/slides/HtmlRuntimePreview";
+import type { HtmlRuntimeRenderPayload } from "@/lib/api";
 
 export function resolveAspectContainSize(
   containerWidth: number,
@@ -36,8 +36,8 @@ export function resolveAspectContainSize(
 }
 
 interface HtmlPreviewSurfaceProps {
-  presentation?: Presentation | null;
-  htmlContent?: string | null;
+  renderPayload?: HtmlRuntimeRenderPayload | null;
+  documentHtml?: string | null;
   startSlide?: number;
   onSlideChange?: (slideIndex: number) => void;
   className?: string;
@@ -45,8 +45,8 @@ interface HtmlPreviewSurfaceProps {
 }
 
 export default function HtmlPreviewSurface({
-  presentation,
-  htmlContent,
+  renderPayload = null,
+  documentHtml,
   startSlide = 0,
   onSlideChange,
   className = "",
@@ -96,9 +96,9 @@ export default function HtmlPreviewSurface({
         className={`relative overflow-hidden rounded-[20px] ${frameClassName}`}
         style={frameStyle}
       >
-        <RevealPreview
-          presentation={presentation}
-          htmlContent={htmlContent}
+        <HtmlRuntimePreview
+          renderPayload={renderPayload}
+          documentHtml={documentHtml}
           startSlide={startSlide}
           onSlideChange={onSlideChange}
           className="rounded-[20px]"

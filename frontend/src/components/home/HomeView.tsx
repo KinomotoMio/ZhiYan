@@ -15,7 +15,7 @@ import {
   createSession,
   getCurrentWorkspace,
   getLatestSessionPresentation,
-  getLatestSessionPresentationHtml,
+  getLatestSessionPresentationHtmlRender,
   listSessions,
   listWorkspaceSources,
   removeSession,
@@ -333,7 +333,7 @@ export default function HomeView() {
       const outputMode = latest?.output_mode ?? "structured";
       const html =
         outputMode === "html"
-          ? await getLatestSessionPresentationHtml(latestResultSession.id)
+          ? (await getLatestSessionPresentationHtmlRender(latestResultSession.id))?.documentHtml ?? null
           : null;
       if (cancelled) return;
       setLatestResultPresentation(latest?.presentation ?? null);

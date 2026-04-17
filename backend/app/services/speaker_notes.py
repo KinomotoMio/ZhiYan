@@ -212,6 +212,7 @@ async def generate_speaker_notes_for_session(
     output_mode = str((latest or {}).get("output_mode") or "").strip()
     artifacts = dict((latest or {}).get("artifacts") or {}) if isinstance((latest or {}).get("artifacts"), dict) else {}
     latest_html = await session_store.get_latest_html_deck(workspace_id, session_id) if output_mode == "html" else None
+    latest_html_runtime = await session_store.get_latest_html_runtime(workspace_id, session_id) if output_mode == "html" else None
 
     normalized = Presentation.model_validate(presentation_payload).model_dump(
         mode="json",
@@ -294,13 +295,31 @@ async def generate_speaker_notes_for_session(
         updated_presentation["outputMode"] = "html"
         if artifacts:
             updated_presentation["artifacts"] = artifacts
+        html_manifest = None
+        if latest_html_runtime is not None:
+            html_manifest = dict(latest_html_runtime[0])
+            slides = html_manifest.get("slides")
+            if isinstance(slides, list):
+                for slide in slides:
+                    if not isinstance(slide, dict):
+                        continue
+                    slide_id = str(slide.get("slideId") or "")
+                    next_notes = notes_by_slide_id.get(slide_id)
+                    if next_notes is not None:
+                        slide["speakerNotes"] = next_notes
         await session_store.save_presentation(
             session_id=session_id,
             payload=updated_presentation,
             is_snapshot=False,
             snapshot_label=None,
             output_mode="html",
-            html_deck={"html": latest_html[0]} if latest_html is not None else None,
+            html_deck=(
+                {"manifest": html_manifest}
+                if isinstance(html_manifest, dict)
+                else {"html": latest_html[0]}
+                if latest_html is not None
+                else None
+            ),
         )
     else:
         await session_store.save_presentation(

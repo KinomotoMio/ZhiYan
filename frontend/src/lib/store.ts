@@ -4,6 +4,8 @@ import type { Presentation, Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type {
   HtmlDeckArtifactMeta,
+  HtmlRuntimeManifest,
+  HtmlRuntimeRenderPayload,
   PlanningOutlineItem,
   PlanningState,
   PresentationOutputMode,
@@ -79,6 +81,8 @@ interface AppState {
   presentation: Presentation | null;
   presentationOutputMode: PresentationOutputMode;
   presentationHtml: string | null;
+  presentationHtmlManifest: HtmlRuntimeManifest | null;
+  presentationHtmlRender: HtmlRuntimeRenderPayload | null;
   presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
   presentationSlidevMarkdown: string | null;
   presentationSlidevMeta: Record<string, unknown> | null;
@@ -131,6 +135,8 @@ interface AppState {
     presentation: Presentation | null;
     presentationOutputMode?: PresentationOutputMode;
     presentationHtml?: string | null;
+    presentationHtmlManifest?: HtmlRuntimeManifest | null;
+    presentationHtmlRender?: HtmlRuntimeRenderPayload | null;
     presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
     presentationSlidevMarkdown?: string | null;
     presentationSlidevMeta?: Record<string, unknown> | null;
@@ -148,6 +154,8 @@ interface AppState {
   setPresentationHtmlState: (
     outputMode: PresentationOutputMode,
     html: string | null,
+    manifest?: HtmlRuntimeManifest | null,
+    render?: HtmlRuntimeRenderPayload | null,
     artifact?: HtmlDeckArtifactMeta | null
   ) => void;
   setPresentationSlidevState: (payload: {
@@ -233,6 +241,8 @@ export const useAppStore = create<AppState>()(
       presentation: null,
       presentationOutputMode: "structured",
       presentationHtml: null,
+      presentationHtmlManifest: null,
+      presentationHtmlRender: null,
       presentationHtmlArtifact: null,
       presentationSlidevMarkdown: null,
       presentationSlidevMeta: null,
@@ -314,6 +324,8 @@ export const useAppStore = create<AppState>()(
         presentation,
         presentationOutputMode,
         presentationHtml,
+        presentationHtmlManifest,
+        presentationHtmlRender,
         presentationHtmlArtifact,
         presentationSlidevMarkdown,
         presentationSlidevMeta,
@@ -337,6 +349,8 @@ export const useAppStore = create<AppState>()(
           presentation,
           presentationOutputMode: presentationOutputMode ?? "structured",
           presentationHtml: presentationHtml ?? null,
+          presentationHtmlManifest: presentationHtmlManifest ?? null,
+          presentationHtmlRender: presentationHtmlRender ?? null,
           presentationHtmlArtifact: presentationHtmlArtifact ?? null,
           presentationSlidevMarkdown: presentationSlidevMarkdown ?? null,
           presentationSlidevMeta: presentationSlidevMeta ?? null,
@@ -401,10 +415,12 @@ export const useAppStore = create<AppState>()(
                 : state.sessions,
           };
         }),
-      setPresentationHtmlState: (outputMode, html, artifact) =>
+      setPresentationHtmlState: (outputMode, html, manifest, render, artifact) =>
         set({
           presentationOutputMode: outputMode,
           presentationHtml: html,
+          presentationHtmlManifest: manifest ?? null,
+          presentationHtmlRender: render ?? null,
           presentationHtmlArtifact: artifact ?? null,
           presentationSlidevMarkdown: outputMode === "slidev" ? get().presentationSlidevMarkdown : null,
           presentationSlidevMeta: outputMode === "slidev" ? get().presentationSlidevMeta : null,
@@ -423,6 +439,8 @@ export const useAppStore = create<AppState>()(
         set({
           presentationOutputMode: outputMode,
           presentationHtml: outputMode === "slidev" ? get().presentationHtml : null,
+          presentationHtmlManifest: outputMode === "slidev" ? get().presentationHtmlManifest : null,
+          presentationHtmlRender: outputMode === "slidev" ? get().presentationHtmlRender : null,
           presentationHtmlArtifact: outputMode === "slidev" ? get().presentationHtmlArtifact : null,
           presentationSlidevMarkdown: markdown,
           presentationSlidevMeta: meta ?? null,
