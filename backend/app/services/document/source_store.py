@@ -48,7 +48,7 @@ def _snippet(text: str, max_len: int = 200) -> str:
 async def _generate_meta_background(source_id: str, content: str, file_name: str) -> None:
     """后台生成文档元数据（Layer 1+2），不阻塞上传响应"""
     try:
-        from app.services.agents.document_meta_generator import generate_document_meta
+        from app.services.document_meta import generate_document_meta
 
         meta_result = await generate_document_meta(content, file_name)
         entry = _sources.get(source_id)

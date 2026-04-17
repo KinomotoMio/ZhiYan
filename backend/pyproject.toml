@@ -9,7 +9,6 @@ dependencies = [
     "markitdown[all]>=0.1.2",
     "httpx[socks]>=0.28.1",
     "pydantic>=2.12.5",
-    "pydantic-ai[anthropic,google,openai]>=1.58.0",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.1.1",
     "python-multipart>=0.0.22",

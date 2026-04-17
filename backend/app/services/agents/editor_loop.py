@@ -12,22 +12,20 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.model_status import parse_provider
-from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
+from app.services.agents.modifications import SlideModification
+from app.services.generation.agentic import AgentBuilder, Tool, ToolContext, ToolRegistry
 from app.services.generation.agentic.tools import load_skill, todo
 from app.services.generation.agentic.types import AssistantMessage, Message, ToolMessage, ToolResult
 from app.services.html_deck import normalize_html_deck
+from app.services.model_clients import create_model_client
 from app.services.skill_runtime.contracts import build_skill_catalog_context, resolve_skill_name
 from app.services.skill_runtime.registry import build_skill_catalog
 from app.services.slidev import create_slidev_preview
 
-from .chat_agent import (
-    DEFAULT_COMPARE_FILLER,
-    DEFAULT_COMPARE_LEFT_HEADING,
-    DEFAULT_COMPARE_RIGHT_HEADING,
-    SlideModification,
-)
-from .slidev_deck_editor import edit_slidev_deck
+
+DEFAULT_COMPARE_LEFT_HEADING = "要点 A"
+DEFAULT_COMPARE_RIGHT_HEADING = "要点 B"
+DEFAULT_COMPARE_FILLER = "内容生成中"
 
 
 _THINK_BLOCK_RE = re.compile(r"<think\b[^>]*>.*?</think>", re.IGNORECASE | re.DOTALL)
@@ -58,6 +56,7 @@ WRITE_TOOLS = {
     "modify_slide_speaker_notes",
     "update_two_column_compare",
     "submit_html_revision",
+    "submit_slidev_revision",
 }
 VISIBLE_CONTENT_ACTIONS = {
     "refresh_layout",
@@ -98,6 +97,12 @@ class _CompareArgs(BaseModel):
 
 class _SubmitHtmlRevisionArgs(BaseModel):
     html: str
+    summary: str | None = None
+
+
+class _SubmitSlidevRevisionArgs(BaseModel):
+    markdown: str
+    selected_style_id: str | None = None
     summary: str | None = None
 
 
@@ -337,6 +342,8 @@ def _tool_call_summary(tool_name: str, args: dict[str, Any]) -> str:
         return f"更新第 {int(args.get('slide_index', 0)) + 1} 页双栏要点"
     if tool_name == "submit_html_revision":
         return "提交整份 HTML 改稿"
+    if tool_name == "submit_slidev_revision":
+        return "提交整份 Slidev markdown 改稿"
     return f"调用工具 {tool_name}"
 
 
@@ -366,9 +373,6 @@ class EditorLoopService:
         self._model_client_factory = self._create_model_client
 
     async def run(self, request: EditorLoopRequest) -> EditorLoopOutcome:
-        if request.output_mode == "slidev":
-            return await self._run_slidev(request)
-
         workspace_bundle = self._prepare_workspace(request)
         runtime = _EditorRuntimeState(
             request=request,
@@ -477,136 +481,9 @@ class EditorLoopService:
             "base_signature": base_signature,
         }
 
-    async def _run_slidev(self, request: EditorLoopRequest) -> EditorLoopOutcome:
-        workspace_bundle = self._prepare_workspace(request)
-        slidev_meta = (
-            dict(request.slidev_meta)
-            if isinstance(request.slidev_meta, dict)
-            else _derive_slidev_meta_from_slides(request.slides, title=request.presentation_title)
-        )
-        runtime = _EditorRuntimeState(
-            request=request,
-            current_slide_index=request.current_slide_index,
-            slides=json.loads(json.dumps(request.slides, ensure_ascii=False)),
-            html_content=request.html_content,
-            slidev_markdown=request.slidev_markdown,
-            slidev_meta=slidev_meta,
-            selected_style_id=request.selected_style_id,
-        )
-        self._write_debug_artifacts(workspace_bundle["artifacts_dir"], request, runtime)
-
-        events: list[dict[str, Any]] = [{"type": "assistant_status", "assistant_status": "thinking"}]
-        assistant_reply = ""
-        error: str | None = None
-        stop_reason = "completed"
-
-        try:
-            resolved_skill_id = resolve_skill_name(
-                requested_skill=request.skill_id,
-                output_mode=request.output_mode,
-            )
-            result = await edit_slidev_deck(
-                message=request.message,
-                action_hint=request.action_hint,
-                markdown=request.slidev_markdown or "",
-                current_slide_index=request.current_slide_index,
-                slide_meta=slidev_meta,
-                selected_style_id=request.selected_style_id,
-                skill_id=resolved_skill_id,
-                history=request.history,
-            )
-            assistant_reply = result.assistant_reply.strip()
-            if result.should_update and result.markdown.strip():
-                events.extend(
-                    [
-                        {"type": "assistant_status", "assistant_status": "applying_change"},
-                        {
-                            "type": "tool_call",
-                            "tool_name": "edit_slidev_deck",
-                            "call_id": "slidev-edit",
-                            "summary": "改写整份 Slidev deck",
-                        },
-                    ]
-                )
-                preview = await create_slidev_preview(
-                    markdown=result.markdown,
-                    fallback_title=request.presentation_title,
-                    selected_style_id=result.selected_style_id or request.selected_style_id,
-                    topic=request.presentation_title,
-                    outline_items=_slidev_outline_items(slidev_meta),
-                    expected_pages=max(1, len((slidev_meta or {}).get("slides") or request.slides)),
-                    preview_id=f"spv-{request.session_id or 'anon'}-{abs(hash(result.markdown)) % 10**10}",
-                )
-                runtime.slidev_markdown = preview["markdown"]
-                runtime.slidev_meta = preview["meta"]
-                runtime.slidev_preview_url = f"/api/v1/slidev-previews/{preview['preview_id']}"
-                runtime.selected_style_id = preview["selected_style_id"]
-                runtime.normalized_presentation = preview["presentation"]
-                runtime.slides = json.loads(
-                    json.dumps(preview["presentation"].get("slides") or [], ensure_ascii=False)
-                )
-                runtime.modifications.append(
-                    SlideModification(
-                        slide_index=max(0, request.current_slide_index),
-                        action="update_slidev_deck",
-                        data={"selected_style_id": runtime.selected_style_id},
-                    )
-                )
-                events.extend(
-                    [
-                        {
-                            "type": "tool_result",
-                            "tool_name": "edit_slidev_deck",
-                            "call_id": "slidev-edit",
-                            "ok": True,
-                            "summary": "已完成 Slidev deck 改稿",
-                        },
-                        {
-                            "type": "tool_call",
-                            "tool_name": "build_slidev_preview",
-                            "call_id": "slidev-build",
-                            "summary": "构建 Slidev 预览",
-                        },
-                        {
-                            "type": "tool_result",
-                            "tool_name": "build_slidev_preview",
-                            "call_id": "slidev-build",
-                            "ok": True,
-                            "summary": "已生成可预览的 Slidev deck",
-                        },
-                    ]
-                )
-            if assistant_reply:
-                events.append({"type": "assistant_status", "assistant_status": "ready"})
-        except Exception as exc:
-            error = str(exc)
-            stop_reason = "error"
-            events.append({"type": "assistant_status", "assistant_status": "error"})
-            raise
-        finally:
-            self._write_result_artifact(
-                workspace_bundle["artifacts_dir"],
-                assistant_reply=assistant_reply,
-                runtime=runtime,
-                stop_reason=stop_reason,
-                error=error,
-            )
-
-        return EditorLoopOutcome(
-            assistant_reply=assistant_reply,
-            events=events,
-            modifications=list(runtime.modifications),
-            slides=runtime.slides,
-            normalized_presentation=runtime.normalized_presentation,
-            slidev_markdown=runtime.slidev_markdown,
-            slidev_meta=runtime.slidev_meta,
-            slidev_preview_url=runtime.slidev_preview_url,
-            selected_style_id=runtime.selected_style_id,
-            skill_id=resolved_skill_id,
-        )
-
     def _build_tool_registry(self, *, runtime: _EditorRuntimeState) -> ToolRegistry:
         registry = ToolRegistry()
+        is_slidev_mode = runtime.request.output_mode == "slidev"
 
         async def _get_current_slide_info(_args: _NoArgs, _context: ToolContext) -> dict[str, Any]:
             slide = runtime.current_slide
@@ -770,68 +647,123 @@ class EditorLoopService:
             )
             return {"message": "已提交并校验 HTML 改稿"}
 
-        registry.extend(
+        async def _submit_slidev_revision(args: _SubmitSlidevRevisionArgs, _context: ToolContext) -> dict[str, Any]:
+            markdown = args.markdown.strip()
+            if not markdown:
+                raise ValueError("Slidev markdown 不能为空。")
+            preview = await create_slidev_preview(
+                markdown=markdown,
+                fallback_title=runtime.request.presentation_title,
+                selected_style_id=args.selected_style_id or runtime.selected_style_id or runtime.request.selected_style_id,
+                topic=runtime.request.presentation_title,
+                outline_items=_slidev_outline_items(runtime.slidev_meta or {}),
+                expected_pages=max(1, len((runtime.slidev_meta or {}).get("slides") or runtime.slides)),
+                preview_id=f"spv-{runtime.request.session_id or 'anon'}-{abs(hash(markdown)) % 10**10}",
+            )
+            runtime.slidev_markdown = preview["markdown"]
+            runtime.slidev_meta = preview["meta"]
+            runtime.slidev_preview_url = f"/api/v1/slidev-previews/{preview['preview_id']}"
+            runtime.selected_style_id = preview["selected_style_id"]
+            runtime.normalized_presentation = preview["presentation"]
+            runtime.slides = json.loads(
+                json.dumps(preview["presentation"].get("slides") or [], ensure_ascii=False)
+            )
+            runtime.modifications.append(
+                SlideModification(
+                    slide_index=max(0, runtime.current_slide_index),
+                    action="update_slidev_deck",
+                    data={
+                        "selected_style_id": runtime.selected_style_id,
+                        "summary": (args.summary or "").strip(),
+                    },
+                )
+            )
+            return {
+                "message": "已提交并校验 Slidev deck 改稿",
+                "selected_style_id": runtime.selected_style_id,
+                "preview_url": runtime.slidev_preview_url,
+            }
+
+        tool_definitions: list[Tool | Any] = [
+            Tool(
+                name="get_current_slide_info",
+                description="Read the full structured data of the current slide.",
+                args_model=_NoArgs,
+                handler=_get_current_slide_info,
+                source="editor",
+            ),
+            Tool(
+                name="get_deck_summary",
+                description="Read a compact summary of the current deck.",
+                args_model=_NoArgs,
+                handler=_get_deck_summary,
+                source="editor",
+            ),
+        ]
+        if is_slidev_mode:
+            tool_definitions.append(
+                Tool(
+                    name="submit_slidev_revision",
+                    description="Submit the full revised Slidev markdown deck after editing.",
+                    args_model=_SubmitSlidevRevisionArgs,
+                    handler=_submit_slidev_revision,
+                    source="editor",
+                )
+            )
+        else:
+            tool_definitions.extend(
+                [
+                    Tool(
+                        name="get_current_html_slide_info",
+                        description="Read the current HTML slide summary for the active page.",
+                        args_model=_NoArgs,
+                        handler=_get_current_html_slide_info,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="modify_slide_title",
+                        description="Update a slide title in the structured presentation.",
+                        args_model=_ModifyTitleArgs,
+                        handler=_modify_slide_title,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="modify_slide_content",
+                        description="Update a scalar content field in the structured presentation.",
+                        args_model=_ModifyContentArgs,
+                        handler=_modify_slide_content,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="modify_slide_speaker_notes",
+                        description="Update speaker notes for one slide.",
+                        args_model=_ModifyNotesArgs,
+                        handler=_modify_slide_speaker_notes,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="update_two_column_compare",
+                        description="Update headings and items for a two-column-compare slide.",
+                        args_model=_CompareArgs,
+                        handler=_update_two_column_compare,
+                        source="editor",
+                    ),
+                    Tool(
+                        name="submit_html_revision",
+                        description="Submit the full revised HTML deck after editing.",
+                        args_model=_SubmitHtmlRevisionArgs,
+                        handler=_submit_html_revision,
+                        source="editor",
+                    ),
+                ]
+            )
+        tool_definitions.extend(
             [
-                Tool(
-                    name="get_current_slide_info",
-                    description="Read the full structured data of the current slide.",
-                    args_model=_NoArgs,
-                    handler=_get_current_slide_info,
-                    source="editor",
-                ),
-                Tool(
-                    name="get_deck_summary",
-                    description="Read a compact summary of the current deck.",
-                    args_model=_NoArgs,
-                    handler=_get_deck_summary,
-                    source="editor",
-                ),
-                Tool(
-                    name="get_current_html_slide_info",
-                    description="Read the current HTML slide summary for the active page.",
-                    args_model=_NoArgs,
-                    handler=_get_current_html_slide_info,
-                    source="editor",
-                ),
-                Tool(
-                    name="modify_slide_title",
-                    description="Update a slide title in the structured presentation.",
-                    args_model=_ModifyTitleArgs,
-                    handler=_modify_slide_title,
-                    source="editor",
-                ),
-                Tool(
-                    name="modify_slide_content",
-                    description="Update a scalar content field in the structured presentation.",
-                    args_model=_ModifyContentArgs,
-                    handler=_modify_slide_content,
-                    source="editor",
-                ),
-                Tool(
-                    name="modify_slide_speaker_notes",
-                    description="Update speaker notes for one slide.",
-                    args_model=_ModifyNotesArgs,
-                    handler=_modify_slide_speaker_notes,
-                    source="editor",
-                ),
-                Tool(
-                    name="update_two_column_compare",
-                    description="Update headings and items for a two-column-compare slide.",
-                    args_model=_CompareArgs,
-                    handler=_update_two_column_compare,
-                    source="editor",
-                ),
-                Tool(
-                    name="submit_html_revision",
-                    description="Submit the full revised HTML deck after editing.",
-                    args_model=_SubmitHtmlRevisionArgs,
-                    handler=_submit_html_revision,
-                    source="editor",
-                ),
                 getattr(todo, "__agentloop_tool__"),
                 getattr(load_skill, "__agentloop_tool__"),
             ]
         )
+        registry.extend(tool_definitions)
         return registry
 
     def _system_prompt(self, request: EditorLoopRequest) -> str:
@@ -846,7 +778,7 @@ class EditorLoopService:
         mode_line = (
             "当前工作模式是 HTML deck 全稿改写，必须在准备好后使用 submit_html_revision 提交完整 HTML。"
             if request.output_mode == "html"
-            else "当前工作模式是 Slidev deck 全稿改写，必须直接修改完整 markdown deck，并保持 deck 可被 slidev build 编译。"
+            else "当前工作模式是 Slidev deck 全稿改写，必须在准备好后使用 submit_slidev_revision 提交完整 markdown deck。"
             if request.output_mode == "slidev"
             else "当前工作模式是结构化 slide 改稿，优先直接修改当前页对应的结构化字段。"
         )
@@ -879,6 +811,11 @@ class EditorLoopService:
             }
             for index, slide in enumerate(runtime.slides[:12])
         ]
+        slidev_context = (
+            f"当前 Slidev deck:\n{request.slidev_markdown.strip()}\n\n"
+            if request.output_mode == "slidev" and request.slidev_markdown
+            else ""
+        )
         return (
             f"当前会话 output_mode: {request.output_mode}\n"
             f"操作意图: {request.action_hint}\n"
@@ -889,7 +826,9 @@ class EditorLoopService:
             f"当前页内容摘要: {current_summary}\n"
             f"整份演示概览: {_safe_json_dumps(deck_summary)}\n"
             f"最近对话: {_safe_json_dumps(history)}\n\n"
-            f"当前 Slidev deck 是否存在: {'yes' if request.slidev_markdown else 'no'}\n\n"
+            f"当前 Slidev deck 是否存在: {'yes' if request.slidev_markdown else 'no'}\n"
+            f"当前 Slidev meta: {_safe_json_dumps(runtime.slidev_meta or {})}\n\n"
+            f"{slidev_context}"
             f"用户消息:\n{request.message.strip()}\n\n"
             "请结合工具决定下一步，并在必要时完成真实改稿。"
         )
@@ -1005,23 +944,9 @@ class EditorLoopService:
             raise ValueError(f"幻灯片索引 {slide_index} 超出范围（共 {len(runtime.slides)} 页）")
         return runtime.slides[slide_index]
 
-    def _create_model_client(self) -> LiteLLMModelClient:
+    def _create_model_client(self):
         model_name = str(settings.fast_model or settings.strong_model or "").strip()
-        provider = parse_provider(model_name)
-        api_key: str | None = None
-        api_base: str | None = None
-        if provider == "openai":
-            api_key = str(settings.openai_api_key or "").strip() or None
-            api_base = str(settings.openai_base_url or "").strip() or None
-        elif provider == "anthropic":
-            api_key = str(settings.anthropic_api_key or "").strip() or None
-        elif provider == "google-gla":
-            api_key = str(settings.google_api_key or "").strip() or None
-        elif provider == "deepseek":
-            api_key = str(settings.deepseek_api_key or "").strip() or None
-        elif provider == "openrouter":
-            api_key = str(settings.openrouter_api_key or "").strip() or None
-        return LiteLLMModelClient(model=model_name, api_key=api_key, api_base=api_base)
+        return create_model_client(model_name)
 
 
 editor_loop_service = EditorLoopService()

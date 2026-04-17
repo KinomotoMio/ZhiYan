@@ -1,7 +1,6 @@
-"""Layout content schemas — 每个布局的 Pydantic output_type
+"""Layout content schemas — 每个布局对应一个 Pydantic 数据模型。
 
-每个 layout 定义一个 Pydantic 模型，作为 PydanticAI Agent 的 output_type，
-确保 LLM 输出严格匹配布局所需的结构化数据。
+这些模型用于约束结构化生成结果，确保输出匹配布局所需的数据形状。
 """
 
 from app.models.layouts.schemas import (

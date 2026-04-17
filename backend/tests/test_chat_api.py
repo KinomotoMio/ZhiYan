@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
-from app.services.agents.chat_agent import SlideModification
+from app.services.agents.modifications import SlideModification
 from app.services.agents.editor_loop import EditorLoopOutcome, editor_loop_service
 from app.services.generation.agentic.models import ModelUsage
 from app.services.generation.agentic.types import AssistantMessage, ToolCall

@@ -380,7 +380,11 @@ def test_agentic_auto_job_generates_presentation(monkeypatch, tmp_path):
     assert "presentation" in body["document_metadata"]["agent_outputs"]
     assert (workspace_root / "artifacts" / "debug" / "session-presentation.json").exists()
     assert (workspace_root / "artifacts" / "debug" / "runner-trace.json").exists()
-    assert set(tool["name"] for tool in presentation_model.seen_tools[0]) == {"read_file", "submit_presentation"}
+    assert set(tool["name"] for tool in presentation_model.seen_tools[0]) == {
+        "read_file",
+        "load_skill",
+        "submit_presentation",
+    }
 
 
 def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
@@ -470,7 +474,11 @@ def test_agentic_auto_job_generates_html_deck(monkeypatch, tmp_path):
     )
     assert latest_meta.status_code == 200
     assert latest_meta.json()["slide_count"] == 4
-    assert set(tool["name"] for tool in html_model.seen_tools[0]) == {"read_file", "submit_html_deck"}
+    assert set(tool["name"] for tool in html_model.seen_tools[0]) == {
+        "read_file",
+        "load_skill",
+        "submit_html_deck",
+    }
 
 
 def test_agentic_auto_job_generates_slidev_deck(monkeypatch, tmp_path):
@@ -615,7 +623,11 @@ def test_agentic_auto_job_generates_slidev_deck(monkeypatch, tmp_path):
     )
     assert latest_build.status_code == 200
     assert "slidev build" in latest_build.text
-    assert set(tool["name"] for tool in slidev_model.seen_tools[0]) == {"read_file", "submit_slidev_deck"}
+    assert set(tool["name"] for tool in slidev_model.seen_tools[0]) == {
+        "read_file",
+        "load_skill",
+        "submit_slidev_deck",
+    }
 
 
 def test_agentic_review_outline_job_waits_and_then_completes(monkeypatch, tmp_path):

@@ -8,12 +8,11 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.model_status import parse_provider
 from app.models.slide import Presentation
 from app.services.generation.agent_workspace import build_agent_workspace
 from app.services.generation.agentic.builder import AgentBuilder
-from app.services.generation.agentic.models import LiteLLMModelClient
 from app.services.generation.agentic.tools import Tool, ToolContext, ToolRegistry, create_builtin_registry
+from app.services.model_clients import create_model_client
 
 
 class SubmittedSpeakerNote(BaseModel):
@@ -33,27 +32,9 @@ class SpeakerNotesGenerationResult(BaseModel):
     workspace_root: str
 
 
-def _create_agent_model_client() -> LiteLLMModelClient:
+def _create_agent_model_client():
     model_name = str(settings.strong_model or settings.default_model or "").strip()
-    provider = parse_provider(model_name)
-    api_key: str | None = None
-    api_base: str | None = None
-    if provider == "openai":
-        api_key = str(settings.openai_api_key or "").strip() or None
-        api_base = str(settings.openai_base_url or "").strip() or None
-    elif provider == "anthropic":
-        api_key = str(settings.anthropic_api_key or "").strip() or None
-    elif provider == "google-gla":
-        api_key = str(settings.google_api_key or "").strip() or None
-    elif provider == "deepseek":
-        api_key = str(settings.deepseek_api_key or "").strip() or None
-    elif provider == "openrouter":
-        api_key = str(settings.openrouter_api_key or "").strip() or None
-    return LiteLLMModelClient(
-        model=model_name,
-        api_key=api_key,
-        api_base=api_base,
-    )
+    return create_model_client(model_name)
 
 
 def _speaker_notes_submit_tool(payload_holder: dict[str, object]) -> Tool:

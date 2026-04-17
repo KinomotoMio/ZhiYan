@@ -37,6 +37,7 @@ from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
 from app.services.generation.verifier import stage_fix_slides_once, stage_verify_slides
+from app.services.model_clients import create_model_client
 from app.services.presentations import normalize_presentation_payload
 from app.services.skill_runtime.contracts import (
     build_skill_activation_record,
@@ -1978,25 +1979,7 @@ class GenerationRunner:
 
     def _create_agent_model_client(self):
         model_name = str(settings.strong_model or "").strip()
-        provider = parse_provider(model_name)
-        api_key: str | None = None
-        api_base: str | None = None
-        if provider == "openai":
-            api_key = str(settings.openai_api_key or "").strip() or None
-            api_base = str(settings.openai_base_url or "").strip() or None
-        elif provider == "anthropic":
-            api_key = str(settings.anthropic_api_key or "").strip() or None
-        elif provider == "google-gla":
-            api_key = str(settings.google_api_key or "").strip() or None
-        elif provider == "deepseek":
-            api_key = str(settings.deepseek_api_key or "").strip() or None
-        elif provider == "openrouter":
-            api_key = str(settings.openrouter_api_key or "").strip() or None
-        return LiteLLMModelClient(
-            model=model_name,
-            api_key=api_key,
-            api_base=api_base,
-        )
+        return create_model_client(model_name)
 
     def _make_outline_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
         async def _handler(args: _SubmitOutlineArgs, context: ToolContext) -> dict[str, Any]:

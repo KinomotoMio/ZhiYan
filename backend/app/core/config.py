@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     openrouter_api_key: str = ""
 
-    # PydanticAI 模型标识
+    # 模型标识
     default_model: str = "openai:gpt-4o-mini"
     strong_model: str = "openai:gpt-4o"
     vision_model: str = "openai:gpt-4o-mini"

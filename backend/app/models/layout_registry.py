@@ -1,6 +1,6 @@
-"""布局注册中心 — layout_id → Pydantic 模型映射。
+"""布局注册中心 — layout_id → Pydantic 数据模型映射。
 
-用于 Pipeline 中的 GenerateSlides 节点，根据 layout_id 动态选择 output_type。
+用于运行时按 layout_id 选择结构化内容模型。
 对外正式暴露 `group / sub_group / variant_id / layout_id` 运行时字段，
 同时保留兼容的单值 variant token 视图。
 """

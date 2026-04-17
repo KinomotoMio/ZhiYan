@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class DocumentMeta(BaseModel):
-    """AI 生成的文档元数据（Layer 1+2，由 document_meta_generator Agent 填充）"""
+    """AI 生成的文档元数据（Layer 1+2，由轻量结构化生成服务填充）"""
 
     title: str = Field(description="文档的有意义标题（非文件名乱码）")
     description: str = Field(description="100 字以内的内容摘要")

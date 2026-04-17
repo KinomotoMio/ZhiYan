@@ -1,7 +1,7 @@
 from app.services.skill_runtime.contracts import (
     build_skill_activation_record,
     build_skill_catalog_context,
-    build_skill_prompt_bundle,
+    build_skill_summary,
     resolve_default_skill_name,
     resolve_skill_name,
 )
@@ -18,11 +18,11 @@ def test_resolve_skill_name_uses_default_when_missing():
     assert resolve_skill_name(requested_skill=None, output_mode="html") == "html-default"
 
 
-def test_build_skill_prompt_bundle_includes_skill_and_reference_text():
-    bundle = build_skill_prompt_bundle("slidev-default")
-    assert "slidev-default" in bundle
-    assert "Slidev Default" in bundle
-    assert "references/generation-contract.md" in bundle
+def test_build_skill_summary_includes_resource_listing():
+    summary = build_skill_summary("slidev-default")
+    assert summary["skill_id"] == "slidev-default"
+    assert summary["name"] == "slidev-default"
+    assert "references/generation-contract.md" in summary["resources"]
 
 
 def test_build_skill_catalog_context_mentions_mode_and_base_skill():

@@ -59,45 +59,6 @@ class SkillRegistry:
                     resources.append(str(path.relative_to(record.skill_dir)))
         return resources
 
-    def read_reference_texts(
-        self,
-        skill_name: str,
-        *,
-        limit: int = 4,
-        max_chars: int = 16000,
-    ) -> list[dict[str, str]]:
-        record = self.get_record(skill_name)
-        if record is None:
-            return []
-        refs_dir = record.skill_dir / "references"
-        if not refs_dir.exists():
-            return []
-
-        refs: list[dict[str, str]] = []
-        used_chars = 0
-        for path in sorted(refs_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in {".md", ".txt", ".json"}:
-                continue
-            raw = path.read_text(encoding="utf-8").strip()
-            if not raw:
-                continue
-            remaining = max_chars - used_chars
-            if remaining <= 0:
-                break
-            excerpt = raw[:remaining]
-            refs.append(
-                {
-                    "path": str(path.relative_to(record.skill_dir)),
-                    "content": excerpt,
-                }
-            )
-            used_chars += len(excerpt)
-            if len(refs) >= limit:
-                break
-        return refs
-
     def _record_to_metadata(self, record: SkillRecord) -> dict[str, Any]:
         metadata = dict(record.metadata or {})
         metadata.update(

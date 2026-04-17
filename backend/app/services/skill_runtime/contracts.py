@@ -74,56 +74,6 @@ def build_skill_catalog_context(
     if catalog_lines:
         lines.extend(["", "可用 skills 摘要：", *catalog_lines])
     return "\n".join(lines).strip()
-
-
-def build_skill_prompt_bundle(
-    skill_name: str | None,
-    *,
-    registry: SkillRegistry | None = None,
-) -> str:
-    if not skill_name:
-        return ""
-
-    registry = registry or SkillRegistry()
-    meta = registry.get_skill(skill_name)
-    body = registry.load_skill(skill_name)
-    if not meta or not body:
-        return ""
-
-    resource_files = registry.list_resource_files(skill_name)
-    reference_texts = registry.read_reference_texts(skill_name)
-
-    lines = [
-        "当前激活的业务 Skill：",
-        f"- name: {meta.get('name') or skill_name}",
-        f"- description: {meta.get('description') or ''}",
-    ]
-    if meta.get("default_for_output"):
-        lines.append(f"- default_for_output: {meta.get('default_for_output')}")
-    if meta.get("allowed_tools"):
-        lines.append(f"- allowed_tools: {meta.get('allowed_tools')}")
-    lines.extend(
-        [
-            "",
-            "<skill_instructions>",
-            body.strip(),
-            "</skill_instructions>",
-        ]
-    )
-    if resource_files:
-        lines.append("<skill_resources>")
-        lines.extend(f"- {item}" for item in resource_files)
-        lines.append("</skill_resources>")
-    if reference_texts:
-        lines.append("<skill_references>")
-        for item in reference_texts:
-            lines.append(f"## {item['path']}")
-            lines.append(item["content"])
-            lines.append("")
-        lines.append("</skill_references>")
-    return "\n".join(lines).strip()
-
-
 def build_skill_activation_record(
     skill_name: str | None,
     *,

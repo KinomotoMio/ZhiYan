@@ -161,11 +161,7 @@ async def get_settings():
 @router.put("", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdate):
     from app.core.config import reload_settings
-    from app.core.settings_store import (
-        invalidate_agents,
-        load_user_settings,
-        save_user_settings,
-    )
+    from app.core.settings_store import load_user_settings, save_user_settings
 
     current = load_user_settings()
     updates = req.model_dump(exclude_none=True)
@@ -178,7 +174,6 @@ async def update_settings(req: SettingsUpdate):
     current.update(updates)
     save_user_settings(current)
     reload_settings()
-    invalidate_agents()
 
     return await get_settings()
 
