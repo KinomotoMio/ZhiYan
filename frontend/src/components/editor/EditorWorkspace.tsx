@@ -42,7 +42,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { canResumeGenerationJob } from "@/lib/routes";
+import { canResumeGenerationJob, getSessionPresenterPath } from "@/lib/routes";
 import { resumeGenerationJob } from "@/components/editor/resume-job";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
 import SlidevPreview from "@/components/slides/SlidevPreview";
@@ -894,7 +894,7 @@ export default function EditorWorkspace({
     return fetchSpeakerAudio(currentSessionId, currentSlideId, signal);
   };
 
-  if (showReveal) {
+  if (showReveal && isSlidevMode) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
         <button
@@ -903,26 +903,11 @@ export default function EditorWorkspace({
         >
           退出演示
         </button>
-        {isSlidevMode ? (
-          <SlidevPreview
-            src={presentationSlidevBuildUrl}
-            startSlide={revealSlideIndex}
-            onSlideChange={setRevealSlideIndex}
-          />
-        ) : (
-          <CentiDeckPreview
-            sessionId={currentSessionId}
-            artifactOverride={
-              presentationCentiDeckArtifact as
-                | import("@/lib/api").CentiDeckArtifactPayload
-                | null
-            }
-            startSlide={revealSlideIndex}
-            onSlideChange={setRevealSlideIndex}
-            mode="presenter"
-            className="bg-black"
-          />
-        )}
+        <SlidevPreview
+          src={presentationSlidevBuildUrl}
+          startSlide={revealSlideIndex}
+          onSlideChange={setRevealSlideIndex}
+        />
       </div>
     );
   }
@@ -1055,8 +1040,17 @@ export default function EditorWorkspace({
             )}
             <button
               onClick={() => {
-                setRevealSlideIndex(currentSlideIndex);
-                setShowReveal(true);
+                if (!currentSessionId) return;
+                if (isSlidevMode) {
+                  setRevealSlideIndex(currentSlideIndex);
+                  setShowReveal(true);
+                  return;
+                }
+                router.push(
+                  getSessionPresenterPath(currentSessionId, {
+                    slide: currentSlideIndex + 1,
+                  })
+                );
               }}
               disabled={isGenerating || (isSlidevMode && (!presentationSlidevBuildUrl || presentationRenderStatus !== "ready"))}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50"
