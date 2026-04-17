@@ -20,7 +20,6 @@ import {
   unlinkSourceFromSession,
   uploadWorkspaceSource,
 } from "@/lib/api";
-import { resolveGenerationRequestTitle } from "@/lib/loading-title";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
@@ -222,8 +221,7 @@ export default function SourcePanel() {
           ? "running"
           : detail.latest_generation_job?.status ?? null;
       let hydratedJob: HydratedGenerationJob | null = null;
-      let hydratedPresentation = detail.latest_presentation?.presentation ?? null;
-      const latestOutputMode = detail.latest_presentation?.output_mode ?? "structured";
+      const latestOutputMode = detail.latest_presentation?.output_mode ?? "slidev";
       const shouldHydrateJob =
         Boolean(detail.latest_generation_job?.job_id) &&
         (resolvedJobStatus === "running" ||
@@ -235,22 +233,6 @@ export default function SourcePanel() {
         try {
           const job = await getJob(sessionId, detail.latest_generation_job.job_id);
           hydratedJob = job as unknown as HydratedGenerationJob;
-          if (
-            !hydratedPresentation &&
-            latestOutputMode !== "slidev" &&
-            Array.isArray(job.slides) &&
-            job.slides.length > 0
-          ) {
-            hydratedPresentation = {
-              presentationId:
-                (typeof job.presentation?.presentationId === "string" &&
-                job.presentation.presentationId.trim()
-                  ? job.presentation.presentationId
-                  : "pres-skeleton"),
-              title: resolveGenerationRequestTitle(job.request),
-              slides: job.slides,
-            };
-          }
         } catch {
           hydratedJob = null;
         }
@@ -260,7 +242,7 @@ export default function SourcePanel() {
       setSessionData({
         sources: detail.sources,
         chatMessages,
-        presentation: hydratedPresentation,
+        presentationOutputMode: latestOutputMode,
         presentationArtifactStatus: detail.latest_presentation?.artifact_status ?? null,
         presentationRenderStatus: detail.latest_presentation?.render_status ?? null,
         presentationRenderError: detail.latest_presentation?.render_error ?? null,
@@ -288,10 +270,6 @@ export default function SourcePanel() {
             hydratedJob && typeof hydratedJob.advisory_issue_count === "number"
               ? hydratedJob.advisory_issue_count
               : 0,
-          fixPreviewSlides:
-            hydratedJob && Array.isArray(hydratedJob.fix_preview_slides)
-              ? hydratedJob.fix_preview_slides
-              : [],
           fixPreviewSourceIds:
             hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
               ? hydratedJob.fix_preview_source_ids
@@ -300,10 +278,6 @@ export default function SourcePanel() {
             hydratedJob && hydratedJob.fix_preview_slidev
               ? hydratedJob.fix_preview_slidev
               : null,
-          selectedFixPreviewSlideIds:
-            hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
-              ? hydratedJob.fix_preview_source_ids
-              : [],
         });
         setIsGenerating(resolvedJobStatus === "running");
       } else {
@@ -316,10 +290,8 @@ export default function SourcePanel() {
           failedSlideIndices: [],
           hardIssueSlideIds: [],
           advisoryIssueCount: 0,
-          fixPreviewSlides: [],
           fixPreviewSourceIds: [],
           fixPreviewSlidev: null,
-          selectedFixPreviewSlideIds: [],
         });
         setIsGenerating(false);
       }

@@ -22,11 +22,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   chatStream,
   defaultSkillIdForOutputMode,
-  type HtmlRuntimeManifest,
-  type HtmlRuntimeRenderPayload,
   listSkills,
-  saveLatestSessionHtmlPresentation,
-  saveLatestSessionPresentation,
   saveLatestSessionSlidevPresentation,
   type ChatActionHint,
   type ChatAssistantStatusEvent,
@@ -36,7 +32,6 @@ import {
 import { sanitizeAssistantText } from "@/lib/chat-sanitize";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import type { Slide } from "@/types/slide";
 
 function ChatAvatar({ role }: { role: "assistant" | "user" }) {
   if (role === "assistant") {
@@ -145,21 +140,13 @@ const QUICK_ACTIONS: QuickActionGroup[] = [
 ];
 
 interface PendingSlideChange {
-  mode: "structured" | "html" | "slidev";
-  previousSlides: Slide[];
-  proposedSlides: Slide[];
-  previousHtml: string | null;
-  proposedHtml: string | null;
-  previousHtmlManifest?: HtmlRuntimeManifest | null;
-  proposedHtmlManifest?: HtmlRuntimeManifest | null;
-  previousHtmlRender?: HtmlRuntimeRenderPayload | null;
-  proposedHtmlRender?: HtmlRuntimeRenderPayload | null;
-  previousSlidevMarkdown?: string | null;
-  proposedSlidevMarkdown?: string | null;
-  previousSlidevMeta?: Record<string, unknown> | null;
-  proposedSlidevMeta?: Record<string, unknown> | null;
-  previousSlidevBuildUrl?: string | null;
-  proposedSlidevBuildUrl?: string | null;
+  mode: "slidev";
+  previousSlidevMarkdown: string | null;
+  proposedSlidevMarkdown: string | null;
+  previousSlidevMeta: Record<string, unknown> | null;
+  proposedSlidevMeta: Record<string, unknown> | null;
+  previousSlidevBuildUrl: string | null;
+  proposedSlidevBuildUrl: string | null;
   selectedStyleId?: string | null;
   modifications: Record<string, unknown>[];
   saving: boolean;
@@ -186,10 +173,6 @@ const STATUS_LABELS: Record<string, string> = {
   ready: "已完成",
   error: "出错了",
 };
-
-function cloneSlides(slides: Slide[]): Slide[] {
-  return JSON.parse(JSON.stringify(slides)) as Slide[];
-}
 
 export function buildHistoryForApi(
   messages: ChatMessage[],
@@ -301,20 +284,13 @@ export default function FloatingChatPanel() {
   const {
     chatMessages,
     addChatMessage,
-    presentation,
     presentationOutputMode,
-    presentationHtml,
-    presentationHtmlManifest,
-    presentationHtmlRender,
     presentationSlidevMarkdown,
     presentationSlidevMeta,
     presentationSlidevBuildUrl,
     presentationSlidevDeckArtifact,
     currentSlideIndex,
     currentSessionId,
-    updateSlides,
-    setPresentation,
-    setPresentationHtmlState,
     setPresentationSlidevState,
   } = useAppStore();
   const [input, setInput] = useState("");
@@ -358,34 +334,14 @@ export default function FloatingChatPanel() {
 
   const handleRollbackPending = () => {
     if (!pendingChange) return;
-    if (pendingChange.mode !== "slidev") {
-      const currentPresentation = useAppStore.getState().presentation;
-      if (currentPresentation) {
-        setPresentation({
-          ...currentPresentation,
-          slides: cloneSlides(pendingChange.previousSlides),
-        });
-      } else {
-        updateSlides(cloneSlides(pendingChange.previousSlides));
-      }
-    }
-    setPresentationHtmlState(
-      pendingChange.mode,
-      pendingChange.previousHtml,
-      pendingChange.previousHtmlManifest,
-      pendingChange.previousHtmlRender,
-      useAppStore.getState().presentationHtmlArtifact
-    );
-    if (pendingChange.mode === "slidev") {
-      setPresentationSlidevState({
-        outputMode: "slidev",
-        markdown: pendingChange.previousSlidevMarkdown ?? null,
-        meta: pendingChange.previousSlidevMeta ?? null,
-        deckArtifact: useAppStore.getState().presentationSlidevDeckArtifact,
-        buildArtifact: useAppStore.getState().presentationSlidevBuildArtifact,
-        buildUrl: pendingChange.previousSlidevBuildUrl ?? null,
-      });
-    }
+    setPresentationSlidevState({
+      outputMode: "slidev",
+      markdown: pendingChange.previousSlidevMarkdown ?? null,
+      meta: pendingChange.previousSlidevMeta ?? null,
+      deckArtifact: useAppStore.getState().presentationSlidevDeckArtifact,
+      buildArtifact: useAppStore.getState().presentationSlidevBuildArtifact,
+      buildUrl: pendingChange.previousSlidevBuildUrl ?? null,
+    });
     setPendingChange(null);
     const rollbackSeq = messageSeqRef.current++;
     addChatMessage({
@@ -401,43 +357,17 @@ export default function FloatingChatPanel() {
 
   const handleApplyPending = async () => {
     if (!pendingChange || !currentSessionId) return;
-    const latestPresentation = useAppStore.getState().presentation;
-    if (pendingChange.mode !== "slidev" && !latestPresentation) {
-      toast.error("当前没有可保存的演示稿");
-      return;
-    }
 
     setPendingChange((prev) => (prev ? { ...prev, saving: true } : prev));
     try {
-      if (pendingChange.mode === "html") {
-        if (!latestPresentation) {
-          throw new Error("当前没有可保存的演示稿");
-        }
-        await saveLatestSessionHtmlPresentation(
-          currentSessionId,
-          latestPresentation,
-          pendingChange.proposedHtmlManifest || presentationHtmlManifest || {
-            version: "runtime_v2",
-            title: latestPresentation.title,
-            slides: [],
-          },
-          "chat"
-        );
-      } else if (pendingChange.mode === "slidev") {
-        await saveLatestSessionSlidevPresentation(
-          currentSessionId,
-          pendingChange.proposedSlidevMarkdown || "",
-          pendingChange.selectedStyleId ?? presentationSlidevDeckArtifact?.selected_style_id ?? null,
-          pendingChange.proposedSlidevMeta ?? undefined,
-          latestPresentation,
-          "chat"
-        );
-      } else {
-        if (!latestPresentation) {
-          throw new Error("当前没有可保存的演示稿");
-        }
-        await saveLatestSessionPresentation(currentSessionId, latestPresentation, "chat");
-      }
+      await saveLatestSessionSlidevPresentation(
+        currentSessionId,
+        pendingChange.proposedSlidevMarkdown || "",
+        pendingChange.selectedStyleId ?? presentationSlidevDeckArtifact?.selected_style_id ?? null,
+        pendingChange.proposedSlidevMeta ?? undefined,
+        null,
+        "chat"
+      );
       setPendingChange(null);
       toast.success("已应用并保存到当前会话");
     } catch (err) {
@@ -495,23 +425,15 @@ export default function FloatingChatPanel() {
         session_id: currentSessionId,
         messages: historyForApi,
         presentation_context:
-          presentation || presentationOutputMode === "slidev"
+          presentationOutputMode === "slidev"
             ? {
-                slides: presentation?.slides ?? [],
+                slides: [],
                 title:
-                  presentation?.title ??
                   String((presentationSlidevMeta as { title?: unknown } | null)?.title || "新演示文稿"),
                 output_mode: presentationOutputMode,
-                html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
-                html_manifest: presentationOutputMode === "html" ? presentationHtmlManifest : undefined,
-                html_render: presentationOutputMode === "html" ? presentationHtmlRender : undefined,
-                slidev_markdown:
-                  presentationOutputMode === "slidev" ? presentationSlidevMarkdown : undefined,
-                slidev_meta: presentationOutputMode === "slidev" ? presentationSlidevMeta : undefined,
-                selected_style_id:
-                  presentationOutputMode === "slidev"
-                    ? presentationSlidevDeckArtifact?.selected_style_id
-                    : undefined,
+                slidev_markdown: presentationSlidevMarkdown,
+                slidev_meta: presentationSlidevMeta,
+                selected_style_id: presentationSlidevDeckArtifact?.selected_style_id,
               }
             : undefined,
         current_slide_index: currentSlideIndex,
@@ -542,79 +464,12 @@ export default function FloatingChatPanel() {
         }));
         setIsStreaming(false);
       },
-      (slideUpdate) => {
-        const currentSlides = useAppStore.getState().presentation?.slides ?? [];
-        const currentHtml = useAppStore.getState().presentationHtml;
-        const previousSlidesSnapshot = pendingChange?.previousSlides
-          ? cloneSlides(pendingChange.previousSlides)
-          : cloneSlides(currentSlides);
-        updateSlides(slideUpdate.slides);
-        setPendingChange({
-          mode: "structured",
-          previousSlides: previousSlidesSnapshot,
-          proposedSlides: cloneSlides(slideUpdate.slides),
-          previousHtml: currentHtml,
-          proposedHtml: currentHtml,
-          previousHtmlManifest: presentationHtmlManifest,
-          proposedHtmlManifest: presentationHtmlManifest,
-          previousHtmlRender: presentationHtmlRender,
-          proposedHtmlRender: presentationHtmlRender,
-          previousSlidevMarkdown: presentationSlidevMarkdown,
-          proposedSlidevMarkdown: presentationSlidevMarkdown,
-          previousSlidevMeta: presentationSlidevMeta,
-          proposedSlidevMeta: presentationSlidevMeta,
-          previousSlidevBuildUrl: presentationSlidevBuildUrl,
-          proposedSlidevBuildUrl: presentationSlidevBuildUrl,
-          modifications: slideUpdate.modifications,
-          saving: false,
-        });
-        toast.info("已生成改稿预览，请确认应用或撤回");
-      },
+      undefined,
       (noOp) => {
         setNoOpReason(noOp.reason);
         toast.warning(noOp.reason);
       },
-      (htmlUpdate) => {
-        const currentSlides = useAppStore.getState().presentation?.slides ?? [];
-        const currentHtml = useAppStore.getState().presentationHtml;
-        const previousSlidesSnapshot = pendingChange?.previousSlides
-          ? cloneSlides(pendingChange.previousSlides)
-          : cloneSlides(currentSlides);
-        setPresentation(htmlUpdate.presentation);
-        setPresentationHtmlState(
-          "html",
-          htmlUpdate.html_render.documentHtml,
-          htmlUpdate.html_manifest,
-          htmlUpdate.html_render,
-          useAppStore.getState().presentationHtmlArtifact
-        );
-        setPendingChange({
-          mode: "html",
-          previousSlides: previousSlidesSnapshot,
-          proposedSlides: cloneSlides(htmlUpdate.presentation.slides),
-          previousHtml: currentHtml,
-          proposedHtml: htmlUpdate.html_render.documentHtml,
-          previousHtmlManifest: presentationHtmlManifest,
-          proposedHtmlManifest: htmlUpdate.html_manifest,
-          previousHtmlRender: presentationHtmlRender,
-          proposedHtmlRender: htmlUpdate.html_render,
-          previousSlidevMarkdown: presentationSlidevMarkdown,
-          proposedSlidevMarkdown: presentationSlidevMarkdown,
-          previousSlidevMeta: presentationSlidevMeta,
-          proposedSlidevMeta: presentationSlidevMeta,
-          previousSlidevBuildUrl: presentationSlidevBuildUrl,
-          proposedSlidevBuildUrl: presentationSlidevBuildUrl,
-          modifications: htmlUpdate.modifications || [],
-          saving: false,
-        });
-        toast.info("已生成 HTML 改稿预览，请确认应用或撤回");
-      },
       (slidevUpdate) => {
-        const currentSlides = useAppStore.getState().presentation?.slides ?? [];
-        const currentHtml = useAppStore.getState().presentationHtml;
-        const previousSlidesSnapshot = pendingChange?.previousSlides
-          ? cloneSlides(pendingChange.previousSlides)
-          : cloneSlides(currentSlides);
         setPresentationSlidevState({
           outputMode: "slidev",
           markdown: slidevUpdate.markdown,
@@ -625,14 +480,6 @@ export default function FloatingChatPanel() {
         });
         setPendingChange({
           mode: "slidev",
-          previousSlides: previousSlidesSnapshot,
-          proposedSlides: previousSlidesSnapshot,
-          previousHtml: currentHtml,
-          proposedHtml: currentHtml,
-          previousHtmlManifest: presentationHtmlManifest,
-          proposedHtmlManifest: presentationHtmlManifest,
-          previousHtmlRender: presentationHtmlRender,
-          proposedHtmlRender: presentationHtmlRender,
           previousSlidevMarkdown: presentationSlidevMarkdown,
           proposedSlidevMarkdown: slidevUpdate.markdown,
           previousSlidevMeta: presentationSlidevMeta,

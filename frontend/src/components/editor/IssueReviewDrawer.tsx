@@ -1,10 +1,8 @@
 "use client";
 
 import { X, Loader2 } from "lucide-react";
-import SlidePreview from "@/components/slides/SlidePreview";
 import SlidevPreview from "@/components/slides/SlidevPreview";
 import type { SlidevFixPreviewState } from "@/lib/api";
-import type { Slide } from "@/types/slide";
 import type {
   IssueDecisionStatus,
   SlideIssueGroup,
@@ -14,22 +12,19 @@ interface IssueReviewDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isSlidevMode: boolean;
-  slides: Slide[];
   slidevMetaSlides: Array<Record<string, unknown>>;
   slidevBuildUrl: string | null;
   groupedIssues: Map<string, SlideIssueGroup>;
   issueDecisionBySlideId: Record<string, IssueDecisionStatus>;
   focusSlideId: string | null;
   onFocusSlide: (slideId: string) => void;
-  fixPreviewBySlideId: Map<string, Slide>;
   fixPreviewSlidev: SlidevFixPreviewState | null;
-  selectedFixPreviewSlideIds: string[];
+  fixPreviewSourceIds: string[];
   waitingFixReview: boolean;
   previewingFix: boolean;
   applyingFix: boolean;
   skippingFix: boolean;
   onGeneratePreview: (slideId: string) => void;
-  onToggleApplySlide: (slideId: string) => void;
   onApplySelected: () => void;
   onSkipAll: () => void;
   onDiscardPreview: () => void;
@@ -54,22 +49,19 @@ export default function IssueReviewDrawer({
   open,
   onOpenChange,
   isSlidevMode,
-  slides,
   slidevMetaSlides,
   slidevBuildUrl,
   groupedIssues,
   issueDecisionBySlideId,
   focusSlideId,
   onFocusSlide,
-  fixPreviewBySlideId,
   fixPreviewSlidev,
-  selectedFixPreviewSlideIds,
+  fixPreviewSourceIds,
   waitingFixReview,
   previewingFix,
   applyingFix,
   skippingFix,
   onGeneratePreview,
-  onToggleApplySlide,
   onApplySelected,
   onSkipAll,
   onDiscardPreview,
@@ -79,27 +71,17 @@ export default function IssueReviewDrawer({
     ? slidevMetaSlides
         .map((slide) => String(slide.slide_id ?? ""))
         .filter((slideId) => slideId && groupedIssues.has(slideId))
-    : slides
-        .map((slide) => slide.slideId)
-        .filter((slideId) => groupedIssues.has(slideId));
+    : Array.from(groupedIssues.keys());
 
   const activeSlideId = focusSlideId && groupedIssues.has(focusSlideId)
     ? focusSlideId
     : orderedSlideIds[0] ?? null;
   const activeGroup = activeSlideId ? groupedIssues.get(activeSlideId) ?? null : null;
-  const activeSlide = !isSlidevMode && activeSlideId
-    ? slides.find((slide) => slide.slideId === activeSlideId) ?? null
-    : null;
   const activeSlideMeta = isSlidevMode && activeSlideId
     ? slidevMetaSlides.find((slide) => String(slide.slide_id ?? "") === activeSlideId) ?? null
     : null;
-  const activePreview = activeSlideId
-    ? fixPreviewBySlideId.get(activeSlideId)
-    : undefined;
-  const activeSlideIndex = activeSlideId
-    ? (isSlidevMode
-        ? slidevMetaSlides.findIndex((slide) => String(slide.slide_id ?? "") === activeSlideId)
-        : slides.findIndex((slide) => slide.slideId === activeSlideId))
+  const activeSlideIndex = activeSlideId && isSlidevMode
+    ? slidevMetaSlides.findIndex((slide) => String(slide.slide_id ?? "") === activeSlideId)
     : -1;
 
   let hardCount = 0;
@@ -164,7 +146,7 @@ export default function IssueReviewDrawer({
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-3">
-            {activeGroup && (isSlidevMode ? activeSlideMeta : activeSlide) ? (
+            {activeGroup && activeSlideId ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-medium">{activeSlideId}</div>
@@ -236,23 +218,14 @@ export default function IssueReviewDrawer({
                           </div>
                         </div>
                         <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-6 text-cyan-800">
-                          当前预览会以整份 deck 形式应用，涉及 {selectedFixPreviewSlideIds.length} 个问题页。
+                          当前预览会以整份 deck 形式应用，涉及 {fixPreviewSourceIds.length} 个问题页。
                         </div>
                       </div>
                     )}
                   </div>
-                ) : activePreview && activeSlide ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-slate-500">当前页 vs 修复候选</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <SlidePreview slide={activeSlide} className="w-full" />
-                      <SlidePreview
-                        slide={activePreview}
-                        className="w-full ring-2 ring-cyan-400/60"
-                      />
-                    </div>
-                  </div>
-                ) : null}
+                ) : (
+                  <p className="text-xs text-slate-500">本模式的修复扫描即将上线。</p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-slate-500">当前没有可展示的问题页面。</p>
@@ -271,18 +244,7 @@ export default function IssueReviewDrawer({
                 生成该页修复建议
               </button>
             )}
-            {activeSlideId && fixPreviewBySlideId.has(activeSlideId) && (
-              <button
-                type="button"
-                onClick={() => onToggleApplySlide(activeSlideId)}
-                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs hover:bg-slate-50"
-              >
-                {selectedFixPreviewSlideIds.includes(activeSlideId)
-                  ? "移出应用列表"
-                  : "加入应用列表"}
-              </button>
-            )}
-            {isSlidevMode && fixPreviewSlidev && selectedFixPreviewSlideIds.length > 0 && (
+            {isSlidevMode && fixPreviewSlidev && fixPreviewSourceIds.length > 0 && (
               <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-6 text-cyan-800">
                 当前 deck 修复预览将以整份 Slidev artifact 应用，不再做结构化 page diff。
               </div>
@@ -296,7 +258,7 @@ export default function IssueReviewDrawer({
                 标记为已处理（不修改）
               </button>
             )}
-            {selectedFixPreviewSlideIds.length > 0 && (
+            {isSlidevMode && fixPreviewSlidev && fixPreviewSourceIds.length > 0 && (
               <button
                 type="button"
                 onClick={onApplySelected}
@@ -304,12 +266,10 @@ export default function IssueReviewDrawer({
                 className="w-full rounded bg-cyan-600 px-3 py-2 text-xs text-white hover:bg-cyan-500 disabled:opacity-50"
               >
                 {applyingFix && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
-                {isSlidevMode
-                  ? `确认并应用当前 deck 预览（${selectedFixPreviewSlideIds.length}）`
-                  : `按页应用（${selectedFixPreviewSlideIds.length}）`}
+                {`确认并应用当前 deck 预览（${fixPreviewSourceIds.length}）`}
               </button>
             )}
-            {fixPreviewBySlideId.size > 0 && (
+            {fixPreviewSlidev && (
               <button
                 type="button"
                 onClick={onDiscardPreview}

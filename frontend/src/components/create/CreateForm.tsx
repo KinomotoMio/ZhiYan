@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { createJob, createSession } from "@/lib/api";
-import { buildLoadingTitle } from "@/lib/loading-title";
 import {
   canShowContinueEditorEntry,
   getSessionEditorPath,
@@ -48,7 +47,6 @@ export default function CreateForm() {
     sessions,
     isGenerating,
     setIsGenerating,
-    initGenerationShell,
     updateJobState,
     resetJobState,
   } = useAppStore();
@@ -115,13 +113,6 @@ export default function CreateForm() {
         issues: [],
         failedSlideIndices: [],
       });
-      initGenerationShell(
-        buildLoadingTitle({
-          topic,
-          sourceNames: selectedReadySources.map((source) => source.name),
-        }),
-        numPages
-      );
 
       const targetPath = resolvePostCreateEditorPath(
         created.session_id ?? null,

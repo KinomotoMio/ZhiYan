@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  ExternalLink,
   FileOutput,
   LayoutPanelLeft,
   Loader2,
@@ -15,13 +14,13 @@ import {
   Share2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import CentiDeckPreview from "@/components/editor/CentiDeckPreview";
 import { useAppStore } from "@/lib/store";
 import {
   acceptOutline,
+  type CentiDeckArtifactPayload,
   cancelJob,
   ensureSpeakerAudio,
-  exportPptx,
-  exportPdf,
   exportSessionPdf,
   exportSessionPptx,
   fetchSpeakerAudio,
@@ -31,12 +30,8 @@ import {
   generateSpeakerNotes,
   createOrGetSessionShareLink,
   getLatestSessionPresentation,
-  getLatestSessionPresentationHtmlManifest,
-  getLatestSessionPresentationHtmlRender,
   getLatestSessionPresentationSlidev,
   getLatestSessionPresentationSlidevSidecar,
-  saveLatestSessionPresentation,
-  saveLatestSessionHtmlPresentation,
   saveLatestSessionSlidevPresentation,
   saveSlidevSpeakerNotes,
 } from "@/lib/api";
@@ -47,16 +42,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { canResumeGenerationJob, getSessionPresenterPath } from "@/lib/routes";
-import { useHtmlRuntimeRoomSync } from "@/lib/use-html-runtime-room-sync";
+import { canResumeGenerationJob } from "@/lib/routes";
 import { resumeGenerationJob } from "@/components/editor/resume-job";
-import SlidePreview from "@/components/slides/SlidePreview";
-import SlideThumbnail from "@/components/slides/SlideThumbnail";
 import SpeakerNotes from "@/components/slides/SpeakerNotes";
-import RevealPreview from "@/components/slides/RevealPreview";
-import HtmlRuntimePreview from "@/components/slides/HtmlRuntimePreview";
 import SlidevPreview from "@/components/slides/SlidevPreview";
-import HtmlPreviewSurface from "@/components/slides/HtmlPreviewSurface";
 import FloatingChatPanel from "@/components/chat/FloatingChatPanel";
 import UserMenu from "@/components/settings/UserMenu";
 import IssueReviewDrawer from "@/components/editor/IssueReviewDrawer";
@@ -64,11 +53,7 @@ import ShareLinkDialog from "@/components/editor/ShareLinkDialog";
 import SessionTitleInlineEditor from "@/components/session/SessionTitleInlineEditor";
 import { resolveSlidevPreviewState } from "@/lib/slidev-preview-state";
 import { mergeSpeakerNotesDrafts } from "@/components/editor/speakerNotesDrafts";
-import {
-  applySpeakerAudioMetaToSlides,
-  applySpeakerNotesDraftToSlides,
-  buildSpeakerNotesDraftMap,
-} from "@/components/editor/speaker-notes-flow";
+
 interface EditorWorkspaceProps {
   returnHref: string;
   returnLabel?: string;
@@ -149,15 +134,10 @@ export default function EditorWorkspace({
 }: EditorWorkspaceProps) {
   const router = useRouter();
   const {
-    presentation,
     presentationOutputMode,
-    presentationHtml,
-    presentationHtmlManifest,
-    presentationHtmlRender,
     presentationSlidevBuildUrl,
     presentationSlidevMeta,
     presentationSlidevMarkdown,
-    presentationHtmlArtifact,
     presentationSlidevDeckArtifact,
     presentationSlidevBuildArtifact,
     presentationSlidevNotesState,
@@ -172,26 +152,20 @@ export default function EditorWorkspace({
     jobStatus,
     updateJobState,
     setIsGenerating,
-    initGenerationShell,
-    setFixPreviewSelection,
-    toggleFixPreviewSelection,
     setIssuePanelOpen,
     openIssuePanelForSlide,
     setIssueDecision,
     markSlidesProcessed,
     issues,
     hardIssueSlideIds,
-    fixPreviewSlides,
+    fixPreviewSourceIds,
     fixPreviewSlidev,
-    selectedFixPreviewSlideIds,
     issuePanelOpen,
     issuePanelSlideId,
     issueDecisionBySlideId,
-    setPresentation,
-    setPresentationHtmlState,
     setPresentationSlidevState,
     setPresentationRenderState,
-    updateSlides,
+    presentationCentiDeckArtifact,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
   const [revealSlideIndex, setRevealSlideIndex] = useState(0);
@@ -204,157 +178,39 @@ export default function EditorWorkspace({
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
   const [acceptingOutline, setAcceptingOutline] = useState(false);
-  const [retryingHtmlRender, setRetryingHtmlRender] = useState(false);
   const [retryingSlidevRender, setRetryingSlidevRender] = useState(false);
   const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
   const [generatingSpeakerNotesScope, setGeneratingSpeakerNotesScope] = useState<
     "current" | "all" | null
   >(null);
-  const isHtmlMode = presentationOutputMode === "html";
   const isSlidevMode = presentationOutputMode === "slidev";
   const slidevPreviewState = resolveSlidevPreviewState({
     buildUrl: presentationSlidevBuildUrl,
     renderStatus: presentationRenderStatus,
     renderError: presentationRenderError,
   });
-  const prevPresentationRef = useRef(presentation);
-  const htmlPreviewAutoRefreshKeyRef = useRef<string | null>(null);
-  const htmlPreviewReady = Boolean(presentationHtmlRender?.documentHtml);
-  const htmlRenderFailed =
-    isHtmlMode && (jobStatus === "render_failed" || presentationRenderStatus === "failed");
-  const htmlRenderPending =
-    isHtmlMode &&
-    !htmlPreviewReady &&
-    (isGenerating ||
-      jobStatus === "running" ||
-      jobStatus === "artifact_ready" ||
-      presentationRenderStatus === "pending");
-  const htmlPreviewMissingAfterCompletion =
-    isHtmlMode &&
-    !htmlPreviewReady &&
-    !htmlRenderFailed &&
-    !htmlRenderPending &&
-    (jobStatus === "completed" || presentationRenderStatus === "ready");
-  const canRetryHtmlRender = Boolean(
-    isHtmlMode && currentSessionId && presentation && presentationHtmlManifest && !isGenerating
-  );
   const prevSlidevNotesRef = useRef<Array<{ slideId: string; speakerNotes?: string }> | null>(null);
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
+  const slidevHasContent = Boolean(presentationSlidevMarkdown);
   const canShare = Boolean(
     currentSessionId &&
       !isGenerating &&
       !isSlidevMode &&
-      (isHtmlMode
-        ? presentationHtmlRender?.documentHtml
-        : presentation && presentation.slides.length > 0)
+      false // Slidev sharing/centi-deck sharing not wired yet
   );
   const canExport = Boolean(
     currentSessionId &&
       !isGenerating &&
       !isSlidevMode &&
-      (isHtmlMode
-        ? presentationHtmlRender?.documentHtml
-        : presentation && presentation.slides.length > 0)
+      slidevHasContent === false // centi-deck export not wired yet
   );
-  const syncedHtmlSlideIndex = isHtmlMode && showReveal ? revealSlideIndex : currentSlideIndex;
-  const { roomId: presenterRoomId, status: presenterRoomStatus } = useHtmlRuntimeRoomSync({
-    sessionId: isHtmlMode ? currentSessionId : null,
-    room: null,
-    slideIndex: syncedHtmlSlideIndex,
-    onRemoteSlideChange: (nextSlideIndex) => {
-      if (showReveal && isHtmlMode) {
-        setRevealSlideIndex(nextSlideIndex);
-        return;
-      }
-      setCurrentSlideIndex(nextSlideIndex);
-    },
-    enabled: isHtmlMode && Boolean(presentationHtmlRender?.documentHtml),
-  });
-
-  const refreshHtmlPreviewState = async () => {
-    if (!currentSessionId) return;
-    const [latestPresentation, latestManifest, latestRender] = await Promise.all([
-      getLatestSessionPresentation(currentSessionId),
-      getLatestSessionPresentationHtmlManifest(currentSessionId),
-      getLatestSessionPresentationHtmlRender(currentSessionId),
-    ]);
-    setPresentationHtmlState(
-      "html",
-      latestRender?.documentHtml ?? null,
-      latestManifest ?? null,
-      latestRender ?? null,
-      latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
-    );
-    setPresentationRenderState({
-      artifactStatus: latestPresentation?.artifact_status ?? null,
-      renderStatus: latestPresentation?.render_status ?? null,
-      renderError: latestPresentation?.render_error ?? null,
-    });
-  };
-
-  useEffect(() => {
-    if (!isHtmlMode || !currentSessionId || htmlPreviewReady) {
-      htmlPreviewAutoRefreshKeyRef.current = null;
-      return;
-    }
-    const shouldRefresh =
-      jobStatus === "completed" ||
-      jobStatus === "artifact_ready" ||
-      presentationRenderStatus === "ready";
-    if (!shouldRefresh) {
-      htmlPreviewAutoRefreshKeyRef.current = null;
-      return;
-    }
-    const refreshKey = [
-      currentSessionId,
-      jobStatus ?? "none",
-      presentationRenderStatus ?? "none",
-      presentationHtmlManifest ? "manifest" : "no-manifest",
-    ].join(":");
-    if (htmlPreviewAutoRefreshKeyRef.current === refreshKey) {
-      return;
-    }
-    htmlPreviewAutoRefreshKeyRef.current = refreshKey;
-    void (async () => {
-      try {
-        const [latestPresentation, latestManifest, latestRender] = await Promise.all([
-          getLatestSessionPresentation(currentSessionId),
-          getLatestSessionPresentationHtmlManifest(currentSessionId),
-          getLatestSessionPresentationHtmlRender(currentSessionId),
-        ]);
-        setPresentationHtmlState(
-          "html",
-          latestRender?.documentHtml ?? null,
-          latestManifest ?? null,
-          latestRender ?? null,
-          latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
-        );
-        setPresentationRenderState({
-          artifactStatus: latestPresentation?.artifact_status ?? null,
-          renderStatus: latestPresentation?.render_status ?? null,
-          renderError: latestPresentation?.render_error ?? null,
-        });
-      } catch {
-        htmlPreviewAutoRefreshKeyRef.current = null;
-      }
-    })();
-  }, [
-    currentSessionId,
-    htmlPreviewReady,
-    isHtmlMode,
-    jobStatus,
-    presentationHtmlArtifact,
-    presentationHtmlManifest,
-    presentationRenderStatus,
-    setPresentationHtmlState,
-    setPresentationRenderState,
-  ]);
 
   const refreshSlidevPreviewState = async () => {
     if (!currentSessionId) return;
+    if (!isSlidevMode) return;
     const [latestPresentation, latestSlidev, latestSlidevSidecar] = await Promise.all([
       getLatestSessionPresentation(currentSessionId),
       getLatestSessionPresentationSlidev(currentSessionId),
@@ -453,9 +309,6 @@ export default function EditorWorkspace({
       updateJobState({
         lastJobEventSeq: resumed.eventsSeq,
       });
-      if (!presentation && !isSlidevMode) {
-        initGenerationShell(resumed.requestTitle, resumed.requestNumPages);
-      }
       setIsGenerating(true);
       updateJobState({
         jobId: resumed.resumedJobId,
@@ -521,38 +374,6 @@ export default function EditorWorkspace({
     }
   };
 
-  const handleRetryHtmlRender = async () => {
-    if (
-      retryingHtmlRender ||
-      !currentSessionId ||
-      !presentation ||
-      !presentationHtmlManifest ||
-      !isHtmlMode
-    ) {
-      return;
-    }
-    setRetryingHtmlRender(true);
-    try {
-      await saveLatestSessionHtmlPresentation(
-        currentSessionId,
-        presentation,
-        presentationHtmlManifest,
-        "editor"
-      );
-      await refreshHtmlPreviewState();
-      const nextRender = useAppStore.getState().presentationHtmlRender?.documentHtml;
-      if (nextRender) {
-        toast.success("已重新完成 HTML 预览构建");
-      } else {
-        toast.warning("已重新尝试构建，但 HTML 预览仍不可用");
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "重新构建 HTML 预览失败");
-    } finally {
-      setRetryingHtmlRender(false);
-    }
-  };
-
   const handleRetrySlidevRender = async () => {
     if (
       retryingSlidevRender ||
@@ -569,7 +390,7 @@ export default function EditorWorkspace({
         presentationSlidevMarkdown,
         presentationSlidevDeckArtifact?.selected_style_id ?? null,
         presentationSlidevMeta ?? undefined,
-        presentation,
+        null,
         "editor"
       );
       await refreshSlidevPreviewState();
@@ -634,17 +455,9 @@ export default function EditorWorkspace({
           typeof job.advisory_issue_count === "number"
             ? job.advisory_issue_count
             : 0,
-        fixPreviewSlides:
-          isSlidevMode || job.fix_preview_slidev
-            ? []
-            : Array.isArray(job.fix_preview_slides)
-              ? job.fix_preview_slides
-              : [],
         fixPreviewSourceIds: sourceIds,
         fixPreviewSlidev: job.fix_preview_slidev ?? null,
-        selectedFixPreviewSlideIds: sourceIds,
       });
-      setFixPreviewSelection(sourceIds);
       toast.success(`已生成 ${sourceIds.length} 页修复建议`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "生成修复建议失败");
@@ -655,26 +468,24 @@ export default function EditorWorkspace({
 
   const handleApplyFix = async () => {
     if (!jobId || applyingFix || previewingFix || skippingFix) return;
-    if (selectedFixPreviewSlideIds.length === 0) {
-      toast.info(isSlidevMode ? "请先生成并确认当前 deck 修复预览" : "请先勾选要应用的页面");
+    if (fixPreviewSourceIds.length === 0) {
+      toast.info("请先生成并确认当前 deck 修复预览");
       return;
     }
     setApplyingFix(true);
     try {
       if (!currentSessionId) throw new Error("缺少 session_id");
-      const job = await fixApply(currentSessionId, jobId, selectedFixPreviewSlideIds);
+      const job = await fixApply(currentSessionId, jobId, fixPreviewSourceIds);
       if (isSlidevMode) {
         await refreshSlidevPreviewState();
-      } else if (job.presentation) {
-        setPresentation(job.presentation);
       }
       const normalizedIssues = Array.isArray(job.issues)
         ? (job.issues as Array<Record<string, unknown>>)
         : [];
       const allIssueSlideIds = collectIssueSlideIds(normalizedIssues);
-      const selectedSet = new Set(selectedFixPreviewSlideIds);
+      const selectedSet = new Set(fixPreviewSourceIds);
       const skippedSlideIds = allIssueSlideIds.filter((slideId) => !selectedSet.has(slideId));
-      markSlidesProcessed(selectedFixPreviewSlideIds, "applied");
+      markSlidesProcessed(fixPreviewSourceIds, "applied");
       markSlidesProcessed(skippedSlideIds, "skipped");
       updateJobState({
         jobStatus: job.status,
@@ -690,13 +501,11 @@ export default function EditorWorkspace({
           typeof job.advisory_issue_count === "number"
             ? job.advisory_issue_count
             : 0,
-        fixPreviewSlides: [],
         fixPreviewSourceIds: [],
         fixPreviewSlidev: null,
-        selectedFixPreviewSlideIds: [],
       });
       setIsGenerating(false);
-      toast.success(isSlidevMode ? "已应用当前 Slidev deck 修复预览" : "已按所选页面应用修复");
+      toast.success(isSlidevMode ? "已应用当前 Slidev deck 修复预览" : "已应用修复");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "应用修复失败");
     } finally {
@@ -712,8 +521,6 @@ export default function EditorWorkspace({
       const job = await fixSkip(currentSessionId, jobId);
       if (isSlidevMode) {
         await refreshSlidevPreviewState();
-      } else if (job.presentation) {
-        setPresentation(job.presentation);
       }
       const normalizedIssues = Array.isArray(job.issues)
         ? (job.issues as Array<Record<string, unknown>>)
@@ -734,10 +541,8 @@ export default function EditorWorkspace({
           typeof job.advisory_issue_count === "number"
             ? job.advisory_issue_count
             : 0,
-        fixPreviewSlides: [],
         fixPreviewSourceIds: [],
         fixPreviewSlidev: null,
-        selectedFixPreviewSlideIds: [],
       });
       setIsGenerating(false);
       toast.success("已完成当前版本");
@@ -750,12 +555,9 @@ export default function EditorWorkspace({
 
   const handleDiscardFixPreview = () => {
     updateJobState({
-      fixPreviewSlides: [],
       fixPreviewSourceIds: [],
       fixPreviewSlidev: null,
-      selectedFixPreviewSlideIds: [],
     });
-    setFixPreviewSelection([]);
     toast.info("已丢弃当前修复候选");
   };
 
@@ -764,7 +566,6 @@ export default function EditorWorkspace({
     toast.success(`已将 ${slideId} 标记为已处理`);
   };
 
-  const slides = presentation?.slides ?? [];
   const slidevMetaSlides = useMemo(
     () =>
       Array.isArray(presentationSlidevMeta?.slides)
@@ -772,22 +573,39 @@ export default function EditorWorkspace({
         : [],
     [presentationSlidevMeta]
   );
-  const currentSlide = slides[currentSlideIndex] ?? null;
+  const centiDeckSlides = useMemo(() => {
+    const artifact = presentationCentiDeckArtifact as
+      | { slides?: Array<Record<string, unknown>> }
+      | null;
+    return Array.isArray(artifact?.slides) ? artifact.slides : [];
+  }, [presentationCentiDeckArtifact]);
+  const centiDeckArtifact = useMemo(
+    () => presentationCentiDeckArtifact as CentiDeckArtifactPayload | null,
+    [presentationCentiDeckArtifact]
+  );
   const currentSlideMeta = slidevMetaSlides[currentSlideIndex] ?? null;
   const currentSlideId = isSlidevMode
     ? currentSlideMeta
       ? String(currentSlideMeta.slide_id ?? "")
       : null
-    : currentSlide?.slideId ?? null;
-  const currentCanonicalSpeakerNotes = currentSlideId
-    ? isSlidevMode
-      ? presentationSlidevNotesState[currentSlideId] ?? ""
-      : currentSlide?.speakerNotes ?? ""
-    : "";
+    : centiDeckSlides[currentSlideIndex]
+      ? String(
+          (centiDeckSlides[currentSlideIndex] as { slideId?: unknown }).slideId ?? ""
+        )
+      : null;
+  const currentCanonicalSpeakerNotes = currentSlideId && isSlidevMode
+    ? presentationSlidevNotesState[currentSlideId] ?? ""
+    : !isSlidevMode && centiDeckSlides[currentSlideIndex]
+      ? String(
+          (centiDeckSlides[currentSlideIndex] as { notes?: unknown }).notes ?? ""
+        )
+      : "";
   const loadedCount = isSlidevMode
     ? slidevMetaSlides.length
-    : slides.filter((s) => !(s.contentData as Record<string, unknown> | undefined)?._loading).length;
-  const totalCount = isSlidevMode ? slidevMetaSlides.length : slides.length;
+    : centiDeckSlides.length;
+  const totalCount = isSlidevMode
+    ? slidevMetaSlides.length
+    : centiDeckSlides.length;
   const genPct = totalCount > 0 ? Math.round((loadedCount / totalCount) * 100) : 0;
   const waitingFixReview = jobStatus === "waiting_fix_review";
   const statusBadge = getJobStatusBadge(
@@ -803,7 +621,6 @@ export default function EditorWorkspace({
     (sum, item) => sum + item.total,
     0
   );
-  const fixPreviewBySlideId = new Map(fixPreviewSlides.map((slide) => [slide.slideId, slide]));
   const activeIssueSlideId =
     issuePanelSlideId && groupedIssues.has(issuePanelSlideId)
       ? issuePanelSlideId
@@ -816,34 +633,6 @@ export default function EditorWorkspace({
   const hasUnsavedSpeakerNotes = currentSlideId
     ? speakerNotesDraft !== currentCanonicalSpeakerNotes
     : false;
-
-  useEffect(() => {
-    if (isSlidevMode) {
-      prevPresentationRef.current = presentation;
-      return;
-    }
-    if (!presentation) {
-      setSpeakerNotesDrafts({});
-      prevPresentationRef.current = presentation;
-      return;
-    }
-
-    setSpeakerNotesDrafts((current) => {
-      const next = mergeSpeakerNotesDrafts({
-        currentDrafts: current,
-        previousSlides: prevPresentationRef.current?.slides,
-        currentSlides: presentation.slides,
-      });
-      const currentKeys = Object.keys(current);
-      const nextKeys = Object.keys(next);
-      const unchanged =
-        currentKeys.length === nextKeys.length &&
-        nextKeys.every((key) => current[key] === next[key]);
-      return unchanged ? current : next;
-    });
-
-    prevPresentationRef.current = presentation;
-  }, [isSlidevMode, presentation]);
 
   useEffect(() => {
     if (!isSlidevMode) {
@@ -909,7 +698,7 @@ export default function EditorWorkspace({
     }
   }, [isSlidevMode, presentationRenderStatus, presentationSlidevBuildUrl, isGenerating]);
 
-  if (!presentation && !isSlidevMode) {
+  if (!isSlidevMode && !slidevHasContent && centiDeckSlides.length === 0 && !jobId) {
     return (
       <div className="zy-bg-page flex min-h-screen items-center justify-center p-6">
         <div className="zy-card-glass w-full max-w-xl p-8 text-center">
@@ -964,18 +753,14 @@ export default function EditorWorkspace({
 
     try {
       const blob =
-        isHtmlMode
-          ? format === "pptx"
-            ? await exportSessionPptx(currentSessionId)
-            : await exportSessionPdf(currentSessionId)
-          : format === "pptx"
-            ? await exportPptx(presentation as Presentation)
-            : await exportPdf(presentation as Presentation);
+        format === "pptx"
+          ? await exportSessionPptx(currentSessionId)
+          : await exportSessionPdf(currentSessionId);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(presentation?.title || sessionTitle || "presentation").slice(0, 30)}.${format}`;
+      a.download = `${(sessionTitle || "presentation").slice(0, 30)}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1025,36 +810,7 @@ export default function EditorWorkspace({
         toast.success("已保存当前页演讲者注解");
         return true;
       }
-
-      if (!presentation || !currentSlide) return false;
-      const nextSlides = applySpeakerNotesDraftToSlides(
-        presentation.slides,
-        currentSlideIndex,
-        speakerNotesDraft
-      );
-      const nextPresentation = { ...presentation, slides: nextSlides };
-
-      updateSlides(nextSlides);
-      if (isHtmlMode) {
-        if (!presentationHtmlManifest) {
-          throw new Error("HTML 演示稿尚未加载完成，暂时无法保存演讲者注解");
-        }
-        await saveLatestSessionHtmlPresentation(
-          currentSessionId,
-          nextPresentation,
-          presentationHtmlManifest,
-          "editor"
-        );
-        await refreshHtmlPreviewState();
-      } else {
-        await saveLatestSessionPresentation(currentSessionId, nextPresentation, "editor");
-      }
-      setSpeakerNotesDrafts((current) => ({
-        ...current,
-        [currentSlide.slideId]: nextSlides[currentSlideIndex]?.speakerNotes ?? "",
-      }));
-      toast.success("已保存当前页演讲者注解");
-      return true;
+      return false;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存演讲者注解失败");
       return false;
@@ -1065,19 +821,6 @@ export default function EditorWorkspace({
 
   const handleGenerateSpeakerNotes = async (scope: "current" | "all") => {
     if (generatingSpeakerNotesScope || !currentSessionId) return;
-    const snapshot =
-      !isSlidevMode &&
-      presentation &&
-      speakerNotesDraft !== (currentSlide?.speakerNotes ?? "")
-        ? {
-            ...presentation,
-            slides: applySpeakerNotesDraftToSlides(
-              presentation.slides,
-              currentSlideIndex,
-              speakerNotesDraft
-            ),
-          }
-        : presentation;
     const slidevSnapshotNotesState =
       isSlidevMode && currentSlideId
         ? {
@@ -1089,7 +832,7 @@ export default function EditorWorkspace({
     setGeneratingSpeakerNotesScope(scope);
     try {
       const response = await generateSpeakerNotes(currentSessionId, {
-        presentation: isSlidevMode ? null : snapshot,
+        presentation: null,
         slidevNotesState: isSlidevMode ? slidevSnapshotNotesState : undefined,
         scope,
         currentSlideIndex: currentSlideIndex,
@@ -1109,12 +852,6 @@ export default function EditorWorkspace({
           notesState: response.slidevNotesState ?? slidevSnapshotNotesState,
           audioState: clearedAudioState,
         });
-      } else if (response.presentation) {
-        setPresentation(response.presentation);
-        setSpeakerNotesDrafts(buildSpeakerNotesDraftMap(response.presentation.slides));
-      }
-      if (isHtmlMode) {
-        await refreshHtmlPreviewState();
       }
       toast.success(
         scope === "current"
@@ -1139,7 +876,6 @@ export default function EditorWorkspace({
       }
     }
     const response = await ensureSpeakerAudio(currentSessionId, currentSlideId);
-    const latestPresentation = useAppStore.getState().presentation;
     if (isSlidevMode) {
       setPresentationSlidevState({
         outputMode: "slidev",
@@ -1154,25 +890,8 @@ export default function EditorWorkspace({
           [currentSlideId]: response.speakerAudio,
         },
       });
-    } else if (latestPresentation && currentSlide) {
-      updateSlides(
-        applySpeakerAudioMetaToSlides(
-          latestPresentation.slides,
-          currentSlideId,
-          response.speakerAudio
-        )
-      );
     }
     return fetchSpeakerAudio(currentSessionId, currentSlideId, signal);
-  };
-
-  const handleOpenPresenter = () => {
-    if (!currentSessionId || !isHtmlMode) return;
-    const href = getSessionPresenterPath(currentSessionId, {
-      slide: syncedHtmlSlideIndex + 1,
-      room: presenterRoomId,
-    });
-    window.open(href, "_blank", "noopener,noreferrer");
   };
 
   if (showReveal) {
@@ -1190,18 +909,18 @@ export default function EditorWorkspace({
             startSlide={revealSlideIndex}
             onSlideChange={setRevealSlideIndex}
           />
-        ) : isHtmlMode ? (
-          <HtmlRuntimePreview
-            renderPayload={presentationHtmlRender}
-            startSlide={revealSlideIndex}
-            onSlideChange={setRevealSlideIndex}
-          />
         ) : (
-          <RevealPreview
-            presentation={presentation}
-            htmlContent={null}
+          <CentiDeckPreview
+            sessionId={currentSessionId}
+            artifactOverride={
+              presentationCentiDeckArtifact as
+                | import("@/lib/api").CentiDeckArtifactPayload
+                | null
+            }
             startSlide={revealSlideIndex}
             onSlideChange={setRevealSlideIndex}
+            mode="presenter"
+            className="bg-black"
           />
         )}
       </div>
@@ -1334,21 +1053,6 @@ export default function EditorWorkspace({
                 校验问题（{totalIssueCount}）
               </button>
             )}
-            {isHtmlMode && currentSessionId && presentationHtmlRender?.documentHtml && (
-              <button
-                type="button"
-                onClick={handleOpenPresenter}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/80 px-3 text-sm text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-sm"
-                title={
-                  presenterRoomStatus === "connected"
-                    ? "打开 Presenter 路由（房间同步已就绪）"
-                    : "打开 Presenter 路由"
-                }
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                Presenter
-              </button>
-            )}
             <button
               onClick={() => {
                 setRevealSlideIndex(currentSlideIndex);
@@ -1387,8 +1091,8 @@ export default function EditorWorkspace({
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             <div className="space-y-2">
-              {isSlidevMode
-                ? slidevMetaSlides.map((slide, i) => (
+              {isSlidevMode ? (
+                slidevMetaSlides.map((slide, i) => (
                   <button
                     key={String(slide.slide_id ?? `slide-${i + 1}`)}
                     type="button"
@@ -1406,45 +1110,56 @@ export default function EditorWorkspace({
                       {String(slide.title ?? `第 ${i + 1} 页`)}
                     </div>
                   </button>
-                  ))
-                : presentation?.slides.map((slide, i) => (
-                  <div
-                    key={slide.slideId}
-                    className={`zy-list-item p-2 ${
-                      i === currentSlideIndex
-                        ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
-                        : ""
-                    }`}
-                  >
-                    <SlideThumbnail
-                      slide={slide}
-                      index={i}
-                      isActive={i === currentSlideIndex}
+                ))
+              ) : centiDeckSlides.length > 0 ? (
+                centiDeckSlides.map((slide, i) => {
+                  const slideRecord = slide as {
+                    slideId?: unknown;
+                    title?: unknown;
+                  };
+                  const slideKey = String(slideRecord.slideId ?? `slide-${i + 1}`);
+                  const slideTitle = String(slideRecord.title ?? `第 ${i + 1} 页`);
+                  return (
+                    <button
+                      key={slideKey}
+                      type="button"
                       onClick={() => setCurrentSlideIndex(i)}
-                      htmlRender={isHtmlMode ? presentationHtmlRender : null}
-                      htmlDocument={isHtmlMode ? presentationHtml : null}
-                      htmlStartSlide={i}
-                      issueMeta={
-                        groupedIssues.has(slide.slideId)
-                          ? {
-                              hard: groupedIssues.get(slide.slideId)?.hard ?? 0,
-                              advisory: groupedIssues.get(slide.slideId)?.advisory ?? 0,
-                              total: groupedIssues.get(slide.slideId)?.total ?? 0,
-                              decision: issueDecisionBySlideId[slide.slideId] ?? "pending",
-                            }
-                          : undefined
-                      }
-                      onIssueClick={
-                        groupedIssues.has(slide.slideId)
-                          ? () => {
-                              setCurrentSlideIndex(i);
-                              openIssuePanelForSlide(slide.slideId);
-                            }
-                          : undefined
-                      }
-                    />
-                  </div>
-                  ))}
+                      className={`zy-list-item w-full p-3 text-left ${
+                        i === currentSlideIndex
+                          ? "border-cyan-300 bg-white shadow-[0_18px_40px_-28px_rgba(14,165,233,0.45)] ring-1 ring-cyan-200"
+                          : ""
+                      }`}
+                    >
+                      <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950 shadow-[0_18px_40px_-32px_rgba(15,23,42,0.45)]">
+                        <div className="aspect-[16/9] w-full">
+                          {centiDeckArtifact ? (
+                            <CentiDeckPreview
+                              artifactOverride={centiDeckArtifact}
+                              startSlide={i}
+                              mode="thumbnail"
+                              className="pointer-events-none h-full w-full"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-400">
+                              缩略图加载中…
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-3 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+                        Slide {i + 1}
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">
+                        {slideTitle}
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="rounded border border-dashed border-slate-200 bg-white/70 p-3 text-xs text-slate-500">
+                  演示稿尚未生成，目录将在就绪后显示。
+                </div>
+              )}
             </div>
           </div>
         </aside>
@@ -1464,60 +1179,8 @@ export default function EditorWorkspace({
             </div>
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-5 lg:p-7">
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
-                {(isSlidevMode ? Boolean(currentSlideMeta) : Boolean(currentSlide)) ? (
-                  isHtmlMode ? (
-                    htmlPreviewReady ? (
-                      <HtmlPreviewSurface
-                        renderPayload={presentationHtmlRender}
-                        documentHtml={presentationHtml}
-                        startSlide={currentSlideIndex}
-                        onSlideChange={setCurrentSlideIndex}
-                        className="h-full min-h-0 w-full"
-                        frameClassName="border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
-                      />
-                    ) : (
-                      <div
-                        className={`flex aspect-[16/9] w-full max-w-5xl flex-col items-center justify-center rounded-[20px] px-6 text-center ${
-                          htmlRenderFailed || htmlPreviewMissingAfterCompletion
-                            ? "border border-amber-200 bg-amber-50/90 text-amber-900"
-                            : "border border-dashed border-slate-200 bg-white/70 text-slate-500"
-                        }`}
-                      >
-                        <div className="font-medium">
-                          {htmlRenderFailed
-                            ? "HTML 预览构建失败，内容已生成但无法显示真实预览。"
-                            : htmlPreviewMissingAfterCompletion
-                              ? "内容已生成，但 HTML 预览文件暂未就绪。"
-                              : "HTML 演示稿还在生成中，完成后会自动切换到真实预览。"}
-                        </div>
-                        {(htmlRenderFailed ||
-                          htmlPreviewMissingAfterCompletion ||
-                          presentationRenderError) && (
-                          <div className="mt-2 max-w-2xl whitespace-pre-wrap text-xs leading-6 text-amber-800">
-                            {presentationRenderError ??
-                              (htmlPreviewMissingAfterCompletion
-                                ? "这通常表示预览产物缺失或未成功落盘，可以手动重试构建。"
-                                : "可以手动重试构建 HTML 预览。")}
-                          </div>
-                        )}
-                        {canRetryHtmlRender &&
-                          (htmlRenderFailed || htmlPreviewMissingAfterCompletion) && (
-                            <div className="mt-4">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void handleRetryHtmlRender();
-                                }}
-                                disabled={retryingHtmlRender}
-                                className="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-white/90 px-3 py-2 text-sm font-medium text-amber-900 transition hover:bg-white disabled:opacity-50"
-                              >
-                                {retryingHtmlRender ? "重试中..." : "重试构建 HTML 预览"}
-                              </button>
-                            </div>
-                          )}
-                      </div>
-                    )
-                  ) : isSlidevMode ? (
+                {isSlidevMode ? (
+                  Boolean(currentSlideMeta) ? (
                     slidevPreviewState.previewReady && slidevPreviewState.buildUrl ? (
                       <div className="w-full max-w-5xl">
                         <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
@@ -1568,16 +1231,21 @@ export default function EditorWorkspace({
                     )
                   ) : (
                     <div className="w-full max-w-4xl">
-                      <SlidePreview
-                        slide={currentSlide}
-                        className="shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
-                      />
+                      <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
+                        当前没有可预览的页面
+                      </div>
                     </div>
                   )
                 ) : (
                   <div className="w-full max-w-4xl">
-                    <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
-                      当前没有可预览的页面
+                    <div className="relative aspect-[16/9] overflow-hidden rounded-lg border border-slate-200 bg-slate-950">
+                      <CentiDeckPreview
+                        sessionId={currentSessionId}
+                        artifactOverride={centiDeckArtifact}
+                        startSlide={currentSlideIndex}
+                        onSlideChange={setCurrentSlideIndex}
+                        mode="interactive"
+                      />
                     </div>
                   </div>
                 )}
@@ -1615,7 +1283,6 @@ export default function EditorWorkspace({
         open={issuePanelOpen}
         onOpenChange={setIssuePanelOpen}
         isSlidevMode={isSlidevMode}
-        slides={slides}
         slidevMetaSlides={slidevMetaSlides}
         slidevBuildUrl={presentationSlidevBuildUrl}
         groupedIssues={groupedIssues}
@@ -1624,15 +1291,14 @@ export default function EditorWorkspace({
         onFocusSlide={(slideId) => {
           const targetIndex = isSlidevMode
             ? slidevMetaSlides.findIndex((slide) => String(slide.slide_id ?? "") === slideId)
-            : slides.findIndex((slide) => slide.slideId === slideId);
+            : -1;
           if (targetIndex >= 0) {
             setCurrentSlideIndex(targetIndex);
           }
           openIssuePanelForSlide(slideId);
         }}
-        fixPreviewBySlideId={fixPreviewBySlideId}
         fixPreviewSlidev={fixPreviewSlidev}
-        selectedFixPreviewSlideIds={selectedFixPreviewSlideIds}
+        fixPreviewSourceIds={fixPreviewSourceIds}
         waitingFixReview={waitingFixReview}
         previewingFix={previewingFix}
         applyingFix={applyingFix}
@@ -1640,7 +1306,6 @@ export default function EditorWorkspace({
         onGeneratePreview={(slideId) => {
           void handlePreviewFix([slideId]);
         }}
-        onToggleApplySlide={toggleFixPreviewSelection}
         onApplySelected={() => {
           void handleApplyFix();
         }}
