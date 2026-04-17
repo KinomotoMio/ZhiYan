@@ -1,5 +1,0 @@
-INFO:     Started server process [31836]
-INFO:     Waiting for application startup.
-2026-04-17 12:57:02 INFO [app.core.config] Settings reloaded from defaults (object_id=2982034268208)
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)

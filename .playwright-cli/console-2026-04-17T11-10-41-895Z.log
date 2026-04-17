@@ -1,2 +1,0 @@
-[      40ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/sessions/sess-cff4028135d4/presentations/latest/slidev/build#/3:0
-[      54ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/favicon.ico:0

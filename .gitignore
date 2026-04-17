@@ -40,9 +40,15 @@ htmlcov/
 
 # Build artifacts
 *.pptx.tmp
+.codex-run/
+.playwright-cli/
 
 # Runtime data (contains DB, uploads, API keys in settings.json)
 data/
+data-backup-before-centi-deck/
+*.db
+*.db-shm
+*.db-wal
 
 # Reference materials
 ref/
