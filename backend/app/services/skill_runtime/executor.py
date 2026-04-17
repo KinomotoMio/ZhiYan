@@ -12,6 +12,7 @@ import logging
 import sys
 
 from app.core.config import settings
+from app.services.skill_runtime.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,19 @@ async def execute_skill(
     Returns:
         脚本输出的 JSON 数据
     """
-    scripts_dir = settings.skills_dir / skill_name / "scripts"
+    registry = SkillRegistry()
+    record = registry.get_record(skill_name)
+    if record is None:
+        raise SkillExecutionError(f"Skill 不存在: {skill_name}")
+
+    scripts_dir = record.skill_dir / "scripts"
     script_path = (scripts_dir / script_name).resolve()
 
-    # 安全校验：路径必须在 skills/ 目录下
-    skills_root = settings.skills_dir.resolve()
-    if not str(script_path).startswith(str(skills_root)):
+    allowed_roots = [
+        settings.skills_dir.resolve(),
+        settings.user_skills_dir.resolve(),
+    ]
+    if not any(str(script_path).startswith(str(root)) for root in allowed_roots):
         raise SkillExecutionError(f"脚本路径越权: {script_path}")
 
     if not script_path.exists():

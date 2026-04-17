@@ -17,7 +17,13 @@ _registry = SkillRegistry()
 async def list_skills():
     """返回所有可用 Skills 的元数据"""
     skills = _registry.discover()
-    return {"skills": skills}
+    return {
+        "skills": skills,
+        "defaults": {
+            "slidev": "slidev-default",
+            "html": "html-default",
+        },
+    }
 
 
 class SkillExecuteRequest(BaseModel):

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # 路径
     project_root: Path = PROJECT_ROOT
     skills_dir: Path = PROJECT_ROOT / "skills"
+    user_skills_dir: Path = PROJECT_ROOT / ".zhiyan" / "skills"
     db_path: Path = PROJECT_ROOT / "data" / "zhiyan.db"
     uploads_dir: Path = PROJECT_ROOT / "data" / "uploads"
 

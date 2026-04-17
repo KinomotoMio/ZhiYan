@@ -60,3 +60,39 @@ def test_skill_catalog_render_includes_argument_hint_when_present(tmp_path: Path
     rendered = catalog.render_catalog()
 
     assert "<argument_hint>Optional task selector or target identifier.</argument_hint>" in rendered
+
+
+def test_skill_discovery_prefers_user_skill_over_builtin(tmp_path: Path) -> None:
+    builtin_dir = tmp_path / "skills" / "example-skill"
+    builtin_dir.mkdir(parents=True)
+    (builtin_dir / "SKILL.md").write_text(
+        """---
+name: example-skill
+description: Builtin version.
+default_for_output: slidev
+---
+
+Builtin body.
+""",
+        encoding="utf-8",
+    )
+    user_dir = tmp_path / ".zhiyan" / "skills" / "example-skill"
+    user_dir.mkdir(parents=True)
+    (user_dir / "SKILL.md").write_text(
+        """---
+name: example-skill
+description: User override version.
+default_for_output: slidev
+---
+
+User body.
+""",
+        encoding="utf-8",
+    )
+
+    catalog = SkillDiscovery(tmp_path).discover()
+
+    assert catalog.records["example-skill"].scope == "user"
+    assert catalog.records["example-skill"].description == "User override version."
+    assert len(catalog.records["example-skill"].shadowed_records) == 1
+    assert catalog.records["example-skill"].shadowed_records[0].scope == "builtin"

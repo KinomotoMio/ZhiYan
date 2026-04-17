@@ -23,7 +23,13 @@ class SkillRecord:
     body: str
     argument_hint: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    version: str | None = None
+    command: str | None = None
     allowed_tools: str | None = None
+    default_for_output: str | None = None
+    scope: str = "builtin"
+    source_root: Path | None = None
+    shadowed_records: list["SkillRecord"] = field(default_factory=list)
     diagnostics: list[SkillDiagnostic] = field(default_factory=list)
 
 
@@ -47,9 +53,15 @@ class SkillCatalog:
                     "  <skill>",
                     f"    <name>{skill.name}</name>",
                     f"    <description>{skill.description}</description>",
+                    f"    <scope>{skill.scope}</scope>",
                     *(
                         [f"    <argument_hint>{escape(skill.argument_hint)}</argument_hint>"]
                         if skill.argument_hint
+                        else []
+                    ),
+                    *(
+                        [f"    <default_for_output>{escape(skill.default_for_output)}</default_for_output>"]
+                        if skill.default_for_output
                         else []
                     ),
                     "  </skill>",
@@ -70,6 +82,7 @@ class SkillCatalog:
             f'<skill_content name="{record.name}">',
             record.body,
             "",
+            f"Scope: {record.scope}",
             f"Skill directory: {record.skill_dir}",
             "Relative paths in this skill are relative to the skill directory.",
         ]
@@ -84,28 +97,53 @@ class SkillCatalog:
 @dataclass(slots=True)
 class SkillDiscovery:
     project_root: Path
-    relative_skill_dir: Path = Path(".agents/skills")
+    search_roots: tuple[tuple[Path, str, int], ...] = (
+        (Path("skills"), "builtin", 20),
+        (Path(".zhiyan/skills"), "user", 30),
+        (Path(".agents/skills"), "legacy", 10),
+    )
 
     def discover(self) -> SkillCatalog:
         catalog = SkillCatalog()
-        skills_root = (self.project_root / self.relative_skill_dir).resolve()
-        if not skills_root.exists():
-            return catalog
-        for skill_md in sorted(skills_root.rglob("SKILL.md")):
-            record, diagnostics = parse_skill_file(skill_md)
-            if record is None:
-                catalog.diagnostics.extend(diagnostics)
+        priority_by_name: dict[str, int] = {}
+        for relative_root, scope, priority in self.search_roots:
+            skills_root = (self.project_root / relative_root).resolve()
+            if not skills_root.exists():
                 continue
-            existing = catalog.records.get(record.name)
-            if existing is not None:
+            for skill_md in sorted(skills_root.rglob("SKILL.md")):
+                record, diagnostics = parse_skill_file(skill_md)
+                catalog.diagnostics.extend(diagnostics)
+                if record is None:
+                    continue
+                record.scope = scope
+                record.source_root = skills_root
+                existing = catalog.records.get(record.name)
+                existing_priority = priority_by_name.get(record.name, -1)
+                if existing is None or priority > existing_priority:
+                    if existing is not None:
+                        record.shadowed_records = [*existing.shadowed_records, existing]
+                        diagnostic = SkillDiagnostic(
+                            level="warning",
+                            message=(
+                                f"Skill '{record.name}' at {record.location} overrides "
+                                f"{existing.location}."
+                            ),
+                        )
+                        record.diagnostics.append(diagnostic)
+                        catalog.diagnostics.append(diagnostic)
+                    catalog.records[record.name] = record
+                    priority_by_name[record.name] = priority
+                    continue
+                existing.shadowed_records.append(record)
                 diagnostic = SkillDiagnostic(
                     level="warning",
-                    message=f"Skill '{record.name}' at {record.location} shadows {existing.location}.",
+                    message=(
+                        f"Skill '{existing.name}' at {existing.location} shadows "
+                        f"{record.location}."
+                    ),
                 )
-                record.diagnostics.append(diagnostic)
+                existing.diagnostics.append(diagnostic)
                 catalog.diagnostics.append(diagnostic)
-            catalog.records[record.name] = record
-            catalog.diagnostics.extend(diagnostics)
         return catalog
 
 
@@ -150,7 +188,10 @@ def parse_skill_file(path: Path) -> tuple[SkillRecord | None, list[SkillDiagnost
         body=body.strip(),
         argument_hint=argument_hint,
         metadata=data.get("metadata", {}) or {},
-        allowed_tools=data.get("allowed-tools"),
+        version=str(data.get("version") or "").strip() or None,
+        command=str(data.get("command") or "").strip() or None,
+        allowed_tools=str(data.get("allowed_tools") or data.get("allowed-tools") or "").strip() or None,
+        default_for_output=str(data.get("default_for_output") or "").strip() or None,
         diagnostics=list(diagnostics),
     )
     return record, diagnostics

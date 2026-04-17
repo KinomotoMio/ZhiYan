@@ -1,57 +1,127 @@
-"""Skill 发现 — 扫描 skills/ 目录，解析 SKILL.md frontmatter"""
+"""Unified skill catalog and metadata helpers for business-facing flows."""
 
-import re
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
+from app.services.generation.agentic.skills import SkillCatalog, SkillDiscovery, SkillRecord
+
+
+def build_skill_catalog(project_root: Path | None = None) -> SkillCatalog:
+    root = (project_root or settings.project_root).resolve()
+    return SkillDiscovery(root).discover()
 
 
 class SkillRegistry:
-    def __init__(self, skills_dir: Path | None = None):
-        self._skills_dir = skills_dir or settings.skills_dir
+    def __init__(self, project_root: Path | None = None):
+        self._project_root = (project_root or settings.project_root).resolve()
+
+    def catalog(self) -> SkillCatalog:
+        return build_skill_catalog(self._project_root)
 
     def discover(self) -> list[dict[str, Any]]:
-        """扫描 skills/ 目录，返回所有 Skill 元数据"""
-        skills: list[dict[str, Any]] = []
+        return [self._record_to_metadata(record) for record in self.catalog().records.values()]
 
-        if not self._skills_dir.exists():
-            return skills
+    def get_skill(self, skill_name: str) -> dict[str, Any] | None:
+        record = self.catalog().records.get(skill_name)
+        if record is None:
+            return None
+        return self._record_to_metadata(record)
 
-        for skill_dir in sorted(self._skills_dir.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            skill_md = skill_dir / "SKILL.md"
-            if not skill_md.exists():
-                continue
-
-            metadata = self._parse_frontmatter(skill_md)
-            if metadata:
-                metadata["path"] = str(skill_dir)
-                skills.append(metadata)
-
-        return skills
+    def get_record(self, skill_name: str) -> SkillRecord | None:
+        return self.catalog().records.get(skill_name)
 
     def load_skill(self, skill_name: str) -> str | None:
-        """加载完整 SKILL.md 内容（用户触发 /command 时调用）"""
-        skill_dir = self._skills_dir / skill_name
-        skill_md = skill_dir / "SKILL.md"
-        if skill_md.exists():
-            return skill_md.read_text(encoding="utf-8")
-        return None
-
-    @staticmethod
-    def _parse_frontmatter(path: Path) -> dict[str, Any] | None:
-        """解析 YAML frontmatter"""
-        text = path.read_text(encoding="utf-8")
-        match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-        if not match:
+        record = self.get_record(skill_name)
+        if record is None:
             return None
+        return record.location.read_text(encoding="utf-8")
 
-        metadata: dict[str, Any] = {}
-        for line in match.group(1).strip().split("\n"):
-            if ":" in line:
-                key, _, value = line.partition(":")
-                metadata[key.strip()] = value.strip()
+    def list_resource_files(self, skill_name: str) -> list[str]:
+        record = self.get_record(skill_name)
+        if record is None:
+            return []
+        return self._list_record_resources(record)
 
+    def _list_record_resources(self, record: SkillRecord) -> list[str]:
+        if record is None:
+            return []
+
+        resources: list[str] = []
+        for folder_name in ("references", "scripts", "assets"):
+            folder = record.skill_dir / folder_name
+            if not folder.exists():
+                continue
+            for path in sorted(folder.rglob("*")):
+                if path.is_file():
+                    resources.append(str(path.relative_to(record.skill_dir)))
+        return resources
+
+    def read_reference_texts(
+        self,
+        skill_name: str,
+        *,
+        limit: int = 4,
+        max_chars: int = 16000,
+    ) -> list[dict[str, str]]:
+        record = self.get_record(skill_name)
+        if record is None:
+            return []
+        refs_dir = record.skill_dir / "references"
+        if not refs_dir.exists():
+            return []
+
+        refs: list[dict[str, str]] = []
+        used_chars = 0
+        for path in sorted(refs_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".md", ".txt", ".json"}:
+                continue
+            raw = path.read_text(encoding="utf-8").strip()
+            if not raw:
+                continue
+            remaining = max_chars - used_chars
+            if remaining <= 0:
+                break
+            excerpt = raw[:remaining]
+            refs.append(
+                {
+                    "path": str(path.relative_to(record.skill_dir)),
+                    "content": excerpt,
+                }
+            )
+            used_chars += len(excerpt)
+            if len(refs) >= limit:
+                break
+        return refs
+
+    def _record_to_metadata(self, record: SkillRecord) -> dict[str, Any]:
+        metadata = dict(record.metadata or {})
+        metadata.update(
+            {
+                "id": record.name,
+                "name": record.name,
+                "description": record.description,
+                "version": record.version,
+                "command": record.command,
+                "path": str(record.skill_dir),
+                "scope": record.scope,
+                "argument_hint": record.argument_hint,
+                "default_for_output": record.default_for_output,
+                "allowed_tools": record.allowed_tools,
+                "resources": self._list_record_resources(record),
+                "shadowed": [
+                    {
+                        "name": item.name,
+                        "scope": item.scope,
+                        "path": str(item.skill_dir),
+                    }
+                    for item in record.shadowed_records
+                ],
+                "shadowed_count": len(record.shadowed_records),
+            }
+        )
         return metadata
