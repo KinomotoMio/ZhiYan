@@ -23,6 +23,7 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 _TITLE_FRONTMATTER_RE = re.compile(r"^\s*title\s*:\s*(.+?)\s*$", re.MULTILINE)
 _LAYOUT_FRONTMATTER_RE = re.compile(r"^\s*layout\s*:\s*(.+?)\s*$", re.MULTILINE)
+_METADATA_ONLY_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*.+$")
 
 ROLE_TO_LAYOUT_RECIPE: dict[str, str] = {
     "cover": "cover-hero",
@@ -148,10 +149,12 @@ def parse_slidev_markdown(
     markdown: str,
     outline_items: list[dict[str, Any]] | None = None,
     fallback_title: str = "新演示文稿",
+    normalize_composition: bool = True,
 ) -> dict[str, Any]:
-    normalized = str(markdown or "").strip()
-    if not normalized:
+    text = str(markdown or "").strip()
+    if not text:
         raise ValueError("Slidev markdown is empty.")
+    normalized = _normalize_slidev_composition(text)[0] if normalize_composition else text
     frontmatter = _frontmatter_block(normalized)
     title = _frontmatter_title(frontmatter) or _first_heading(normalized) or fallback_title
     slides = _split_slide_chunks(normalized)
@@ -164,7 +167,7 @@ def parse_slidev_markdown(
         item = outline_items[index - 1] if index - 1 < len(outline_items) else {}
         role = str(item.get("suggested_slide_role") or "narrative").strip() or "narrative"
         slide_title = (
-            _frontmatter_title(_frontmatter_block(chunk))
+            _slide_frontmatter_title(chunk)
             or _first_heading(chunk)
             or str(item.get("title") or f"第 {index} 页")
         )
@@ -205,6 +208,29 @@ def parse_slidev_markdown(
     }
 
 
+def inspect_slidev_markdown_submission(
+    *,
+    markdown: str,
+    outline_items: list[dict[str, Any]] | None = None,
+    fallback_title: str = "新演示文稿",
+) -> dict[str, Any]:
+    text = str(markdown or "").strip()
+    if not text:
+        raise ValueError("Slidev markdown is empty.")
+    body = _strip_global_frontmatter(text)
+    raw_chunks = _split_slide_chunks_raw(body)
+    normalized_markdown, normalization = _normalize_slidev_composition(text)
+    normalized_chunks = _coalesce_slide_chunks(raw_chunks)
+    normalized_meta = parse_slidev_markdown(markdown=normalized_markdown, outline_items=outline_items, fallback_title=fallback_title)
+    return {
+        "raw_slide_count": len(raw_chunks),
+        "normalized_slide_count": len(normalized_chunks),
+        "normalized_markdown": normalized_markdown,
+        "normalization": normalization,
+        "meta": normalized_meta,
+    }
+
+
 def normalize_slidev_markdown(
     *,
     markdown: str,
@@ -215,9 +241,10 @@ def normalize_slidev_markdown(
     raw = str(markdown or "").strip()
     if not raw:
         raise ValueError("Slidev markdown is empty.")
-    body = _strip_global_frontmatter(raw)
+    normalized_raw, _normalization = _normalize_slidev_composition(raw)
+    body = _strip_global_frontmatter(normalized_raw)
     theme = str(selected_style.get("theme") or "seriph").strip() or "seriph"
-    title = _frontmatter_title(_frontmatter_block(raw)) or fallback_title.strip() or "新演示文稿"
+    title = _frontmatter_title(_frontmatter_block(normalized_raw)) or fallback_title.strip() or "新演示文稿"
     deck_scaffold_class = str(selected_style.get("deck_scaffold_class") or "theme-default").strip()
     theme_config = selected_style.get("theme_config") if isinstance(selected_style.get("theme_config"), dict) else {}
 
@@ -345,6 +372,37 @@ async def finalize_slidev_deck(
     build_out_dir: Path,
     paginate: bool = True,
 ) -> dict[str, Any]:
+    prepared = await prepare_slidev_deck_artifact(
+        markdown=markdown,
+        fallback_title=fallback_title,
+        selected_style_id=selected_style_id,
+        topic=topic,
+        outline_items=outline_items,
+        expected_pages=expected_pages,
+        paginate=paginate,
+    )
+    await build_slidev_spa(
+        markdown=prepared["markdown"],
+        base_path=build_base_path,
+        out_dir=build_out_dir,
+    )
+    return {
+        **prepared,
+        "build_root": str(build_out_dir.resolve()),
+        "entry_path": str((build_out_dir / "index.html").resolve()),
+    }
+
+
+async def prepare_slidev_deck_artifact(
+    *,
+    markdown: str,
+    fallback_title: str,
+    selected_style_id: str | None,
+    topic: str,
+    outline_items: list[dict[str, Any]],
+    expected_pages: int,
+    paginate: bool = True,
+) -> dict[str, Any]:
     style_id, selected_style = select_slidev_style(
         requested_style_id=selected_style_id,
         topic=topic,
@@ -381,16 +439,12 @@ async def finalize_slidev_deck(
         markdown=normalized_markdown,
         outline_items=outline_items,
         fallback_title=fallback_title,
+        normalize_composition=False,
     )
     if meta["slide_count"] != expected_pages:
         raise ValueError(
             f"Slidev deck slide count mismatch: expected {expected_pages}, got {meta['slide_count']}."
         )
-    await build_slidev_spa(
-        markdown=normalized_markdown,
-        base_path=build_base_path,
-        out_dir=build_out_dir,
-    )
     return {
         "title": meta["title"],
         "markdown": normalized_markdown,
@@ -408,8 +462,6 @@ async def finalize_slidev_deck(
         "selected_style_id": style_id,
         "selected_style": selected_style,
         "selected_theme": {"theme": selected_style.get("theme") or "seriph"},
-        "build_root": str(build_out_dir.resolve()),
-        "entry_path": str((build_out_dir / "index.html").resolve()),
     }
 
 
@@ -529,7 +581,7 @@ def _shared_visual_scaffold(selected_style: dict[str, Any]) -> str:
         f'--deck-border: {border}; --deck-text: {text}; --deck-muted: {muted}; --deck-shadow: {shadow}; color: var(--deck-text); }}\n'
         f'.{deck_class} .insight-card, .{deck_class} .compare-side, .{deck_class} .action-step, .{deck_class} .verdict-line {{ '
         'border-radius: 20px; border: 1px solid var(--deck-border); background: var(--deck-surface); '
-        'box-shadow: var(--deck-shadow); }}\n'
+        'box-shadow: var(--deck-shadow); }\n'
         f'.{deck_class} .kicker, .{deck_class} .section-kicker {{ color: var(--deck-muted); letter-spacing: 0.08em; text-transform: uppercase; }}\n'
         f'.{deck_class} .accent-bar {{ width: 56px; height: 6px; border-radius: 999px; background: var(--deck-accent); }}\n'
         f'.{deck_class} .verdict-line {{ padding: 14px 18px; border-left: 6px solid var(--deck-accent); }}\n'
@@ -593,11 +645,16 @@ def _frontmatter_title(frontmatter: str) -> str:
 
 
 def _slide_layout_name(slide: str) -> str:
-    frontmatter = _frontmatter_block(slide)
+    frontmatter, _remainder = _extract_slide_chunk_parts(slide)
     match = _LAYOUT_FRONTMATTER_RE.search(frontmatter)
     if not match:
         return ""
     return str(match.group(1)).strip().strip('"').strip("'")
+
+
+def _slide_frontmatter_title(slide: str) -> str:
+    frontmatter, _remainder = _extract_slide_chunk_parts(slide)
+    return _frontmatter_title(frontmatter)
 
 
 def _first_heading(markdown: str) -> str:
@@ -614,6 +671,10 @@ def _split_slide_chunks(markdown: str) -> list[str]:
     if not text:
         return []
     text = _strip_global_frontmatter(text)
+    return _coalesce_slide_chunks(_split_slide_chunks_raw(text))
+
+
+def _split_slide_chunks_raw(text: str) -> list[str]:
     slides: list[list[str]] = [[]]
     in_code_block = False
     code_fence = ""
@@ -632,3 +693,189 @@ def _split_slide_chunks(markdown: str) -> list[str]:
             continue
         slides[-1].append(raw_line)
     return ["\n".join(chunk).strip() for chunk in slides if "\n".join(chunk).strip()]
+
+
+def _normalize_slidev_composition(markdown: str) -> tuple[str, dict[str, int | bool]]:
+    text = str(markdown or "").strip()
+    if not text:
+        return "", {
+            "blank_first_slide_detected": False,
+            "double_separator_frontmatter_detected": False,
+            "stray_metadata_repaired_count": 0,
+            "empty_slide_repaired_count": 0,
+        }
+    frontmatter_match = _FRONTMATTER_RE.match(text)
+    frontmatter_prefix = frontmatter_match.group(0).strip() if frontmatter_match else ""
+    body = _strip_global_frontmatter(text)
+    raw_chunks = _split_slide_chunks_raw(body)
+    if not raw_chunks:
+        return text, {
+            "blank_first_slide_detected": False,
+            "double_separator_frontmatter_detected": False,
+            "stray_metadata_repaired_count": 0,
+            "empty_slide_repaired_count": 0,
+        }
+
+    normalized_chunks: list[str] = []
+    stray_metadata_repaired_count = 0
+    empty_slide_repaired_count = 0
+    double_separator_frontmatter_detected = False
+    blank_first_slide_detected = False
+    pending_frontmatter = ""
+
+    for index, chunk in enumerate(raw_chunks):
+        stripped = chunk.strip()
+        if not stripped:
+            empty_slide_repaired_count += 1
+            continue
+        frontmatter_payload, remainder = _extract_slide_chunk_parts(stripped)
+        if frontmatter_payload and not remainder.strip():
+            stray_metadata_repaired_count += 1
+            double_separator_frontmatter_detected = True
+            if index == 0:
+                blank_first_slide_detected = True
+            pending_frontmatter = _merge_metadata_payloads(pending_frontmatter, frontmatter_payload)
+            continue
+        merged_frontmatter = _merge_metadata_payloads(pending_frontmatter, frontmatter_payload)
+        normalized_chunks.append(_render_slide_chunk(merged_frontmatter, remainder or stripped))
+        pending_frontmatter = ""
+
+    if pending_frontmatter:
+        stray_metadata_repaired_count += 1
+
+    if not normalized_chunks:
+        normalized_chunks = [chunk.strip() for chunk in raw_chunks if chunk.strip()]
+
+    assembled_parts: list[str] = []
+    if frontmatter_prefix:
+        assembled_parts.append(frontmatter_prefix)
+    if normalized_chunks:
+        assembled_parts.append("\n\n---\n\n".join(normalized_chunks).strip())
+    normalized_markdown = "\n\n".join(part for part in assembled_parts if part).strip() + "\n"
+    return normalized_markdown, {
+        "blank_first_slide_detected": blank_first_slide_detected,
+        "double_separator_frontmatter_detected": double_separator_frontmatter_detected,
+        "stray_metadata_repaired_count": stray_metadata_repaired_count,
+        "empty_slide_repaired_count": empty_slide_repaired_count,
+    }
+
+
+def _merge_frontmatter_blocks(primary_block: str, secondary_block: str) -> str:
+    primary = _frontmatter_to_mapping(_frontmatter_block(primary_block))
+    secondary = _frontmatter_to_mapping(_frontmatter_block(secondary_block))
+    merged = {**primary, **secondary}
+    lines = ["---"]
+    for key, value in merged.items():
+        if isinstance(value, bool):
+            rendered = "true" if value else "false"
+        elif value is None:
+            rendered = "null"
+        elif isinstance(value, (int, float)):
+            rendered = str(value)
+        else:
+            rendered = str(value)
+        lines.append(f"{key}: {rendered}")
+    lines.append("---")
+    return "\n".join(lines)
+
+
+def _frontmatter_to_mapping(frontmatter: str) -> dict[str, str | bool | int | float | None]:
+    mapping: dict[str, str | bool | int | float | None] = {}
+    for raw_line in str(frontmatter or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        raw_value = value.strip()
+        if not key:
+            continue
+        if raw_value.lower() == "true":
+            mapping[key] = True
+        elif raw_value.lower() == "false":
+            mapping[key] = False
+        elif raw_value.lower() == "null":
+            mapping[key] = None
+        else:
+            mapping[key] = raw_value
+    return mapping
+
+
+def _extract_metadata_only_block(chunk: str) -> str:
+    lines = [line.strip() for line in str(chunk or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if all(_METADATA_ONLY_LINE_RE.match(line) for line in lines):
+        return "\n".join(lines)
+    return ""
+
+
+def _strip_metadata_lines(chunk: str) -> str:
+    lines = [line for line in str(chunk or "").splitlines()]
+    retained = [line for line in lines if not _METADATA_ONLY_LINE_RE.match(line.strip())]
+    return "\n".join(retained)
+
+
+def _extract_slide_chunk_parts(chunk: str) -> tuple[str, str]:
+    stripped = str(chunk or "").strip()
+    if not stripped:
+        return "", ""
+    lines = stripped.splitlines()
+    metadata_lines: list[str] = []
+    remainder_start: int | None = None
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line and not metadata_lines:
+            continue
+        if _METADATA_ONLY_LINE_RE.match(line):
+            metadata_lines.append(line)
+            continue
+        if line == "---" and metadata_lines:
+            remainder_start = index + 1
+            break
+        metadata_lines = []
+        remainder_start = 0
+        break
+    if metadata_lines:
+        if remainder_start is None:
+            return "\n".join(metadata_lines), ""
+        remainder = "\n".join(lines[remainder_start:]).strip()
+        return "\n".join(metadata_lines), remainder
+    return "", stripped
+
+
+def _merge_metadata_payloads(primary: str, secondary: str) -> str:
+    if primary and secondary:
+        primary_block = f"---\n{primary}\n---"
+        secondary_block = f"---\n{secondary}\n---"
+        merged_block = _merge_frontmatter_blocks(primary_block, secondary_block)
+        return _frontmatter_block(merged_block).strip()
+    return secondary or primary
+
+
+def _render_slide_chunk(frontmatter_payload: str, content: str) -> str:
+    content = str(content or "").strip()
+    if frontmatter_payload.strip():
+        if content:
+            return f"{frontmatter_payload.strip()}\n---\n\n{content}"
+        return frontmatter_payload.strip()
+    return content
+
+
+def _coalesce_slide_chunks(raw_chunks: list[str]) -> list[str]:
+    slides: list[str] = []
+    pending_frontmatter = ""
+    for chunk in raw_chunks:
+        stripped = chunk.strip()
+        if not stripped:
+            continue
+        frontmatter_payload, remainder = _extract_slide_chunk_parts(stripped)
+        if frontmatter_payload and not remainder.strip():
+            pending_frontmatter = _merge_metadata_payloads(pending_frontmatter, frontmatter_payload)
+            continue
+        merged_frontmatter = _merge_metadata_payloads(pending_frontmatter, frontmatter_payload)
+        slides.append(_render_slide_chunk(merged_frontmatter, remainder or stripped))
+        pending_frontmatter = ""
+    if pending_frontmatter.strip():
+        slides.append(_render_slide_chunk(pending_frontmatter, ""))
+    return [slide.strip() for slide in slides if slide.strip()]

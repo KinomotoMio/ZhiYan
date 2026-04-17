@@ -1057,13 +1057,7 @@ def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
 
     from app.api.v1 import sessions as sessions_api
 
-    async def _fake_finalize_slidev_deck(**kwargs):  # noqa: ANN003
-        build_out_dir = Path(kwargs["build_out_dir"])
-        build_out_dir.mkdir(parents=True, exist_ok=True)
-        (build_out_dir / "index.html").write_text("<html><body>slidev deck</body></html>", encoding="utf-8")
-        assets_dir = build_out_dir / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        (assets_dir / "entry.js").write_text("console.log('slidev');", encoding="utf-8")
+    async def _fake_prepare_slidev_deck_artifact(**kwargs):  # noqa: ANN003
         return {
             "title": "Slidev 测试演示",
             "markdown": "---\ntitle: Slidev 测试演示\n---\n\n# 封面\n\n---\n\n# 收尾\n",
@@ -1101,11 +1095,18 @@ def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
             "selected_style_id": "tech-launch",
             "selected_style": {"name": "tech-launch", "theme": "seriph"},
             "selected_theme": {"theme": "seriph"},
-            "build_root": str(build_out_dir.resolve()),
-            "entry_path": str((build_out_dir / "index.html").resolve()),
         }
 
-    monkeypatch.setattr(sessions_api, "finalize_slidev_deck", _fake_finalize_slidev_deck)
+    async def _fake_build_slidev_spa(*, out_dir, **kwargs):  # noqa: ANN003
+        build_out_dir = Path(out_dir)
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+        (build_out_dir / "index.html").write_text("<html><body>slidev deck</body></html>", encoding="utf-8")
+        assets_dir = build_out_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        (assets_dir / "entry.js").write_text("console.log('slidev');", encoding="utf-8")
+
+    monkeypatch.setattr(sessions_api, "prepare_slidev_deck_artifact", _fake_prepare_slidev_deck_artifact)
+    monkeypatch.setattr(sessions_api, "build_slidev_spa", _fake_build_slidev_spa)
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-slidev"}
@@ -1191,6 +1192,107 @@ def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
     )
     assert build_asset.status_code == 200
     assert "console.log('slidev')" in build_asset.text
+
+
+def test_slidev_latest_presentation_survives_build_failure(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import sessions as sessions_api
+
+    async def _fake_prepare_slidev_deck_artifact(**kwargs):  # noqa: ANN003
+        return {
+            "title": "Slidev 构建失败保留 artifact",
+            "markdown": "---\ntitle: Slidev 构建失败保留 artifact\n---\n\n# 封面\n",
+            "meta": {
+                "title": "Slidev 构建失败保留 artifact",
+                "slide_count": 1,
+                "slides": [
+                    {"index": 0, "slide_id": "slide-1", "title": "封面", "role": "cover", "layout": "cover"},
+                ],
+                "selected_style_id": "tech-launch",
+                "validation": {"ok": True, "issues": []},
+                "review": {"issues": []},
+            },
+            "presentation": {
+                "presentationId": "pres-slidev-test",
+                "title": "Slidev 构建失败保留 artifact",
+                "slides": [
+                    {
+                        "slideId": "slide-1",
+                        "layoutType": "blank",
+                        "layoutId": "blank",
+                        "contentData": {"title": "封面"},
+                        "components": [],
+                    }
+                ],
+            },
+            "selected_style_id": "tech-launch",
+            "selected_style": {"name": "tech-launch", "theme": "seriph"},
+            "selected_theme": {"theme": "seriph"},
+        }
+
+    async def _fake_build_slidev_spa(**kwargs):  # noqa: ANN003
+        raise RuntimeError("Slidev build failed: broken css")
+
+    monkeypatch.setattr(sessions_api, "prepare_slidev_deck_artifact", _fake_prepare_slidev_deck_artifact)
+    monkeypatch.setattr(sessions_api, "build_slidev_spa", _fake_build_slidev_spa)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-slidev-fail"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "slidev fail"})
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    presentation = {
+        "presentationId": "pres-slidev-test",
+        "title": "Slidev 构建失败保留 artifact",
+        "slides": [
+            {
+                "slideId": "slide-1",
+                "layoutType": "blank",
+                "layoutId": "blank",
+                "contentData": {"title": "封面"},
+                "components": [],
+            }
+        ],
+    }
+
+    saved = client.put(
+        f"/api/v1/sessions/{session_id}/presentations/latest",
+        headers=headers,
+        json={
+            "presentation": presentation,
+            "source": "chat",
+            "output_mode": "slidev",
+            "slidev_deck": {
+                "markdown": "# placeholder",
+                "selected_style_id": "tech-launch",
+                "meta": {"slides": [{"title": "封面"}]},
+            },
+        },
+    )
+    assert saved.status_code == 200
+
+    latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
+    assert latest.status_code == 200
+    latest_payload = latest.json()
+    assert latest_payload["artifact_status"] == "ready"
+    assert latest_payload["render_status"] == "failed"
+    assert latest_payload["render_available"] is False
+    assert "slidev_build" not in latest_payload["artifacts"]
+
+    slidev = client.get(f"/api/v1/sessions/{session_id}/presentations/latest/slidev", headers=headers)
+    assert slidev.status_code == 200
+    slidev_payload = slidev.json()
+    assert slidev_payload["build_url"] is None
+    assert slidev_payload["render_status"] == "failed"
+    assert "broken css" in slidev_payload["render_error"]
+
+    build_entry = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/slidev/build",
+        headers=headers,
+    )
+    assert build_entry.status_code == 404
 
 
 def test_session_share_link_is_stable_and_public_structured_playback_updates(monkeypatch, tmp_path):
@@ -1330,10 +1432,7 @@ def test_session_share_link_rejects_slidev(monkeypatch, tmp_path):
 
     from app.api.v1 import sessions as sessions_api
 
-    async def _fake_finalize_slidev_deck(**kwargs):  # noqa: ANN003
-        build_out_dir = Path(kwargs["build_out_dir"])
-        build_out_dir.mkdir(parents=True, exist_ok=True)
-        (build_out_dir / "index.html").write_text("<html><body>slidev deck</body></html>", encoding="utf-8")
+    async def _fake_prepare_slidev_deck_artifact(**kwargs):  # noqa: ANN003
         return {
             "title": "Slidev 分享限制",
             "markdown": "---\ntitle: Slidev 分享限制\n---\n\n# 封面\n",
@@ -1363,11 +1462,15 @@ def test_session_share_link_rejects_slidev(monkeypatch, tmp_path):
             "selected_style_id": "tech-launch",
             "selected_style": {"name": "tech-launch", "theme": "seriph"},
             "selected_theme": {"theme": "seriph"},
-            "build_root": str(build_out_dir.resolve()),
-            "entry_path": str((build_out_dir / "index.html").resolve()),
         }
 
-    monkeypatch.setattr(sessions_api, "finalize_slidev_deck", _fake_finalize_slidev_deck)
+    async def _fake_build_slidev_spa(*, out_dir, **kwargs):  # noqa: ANN003
+        build_out_dir = Path(out_dir)
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+        (build_out_dir / "index.html").write_text("<html><body>slidev deck</body></html>", encoding="utf-8")
+
+    monkeypatch.setattr(sessions_api, "prepare_slidev_deck_artifact", _fake_prepare_slidev_deck_artifact)
+    monkeypatch.setattr(sessions_api, "build_slidev_spa", _fake_build_slidev_spa)
 
     client = TestClient(app)
     headers = {"X-Workspace-Id": "ws-slidev-share"}

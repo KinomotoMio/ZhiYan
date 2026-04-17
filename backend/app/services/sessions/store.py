@@ -1607,6 +1607,11 @@ class SessionStore:
                 "presentation": normalized_payload,
                 "output_mode": self._extract_output_mode(normalized_payload),
                 "artifacts": self._extract_artifacts(normalized_payload),
+                "artifact_status": self._extract_runtime_field(normalized_payload, "artifactStatus", default="ready"),
+                "render_status": self._extract_runtime_field(normalized_payload, "renderStatus", default="ready"),
+                "render_error": self._extract_runtime_field(normalized_payload, "renderError"),
+                "artifact_available": self._extract_runtime_bool(normalized_payload, "artifactAvailable", default=True),
+                "render_available": self._extract_runtime_bool(normalized_payload, "renderAvailable", default=False),
             }
 
     @staticmethod
@@ -1783,6 +1788,32 @@ class SessionStore:
             return "structured"
         raw = payload.get("outputMode")
         return str(raw).strip() if isinstance(raw, str) and str(raw).strip() else "structured"
+
+    @staticmethod
+    def _extract_runtime_field(
+        payload: dict | None,
+        key: str,
+        *,
+        default: Any = None,
+    ) -> Any:
+        if not isinstance(payload, dict):
+            return default
+        value = payload.get(key)
+        return default if value is None else value
+
+    @staticmethod
+    def _extract_runtime_bool(
+        payload: dict | None,
+        key: str,
+        *,
+        default: bool,
+    ) -> bool:
+        if not isinstance(payload, dict):
+            return default
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        return default
 
     @staticmethod
     def _extract_artifacts(payload: dict | None) -> dict[str, Any]:

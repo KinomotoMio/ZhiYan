@@ -23,6 +23,12 @@ ToolHandler = Callable[..., Awaitable[HandlerResult] | HandlerResult]
 DecoratedTool = TypeVar("DecoratedTool", bound=ToolHandler)
 
 
+class ToolExecutionError(Exception):
+    def __init__(self, message: str, *, content: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.content = content or {"error": message}
+
+
 @dataclass(slots=True)
 class BashPolicy:
     workspace_root: Path
@@ -78,6 +84,7 @@ class ToolContext:
     task_manager: TaskManager | None = None
     subagent_manager: SubagentManager | None = None
     background_manager: BackgroundManager | None = None
+    active_skills: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -157,11 +164,15 @@ class ToolRegistry:
                         )
                     )
             except Exception as exc:
+                if isinstance(exc, ToolExecutionError):
+                    content = _normalize_content(exc.content)
+                else:
+                    content = {"error": f"{type(exc).__name__}: {exc}"}
                 results.append(
                     ToolResult(
                         tool_name=tool_call.tool_name,
                         tool_call_id=tool_call.tool_call_id,
-                        content={"error": f"{type(exc).__name__}: {exc}"},
+                        content=content,
                         is_error=True,
                     )
                 )
@@ -237,6 +248,17 @@ class BashArgs(BaseModel):
 
 class ReadArgs(BaseModel):
     path: str = Field(description="Path to the file to read.")
+    limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=10_000,
+        description="Optional maximum number of lines to return.",
+    )
+
+
+class ReadSkillResourceArgs(BaseModel):
+    skill_name: str = Field(description="Name of the already activated skill to read from.")
+    path: str = Field(description="Relative resource path inside the skill, for example references/foo.md.")
     limit: int | None = Field(
         default=None,
         ge=1,
@@ -366,6 +388,52 @@ def read_file(args: ReadArgs, context: ToolContext) -> dict[str, Any]:
     }
 
 
+@tool(
+    name="read_skill_resource",
+    description="Read a file from references/, scripts/, or assets/ of an already activated skill.",
+)
+def read_skill_resource(args: ReadSkillResourceArgs, context: ToolContext) -> dict[str, Any]:
+    if context.skill_catalog is None:
+        raise ValueError("Skill catalog is not available in this context.")
+    skill_name = str(args.skill_name or "").strip()
+    if not skill_name:
+        raise ValueError("skill_name is required.")
+    if skill_name not in context.active_skills:
+        raise ValueError(f"Skill '{skill_name}' is not active. Load it first with load_skill.")
+    record = context.skill_catalog.records.get(skill_name)
+    if record is None:
+        raise ValueError(f"Unknown skill: {skill_name}")
+    relative_path = Path(str(args.path or "").strip())
+    if not str(relative_path):
+        raise ValueError("path is required.")
+    if relative_path.is_absolute():
+        raise ValueError("Use a skill-relative path such as references/foo.md, not an absolute path.")
+    if relative_path.parts[0] not in {"references", "scripts", "assets"}:
+        raise ValueError("Skill resources must live under references/, scripts/, or assets/.")
+    candidate = (record.skill_dir / relative_path).resolve()
+    try:
+        candidate.relative_to(record.skill_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Skill resource '{relative_path}' escapes skill root '{record.skill_dir}'.") from exc
+    if not candidate.exists():
+        raise FileNotFoundError(f"No such skill resource: {candidate}")
+    if not candidate.is_file():
+        raise ValueError(f"Skill resource is not a file: {candidate}")
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    truncated = False
+    if args.limit is not None and len(lines) > args.limit:
+        lines = lines[: args.limit]
+        truncated = True
+    return {
+        "skill_name": skill_name,
+        "path": str(relative_path),
+        "full_path": str(candidate),
+        "content": "\n".join(lines),
+        "truncated": truncated,
+    }
+
+
 @tool(name="write_file", description="Create or overwrite a text file in the workspace.")
 def write_file(args: WriteFileArgs, context: ToolContext) -> dict[str, Any]:
     path = context.read_policy.resolve(args.path)
@@ -412,6 +480,8 @@ def load_skill(args: LoadSkillArgs, context: ToolContext) -> dict[str, object]:
         raise ValueError("Skill catalog is not available in this context.")
     if args.name not in context.skill_catalog.records:
         raise ValueError(f"Unknown skill: {args.name}")
+    if args.name not in context.active_skills:
+        context.active_skills.append(args.name)
     record = context.skill_catalog.records[args.name]
     return {
         "name": record.name,
@@ -545,6 +615,7 @@ def create_builtin_registry(workspace_root: Path, permissive_mode: bool = False)
         [
             bash,
             read_file,
+            read_skill_resource,
             write_file,
             edit_file,
             todo,

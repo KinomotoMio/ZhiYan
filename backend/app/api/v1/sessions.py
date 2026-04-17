@@ -48,7 +48,7 @@ from app.services.planning import (
 )
 from app.services.sessions import session_store
 from app.services.sessions.workspace import get_workspace_id_from_request
-from app.services.slidev import finalize_slidev_deck
+from app.services.slidev import build_slidev_spa, prepare_slidev_deck_artifact
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -231,7 +231,7 @@ async def _resolve_planning_state(
         return state
     latest_status = str(latest.get("status") or "").strip()
     current_status = str(state.get("status") or "").strip()
-    if latest_status == "completed" and current_status == "generating":
+    if latest_status in {"artifact_ready", "completed", "render_failed"} and current_status == "generating":
         return await session_store.save_planning_state(
             workspace_id=workspace_id,
             session_id=session_id,
@@ -958,13 +958,18 @@ async def get_latest_presentation_slidev(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
     deck = await session_store.get_latest_slidev_deck(workspace_id, sid)
     build = await session_store.get_latest_slidev_build(workspace_id, sid)
-    if not deck or not build:
+    if not deck:
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
     markdown, meta = deck
     return {
         "markdown": markdown,
         "meta": meta,
-        "build_url": f"/api/v1/sessions/{sid}/presentations/latest/slidev/build",
+        "build_url": f"/api/v1/sessions/{sid}/presentations/latest/slidev/build" if build else None,
+        "artifact_status": latest.get("artifact_status"),
+        "render_status": latest.get("render_status"),
+        "render_error": latest.get("render_error"),
+        "artifact_available": latest.get("artifact_available"),
+        "render_available": latest.get("render_available"),
         "assets": latest.get("artifacts", {}),
     }
 
@@ -1062,6 +1067,8 @@ async def save_latest_presentation(
     slidev_build = None
     presentation_payload = req.presentation
     temp_root: Path | None = None
+    render_status = "ready"
+    render_error = None
     try:
         if (req.output_mode or "").strip() == "slidev":
             if not isinstance(slidev_deck, dict):
@@ -1074,7 +1081,7 @@ async def save_latest_presentation(
             temp_root = Path(tempfile.mkdtemp(prefix="zhiyan-slidev-save-", dir=settings.uploads_dir))
             temp_build_root = temp_root / "dist"
             try:
-                finalized = await finalize_slidev_deck(
+                finalized = await prepare_slidev_deck_artifact(
                     markdown=markdown,
                     fallback_title=str(presentation_payload.get("title") or "新演示文稿"),
                     selected_style_id=str(slidev_deck.get("selected_style_id") or "").strip() or None,
@@ -1083,8 +1090,6 @@ async def save_latest_presentation(
                     expected_pages=max(
                         1, len(outline_items) or int(slidev_deck.get("expected_slide_count") or 0) or 1
                     ),
-                    build_base_path=f"/api/v1/sessions/{sid}/presentations/latest/slidev/build/",
-                    build_out_dir=temp_build_root,
                 )
                 presentation_payload = finalized["presentation"]
                 slidev_deck = {
@@ -1092,15 +1097,28 @@ async def save_latest_presentation(
                     "meta": finalized["meta"],
                     "selected_style_id": finalized["selected_style_id"],
                 }
-                slidev_build = {
-                    "build_root": finalized["build_root"],
-                    "entry_path": finalized["entry_path"],
-                    "slide_count": finalized["meta"]["slide_count"],
-                }
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            try:
+                await build_slidev_spa(
+                    markdown=finalized["markdown"],
+                    base_path=f"/api/v1/sessions/{sid}/presentations/latest/slidev/build/",
+                    out_dir=temp_build_root,
+                )
+                slidev_build = {
+                    "build_root": str(temp_build_root.resolve()),
+                    "entry_path": str((temp_build_root / "index.html").resolve()),
+                    "slide_count": finalized["meta"]["slide_count"],
+                }
             except RuntimeError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
+                render_status = "failed"
+                render_error = str(exc)
+        presentation_payload = dict(presentation_payload or {})
+        presentation_payload["artifactStatus"] = "ready"
+        presentation_payload["renderStatus"] = render_status
+        presentation_payload["renderError"] = render_error
+        presentation_payload["artifactAvailable"] = True
+        presentation_payload["renderAvailable"] = slidev_build is not None or (req.output_mode or "").strip() != "slidev"
         saved = await session_store.save_presentation(
             session_id=sid,
             payload=presentation_payload,

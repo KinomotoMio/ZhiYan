@@ -27,8 +27,10 @@ class PresentationOutputMode(str, Enum):
 class JobStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    ARTIFACT_READY = "artifact_ready"
     WAITING_OUTLINE_REVIEW = "waiting_outline_review"
     WAITING_FIX_REVIEW = "waiting_fix_review"
+    RENDER_FAILED = "render_failed"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -39,6 +41,10 @@ class StageStatus(str, Enum):
     OUTLINE = "outline"
     LAYOUT = "layout"
     SLIDES = "slides"
+    AGENT_GENERATE_ARTIFACT = "agent_generate_artifact"
+    ARTIFACT_VALIDATE = "artifact_validate"
+    ARTIFACT_RENDER = "artifact_render"
+    ARTIFACT_PUBLISH = "artifact_publish"
     ASSETS = "assets"
     VERIFY = "verify"
     FIX = "fix"
@@ -52,6 +58,7 @@ class EventType(str, Enum):
     OUTLINE_READY = "outline_ready"
     LAYOUT_READY = "layout_ready"
     SLIDE_READY = "slide_ready"
+    ARTIFACT_READY = "artifact_ready"
     JOB_WAITING_FIX_REVIEW = "job_waiting_fix_review"
     FIX_PREVIEW_READY = "fix_preview_ready"
     STAGE_FAILED = "stage_failed"
@@ -190,6 +197,11 @@ class GenerationJob(BaseModel):
     presentation: dict[str, Any] | None = None
     error: str | None = None
     run_metadata: RunMetadata | None = None
+    artifact_status: str | None = None
+    render_status: str | None = None
+    artifact_available: bool = False
+    render_available: bool = False
+    render_error: str | None = None
 
     stage_results: list[StageResult] = Field(default_factory=list)
 

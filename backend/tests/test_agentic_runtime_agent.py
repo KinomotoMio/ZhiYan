@@ -218,6 +218,49 @@ async def test_agent_session_skill_persists_until_reset(tmp_path: Path, skill_fi
 
 
 @pytest.mark.asyncio
+async def test_agent_can_read_resource_from_active_skill(tmp_path: Path, skill_file_contents: str) -> None:
+    skill_dir = tmp_path / ".agents" / "skills" / "example-skill"
+    references_dir = skill_dir / "references"
+    references_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(skill_file_contents, encoding="utf-8")
+    (references_dir / "guide.md").write_text("# Guide\n\nUse the reference.", encoding="utf-8")
+    from app.services.generation.agentic.skills import SkillDiscovery
+    from app.services.generation.agentic.tools import create_builtin_registry
+
+    catalog = SkillDiscovery(tmp_path).discover()
+    model = FakeModel(
+        responses=[
+            AssistantMessage(
+                tool_calls=[
+                    ToolCall(
+                        tool_name="read_skill_resource",
+                        args={"skill_name": "example-skill", "path": "references/guide.md"},
+                        tool_call_id="call-read-skill-resource",
+                    )
+                ]
+            ),
+            AssistantMessage(content="done"),
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tool_registry=create_builtin_registry(tmp_path),
+        tool_context=default_tool_context(tmp_path),
+        skill_catalog=catalog,
+        system_prompt="Be helpful.",
+    )
+
+    result = await agent.run("use the active skill reference", activate_skills=["example-skill"])
+
+    assert result.stop_reason == "completed"
+    assert any(tool_result.tool_name == "load_skill" for tool_result in result.tool_results)
+    assert any(
+        tool_result.tool_name == "read_skill_resource" and "# Guide" in str(tool_result.content.get("content", ""))
+        for tool_result in result.tool_results
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_session_invalid_skill_activation_fails_cleanly(tmp_path: Path) -> None:
     model = FakeModel(responses=[AssistantMessage(content="unused")])
     agent = Agent(

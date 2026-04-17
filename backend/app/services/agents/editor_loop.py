@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.services.agents.modifications import SlideModification
 from app.services.generation.agentic import AgentBuilder, Tool, ToolContext, ToolRegistry
-from app.services.generation.agentic.tools import load_skill, todo
+from app.services.generation.agentic.tools import load_skill, read_skill_resource, todo
 from app.services.generation.agentic.types import AssistantMessage, Message, ToolMessage, ToolResult
 from app.services.html_deck import normalize_html_deck
 from app.services.model_clients import create_model_client
@@ -46,6 +46,7 @@ _WS_RE = re.compile(r"\s+")
 READ_ONLY_TOOLS = {
     "todo",
     "load_skill",
+    "read_skill_resource",
     "get_current_slide_info",
     "get_deck_summary",
     "get_current_html_slide_info",
@@ -325,6 +326,8 @@ def _tool_call_summary(tool_name: str, args: dict[str, Any]) -> str:
         return "整理本轮执行步骤"
     if tool_name == "load_skill":
         return f"加载 skill {str(args.get('name') or '').strip() or 'unknown'}"
+    if tool_name == "read_skill_resource":
+        return f"读取 skill 资源 {str(args.get('skill_name') or '').strip()}/{str(args.get('path') or '').strip()}"
     if tool_name == "get_current_slide_info":
         return "读取当前页详细结构"
     if tool_name == "get_deck_summary":
@@ -361,6 +364,8 @@ def _tool_result_summary(tool_result: ToolResult) -> str:
         if isinstance(content, dict) and str(content.get("name") or "").strip():
             return f"已加载 skill {str(content.get('name')).strip()}"
         return "已加载 skill"
+    if tool_result.tool_name == "read_skill_resource":
+        return "已读取 skill 资源"
     if tool_result.tool_name in {"get_current_slide_info", "get_deck_summary", "get_current_html_slide_info"}:
         return "已读取所需上下文"
     if isinstance(content, dict):
@@ -761,6 +766,7 @@ class EditorLoopService:
             [
                 getattr(todo, "__agentloop_tool__"),
                 getattr(load_skill, "__agentloop_tool__"),
+                getattr(read_skill_resource, "__agentloop_tool__"),
             ]
         )
         registry.extend(tool_definitions)
@@ -793,6 +799,7 @@ class EditorLoopService:
             "- 当操作意图是 refresh_layout / simplify / add_detail / enrich_visual / change_theme 时，优先修改页面可见内容，而不是只改 speaker notes。\n"
             "- two-column-compare 页面优先使用 update_two_column_compare。\n"
             "- 当前 mode 的基础 skill 会由 harness 预先激活；如果任务需要额外 skill，再调用 load_skill。\n"
+            "- skill 下的 references/scripts/assets 必须通过 read_skill_resource 读取，不要对 skill 绝对路径使用 read_file。\n"
             "- 可以使用 todo 先整理执行步骤，但不要把 todo 原文当成最终回复。\n\n"
             f"{skill_context}"
         )

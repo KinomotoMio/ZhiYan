@@ -401,6 +401,7 @@ class AgentSession:
             task_manager=self.task_manager,
             subagent_manager=self.subagent_manager,
             background_manager=self.background_manager,
+            active_skills=list(self.active_skills),
         )
 
     async def _run_pending_auto_compact(self) -> list[dict[str, Any]]:

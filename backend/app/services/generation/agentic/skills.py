@@ -83,8 +83,9 @@ class SkillCatalog:
             record.body,
             "",
             f"Scope: {record.scope}",
-            f"Skill directory: {record.skill_dir}",
-            "Relative paths in this skill are relative to the skill directory.",
+            "Resource paths in this skill are skill-relative.",
+            "To read files under references/, scripts/, or assets/, use read_skill_resource with the skill name and relative path.",
+            "Do not use read_file with absolute skill paths.",
         ]
         if resource_lines:
             lines.append("<skill_resources>")
