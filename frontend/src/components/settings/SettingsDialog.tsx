@@ -18,9 +18,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   getSettings,
   updateSettings,
@@ -28,6 +29,7 @@ import {
   type AppSettings,
   type ModelStatus,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type ModelRoleField = "default_model" | "strong_model" | "vision_model" | "fast_model";
 type KnownProvider = "openai" | "anthropic" | "google-gla" | "deepseek" | "openrouter";
@@ -38,65 +40,6 @@ interface ProviderKeyDraft {
   draftValue: string;
   maskedValue: string;
   showMasked: boolean;
-  cachedPlainValue: string | null;
-}
-
-const API_KEY_FIELDS: Record<ApiKeyProvider, "openai_api_key" | "anthropic_api_key" | "google_api_key" | "deepseek_api_key" | "openrouter_api_key"> = {
-  openai: "openai_api_key",
-  anthropic: "anthropic_api_key",
-  google: "google_api_key",
-  deepseek: "deepseek_api_key",
-  openrouter: "openrouter_api_key",
-};
-type ApiKeyField = (typeof API_KEY_FIELDS)[ApiKeyProvider];
-const API_KEY_PROVIDERS = Object.keys(API_KEY_FIELDS) as ApiKeyProvider[];
-
-const EMPTY_PROVIDER_KEY_DRAFTS: Record<ApiKeyProvider, ProviderKeyDraft> = {
-  openai: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
-  anthropic: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
-  google: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
-  deepseek: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
-  openrouter: { draftValue: "", maskedValue: "", showMasked: false, cachedPlainValue: null },
-};
-
-function createProviderKeyDraft(maskedValue: string): ProviderKeyDraft {
-  return {
-    draftValue: "",
-    maskedValue,
-    showMasked: Boolean(maskedValue),
-    cachedPlainValue: null,
-  };
-}
-
-function getProviderKeyDisplayValue(state: ProviderKeyDraft): string {
-  return state.showMasked ? "" : state.draftValue;
-}
-
-function clearProviderPlaintextDrafts(
-  drafts: Record<ApiKeyProvider, ProviderKeyDraft>
-): Record<ApiKeyProvider, ProviderKeyDraft> {
-  return Object.fromEntries(
-    API_KEY_PROVIDERS.map((provider) => [
-      provider,
-      {
-        ...drafts[provider],
-        draftValue: "",
-        cachedPlainValue: null,
-        showMasked: Boolean(drafts[provider].maskedValue),
-      },
-    ])
-  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
-}
-
-function createProviderKeyDraftsFromSettings(
-  settings: Pick<AppSettings, ApiKeyField>
-): Record<ApiKeyProvider, ProviderKeyDraft> {
-  return Object.fromEntries(
-    API_KEY_PROVIDERS.map((provider) => {
-      const field = API_KEY_FIELDS[provider];
-      return [provider, createProviderKeyDraft(settings[field] || "")];
-    })
-  ) as Record<ApiKeyProvider, ProviderKeyDraft>;
 }
 
 interface ProviderStatus {
@@ -113,6 +56,17 @@ interface ModelDraft {
   modelName: string;
 }
 
+const API_KEY_FIELDS: Record<
+  ApiKeyProvider,
+  "openai_api_key" | "anthropic_api_key" | "google_api_key" | "deepseek_api_key" | "openrouter_api_key"
+> = {
+  openai: "openai_api_key",
+  anthropic: "anthropic_api_key",
+  google: "google_api_key",
+  deepseek: "deepseek_api_key",
+  openrouter: "openrouter_api_key",
+};
+
 const PROVIDER_CONFIG = [
   { value: "openai", label: "OpenAI", keyFlag: "has_openai_key" as const },
   { value: "anthropic", label: "Anthropic", keyFlag: "has_anthropic_key" as const },
@@ -122,10 +76,10 @@ const PROVIDER_CONFIG = [
 ] as const;
 
 const MODEL_ROLE_CONFIG = [
-  { field: "default_model", label: "默认模型", hint: "用于主要文本生成链路" },
-  { field: "strong_model", label: "高级模型", hint: "用于高质量结构化生成" },
-  { field: "vision_model", label: "多模态模型", hint: "用于视觉审美评估（需图片能力）" },
-  { field: "fast_model", label: "快速模型", hint: "用于文档清洗、分块分析等简单任务，建议选非 thinking 模型" },
+  { field: "default_model", label: "默认模型", hint: "主要生成" },
+  { field: "strong_model", label: "高级模型", hint: "更高质量" },
+  { field: "vision_model", label: "多模态模型", hint: "图片理解" },
+  { field: "fast_model", label: "快速模型", hint: "轻量任务" },
 ] as const;
 
 const MODEL_SUGGESTIONS: Record<KnownProvider, string[]> = {
@@ -142,7 +96,7 @@ const MODEL_SUGGESTIONS: Record<KnownProvider, string[]> = {
   ],
 };
 
-const DEFAULT_PROVIDER_STATUS: ProviderStatus = {
+const EMPTY_PROVIDER_STATUS: ProviderStatus = {
   has_openai_key: false,
   has_anthropic_key: false,
   has_google_key: false,
@@ -164,28 +118,61 @@ const EMPTY_MODEL_DRAFTS: Record<ModelRoleField, ModelDraft> = {
   fast_model: { provider: "openrouter", customProvider: "", modelName: "deepseek/deepseek-chat-v3-0324" },
 };
 
+const EMPTY_PROVIDER_KEY_DRAFTS: Record<ApiKeyProvider, ProviderKeyDraft> = {
+  openai: { draftValue: "", maskedValue: "", showMasked: false },
+  anthropic: { draftValue: "", maskedValue: "", showMasked: false },
+  google: { draftValue: "", maskedValue: "", showMasked: false },
+  deepseek: { draftValue: "", maskedValue: "", showMasked: false },
+  openrouter: { draftValue: "", maskedValue: "", showMasked: false },
+};
+
+function createProviderKeyDraft(maskedValue: string): ProviderKeyDraft {
+  return {
+    draftValue: "",
+    maskedValue,
+    showMasked: Boolean(maskedValue),
+  };
+}
+
+function createProviderKeyDraftsFromSettings(settings: AppSettings): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return {
+    openai: createProviderKeyDraft(settings.openai_api_key || ""),
+    anthropic: createProviderKeyDraft(settings.anthropic_api_key || ""),
+    google: createProviderKeyDraft(settings.google_api_key || ""),
+    deepseek: createProviderKeyDraft(settings.deepseek_api_key || ""),
+    openrouter: createProviderKeyDraft(settings.openrouter_api_key || ""),
+  };
+}
+
+function clearProviderPlaintextDrafts(
+  drafts: Record<ApiKeyProvider, ProviderKeyDraft>
+): Record<ApiKeyProvider, ProviderKeyDraft> {
+  return {
+    openai: { ...drafts.openai, draftValue: "", showMasked: Boolean(drafts.openai.maskedValue) },
+    anthropic: { ...drafts.anthropic, draftValue: "", showMasked: Boolean(drafts.anthropic.maskedValue) },
+    google: { ...drafts.google, draftValue: "", showMasked: Boolean(drafts.google.maskedValue) },
+    deepseek: { ...drafts.deepseek, draftValue: "", showMasked: Boolean(drafts.deepseek.maskedValue) },
+    openrouter: { ...drafts.openrouter, draftValue: "", showMasked: Boolean(drafts.openrouter.maskedValue) },
+  };
+}
+
 function isKnownProvider(value: string): value is KnownProvider {
   return PROVIDER_CONFIG.some((provider) => provider.value === value);
 }
 
+function getProviderLabel(value: string): string {
+  return PROVIDER_CONFIG.find((provider) => provider.value === value)?.label ?? value;
+}
+
 function parseModelDraft(raw: string): ModelDraft {
   const value = raw.trim();
-  if (!value) {
-    return { provider: "openai", customProvider: "", modelName: "" };
-  }
-
-  if (!value.includes(":")) {
-    return { provider: "custom", customProvider: "", modelName: value };
-  }
+  if (!value) return { provider: "openai", customProvider: "", modelName: "" };
+  if (!value.includes(":")) return { provider: "custom", customProvider: "", modelName: value };
 
   const [providerPart, ...rest] = value.split(":");
   const provider = providerPart.trim();
   const modelName = rest.join(":").trim();
-
-  if (isKnownProvider(provider)) {
-    return { provider, customProvider: "", modelName };
-  }
-
+  if (isKnownProvider(provider)) return { provider, customProvider: "", modelName };
   return { provider: "custom", customProvider: provider, modelName };
 }
 
@@ -203,69 +190,41 @@ function composeModelValue(draft: ModelDraft): string {
 
 function buildDraftStatus(model: string, providerStatus: ProviderStatus): ModelStatus {
   const value = model.trim();
-  if (!value) {
-    return {
-      model: "",
-      provider: "",
-      ready: false,
-      message: "请先在当前 Tab 输入 Provider 与 Model Name",
-    };
-  }
-
+  if (!value) return { model: "", provider: "", ready: false, message: "还没有设置模型" };
   if (!value.includes(":")) {
-    return {
-      model: value,
-      provider: "",
-      ready: true,
-      message: "未检测到 provider 前缀，将按原始模型名尝试调用",
-    };
+    return { model: value, provider: "", ready: true, message: "将按原始模型名尝试调用" };
   }
 
   const [provider, ...rest] = value.split(":");
   const providerName = provider.trim();
   const modelName = rest.join(":").trim();
-
   if (!modelName) {
-    return {
-      model: value,
-      provider: providerName,
-      ready: false,
-      message: "模型格式无效，请使用 provider:model-name",
-    };
+    return { model: value, provider: providerName, ready: false, message: "格式应为 provider:model-name" };
   }
-
   if (!isKnownProvider(providerName)) {
-    return {
-      model: value,
-      provider: providerName,
-      ready: true,
-      message: `Provider ${providerName} 未内置 API Key 校验，将在运行时尝试调用`,
-    };
+    return { model: value, provider: providerName, ready: true, message: "自定义 Provider 将在运行时尝试调用" };
   }
 
-  const keyFlag = PROVIDER_CONFIG.find((p) => p.value === providerName)?.keyFlag;
+  const keyFlag = PROVIDER_CONFIG.find((item) => item.value === providerName)?.keyFlag;
   const hasKey = keyFlag ? providerStatus[keyFlag] : false;
-  if (hasKey) {
-    return {
-      model: value,
-      provider: providerName,
-      ready: true,
-      message: `${providerName} API Key 已配置，可直接生成`,
-    };
-  }
-
   return {
     model: value,
     provider: providerName,
-    ready: false,
-    message: `模型 ${value} 需要 ${providerName} API Key，请先在 API 信息中配置`,
+    ready: hasKey,
+    message: hasKey ? "可以直接使用" : `需要先配置 ${getProviderLabel(providerName)} 的 API Key`,
   };
+}
+
+function getStatusBadgeClasses(ready: boolean): string {
+  return ready
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"
+    : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300";
 }
 
 interface KeyFieldProps {
   label: string;
   value: string;
-  onChange: (v: string) => void;
+  onChange: (value: string) => void;
   provider: "openai" | "anthropic" | "google" | "deepseek" | "openrouter" | "minimax";
   baseUrl?: string;
   placeholder?: string;
@@ -295,26 +254,28 @@ function KeyField({
     setValidating(true);
     setStatus("idle");
     try {
-      const res = await validateApiKey(provider, value, baseUrl);
-      setStatus(res.valid ? "valid" : "invalid");
-      if (res.valid) toast.success(res.message);
-      else toast.error(res.message);
+      const result = await validateApiKey(provider, value, baseUrl);
+      setStatus(result.valid ? "valid" : "invalid");
+      if (result.valid) toast.success(result.message);
+      else toast.error(result.message);
     } catch {
       setStatus("invalid");
-      toast.error("验证请求失败");
+      toast.error("验证失败");
     } finally {
       setValidating(false);
     }
   };
 
-  const handleToggleVisible = () => {
-    setStatus("idle");
-    setVisible((prev) => !prev);
-  };
-
   return (
-    <div className="space-y-1.5">
-      <Label className="text-sm">{label}</Label>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <Label className="text-sm">{label}</Label>
+        {configured && !value ? (
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+            已保存
+          </span>
+        ) : null}
+      </div>
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Input
@@ -324,36 +285,37 @@ function KeyField({
               onChange(e.target.value);
               setStatus("idle");
             }}
-            placeholder={!value && configured ? "已配置 · 输入新值可覆盖" : placeholder || "sk-..."}
-            className="pr-8"
+            placeholder={!value && configured ? "已配置，输入新值可覆盖" : placeholder || "sk-..."}
+            className="h-10 rounded-xl pr-10"
           />
           <button
             type="button"
-            onClick={handleToggleVisible}
+            onClick={() => setVisible((prev) => !prev)}
             disabled={!value}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 disabled:opacity-50"
             aria-label={visible ? "隐藏 API Key" : "显示 API Key"}
           >
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
-        {showValidate && (
-          <button
+        {showValidate ? (
+          <Button
             type="button"
+            variant="outline"
             onClick={handleValidate}
             disabled={validating || !value}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs border rounded-md hover:bg-muted disabled:opacity-50 shrink-0"
+            className="h-10 rounded-xl px-3"
           >
             {validating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : status === "valid" ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             ) : status === "invalid" ? (
-              <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+              <AlertTriangle className="h-4 w-4 text-red-600" />
             ) : null}
             验证
-          </button>
-        )}
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -368,46 +330,19 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeRole, setActiveRole] = useState<ModelRoleField>("default_model");
-  const [providerEditorOpen, setProviderEditorOpen] = useState(false);
   const [providerEditorTab, setProviderEditorTab] = useState<KnownProvider>("openrouter");
-
-  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(DEFAULT_PROVIDER_STATUS);
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(EMPTY_PROVIDER_STATUS);
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
   const [providerKeyDrafts, setProviderKeyDrafts] =
     useState<Record<ApiKeyProvider, ProviderKeyDraft>>(EMPTY_PROVIDER_KEY_DRAFTS);
+  const [modelDrafts, setModelDrafts] =
+    useState<Record<ModelRoleField, ModelDraft>>(EMPTY_MODEL_DRAFTS);
   const [ttsProvider, setTtsProvider] = useState("minimax");
   const [ttsBaseUrl, setTtsBaseUrl] = useState("https://api.minimaxi.com");
   const [ttsModel, setTtsModel] = useState("speech-2.8-hd");
   const [ttsVoiceId, setTtsVoiceId] = useState("male-qn-qingse");
   const [ttsKeyDraft, setTtsKeyDraft] = useState<ProviderKeyDraft>(createProviderKeyDraft(""));
   const [enableVisionVerification, setEnableVisionVerification] = useState(true);
-
-  const updateProviderKeyDraft = (provider: ApiKeyProvider, nextValue: string) => {
-    setProviderKeyDrafts((prev) => ({
-      ...prev,
-      [provider]: {
-        ...prev[provider],
-        draftValue: nextValue,
-        showMasked: false,
-      },
-    }));
-  };
-
-  const clearProviderPlaintext = () => {
-    setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
-  };
-
-  const clearTtsPlaintext = () => {
-    setTtsKeyDraft((prev) => ({
-      ...prev,
-      draftValue: "",
-      cachedPlainValue: null,
-      showMasked: Boolean(prev.maskedValue),
-    }));
-  };
-
-  const [modelDrafts, setModelDrafts] =
-    useState<Record<ModelRoleField, ModelDraft>>(EMPTY_MODEL_DRAFTS);
 
   const modelValues = useMemo(
     () => ({
@@ -429,25 +364,36 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
     [modelValues, providerStatus]
   );
 
+  const readyModelCount = useMemo(
+    () => MODEL_ROLE_CONFIG.filter((role) => modelStatuses[role.field]?.ready).length,
+    [modelStatuses]
+  );
+
+  const configuredProviderCount = useMemo(
+    () => PROVIDER_CONFIG.filter((provider) => providerStatus[provider.keyFlag]).length,
+    [providerStatus]
+  );
+
   const activeDraft = modelDrafts[activeRole];
   const activeStatus = modelStatuses[activeRole] || EMPTY_MODEL_STATUS;
   const activeProviderValue = getDraftProviderValue(activeDraft);
   const activeKnownProvider = isKnownProvider(activeProviderValue) ? activeProviderValue : null;
+  const activeProviderKeyDraft =
+    providerKeyDrafts[
+      providerEditorTab === "google-gla" ? "google" : (providerEditorTab as Exclude<KnownProvider, "google-gla"> | "google")
+    ];
+  const activeProviderConfigured = providerStatus[
+    PROVIDER_CONFIG.find((provider) => provider.value === providerEditorTab)?.keyFlag || "has_openai_key"
+  ];
+  const ttsConfigured = Boolean(ttsKeyDraft.maskedValue || ttsKeyDraft.draftValue);
 
   useEffect(() => {
     if (!open) return;
-
     setLoading(true);
     getSettings()
       .then((settings) => {
         setOpenaiBaseUrl(settings.openai_base_url || "https://api.openai.com/v1");
         setProviderKeyDrafts(createProviderKeyDraftsFromSettings(settings));
-        setTtsProvider(settings.tts_provider || "minimax");
-        setTtsBaseUrl(settings.tts_base_url || "https://api.minimaxi.com");
-        setTtsModel(settings.tts_model || "speech-2.8-hd");
-        setTtsVoiceId(settings.tts_voice_id || "male-qn-qingse");
-        setTtsKeyDraft(createProviderKeyDraft(settings.tts_api_key || ""));
-        setEnableVisionVerification(settings.enable_vision_verification);
         setProviderStatus({
           has_openai_key: settings.has_openai_key,
           has_anthropic_key: settings.has_anthropic_key,
@@ -461,34 +407,42 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
           vision_model: parseModelDraft(settings.vision_model),
           fast_model: parseModelDraft(settings.fast_model),
         });
+        setTtsProvider(settings.tts_provider || "minimax");
+        setTtsBaseUrl(settings.tts_base_url || "https://api.minimaxi.com");
+        setTtsModel(settings.tts_model || "speech-2.8-hd");
+        setTtsVoiceId(settings.tts_voice_id || "male-qn-qingse");
+        setTtsKeyDraft(createProviderKeyDraft(settings.tts_api_key || ""));
+        setEnableVisionVerification(settings.enable_vision_verification);
       })
       .catch(() => toast.error("加载设置失败"))
       .finally(() => setLoading(false));
   }, [open]);
+
   useEffect(() => {
-    if (!open) {
-      setProviderEditorOpen(false);
-      clearProviderPlaintext();
-      clearTtsPlaintext();
-    }
+    if (open) return;
+    setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
+    setTtsKeyDraft((prev) => ({
+      ...prev,
+      draftValue: "",
+      showMasked: Boolean(prev.maskedValue),
+    }));
   }, [open]);
 
   const updateDraft = (field: ModelRoleField, patch: Partial<ModelDraft>) => {
     setModelDrafts((prev) => ({
       ...prev,
-      [field]: {
-        ...prev[field],
-        ...patch,
-      },
+      [field]: { ...prev[field], ...patch },
     }));
   };
 
-  const openProviderEditor = () => {
-    setProviderEditorTab(activeKnownProvider || "openrouter");
-    setProviderEditorOpen(true);
+  const updateProviderKeyDraft = (provider: ApiKeyProvider, value: string) => {
+    setProviderKeyDrafts((prev) => ({
+      ...prev,
+      [provider]: { ...prev[provider], draftValue: value, showMasked: false },
+    }));
   };
 
-  const handleSave = async (): Promise<boolean> => {
+  const handleSave = async () => {
     setSaving(true);
     try {
       const response = await updateSettings({
@@ -503,11 +457,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
         tts_voice_id: ttsVoiceId,
         enable_vision_verification: enableVisionVerification,
         ...Object.entries(providerKeyDrafts).reduce<Record<string, string>>((acc, [provider, state]) => {
-          if (state.showMasked || !state.draftValue || state.draftValue.includes("...")) {
-            return acc;
-          }
-          const field = API_KEY_FIELDS[provider as ApiKeyProvider];
-          acc[field] = state.draftValue;
+          if (state.showMasked || !state.draftValue || state.draftValue.includes("...")) return acc;
+          acc[API_KEY_FIELDS[provider as ApiKeyProvider]] = state.draftValue;
           return acc;
         }, {}),
         ...(!ttsKeyDraft.showMasked && ttsKeyDraft.draftValue && !ttsKeyDraft.draftValue.includes("...")
@@ -515,6 +466,8 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
           : {}),
       });
 
+      setOpenaiBaseUrl(response.openai_base_url || "https://api.openai.com/v1");
+      setProviderKeyDrafts(createProviderKeyDraftsFromSettings(response));
       setProviderStatus({
         has_openai_key: response.has_openai_key,
         has_anthropic_key: response.has_anthropic_key,
@@ -532,293 +485,248 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
       setTtsBaseUrl(response.tts_base_url || "https://api.minimaxi.com");
       setTtsModel(response.tts_model || "speech-2.8-hd");
       setTtsVoiceId(response.tts_voice_id || "male-qn-qingse");
-      setEnableVisionVerification(response.enable_vision_verification);
-      setProviderKeyDrafts(createProviderKeyDraftsFromSettings(response));
       setTtsKeyDraft(createProviderKeyDraft(response.tts_api_key || ""));
+      setEnableVisionVerification(response.enable_vision_verification);
 
       toast.success("设置已保存");
       window.dispatchEvent(new Event("settings:updated"));
-
-      const warnings = [
-        response.default_model_status,
-        response.strong_model_status,
-        response.vision_model_status,
-        response.fast_model_status,
-      ].filter((status) => !status.ready);
-      if (warnings.length > 0) {
-        toast("设置已保存，但有模型尚未就绪", {
-          description: warnings.map((status) => status.message).join("；"),
-        });
-      }
-      return true;
     } catch {
       toast.error("保存失败");
-      return false;
     } finally {
       setSaving(false);
     }
   };
-  const handleProviderEditorSave = async () => {
-    const saved = await handleSave();
-    if (!saved) return;
-    setProviderEditorOpen(false);
-    clearProviderPlaintext();
-  };
-  const handleSettingsDialogOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) {
-      setProviderEditorOpen(false);
-      clearProviderPlaintext();
-      clearTtsPlaintext();
-    }
-    onOpenChange(nextOpen);
-  };
 
-  const handleProviderEditorOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) {
-      clearProviderPlaintext();
-      clearTtsPlaintext();
-    }
-    setProviderEditorOpen(nextOpen);
-  };
   return (
-    <>
-      <Dialog open={open} onOpenChange={handleSettingsDialogOpenChange}>
-        <DialogContent className="sm:max-w-3xl max-h-[88vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>设置</DialogTitle>
-            <DialogDescription>按“默认模型 / 高级模型 / 多模态模型”分别配置 Provider、模型名与 API 信息</DialogDescription>
-          </DialogHeader>
-
-          {loading ? (
-            <div className="flex items-center justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setProviderKeyDrafts((prev) => clearProviderPlaintextDrafts(prev));
+          setTtsKeyDraft((prev) => ({ ...prev, draftValue: "", showMasked: Boolean(prev.maskedValue) }));
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent className="max-h-[84vh] overflow-y-auto border-slate-200 bg-white p-0 shadow-xl sm:max-w-4xl dark:border-slate-800 dark:bg-slate-950">
+        <DialogHeader className="border-b border-slate-200 px-5 py-4 pr-16 text-left dark:border-slate-800 sm:pr-20">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <DialogTitle className="text-lg font-semibold text-slate-950 dark:text-white">设置</DialogTitle>
+              <DialogDescription className="text-sm text-slate-500 dark:text-slate-400">
+                常用项放这里，尽量保持简单。
+              </DialogDescription>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <Tabs value={activeRole} onValueChange={(value) => setActiveRole(value as ModelRoleField)}>
-                <TabsList className="w-full">
-                  {MODEL_ROLE_CONFIG.map((role) => (
-                    <TabsTrigger key={role.field} value={role.field}>
-                      {role.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
+            <div className="flex flex-wrap justify-end gap-2 pr-2">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                模型 {readyModelCount}/{MODEL_ROLE_CONFIG.length}
+              </span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                API {configuredProviderCount}/{PROVIDER_CONFIG.length}
+              </span>
+            </div>
+          </div>
+        </DialogHeader>
 
-                {MODEL_ROLE_CONFIG.map((role) => {
-                  const draft = modelDrafts[role.field];
-                  const status = modelStatuses[role.field] || EMPTY_MODEL_STATUS;
-                  const providerValue = getDraftProviderValue(draft);
-                  const knownProvider = isKnownProvider(providerValue) ? providerValue : null;
-                  const providerConfig = knownProvider
-                    ? PROVIDER_CONFIG.find((provider) => provider.value === knownProvider)
-                    : null;
-                  const hasProviderKey = providerConfig
-                    ? providerStatus[providerConfig.keyFlag]
-                    : false;
+        {loading ? (
+          <div className="flex min-h-[320px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+          </div>
+        ) : (
+          <div className="px-5 py-4">
+            <Tabs defaultValue="models" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="models">模型</TabsTrigger>
+                <TabsTrigger value="api">API</TabsTrigger>
+                <TabsTrigger value="tts">语音</TabsTrigger>
+              </TabsList>
 
-                  return (
-                    <TabsContent key={role.field} value={role.field} className="space-y-4 mt-4">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">{role.label}</p>
-                        <p className="text-xs text-muted-foreground">{role.hint}</p>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-sm">Provider</Label>
-                        <select
-                          value={draft.provider}
-                          onChange={(e) => updateDraft(role.field, { provider: e.target.value as DraftProvider })}
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                        >
-                          {PROVIDER_CONFIG.map((provider) => (
-                            <option key={provider.value} value={provider.value}>
-                              {provider.label}
-                            </option>
-                          ))}
-                          <option value="custom">自定义 Provider</option>
-                        </select>
-                      </div>
-
-                      {draft.provider === "custom" && (
-                        <div className="space-y-1.5">
-                          <Label className="text-sm">自定义 Provider 名称</Label>
-                          <Input
-                            value={draft.customProvider}
-                            onChange={(e) => updateDraft(role.field, { customProvider: e.target.value })}
-                            placeholder="例如：moonshot"
-                          />
-                        </div>
-                      )}
-
-                      <div className="space-y-1.5">
-                        <Label className="text-sm">Model Name</Label>
-                        <Input
-                          value={draft.modelName}
-                          onChange={(e) => updateDraft(role.field, { modelName: e.target.value })}
-                          placeholder="例如：gpt-4o-mini / moonshotai/kimi-k2.5"
-                        />
-                        {knownProvider && MODEL_SUGGESTIONS[knownProvider].length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {MODEL_SUGGESTIONS[knownProvider].map((modelName) => (
-                              <button
-                                key={modelName}
-                                type="button"
-                                onClick={() => updateDraft(role.field, { modelName })}
-                                className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                                  draft.modelName.trim() === modelName
-                                    ? "bg-primary text-primary-foreground border-primary"
-                                    : "hover:bg-muted"
-                                }`}
-                              >
-                                {modelName}
-                              </button>
-                            ))}
-                          </div>
+              <TabsContent value="models" className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {MODEL_ROLE_CONFIG.map((role) => {
+                    const status = modelStatuses[role.field] || EMPTY_MODEL_STATUS;
+                    return (
+                      <button
+                        key={role.field}
+                        type="button"
+                        onClick={() => setActiveRole(role.field)}
+                        className={cn(
+                          "rounded-full border px-3 py-2 text-xs font-medium transition-colors",
+                          activeRole === role.field
+                            ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950"
+                            : "border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
                         )}
-                      </div>
-
-                      <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-                        <p className="text-xs text-muted-foreground">完整模型预览</p>
-                        <code className="text-sm break-all">
-                          {composeModelValue(draft) || "(空)"}
-                        </code>
-                      </div>
-
-                      <div
-                        className={`rounded-md border p-3 flex items-start gap-2 ${
-                          status.ready
-                            ? "border-green-300/70 bg-green-50/60 dark:bg-green-950/20"
-                            : "border-amber-300/70 bg-amber-50/70 dark:bg-amber-950/20"
-                        }`}
                       >
-                        {status.ready ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
-                        ) : (
-                          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                        )}
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium">{status.ready ? "当前模型已就绪" : "当前模型尚未就绪"}</p>
-                          <p className="text-xs text-muted-foreground">{status.message}</p>
-                        </div>
-                      </div>
+                        {role.label}
+                        <span className="ml-1 opacity-80">{status.ready ? "已就绪" : "未就绪"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
 
-                      <div className="rounded-lg border p-4 space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium">API 信息</p>
-                            <p className="text-xs text-muted-foreground">
-                              当前 Provider：{providerValue || "(未填写)"}
-                            </p>
-                          </div>
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {MODEL_ROLE_CONFIG.find((role) => role.field === activeRole)?.label}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {MODEL_ROLE_CONFIG.find((role) => role.field === activeRole)?.hint}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Provider</Label>
+                    <select
+                      value={activeDraft.provider}
+                      onChange={(e) => updateDraft(activeRole, { provider: e.target.value as DraftProvider })}
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-950"
+                    >
+                      {PROVIDER_CONFIG.map((provider) => (
+                        <option key={provider.value} value={provider.value}>
+                          {provider.label}
+                        </option>
+                      ))}
+                      <option value="custom">自定义</option>
+                    </select>
+                  </div>
+
+                  {activeDraft.provider === "custom" ? (
+                    <div className="space-y-2">
+                      <Label className="text-sm">自定义 Provider</Label>
+                      <Input
+                        value={activeDraft.customProvider}
+                        onChange={(e) => updateDraft(activeRole, { customProvider: e.target.value })}
+                        placeholder="例如：moonshot"
+                        className="h-10 rounded-xl"
+                      />
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">模型名称</Label>
+                    <Input
+                      value={activeDraft.modelName}
+                      onChange={(e) => updateDraft(activeRole, { modelName: e.target.value })}
+                      placeholder="例如：gpt-4o-mini"
+                      className="h-10 rounded-xl"
+                    />
+                    {activeKnownProvider ? (
+                      <div className="flex flex-wrap gap-2">
+                        {MODEL_SUGGESTIONS[activeKnownProvider].map((modelName) => (
                           <button
+                            key={modelName}
                             type="button"
-                            onClick={openProviderEditor}
-                            className="px-3 py-1.5 text-xs rounded-md border hover:bg-muted transition-colors"
-                          >
-                            编辑 API 信息
-                          </button>
-                        </div>
-                        {knownProvider ? (
-                          <div className="flex items-center gap-2 text-xs">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full ${
-                                hasProviderKey
-                                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                              }`}
-                            >
-                              {hasProviderKey ? "API Key 已配置" : "API Key 未配置"}
-                            </span>
-                            {knownProvider === "openai" && (
-                              <span className="text-muted-foreground">
-                                Base URL: {openaiBaseUrl || "https://api.openai.com/v1"}
-                              </span>
+                            onClick={() => updateDraft(activeRole, { modelName })}
+                            className={cn(
+                              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                              activeDraft.modelName.trim() === modelName
+                                ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950"
+                                : "border-slate-200 bg-white text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
                             )}
-                          </div>
-                        ) : (
-                          <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                            <span>自定义 Provider 不走内置 Key 管理，请确保后端运行环境可直接访问该模型。</span>
-                          </div>
-                        )}
+                          >
+                            {modelName}
+                          </button>
+                        ))}
                       </div>
-                    </TabsContent>
-                  );
-                })}
-              </Tabs>
+                    ) : null}
+                  </div>
 
-              <div className="rounded-lg border p-4 space-y-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">TTS 服务</p>
-                  <p className="text-xs text-muted-foreground">
-                    演讲者注解朗读使用独立语音服务配置，不复用上方文本模型 Provider。
-                  </p>
+                  <div className={cn("rounded-xl border px-3 py-3", getStatusBadgeClasses(activeStatus.ready))}>
+                    <p className="text-sm font-medium">{composeModelValue(activeDraft) || "未配置"}</p>
+                    <p className="mt-1 text-xs opacity-90">{activeStatus.message}</p>
+                    {activeKnownProvider ? (
+                      <button
+                        type="button"
+                        onClick={() => setProviderEditorTab(activeKnownProvider)}
+                        className="mt-2 text-xs underline-offset-4 hover:underline"
+                      >
+                        去 API 设置
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {activeDraft.provider === "custom" ? (
+                    <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      自定义 Provider 需要后端环境自行处理连接。
+                    </div>
+                  ) : null}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="api" className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {PROVIDER_CONFIG.map((provider) => {
+                    const ready = providerStatus[provider.keyFlag];
+                    return (
+                      <button
+                        key={provider.value}
+                        type="button"
+                        onClick={() => setProviderEditorTab(provider.value)}
+                        className={cn(
+                          "rounded-full border px-3 py-2 text-xs font-medium transition-colors",
+                          providerEditorTab === provider.value
+                            ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950"
+                            : "border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
+                        )}
+                      >
+                        {provider.label}
+                        <span className="ml-1 opacity-80">{ready ? "已连接" : ""}</span>
+                      </button>
+                    );
+                  })}
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-sm">服务商</Label>
-                  <select
-                    value={ttsProvider}
-                    onChange={(e) => setTtsProvider(e.target.value)}
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="minimax">MiniMax</option>
-                  </select>
-                </div>
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {getProviderLabel(providerEditorTab)}
+                    </p>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px]",
+                        getStatusBadgeClasses(activeProviderConfigured)
+                      )}
+                    >
+                      {activeProviderConfigured ? "已连接" : "未连接"}
+                    </span>
+                  </div>
 
-                <KeyField
-                  label="TTS API Key"
-                  value={ttsKeyDraft.showMasked ? "" : ttsKeyDraft.draftValue}
-                  onChange={(value) =>
-                    setTtsKeyDraft((prev) => ({
-                      ...prev,
-                      draftValue: value,
-                      showMasked: false,
-                    }))
-                  }
-                  provider="minimax"
-                  placeholder="Bearer API Key"
-                  configured={Boolean(ttsKeyDraft.maskedValue)}
-                  showValidate={false}
-                />
-
-                <div className="space-y-1.5">
-                  <Label className="text-sm">Base URL</Label>
-                  <Input
-                    value={ttsBaseUrl}
-                    onChange={(e) => setTtsBaseUrl(e.target.value)}
-                    placeholder="https://api.minimaxi.com"
+                  <KeyField
+                    label="API Key"
+                    value={activeProviderKeyDraft.showMasked ? "" : activeProviderKeyDraft.draftValue}
+                    onChange={(value) =>
+                      updateProviderKeyDraft(providerEditorTab === "google-gla" ? "google" : providerEditorTab, value)
+                    }
+                    provider={providerEditorTab === "google-gla" ? "google" : providerEditorTab}
+                    baseUrl={providerEditorTab === "openai" ? openaiBaseUrl : undefined}
+                    placeholder={
+                      providerEditorTab === "anthropic"
+                        ? "sk-ant-..."
+                        : providerEditorTab === "google-gla"
+                          ? "AIza..."
+                          : providerEditorTab === "openrouter"
+                            ? "sk-or-..."
+                            : "sk-..."
+                    }
+                    configured={activeProviderConfigured}
                   />
+
+                  {providerEditorTab === "openai" ? (
+                    <div className="space-y-2">
+                      <Label className="text-sm">Base URL</Label>
+                      <Input
+                        value={openaiBaseUrl}
+                        onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+                        placeholder="https://api.openai.com/v1"
+                        className="h-10 rounded-xl"
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">模型</Label>
-                    <Input
-                      value={ttsModel}
-                      onChange={(e) => setTtsModel(e.target.value)}
-                      placeholder="speech-2.8-hd"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">音色 ID</Label>
-                    <Input
-                      value={ttsVoiceId}
-                      onChange={(e) => setTtsVoiceId(e.target.value)}
-                      placeholder="male-qn-qingse"
-                    />
-                  </div>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  当前朗读会在点击喇叭时才生成音频，并按注解文本 hash 本地缓存 mp3。
-                </p>
-              </div>
-
-              <div className="rounded-lg border p-4 space-y-2">
-                <p className="text-sm font-medium">生成验证</p>
-                <label className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-muted-foreground">启用视觉验证（截图审美评估）</span>
+                <label className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm dark:border-slate-800 dark:bg-slate-950">
+                  <span>启用视觉验证</span>
                   <input
                     type="checkbox"
                     checked={enableVisionVerification}
@@ -826,125 +734,99 @@ export function SettingsDialogContent({ open, onOpenChange }: SettingsDialogCont
                     className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
                   />
                 </label>
-                <p className="text-xs text-muted-foreground">
-                  关闭后将跳过 Playwright 截图验证，仅保留程序化与文本评估。
-                </p>
-              </div>
+              </TabsContent>
 
-              <button
+              <TabsContent value="tts" className="space-y-4">
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">语音朗读</p>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[11px]",
+                        getStatusBadgeClasses(ttsConfigured)
+                      )}
+                    >
+                      {ttsConfigured ? "已配置" : "未配置"}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">服务商</Label>
+                    <select
+                      value={ttsProvider}
+                      onChange={(e) => setTtsProvider(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-ring dark:border-slate-800 dark:bg-slate-950"
+                    >
+                      <option value="minimax">MiniMax</option>
+                    </select>
+                  </div>
+
+                  <KeyField
+                    label="TTS API Key"
+                    value={ttsKeyDraft.showMasked ? "" : ttsKeyDraft.draftValue}
+                    onChange={(value) => setTtsKeyDraft((prev) => ({ ...prev, draftValue: value, showMasked: false }))}
+                    provider="minimax"
+                    placeholder="Bearer API Key"
+                    configured={Boolean(ttsKeyDraft.maskedValue)}
+                    showValidate={false}
+                  />
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Base URL</Label>
+                    <Input
+                      value={ttsBaseUrl}
+                      onChange={(e) => setTtsBaseUrl(e.target.value)}
+                      placeholder="https://api.minimaxi.com"
+                      className="h-10 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className="text-sm">模型</Label>
+                      <Input
+                        value={ttsModel}
+                        onChange={(e) => setTtsModel(e.target.value)}
+                        placeholder="speech-2.8-hd"
+                        className="h-10 rounded-xl"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm">音色</Label>
+                      <Input
+                        value={ttsVoiceId}
+                        onChange={(e) => setTtsVoiceId(e.target.value)}
+                        placeholder="male-qn-qingse"
+                        className="h-10 rounded-xl"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {readyModelCount === MODEL_ROLE_CONFIG.length
+                  ? "模型已准备好。"
+                  : `还有 ${MODEL_ROLE_CONFIG.length - readyModelCount} 个模型未准备好。`}
+              </p>
+              <Button
                 type="button"
-                onClick={handleSave}
+                onClick={() => {
+                  void handleSave();
+                }}
                 disabled={saving}
-                className="w-full py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+                className="h-10 rounded-xl px-5"
               >
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 保存设置
-              </button>
-
-              {!activeStatus.ready && (
-                <p className="text-xs text-amber-600 dark:text-amber-400">
-                  提示：当前 Tab 模型未就绪仍可保存，系统会在生成时给出明确错误与修复提示。
-                </p>
-              )}
+              </Button>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={providerEditorOpen} onOpenChange={handleProviderEditorOpenChange}>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>API 信息</DialogTitle>
-            <DialogDescription>统一管理各 Provider 的 API Key，可在当前窗口直接保存生效</DialogDescription>
-          </DialogHeader>
-
-          <Tabs value={providerEditorTab} onValueChange={(value) => setProviderEditorTab(value as KnownProvider)}>
-            <TabsList className="w-full">
-              {PROVIDER_CONFIG.map((provider) => (
-                <TabsTrigger key={provider.value} value={provider.value}>
-                  {provider.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-
-            <TabsContent value="openai" className="space-y-3 mt-4">
-              <KeyField
-                label="API Key"
-                value={getProviderKeyDisplayValue(providerKeyDrafts.openai)}
-                onChange={(value) => updateProviderKeyDraft("openai", value)}
-                provider="openai"
-                baseUrl={openaiBaseUrl}
-                placeholder="sk-..."
-                configured={providerStatus.has_openai_key}
-              />
-              <div className="space-y-1.5">
-                <Label className="text-sm">Base URL</Label>
-                <Input
-                  value={openaiBaseUrl}
-                  onChange={(e) => setOpenaiBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1"
-                />
-                <p className="text-xs text-muted-foreground">兼容 OpenAI 接口的服务可修改此地址</p>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="anthropic" className="space-y-3 mt-4">
-              <KeyField
-                label="API Key"
-                value={getProviderKeyDisplayValue(providerKeyDrafts.anthropic)}
-                onChange={(value) => updateProviderKeyDraft("anthropic", value)}
-                provider="anthropic"
-                placeholder="sk-ant-..."
-                configured={providerStatus.has_anthropic_key}
-              />
-            </TabsContent>
-
-            <TabsContent value="google-gla" className="space-y-3 mt-4">
-              <KeyField
-                label="API Key"
-                value={getProviderKeyDisplayValue(providerKeyDrafts.google)}
-                onChange={(value) => updateProviderKeyDraft("google", value)}
-                provider="google"
-                placeholder="AIza..."
-                configured={providerStatus.has_google_key}
-              />
-            </TabsContent>
-
-            <TabsContent value="deepseek" className="space-y-3 mt-4">
-              <KeyField
-                label="API Key"
-                value={getProviderKeyDisplayValue(providerKeyDrafts.deepseek)}
-                onChange={(value) => updateProviderKeyDraft("deepseek", value)}
-                provider="deepseek"
-                placeholder="sk-..."
-                configured={providerStatus.has_deepseek_key}
-              />
-            </TabsContent>
-
-            <TabsContent value="openrouter" className="space-y-3 mt-4">
-              <KeyField
-                label="API Key"
-                value={getProviderKeyDisplayValue(providerKeyDrafts.openrouter)}
-                onChange={(value) => updateProviderKeyDraft("openrouter", value)}
-                provider="openrouter"
-                placeholder="sk-or-..."
-                configured={providerStatus.has_openrouter_key}
-              />
-            </TabsContent>
-          </Tabs>
-
-          <button
-            type="button"
-            onClick={handleProviderEditorSave}
-            disabled={saving}
-            className="w-full py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2 mt-4"
-          >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            保存 API 信息
-          </button>
-        </DialogContent>
-      </Dialog>
-    </>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -956,7 +838,7 @@ export default function SettingsDialog() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         title="设置"
       >
         <Settings className="h-4 w-4" />
