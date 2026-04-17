@@ -8,6 +8,7 @@ import {
   canSubmitUrlSource,
   getAvailableAddSourceModes,
   resetAddSourceAreaDrafts,
+  resolveTextSourceName,
   type AddSourceMode,
 } from "@/components/create/add-source-area-logic";
 
@@ -72,9 +73,9 @@ export default function AddSourceArea({
 
   const handleTextSubmit = () => {
     if (!onTextSubmit) return;
-    const normalizedName = textName.trim();
     const normalizedContent = textContent.trim();
-    if (!canSubmitTextSource(normalizedName, normalizedContent)) return;
+    if (!canSubmitTextSource(textName, normalizedContent)) return;
+    const normalizedName = resolveTextSourceName(textName, normalizedContent);
     onTextSubmit(normalizedName, normalizedContent);
     resetDrafts();
   };
@@ -300,7 +301,7 @@ export default function AddSourceArea({
             type="text"
             value={textName}
             onChange={(e) => setTextName(e.target.value)}
-            placeholder="素材名称"
+            placeholder="素材名称（可选）"
             className="w-full rounded-2xl border border-white/90 bg-white/92 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-cyan-200 focus:ring-2 focus:ring-cyan-500/15"
           />
           <textarea

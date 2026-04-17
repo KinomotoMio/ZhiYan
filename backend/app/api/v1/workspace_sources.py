@@ -44,6 +44,20 @@ def _snippet(text: str, max_len: int = 200) -> str:
     return content[:max_len] + "..."
 
 
+def _normalize_text_source_name(name: str, content: str, max_len: int = 48) -> str:
+    normalized = " ".join(name.split()).strip()
+    if normalized:
+        return normalized
+
+    for line in content.splitlines():
+        candidate = " ".join(line.split()).strip()
+        if candidate:
+            if len(candidate) <= max_len:
+                return candidate
+            return candidate[:max_len].rstrip() + "..."
+    return "未命名文本素材"
+
+
 def _sync_parse_file(path: Path) -> str:
     from app.services.document.parser import (
         create_markitdown_converter,
@@ -219,6 +233,7 @@ async def add_workspace_text_source(req: TextRequest, request: Request):
     await session_store.ensure_workspace(workspace_id)
     from app.services.document.parser import estimate_tokens
     content_hash = _hash_text(req.content)
+    normalized_name = _normalize_text_source_name(req.name, req.content)
 
     deduped = await session_store.get_workspace_source_by_hash(workspace_id, content_hash)
     if deduped:
@@ -228,7 +243,7 @@ async def add_workspace_text_source(req: TextRequest, request: Request):
     meta = await session_store.create_workspace_source(
         workspace_id=workspace_id,
         source_type="text",
-        name=req.name,
+        name=normalized_name,
         file_category="text",
         size=len(req.content.encode("utf-8")),
         status="ready",

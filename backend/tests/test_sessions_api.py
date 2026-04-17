@@ -937,6 +937,22 @@ def test_workspace_source_dedup_and_cross_workspace_isolation(monkeypatch, tmp_p
     assert not cross_payload.get("deduped", False)
 
 
+def test_workspace_text_source_name_falls_back_to_content(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-text-fallback"}
+
+    response = client.post(
+        "/api/v1/workspace/sources/text",
+        headers=headers,
+        json={"name": "   ", "content": "  第一行标题  \n第二行内容"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "第一行标题"
+
+
 def test_workspace_sources_link_count_and_bulk_delete_cascade(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
     client = TestClient(app)
