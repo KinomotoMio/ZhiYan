@@ -350,7 +350,7 @@ export default function AssetsView() {
             </button>
           </div>
 
-          <div className="rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4">
+          <div className="relative rounded-2xl border border-white/80 dark:border-slate-700 bg-white/75 dark:bg-slate-800/75 p-4 pb-10">
             <AddSourceArea
               variant="assets"
               onFilesSelected={(files) => {
@@ -363,6 +363,9 @@ export default function AssetsView() {
                 void handleTextSubmit(name, content);
               }}
             />
+            <p className="pointer-events-none absolute bottom-4 left-4 text-xs text-slate-500 dark:text-slate-400">
+              上传文件支持拖拽或点击，文本素材会在右上区域展开编辑。
+            </p>
           </div>
 
           <div className="flex items-center gap-3">
