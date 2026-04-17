@@ -7,9 +7,12 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
+from app.core.config import settings
 from app.models.generation import JobStatus, StageStatus
 from app.main import app
-from app.services.planning import PlanningTurnOutcome
+from app.services.generation.agentic.types import AssistantMessage
+from app.services.planning import CreateAgentService, PlanningTurnOutcome
+from tests.conftest import FakeModel
 
 
 def _install_temp_session_store(monkeypatch, tmp_path):
@@ -513,6 +516,123 @@ def test_planning_turn_can_persist_output_mode_from_natural_language(monkeypatch
     planning_state = planning_detail.json()["planning_state"]
     assert planning_state["output_mode"] == "html"
     assert planning_state["mode_selection_source"] == "natural_language"
+
+
+def test_planning_turn_prompt_omits_topic_suggestion_details():
+    service = CreateAgentService(session_store=None)
+
+    prompt = service._build_turn_prompt(
+        user_message="写一份 5 页演示文档",
+        current_state={
+            "output_mode": "slidev",
+            "brief": {"topic": "Claude Code"},
+            "outline": {},
+            "topic_suggestions": [
+                {"title": "现状问题与机会"},
+                {"title": "方案设计与取舍"},
+            ],
+        },
+        source_bundle={"sources": []},
+        outline_stale=False,
+    )
+
+    assert "现状问题与机会" not in prompt
+    assert "方案设计与取舍" not in prompt
+    assert "pending_topic_suggestion_cards: true" in prompt
+
+
+def test_planning_turn_model_input_does_not_include_topic_suggestion_text(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+
+    asyncio.run(store.ensure_workspace("ws-plan-input"))
+    session = asyncio.run(store.create_session("ws-plan-input", "planning-input"))
+    session_id = session["id"]
+    asyncio.run(
+        store.save_planning_state(
+            workspace_id="ws-plan-input",
+            session_id=session_id,
+            status="collecting_requirements",
+            brief={"topic": "Claude Code"},
+            topic_suggestions=[
+                {"title": "现状问题与机会", "prompt": "围绕现状问题与机会展开"},
+                {"title": "方案设计与取舍", "prompt": "围绕方案设计与取舍展开"},
+            ],
+        )
+    )
+
+    fake_model = FakeModel(responses=[AssistantMessage(content="继续说说你最想强调的判断。")])
+    monkeypatch.setattr(CreateAgentService, "_create_model_client", lambda self: fake_model)
+
+    service = CreateAgentService(store)
+    outcome = asyncio.run(
+        service.handle_turn(
+            workspace_id="ws-plan-input",
+            session_id=session_id,
+            user_message="写一份 5 页演示文档",
+        )
+    )
+
+    assert outcome.assistant_message == "继续说说你最想强调的判断。"
+    seen_contents = "\n".join(
+        getattr(message, "content", "")
+        for message in fake_model.seen_messages[0]
+        if hasattr(message, "content")
+    )
+    assert "现状问题与机会" not in seen_contents
+    assert "方案设计与取舍" not in seen_contents
+
+
+def test_planning_turn_recovers_outline_from_markdown_table(monkeypatch, tmp_path):
+    store = _install_temp_session_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "project_root", tmp_path)
+
+    asyncio.run(store.ensure_workspace("ws-plan-recover"))
+    session = asyncio.run(store.create_session("ws-plan-recover", "planning-recover"))
+    session_id = session["id"]
+
+    fake_model = FakeModel(
+        responses=[
+            AssistantMessage(
+                content=(
+                    "好，我先看完这份资料了。基于这次主题，我帮你规划 5 页结构如下：\n\n"
+                    "| 页数 | 角色 | 标题 | 内容要点 |\n"
+                    "| --- | --- | --- | --- |\n"
+                    "| 1 | 封面 | Claude Code 提示词背后的三次转向 | 交代主题和核心判断 |\n"
+                    "| 2 | 引入 | 一个你没写一个字的工作流 | 从截图提示走向 AI 自己跑通改代码 |\n"
+                    "| 3 | 理论底座 | 说出来，就是做出来 | 用语言行为理论解释 prompt 为什么是行动 |\n"
+                    "| 4 | 核心 | 三次哲学转向 | 从预测到理解任务再到模拟心智 |\n"
+                    "| 5 | 延伸 | 隐性问题与 AI 的下一步 | 讨论隐式需求和心智闭环 |\n"
+                )
+            )
+        ]
+    )
+    monkeypatch.setattr(CreateAgentService, "_create_model_client", lambda self: fake_model)
+
+    service = CreateAgentService(store)
+    outcome = asyncio.run(
+        service.handle_turn(
+            workspace_id="ws-plan-recover",
+            session_id=session_id,
+            user_message="就介绍 Claude Code prompt suggestions，写一个 5 页演示",
+        )
+    )
+
+    assert outcome.status == "outline_ready"
+    assert outcome.outline is not None
+    assert len(outcome.outline["items"]) == 5
+    assert outcome.outline["items"][0]["title"] == "Claude Code 提示词背后的三次转向"
+    assert outcome.assistant_message == service._outline_ready_message()
+    assert any(event.get("type") == "outline_updated" for event in outcome.events or [])
+
+    planning_state = asyncio.run(store.get_planning_state("ws-plan-recover", session_id))
+    assert planning_state is not None
+    assert len(planning_state["outline"]["items"]) == 5
+
+    planning_messages = asyncio.run(store.list_chat_messages("ws-plan-recover", session_id, limit=20))
+    assistant_messages = [item["content"] for item in planning_messages if item["role"] == "assistant"]
+    assert assistant_messages[-1] == service._outline_ready_message()
+    assert "| 页数 |" not in assistant_messages[-1]
 
 
 def test_workspace_source_link_acl_and_content_acl(monkeypatch, tmp_path):

@@ -12,15 +12,19 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.model_status import parse_provider
 from app.models.generation import CreateJobRequest
-from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
+from app.services.generation.agentic import AgentBuilder, Tool, ToolContext, ToolRegistry
 from app.services.generation.agentic.tools import load_skill
-from app.services.planning_legacy import normalize_planning_outline
+from app.services.model_clients import create_model_client
+from app.services.planning_normalization import normalize_planning_outline
 from app.services.skill_runtime.registry import build_skill_catalog
 
 
 _FILENAME_SANITIZER = re.compile(r"[^A-Za-z0-9._-]+")
+_PAGE_COUNT_RE = re.compile(r"(?P<count>\d{1,2})\s*页")
+_OUTLINE_LINE_RE = re.compile(
+    r"^(?:第?\s*(?P<page>\d{1,2})\s*页|(?P<num>\d{1,2})[.)、])\s*(?P<title>[^:：|-]+?)(?:\s*[-|:：]\s*(?P<summary>.+))?$"
+)
 
 
 @dataclass
@@ -171,6 +175,114 @@ def _render_source_brief_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def _strip_markdown(value: str) -> str:
+    cleaned = re.sub(r"`([^`]+)`", r"\1", value)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _preferred_page_count(user_message: str, brief: dict[str, Any]) -> int | None:
+    preferred = brief.get("preferred_pages")
+    if isinstance(preferred, int) and preferred > 0:
+        return preferred
+    matched = _PAGE_COUNT_RE.search(user_message)
+    if matched:
+        count = int(matched.group("count"))
+        if 3 <= count <= 20:
+            return count
+    return None
+
+
+def _extract_outline_table_rows(text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if "|" not in line:
+            continue
+        parts = [_strip_markdown(cell.strip()) for cell in line.strip("|").split("|")]
+        if len(parts) < 3:
+            continue
+        if all(set(cell) <= {"-", ":"} for cell in parts if cell):
+            continue
+        if any(token in (parts[0] + "".join(parts[1:3])) for token in ("页数", "标题", "内容要点", "角色")):
+            continue
+        page_cell = parts[0]
+        if not page_cell.isdigit():
+            continue
+        title = parts[2] if len(parts) >= 3 else ""
+        summary = parts[3] if len(parts) >= 4 else (parts[2] if len(parts) >= 3 else "")
+        rows.append(
+            {
+                "slide_number": int(page_cell),
+                "title": title.strip(),
+                "content_brief": summary.strip(),
+                "note": summary.strip(),
+                "key_points": [summary.strip()] if summary.strip() else [],
+            }
+        )
+    return rows
+
+
+def _extract_outline_line_rows(text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = _strip_markdown(raw_line.strip())
+        if not line:
+            continue
+        matched = _OUTLINE_LINE_RE.match(line)
+        if not matched:
+            continue
+        page_raw = matched.group("page") or matched.group("num")
+        if not page_raw:
+            continue
+        title = (matched.group("title") or "").strip(" -|:：")
+        summary = (matched.group("summary") or "").strip()
+        rows.append(
+            {
+                "slide_number": int(page_raw),
+                "title": title,
+                "content_brief": summary,
+                "note": summary,
+                "key_points": [summary] if summary else [],
+            }
+        )
+    return rows
+
+
+def _is_outline_like_text(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    if len(_extract_outline_table_rows(normalized)) >= 3:
+        return True
+    line_rows = _extract_outline_line_rows(normalized)
+    if len(line_rows) >= 3:
+        return True
+    return normalized.count("第 ") >= 3 and "页" in normalized
+
+
+def _normalize_recovered_outline_items(
+    items: list[dict[str, Any]],
+    *,
+    preferred_pages: int | None,
+) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_numbers: set[int] = set()
+    for item in items:
+        slide_number = int(item.get("slide_number") or 0)
+        title = str(item.get("title") or "").strip()
+        if slide_number <= 0 or not title or slide_number in seen_numbers:
+            continue
+        seen_numbers.add(slide_number)
+        deduped.append(item)
+    deduped.sort(key=lambda row: int(row.get("slide_number") or 0))
+    if preferred_pages and len(deduped) > preferred_pages:
+        deduped = deduped[:preferred_pages]
+    return deduped
+
+
 class CreateAgentService:
     def __init__(self, session_store) -> None:
         self._session_store = session_store
@@ -278,6 +390,19 @@ class CreateAgentService:
             outline_stale=outline_stale,
         )
         result = await session.send(prompt)
+        recovered_outline = self._recover_outline_from_text(
+            result.output_text,
+            user_message=user_message,
+            brief=turn_state.brief or (current_state.get("brief") if current_state else {}) or {},
+        )
+        recovered_outline_used = False
+        if turn_state.outline is None and recovered_outline is not None:
+            turn_state.outline = recovered_outline
+            turn_state.topic_suggestions = []
+            turn_state.assistant_status = "outline_ready"
+            turn_state.events.append({"type": "outline_updated", "outline": recovered_outline})
+            turn_state.events.append({"type": "assistant_status", "assistant_status": "outline_ready"})
+            recovered_outline_used = True
 
         next_snapshot_version = int(current_state.get("agent_session_version") or 0) + 1 if current_state else 1
         self._write_snapshot(
@@ -324,6 +449,8 @@ class CreateAgentService:
             outline=next_outline,
             outline_stale=next_outline_stale,
         )
+        if recovered_outline_used and _is_outline_like_text(assistant_message):
+            assistant_message = self._outline_ready_message()
         if assistant_message:
             await self._session_store.add_chat_message(
                 workspace_id=workspace_id,
@@ -563,7 +690,7 @@ class CreateAgentService:
             "- 先用 `list_selected_sources` 和 `read_source_brief` 建立上下文，必要时再用 `read_source_file`。\n"
             "- 当用户说不知道写什么、主题还没定、想先找切入点时，优先调用 `suggest_topics`，不要只追问两个字段。\n"
             "- 当你识别到稳定需求时，用 `submit_brief` 保存。\n"
-            "- 当你准备好大纲或需要根据反馈改大纲时，用 `submit_outline` 或 `update_outline`。\n"
+            "- 当你已经能给出 4-8 页的页级结构时，必须先调用 `submit_outline` 或 `update_outline`，不要只在正文里写表格或长列表。\n"
             "- 当用户明确说“用 HTML 做”或“就用 Slidev”时，调用 `set_output_mode` 保存这个决定。\n"
             "- 如果你认为另一种输出模式更合适，可以在自然语言里建议，但不要只凭自己的建议调用 `set_output_mode`。\n"
             "- 当任务需要专项 skill 时，先调用 `load_skill` 再应用其规则。\n"
@@ -571,7 +698,9 @@ class CreateAgentService:
             "回复要求：\n"
             "- 使用中文，语气自然、有温度。\n"
             "- 回复要推动用户前进，不要重复工具结果。\n"
-            "- 如果已经给出 topic suggestions，就在自然语言里简单点题，并邀请用户选一个方向继续。\n"
+            "- `topic suggestions` 只通过 UI 卡片展示，不要在正文里复述具体建议，也不要说成是用户提到过的方向。\n"
+            "- 如果你已经提交了 outline，正文只用 1-2 句短说明提醒用户可以直接编辑页序和标题。\n"
+            "- 只有仍缺少关键信息时才继续追问；如果你已经准备在正文里列第 1 页、第 2 页，就说明应该先提交 outline。\n"
             "- 你可以解释 `slidev` 更适合 markdown-first 快速改稿，`html` 更适合更重的异步强视觉渲染。"
         )
 
@@ -585,36 +714,20 @@ class CreateAgentService:
     ) -> str:
         current_outline = current_state.get("outline") or {}
         return (
-            "当前 create-page 状态：\n"
-            f"- selected_sources: {len(source_bundle['sources'])}\n"
-            f"- source_digest: {source_bundle['source_digest']}\n"
+            "当前 create-page 内部状态（internal planning state，不是聊天历史）：\n"
+            f"- selected_source_count: {len(source_bundle['sources'])}\n"
             f"- outline_stale: {'true' if outline_stale else 'false'}\n"
             f"- current_output_mode: {str(current_state.get('output_mode') or 'slidev')}\n"
-            f"- mode_selection_source: {str(current_state.get('mode_selection_source') or 'default')}\n"
-            f"- current_brief: {json.dumps(current_state.get('brief') or {}, ensure_ascii=False)}\n"
-            f"- current_outline: {json.dumps(current_outline, ensure_ascii=False)}\n"
-            f"- current_topic_suggestions: {json.dumps(current_state.get('topic_suggestions') or [], ensure_ascii=False)}\n\n"
+            f"- brief_state: {json.dumps(current_state.get('brief') or {}, ensure_ascii=False)}\n"
+            f"- outline_state: {json.dumps(current_outline, ensure_ascii=False)}\n"
+            f"- pending_topic_suggestion_cards: {'true' if current_state.get('topic_suggestions') else 'false'}\n\n"
             f"用户最新输入：{user_message.strip()}\n\n"
             "请基于这些信息决定下一步。"
         )
 
-    def _create_model_client(self) -> LiteLLMModelClient:
+    def _create_model_client(self):
         model_name = str(settings.fast_model or settings.strong_model or "").strip()
-        provider = parse_provider(model_name)
-        api_key: str | None = None
-        api_base: str | None = None
-        if provider == "openai":
-            api_key = str(settings.openai_api_key or "").strip() or None
-            api_base = str(settings.openai_base_url or "").strip() or None
-        elif provider == "anthropic":
-            api_key = str(settings.anthropic_api_key or "").strip() or None
-        elif provider == "google-gla":
-            api_key = str(settings.google_api_key or "").strip() or None
-        elif provider == "deepseek":
-            api_key = str(settings.deepseek_api_key or "").strip() or None
-        elif provider == "openrouter":
-            api_key = str(settings.openrouter_api_key or "").strip() or None
-        return LiteLLMModelClient(model=model_name, api_key=api_key, api_base=api_base)
+        return create_model_client(model_name)
 
     async def _prepare_workspace(
         self,
@@ -739,10 +852,39 @@ class CreateAgentService:
         if outline_stale:
             return "我注意到素材刚更新了。要不要我按最新素材重新整理一版结构，或者你先告诉我这次想强调哪一部分？"
         if outline.get("items"):
-            return "我先把结构整理成一版大纲放下面了。你可以直接改页序和标题，也可以继续告诉我想怎么调。"
+            return self._outline_ready_message()
         if topic_suggestions:
             return "我先给你几种可行方向。你挑一个最接近的，我就顺着它继续起结构。"
         return "我先继续帮你梳理，你也可以直接告诉我这份 PPT 最想讲清楚什么。"
+
+    def _outline_ready_message(self) -> str:
+        return "我先整理成一版可编辑提纲了，你可以直接改页序和标题；如果方向对，我就按这版继续生成。"
+
+    def _recover_outline_from_text(
+        self,
+        text: str,
+        *,
+        user_message: str,
+        brief: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not _is_outline_like_text(text):
+            return None
+        preferred_pages = _preferred_page_count(user_message, brief)
+        items = _extract_outline_table_rows(text)
+        if len(items) < 3:
+            items = _extract_outline_line_rows(text)
+        normalized_items = _normalize_recovered_outline_items(
+            items,
+            preferred_pages=preferred_pages,
+        )
+        if len(normalized_items) < 3:
+            return None
+        return normalize_planning_outline(
+            {
+                "narrative_arc": "问题→分析→方案→结论",
+                "items": normalized_items,
+            }
+        )
 
     def _suggest_topics(
         self,
