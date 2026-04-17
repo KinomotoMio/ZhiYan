@@ -354,6 +354,23 @@ export default function HomeView() {
     };
   }, [latestResultSession]);
 
+  const previewTotalSlides = useMemo(() => {
+    if (!latestResultSession) return 0;
+    if ((latestResultSession.output_mode ?? "slidev") === "html") {
+      return latestResultCentiDeck?.slides.length ?? 0;
+    }
+    const slides = latestResultSlidev?.meta?.slides;
+    return Array.isArray(slides) ? slides.length : 0;
+  }, [latestResultSession, latestResultSlidev, latestResultCentiDeck]);
+
+  useEffect(() => {
+    if (previewTotalSlides <= 1) return;
+    const timer = window.setInterval(() => {
+      setPreviewSlideIndex((current) => (current + 1) % previewTotalSlides);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [previewTotalSlides]);
+
   const handleNewPpt = async () => {
     const created = await createSession("未命名会话");
     setCurrentSessionId(created.id);
@@ -664,14 +681,18 @@ export default function HomeView() {
                     latestResultCentiDeck ? (
                       <button
                         type="button"
-                        onClick={() => handleOpenSession(latestResultSession)}
+                        onClick={() =>
+                          handleOpenSession(latestResultSession, {
+                            slide: previewSlideIndex + 1,
+                          })
+                        }
                         className="group relative block w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
                         aria-label="打开 HTML 编辑器"
                       >
                         <div className="aspect-video w-full overflow-hidden bg-slate-950">
                           <CentiDeckPreview
                             artifactOverride={latestResultCentiDeck}
-                            startSlide={0}
+                            startSlide={previewSlideIndex}
                             mode="thumbnail"
                             className="pointer-events-none h-full w-full"
                           />
