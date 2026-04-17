@@ -249,7 +249,7 @@ export const useAppStore = create<AppState>()(
       draftOutline: [],
       outlineStale: false,
       activeGenerationCard: null,
-      planningOutputMode: "html",
+      planningOutputMode: "slidev",
 
       // Create view state
       workspaceSources: [],
@@ -327,6 +327,10 @@ export const useAppStore = create<AppState>()(
           presentationSlidevBuildArtifact: presentationSlidevBuildArtifact ?? null,
           presentationSlidevBuildUrl: presentationSlidevBuildUrl ?? null,
           planningState: planningState ?? null,
+          planningOutputMode:
+            planningState?.output_mode === "html" || planningState?.output_mode === "slidev"
+              ? planningState.output_mode
+              : state.planningOutputMode,
           draftOutline: Array.isArray(planningState?.outline?.items)
             ? planningState.outline.items
             : [],
@@ -521,6 +525,10 @@ export const useAppStore = create<AppState>()(
       setPlanningState: (planningState) =>
         set((state) => ({
           planningState,
+          planningOutputMode:
+            planningState?.output_mode === "html" || planningState?.output_mode === "slidev"
+              ? planningState.output_mode
+              : state.planningOutputMode,
           draftOutline: Array.isArray(planningState?.outline?.items)
             ? planningState.outline.items
             : [],

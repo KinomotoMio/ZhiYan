@@ -424,6 +424,9 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
                 job_id="job-approved-outline",
                 status=JobStatus.PENDING,
                 current_stage=None,
+                request=SimpleNamespace(skill_id=req.skill_id),
+                run_metadata=SimpleNamespace(run_id="run-approved-outline"),
+                created_at="2026-03-01T00:00:00Z",
             ),
             session_id,
         )
@@ -450,6 +453,7 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
     assert req.topic == "智能客服方案"
     assert req.num_pages == 3
     assert req.output_mode.value == "html"
+    assert req.skill_id is None
     assert req.approved_outline["items"][0]["title"] == "业务背景"
 
     detail = client.get(f"/api/v1/sessions/{session_id}", headers=headers)
@@ -464,37 +468,51 @@ def test_planning_confirm_starts_generation_from_approved_outline(monkeypatch, t
         real_create_generation_job_record,
     )
 
-    presentation = {
-        "presentationId": "pres-ready",
-        "title": "已有稿件",
-        "slides": [
-            {
-                "slideId": "slide-1",
-                "layoutType": "bullet-with-icons",
-                "layoutId": "bullet-with-icons",
-                "contentData": {"title": "测试", "items": []},
-                "components": [],
-            }
-        ],
-    }
-    saved = client.put(
-        f"/api/v1/sessions/{session_id}/presentations/latest",
-        headers=headers,
-        json={"presentation": presentation, "source": "chat"},
-    )
-    assert saved.status_code == 200
 
-    create_conflict = client.post(
-        f"/api/v1/sessions/{session_id}/generation/jobs",
+def test_planning_turn_can_persist_output_mode_from_natural_language(monkeypatch, tmp_path):
+    _install_temp_session_store(monkeypatch, tmp_path)
+
+    from app.api.v1 import sessions as sessions_api
+
+    async def _fake_handle_planning_turn(*, workspace_id, session_id, user_message):  # noqa: ANN001
+        del workspace_id, session_id, user_message
+        return PlanningTurnOutcome(
+            assistant_message="这个场景更适合 HTML，我已经先按 HTML 路线记下来了。",
+            brief={"topic": "产品发布会"},
+            outline=None,
+            status="collecting_requirements",
+            output_mode="html",
+            mode_selection_source="natural_language",
+            events=[
+                {
+                    "type": "output_mode_selected",
+                    "output_mode": "html",
+                    "selection_source": "natural_language",
+                    "reason": "用户明确要求 HTML",
+                }
+            ],
+            assistant_status="ready",
+        )
+
+    monkeypatch.setattr(sessions_api, "handle_planning_turn", _fake_handle_planning_turn)
+
+    client = TestClient(app)
+    headers = {"X-Workspace-Id": "ws-plan-mode"}
+    created = client.post("/api/v1/sessions", headers=headers, json={"title": "planning-mode"})
+    session_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/v1/sessions/{session_id}/planning/turns",
         headers=headers,
-        json={
-            "topic": "禁止在已有稿件会话生成",
-            "source_ids": [source_id],
-            "num_pages": 3,
-            "mode": "auto",
-        },
+        json={"message": "这个场景请用 HTML 做"},
     )
-    assert create_conflict.status_code == 409
+    assert response.status_code == 200
+
+    planning_detail = client.get(f"/api/v1/sessions/{session_id}/planning", headers=headers)
+    assert planning_detail.status_code == 200
+    planning_state = planning_detail.json()["planning_state"]
+    assert planning_state["output_mode"] == "html"
+    assert planning_state["mode_selection_source"] == "natural_language"
 
 
 def test_workspace_source_link_acl_and_content_acl(monkeypatch, tmp_path):

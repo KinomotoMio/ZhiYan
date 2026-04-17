@@ -21,6 +21,7 @@ import MarkdownMessage from "@/components/chat/MarkdownMessage";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   chatStream,
+  defaultSkillIdForOutputMode,
   listSkills,
   saveLatestSessionHtmlPresentation,
   saveLatestSessionPresentation,
@@ -488,6 +489,7 @@ export default function FloatingChatPanel() {
           : undefined,
         current_slide_index: currentSlideIndex,
         action_hint: actionHint,
+        skill_id: defaultSkillIdForOutputMode(presentationOutputMode),
       },
       (chunk) => {
         streamingMsgRef.current = sanitizeAssistantText(`${streamingMsgRef.current}${chunk}`);

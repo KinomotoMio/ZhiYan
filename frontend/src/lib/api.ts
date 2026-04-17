@@ -128,6 +128,8 @@ export interface PlanningState {
     | "generating"
     | "completed"
     | string;
+  output_mode?: PresentationOutputMode;
+  mode_selection_source?: "default" | "button" | "natural_language" | "agent_recommendation" | string;
   brief: Record<string, unknown>;
   outline: {
     narrative_arc?: string;
@@ -344,14 +346,26 @@ export interface PlanningConfirmResult {
   planning_state: PlanningState;
 }
 
+export function defaultSkillIdForOutputMode(
+  outputMode: PresentationOutputMode
+): string | undefined {
+  if (outputMode === "slidev") return "slidev-default";
+  if (outputMode === "html") return "html-default";
+  return undefined;
+}
+
 export async function confirmPlanning(
   sessionId: string,
-  outputMode: PresentationOutputMode = "html"
+  outputMode: PresentationOutputMode = "slidev",
+  skillId?: string
 ): Promise<PlanningConfirmResult> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/planning/confirm`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ output_mode: outputMode }),
+    body: JSON.stringify({
+      output_mode: outputMode,
+      skill_id: skillId ?? defaultSkillIdForOutputMode(outputMode) ?? null,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -762,6 +776,7 @@ export interface CreateJobRequest {
   mode?: GenerationMode;
   approved_outline?: Record<string, unknown>;
   output_mode?: PresentationOutputMode;
+  skill_id?: string;
 }
 
 export interface CreateJobResponse {
@@ -770,6 +785,34 @@ export interface CreateJobResponse {
   status: JobStatus;
   created_at: string;
   event_stream_url: string;
+  skill_id?: string | null;
+  run_id?: string | null;
+  run_metadata?: {
+    run_id: string;
+    skill_id?: string | null;
+    base_skill_id?: string | null;
+    activated_skills?: Array<{
+      skill_id: string;
+      name?: string | null;
+      scope?: string | null;
+      path?: string | null;
+      source: string;
+      reason: string;
+      default_for_output?: string | null;
+      resources?: string[];
+      shadowed?: Array<Record<string, unknown>>;
+    }>;
+    output_mode?: PresentationOutputMode;
+    latency_ms?: number | null;
+    token_usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+    tool_events?: Array<Record<string, unknown>>;
+    artifact_refs?: Record<string, unknown>;
+    error_class?: string | null;
+  } | null;
 }
 
 export interface GenerationIssue {
@@ -788,6 +831,7 @@ export interface GenerationRequestDataLite {
   title?: string;
   topic?: string;
   output_mode?: PresentationOutputMode;
+  skill_id?: string | null;
 }
 
 export interface GenerationJob {
@@ -808,6 +852,7 @@ export interface GenerationJob {
   fix_preview_source_ids?: string[];
   error: string | null;
   presentation?: Presentation | null;
+  run_metadata?: CreateJobResponse["run_metadata"];
   [k: string]: unknown;
 }
 
@@ -822,6 +867,7 @@ export interface GenerationEvent {
 }
 
 export async function createJob(sessionId: string, req: CreateJobRequest): Promise<CreateJobResponse> {
+  const outputMode = req.output_mode ?? "slidev";
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/generation/jobs`, {
     method: "POST",
     headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
@@ -834,7 +880,8 @@ export async function createJob(sessionId: string, req: CreateJobRequest): Promi
       num_pages: req.num_pages ?? 5,
       mode: req.mode ?? "auto",
       approved_outline: req.approved_outline ?? null,
-      output_mode: req.output_mode ?? "structured",
+      output_mode: outputMode,
+      skill_id: req.skill_id ?? defaultSkillIdForOutputMode(outputMode) ?? null,
     }),
   });
   if (!res.ok) {
@@ -1057,6 +1104,7 @@ interface ChatRequest {
   presentation_context?: Record<string, unknown>;
   current_slide_index?: number;
   action_hint?: ChatActionHint;
+  skill_id?: string;
 }
 
 interface SlideUpdateEvent {
@@ -1133,7 +1181,16 @@ export async function chatStream(
     const res = await fetch(`${API_BASE}/api/v1/chat`, {
       method: "POST",
       headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(req),
+      body: JSON.stringify({
+        ...req,
+        skill_id:
+          req.skill_id ??
+          defaultSkillIdForOutputMode(
+            (req.presentation_context?.output_mode as PresentationOutputMode | undefined) ??
+              "slidev"
+          ) ??
+          null,
+      }),
     });
 
     if (!res.ok) {
@@ -1315,13 +1372,24 @@ export async function listTemplates(): Promise<{ templates: Array<{ id: string; 
 // ---------- Skills ----------
 
 interface SkillMeta {
+  id?: string;
   name: string;
   description: string;
-  version: string;
-  command: string;
+  version?: string | null;
+  command?: string | null;
+  scope?: string;
+  path?: string;
+  default_for_output?: string;
+  allowed_tools?: string;
+  resources?: string[];
+  shadowed?: Array<Record<string, unknown>>;
+  shadowed_count?: number;
 }
 
-export async function listSkills(): Promise<{ skills: SkillMeta[] }> {
+export async function listSkills(): Promise<{
+  skills: SkillMeta[];
+  defaults?: Record<string, string>;
+}> {
   const res = await fetch(`${API_BASE}/api/v1/skills`, {
     headers: withWorkspaceHeaders(),
   });

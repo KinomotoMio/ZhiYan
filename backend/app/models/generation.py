@@ -101,6 +101,38 @@ class GenerationRequestData(BaseModel):
     title: str = "新演示文稿"
     resolved_content: str = ""
     output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    skill_id: str | None = None
+
+
+class RunTokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ActivatedSkill(BaseModel):
+    skill_id: str
+    name: str | None = None
+    scope: str | None = None
+    path: str | None = None
+    source: str
+    reason: str
+    default_for_output: str | None = None
+    resources: list[str] = Field(default_factory=list)
+    shadowed: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RunMetadata(BaseModel):
+    run_id: str = ""
+    skill_id: str | None = None
+    base_skill_id: str | None = None
+    activated_skills: list[ActivatedSkill] = Field(default_factory=list)
+    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    latency_ms: int | None = None
+    token_usage: RunTokenUsage = Field(default_factory=RunTokenUsage)
+    tool_events: list[dict[str, Any]] = Field(default_factory=list)
+    artifact_refs: dict[str, Any] = Field(default_factory=dict)
+    error_class: str | None = None
 
 
 class StageResult(BaseModel):
@@ -157,6 +189,7 @@ class GenerationJob(BaseModel):
 
     presentation: dict[str, Any] | None = None
     error: str | None = None
+    run_metadata: RunMetadata | None = None
 
     stage_results: list[StageResult] = Field(default_factory=list)
 
@@ -167,6 +200,9 @@ class CreateJobResponse(BaseModel):
     status: JobStatus
     created_at: str
     event_stream_url: str
+    skill_id: str | None = None
+    run_id: str | None = None
+    run_metadata: RunMetadata | None = None
 
 
 class AcceptOutlineRequest(BaseModel):
@@ -198,3 +234,4 @@ class CreateJobRequest(BaseModel):
     mode: GenerationMode = GenerationMode.AUTO
     approved_outline: dict[str, Any] | None = None
     output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    skill_id: str | None = None

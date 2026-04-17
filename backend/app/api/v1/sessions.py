@@ -154,7 +154,8 @@ class PlanningConfirmResponse(BaseModel):
 
 
 class PlanningConfirmRequest(BaseModel):
-    output_mode: PresentationOutputMode = PresentationOutputMode.HTML
+    output_mode: PresentationOutputMode | None = None
+    skill_id: str | None = None
 
 
 class SessionShareLinkResponse(BaseModel):
@@ -454,10 +455,17 @@ async def create_planning_turn(session_id: str, req: PlanningTurnRequest, reques
             expected_outline_version = (
                 int(current_state.get("outline_version") or 0) if current_state else 0
             ) + int(outcome.outline_version_increment or 0)
+            expected_output_mode = str(outcome.output_mode or current_state.get("output_mode") or "slidev")
+            expected_mode_selection_source = str(
+                outcome.mode_selection_source or current_state.get("mode_selection_source") or "default"
+            )
             needs_fallback_save = (
                 refreshed_state is None
                 or str(refreshed_state.get("status") or "") != str(outcome.status or "")
                 or int(refreshed_state.get("outline_version") or 0) < expected_outline_version
+                or str(refreshed_state.get("output_mode") or "slidev") != expected_output_mode
+                or str(refreshed_state.get("mode_selection_source") or "default")
+                != expected_mode_selection_source
             )
             if needs_fallback_save:
                 await session_store.add_chat_message(
@@ -477,6 +485,8 @@ async def create_planning_turn(session_id: str, req: PlanningTurnRequest, reques
                     workspace_id=workspace_id,
                     session_id=sid,
                     status=outcome.status,
+                    output_mode=outcome.output_mode,
+                    mode_selection_source=outcome.mode_selection_source,
                     brief=outcome.brief,
                     outline=next_outline if next_outline else {},
                     outline_version=expected_outline_version,
@@ -583,6 +593,15 @@ async def confirm_session_planning(
     if not approved_outline.get("items"):
         raise HTTPException(status_code=409, detail="当前会话还没有可确认的大纲")
     confirm_req = req or PlanningConfirmRequest()
+    effective_output_mode_raw = (
+        confirm_req.output_mode.value
+        if confirm_req.output_mode is not None
+        else str(current_state.get("output_mode") or PresentationOutputMode.SLIDEV.value)
+    )
+    try:
+        effective_output_mode = PresentationOutputMode(effective_output_mode_raw)
+    except ValueError:
+        effective_output_mode = PresentationOutputMode.SLIDEV
     brief = dict(current_state.get("brief") or {})
     topic = str(brief.get("topic") or "").strip()
     if not topic:
@@ -599,7 +618,8 @@ async def confirm_session_planning(
                 template_id=None,
                 num_pages=len(approved_outline.get("items") or []),
                 approved_outline=approved_outline,
-                output_mode=confirm_req.output_mode,
+                output_mode=effective_output_mode,
+                skill_id=confirm_req.skill_id,
             ),
         )
     except ValueError as exc:
@@ -671,6 +691,9 @@ async def create_session_generation_job(
         status=job.status,
         created_at=job.created_at,
         event_stream_url=f"/api/v1/sessions/{sid}/generation/jobs/{job.job_id}/events",
+        skill_id=job.request.skill_id,
+        run_id=job.run_metadata.run_id if job.run_metadata else None,
+        run_metadata=job.run_metadata,
     )
 
 

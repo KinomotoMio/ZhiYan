@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.model_status import parse_provider
-from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, SkillCatalog, Tool, ToolContext, ToolRegistry
-from app.services.generation.agentic.tools import todo
+from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
+from app.services.generation.agentic.tools import load_skill, todo
 from app.services.generation.agentic.types import AssistantMessage, Message, ToolMessage, ToolResult
 from app.services.html_deck import normalize_html_deck
+from app.services.skill_runtime.contracts import build_skill_catalog_context, resolve_skill_name
+from app.services.skill_runtime.registry import build_skill_catalog
 from app.services.slidev import create_slidev_preview
 
 from .chat_agent import (
@@ -45,6 +47,7 @@ _WS_RE = re.compile(r"\s+")
 
 READ_ONLY_TOOLS = {
     "todo",
+    "load_skill",
     "get_current_slide_info",
     "get_deck_summary",
     "get_current_html_slide_info",
@@ -112,6 +115,7 @@ class EditorLoopRequest:
     slidev_markdown: str | None = None
     slidev_meta: dict[str, Any] | None = None
     selected_style_id: str | None = None
+    skill_id: str | None = None
     history: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -127,6 +131,7 @@ class EditorLoopOutcome:
     slidev_meta: dict[str, Any] | None = None
     slidev_preview_url: str | None = None
     selected_style_id: str | None = None
+    skill_id: str | None = None
 
     @property
     def modification_count(self) -> int:
@@ -313,6 +318,8 @@ def _slidev_outline_items(slide_meta: dict[str, Any] | None) -> list[dict[str, A
 def _tool_call_summary(tool_name: str, args: dict[str, Any]) -> str:
     if tool_name == "todo":
         return "整理本轮执行步骤"
+    if tool_name == "load_skill":
+        return f"加载 skill {str(args.get('name') or '').strip() or 'unknown'}"
     if tool_name == "get_current_slide_info":
         return "读取当前页详细结构"
     if tool_name == "get_deck_summary":
@@ -343,6 +350,10 @@ def _tool_result_summary(tool_result: ToolResult) -> str:
         if isinstance(content, dict) and isinstance(content.get("items"), list):
             return f"已整理 {len(content['items'])} 个步骤"
         return "已整理执行步骤"
+    if tool_result.tool_name == "load_skill":
+        if isinstance(content, dict) and str(content.get("name") or "").strip():
+            return f"已加载 skill {str(content.get('name')).strip()}"
+        return "已加载 skill"
     if tool_result.tool_name in {"get_current_slide_info", "get_deck_summary", "get_current_html_slide_info"}:
         return "已读取所需上下文"
     if isinstance(content, dict):
@@ -377,13 +388,25 @@ class EditorLoopService:
         builder.with_auto_compact(True)
         builder.with_compact_token_threshold(4500)
         builder.tool_registry = self._build_tool_registry(runtime=runtime)
-        builder.skill_catalog = SkillCatalog()
+        builder.skill_catalog = build_skill_catalog(settings.project_root)
         agent = builder.build()
         session = agent.start_session(snapshot=workspace_bundle["snapshot"])
+        start_index = len(session.messages)
+        resolved_skill_id = resolve_skill_name(
+            requested_skill=request.skill_id,
+            output_mode=request.output_mode,
+        )
+        preload_tool_results = []
+        if resolved_skill_id:
+            preload = await session.load_skill(resolved_skill_id)
+            if preload.stop_reason != "completed":
+                raise RuntimeError(preload.error or f"Failed to activate base skill: {resolved_skill_id}")
+            preload_tool_results = list(preload.tool_results)
         prompt = self._build_prompt(request=request, runtime=runtime)
 
-        start_index = len(session.messages)
         result = await session.send(prompt)
+        if preload_tool_results:
+            result.tool_results = [*preload_tool_results, *result.tool_results]
         new_messages = session.messages[start_index:]
         sanitized_reply = sanitize_think_text(result.output_text.strip())
 
@@ -416,6 +439,7 @@ class EditorLoopService:
             slidev_meta=runtime.slidev_meta,
             slidev_preview_url=runtime.slidev_preview_url,
             selected_style_id=runtime.selected_style_id,
+            skill_id=resolved_skill_id,
         )
 
     def _prepare_workspace(self, request: EditorLoopRequest) -> dict[str, Any]:
@@ -477,6 +501,10 @@ class EditorLoopService:
         stop_reason = "completed"
 
         try:
+            resolved_skill_id = resolve_skill_name(
+                requested_skill=request.skill_id,
+                output_mode=request.output_mode,
+            )
             result = await edit_slidev_deck(
                 message=request.message,
                 action_hint=request.action_hint,
@@ -484,6 +512,7 @@ class EditorLoopService:
                 current_slide_index=request.current_slide_index,
                 slide_meta=slidev_meta,
                 selected_style_id=request.selected_style_id,
+                skill_id=resolved_skill_id,
                 history=request.history,
             )
             assistant_reply = result.assistant_reply.strip()
@@ -573,6 +602,7 @@ class EditorLoopService:
             slidev_meta=runtime.slidev_meta,
             slidev_preview_url=runtime.slidev_preview_url,
             selected_style_id=runtime.selected_style_id,
+            skill_id=resolved_skill_id,
         )
 
     def _build_tool_registry(self, *, runtime: _EditorRuntimeState) -> ToolRegistry:
@@ -799,11 +829,20 @@ class EditorLoopService:
                     source="editor",
                 ),
                 getattr(todo, "__agentloop_tool__"),
+                getattr(load_skill, "__agentloop_tool__"),
             ]
         )
         return registry
 
     def _system_prompt(self, request: EditorLoopRequest) -> str:
+        skill_id = resolve_skill_name(
+            requested_skill=request.skill_id,
+            output_mode=request.output_mode,
+        )
+        skill_context = build_skill_catalog_context(
+            output_mode=request.output_mode,
+            requested_skill=skill_id,
+        )
         mode_line = (
             "当前工作模式是 HTML deck 全稿改写，必须在准备好后使用 submit_html_revision 提交完整 HTML。"
             if request.output_mode == "html"
@@ -821,7 +860,9 @@ class EditorLoopService:
             f"- {mode_line}\n"
             "- 当操作意图是 refresh_layout / simplify / add_detail / enrich_visual / change_theme 时，优先修改页面可见内容，而不是只改 speaker notes。\n"
             "- two-column-compare 页面优先使用 update_two_column_compare。\n"
-            "- 可以使用 todo 先整理执行步骤，但不要把 todo 原文当成最终回复。"
+            "- 当前 mode 的基础 skill 会由 harness 预先激活；如果任务需要额外 skill，再调用 load_skill。\n"
+            "- 可以使用 todo 先整理执行步骤，但不要把 todo 原文当成最终回复。\n\n"
+            f"{skill_context}"
         )
 
     def _build_prompt(self, *, request: EditorLoopRequest, runtime: _EditorRuntimeState) -> str:

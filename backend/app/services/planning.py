@@ -15,7 +15,9 @@ from app.core.config import settings
 from app.core.model_status import parse_provider
 from app.models.generation import CreateJobRequest
 from app.services.generation.agentic import AgentBuilder, LiteLLMModelClient, Tool, ToolContext, ToolRegistry
+from app.services.generation.agentic.tools import load_skill
 from app.services.planning_legacy import normalize_planning_outline
+from app.services.skill_runtime.registry import build_skill_catalog
 
 
 _FILENAME_SANITIZER = re.compile(r"[^A-Za-z0-9._-]+")
@@ -28,6 +30,8 @@ class PlanningTurnOutcome:
     outline: dict[str, Any] | None
     outline_version_increment: int = 0
     status: str = "collecting_requirements"
+    output_mode: str = "slidev"
+    mode_selection_source: str = "default"
     events: list[dict[str, Any]] | None = None
     topic_suggestions: list[dict[str, Any]] = field(default_factory=list)
     assistant_status: str | None = None
@@ -40,6 +44,8 @@ class _TurnState:
     outline: dict[str, Any] | None = None
     topic_suggestions: list[dict[str, Any]] = field(default_factory=list)
     assistant_status: str | None = None
+    output_mode: str = "slidev"
+    mode_selection_source: str = "default"
     launch_requested: bool = False
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -82,6 +88,15 @@ class _OutlineArgs(BaseModel):
 
 class _LaunchGenerationArgs(BaseModel):
     confirmed: bool = False
+
+
+class _SetOutputModeArgs(BaseModel):
+    output_mode: str = Field(description="One of slidev or html.")
+    selection_source: str = Field(
+        default="natural_language",
+        description="How this mode was chosen: default, button, natural_language, or agent_recommendation.",
+    )
+    reason: str = ""
 
 
 def _merge_brief(current: dict[str, Any] | None, updates: dict[str, Any]) -> dict[str, Any]:
@@ -182,6 +197,8 @@ class CreateAgentService:
             session_id=session_id,
             mode="agentic",
             status="collecting_requirements",
+            output_mode=(current_state or {}).get("output_mode") or "slidev",
+            mode_selection_source=(current_state or {}).get("mode_selection_source") or "default",
             brief=current_state.get("brief") if current_state else {},
             outline=current_state.get("outline") if current_state else {},
             outline_version=int(current_state.get("outline_version") or 0) if current_state else 0,
@@ -242,6 +259,8 @@ class CreateAgentService:
             outline=current_outline if current_outline else None,
             topic_suggestions=list(current_state.get("topic_suggestions") or []) if current_state else [],
             assistant_status="thinking",
+            output_mode=str((current_state or {}).get("output_mode") or "slidev"),
+            mode_selection_source=str((current_state or {}).get("mode_selection_source") or "default"),
             events=[{"type": "assistant_status", "assistant_status": "thinking"}],
         )
 
@@ -285,6 +304,8 @@ class CreateAgentService:
             session_id=session_id,
             mode="agentic",
             status=next_status,
+            output_mode=turn_state.output_mode,
+            mode_selection_source=turn_state.mode_selection_source,
             brief=next_brief,
             outline=next_outline,
             outline_version=next_outline_version,
@@ -322,6 +343,8 @@ class CreateAgentService:
             outline=next_outline or None,
             outline_version_increment=1 if has_new_outline else 0,
             status=next_status,
+            output_mode=turn_state.output_mode,
+            mode_selection_source=turn_state.mode_selection_source,
             events=list(turn_state.events),
             topic_suggestions=topic_suggestions,
             assistant_status=assistant_status,
@@ -342,6 +365,7 @@ class CreateAgentService:
         builder.with_max_turns(6)
         builder.with_auto_compact(True)
         builder.with_compact_token_threshold(4500)
+        builder.skill_catalog = build_skill_catalog(settings.project_root)
         builder.tool_registry = self._build_tool_registry(
             workspace_root=workspace_root,
             turn_state=turn_state,
@@ -434,6 +458,27 @@ class CreateAgentService:
             turn_state.launch_requested = True
             return {"status": "blocked", "reason": "当前创建页仍要求通过 planning/confirm 启动生成。"}
 
+        async def _set_output_mode(args: _SetOutputModeArgs, _context: ToolContext) -> dict[str, Any]:
+            normalized = str(args.output_mode or "").strip().lower()
+            if normalized not in {"slidev", "html"}:
+                raise ValueError("output_mode 仅支持 slidev 或 html。")
+            selection_source = str(args.selection_source or "natural_language").strip() or "natural_language"
+            turn_state.output_mode = normalized
+            turn_state.mode_selection_source = selection_source
+            turn_state.events.append(
+                {
+                    "type": "output_mode_selected",
+                    "output_mode": normalized,
+                    "selection_source": selection_source,
+                    "reason": str(args.reason or "").strip(),
+                }
+            )
+            return {
+                "status": "ok",
+                "output_mode": normalized,
+                "selection_source": selection_source,
+            }
+
         empty_args = type("_EmptyArgs", (BaseModel,), {})
         registry.register(
             Tool(
@@ -499,6 +544,15 @@ class CreateAgentService:
                 handler=_launch_generation,
             )
         )
+        registry.register(
+            Tool(
+                name="set_output_mode",
+                description="Persist the user's explicitly confirmed output mode choice.",
+                args_model=_SetOutputModeArgs,
+                handler=_set_output_mode,
+            )
+        )
+        registry.register(getattr(load_skill, "__agentloop_tool__"))
         return registry
 
     def _system_prompt(self) -> str:
@@ -510,11 +564,15 @@ class CreateAgentService:
             "- 当用户说不知道写什么、主题还没定、想先找切入点时，优先调用 `suggest_topics`，不要只追问两个字段。\n"
             "- 当你识别到稳定需求时，用 `submit_brief` 保存。\n"
             "- 当你准备好大纲或需要根据反馈改大纲时，用 `submit_outline` 或 `update_outline`。\n"
+            "- 当用户明确说“用 HTML 做”或“就用 Slidev”时，调用 `set_output_mode` 保存这个决定。\n"
+            "- 如果你认为另一种输出模式更合适，可以在自然语言里建议，但不要只凭自己的建议调用 `set_output_mode`。\n"
+            "- 当任务需要专项 skill 时，先调用 `load_skill` 再应用其规则。\n"
             "- 不要调用 `launch_generation`；创建页仍通过单独的确认按钮开始生成。\n\n"
             "回复要求：\n"
             "- 使用中文，语气自然、有温度。\n"
             "- 回复要推动用户前进，不要重复工具结果。\n"
-            "- 如果已经给出 topic suggestions，就在自然语言里简单点题，并邀请用户选一个方向继续。"
+            "- 如果已经给出 topic suggestions，就在自然语言里简单点题，并邀请用户选一个方向继续。\n"
+            "- 你可以解释 `slidev` 更适合 markdown-first 快速改稿，`html` 更适合更重的异步强视觉渲染。"
         )
 
     def _build_turn_prompt(
@@ -531,6 +589,8 @@ class CreateAgentService:
             f"- selected_sources: {len(source_bundle['sources'])}\n"
             f"- source_digest: {source_bundle['source_digest']}\n"
             f"- outline_stale: {'true' if outline_stale else 'false'}\n"
+            f"- current_output_mode: {str(current_state.get('output_mode') or 'slidev')}\n"
+            f"- mode_selection_source: {str(current_state.get('mode_selection_source') or 'default')}\n"
             f"- current_brief: {json.dumps(current_state.get('brief') or {}, ensure_ascii=False)}\n"
             f"- current_outline: {json.dumps(current_outline, ensure_ascii=False)}\n"
             f"- current_topic_suggestions: {json.dumps(current_state.get('topic_suggestions') or [], ensure_ascii=False)}\n\n"
@@ -661,11 +721,11 @@ class CreateAgentService:
         if sources:
             top_names = "、".join(str(source.get("name") or "素材") for source in sources[:3])
             return (
-                f"我先看了你当前勾选的素材：{top_names}。如果你还没想好怎么讲，我可以先给你几个切入方向，或者直接按你想要的受众和目标起一版结构。",
+                f"我先看了你当前勾选的素材：{top_names}。如果你还没想好怎么讲，我可以先给你几个切入方向，或者直接按你想要的受众和目标起一版结构。默认我会按 Slidev 这条 markdown-first 路径来准备；如果你更想走 HTML，也可以直接告诉我。",
                 suggestions,
             )
         return (
-            "我们可以先一起定方向。如果你还没想好写什么，我先给你几个常见的演示题目切口；你也可以直接告诉我想给谁看、希望他们看完形成什么判断。",
+            "我们可以先一起定方向。如果你还没想好写什么，我先给你几个常见的演示题目切口；你也可以直接告诉我想给谁看、希望他们看完形成什么判断。默认会走 Slidev，如果你想改成 HTML，也可以直接说。",
             suggestions,
         )
 

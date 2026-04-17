@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.model_status import parse_provider
-from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, StageResult, StageStatus, now_iso
+from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, RunMetadata, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide, Theme
 from app.services.html_deck import normalize_html_deck
 from app.services.generation.agentic import (
@@ -38,6 +38,11 @@ from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
 from app.services.generation.verifier import stage_fix_slides_once, stage_verify_slides
 from app.services.presentations import normalize_presentation_payload
+from app.services.skill_runtime.contracts import (
+    build_skill_activation_record,
+    build_skill_catalog_context,
+)
+from app.services.skill_runtime.registry import build_skill_catalog
 from app.services.slidev import (
     build_slidev_role_reference_bundle,
     finalize_slidev_deck,
@@ -90,10 +95,12 @@ class _SubmitSlidevDeckArgs(BaseModel):
 
 AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
+    "load_skill",
 )
 
 REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
+    "load_skill",
 )
 
 TEXT_FRIENDLY_LAYOUTS: tuple[str, ...] = (
@@ -233,11 +240,14 @@ class GenerationRunner:
             )
 
         if job.events_seq == 0:
+            self._sync_run_metadata(job)
             await self._emit_event(
                 job,
                 EventType.JOB_STARTED,
                 message="任务开始",
                 payload={
+                    "run_id": job.run_metadata.run_id if job.run_metadata else None,
+                    "skill_id": job.request.skill_id,
                     "mode": job.mode.value,
                     "num_pages": job.request.num_pages,
                     "output_mode": job.output_mode.value,
@@ -341,6 +351,7 @@ class GenerationRunner:
                     "slowest_stage_ms": slowest_stage_ms,
                 }
             )
+            self._sync_run_metadata(job, state=state, latency_ms=elapsed_ms)
             self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             if job.request.session_id:
@@ -397,6 +408,8 @@ class GenerationRunner:
                 stage=StageStatus.COMPLETE,
                 message="任务完成",
                 payload={
+                    "run_id": job.run_metadata.run_id if job.run_metadata else None,
+                    "skill_id": job.request.skill_id,
                     "presentation": job.presentation,
                     "output_mode": job.output_mode.value,
                     "artifacts": job.presentation.get("artifacts") if isinstance(job.presentation, dict) else {},
@@ -412,6 +425,7 @@ class GenerationRunner:
         except asyncio.CancelledError:
             job.status = JobStatus.CANCELLED
             job.current_stage = None
+            self._sync_run_metadata(job, state=state, error_class=ERROR_CANCELLED)
             self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             await self._store.save_job(job)
@@ -446,6 +460,12 @@ class GenerationRunner:
             job.status = JobStatus.FAILED
             job.error = f"[{classified.error_code}] {classified.error_message}"
             job.current_stage = None
+            self._sync_run_metadata(
+                job,
+                state=state,
+                latency_ms=elapsed_ms,
+                error_class=classified.error_code,
+            )
             self._write_runner_trace(job, state)
             job.updated_at = now_iso()
             await self._store.save_job(job)
@@ -1420,6 +1440,7 @@ class GenerationRunner:
             "tool_results": [_serialize_tool_result(item) for item in result.tool_results],
             "context_markers": list(result.context_markers),
             "compact_events": list(result.compact_events),
+            "active_skills": list(getattr(session, "active_skills", []) or []),
             "todo_items": list(getattr(session, "todo_items", []) or []),
             "tasks": list(getattr(session, "tasks", []) or []),
             "current_task": getattr(session, "current_task", None),
@@ -1449,7 +1470,67 @@ class GenerationRunner:
             "error": result.error,
             "call_count": len(calls),
             "submitted": bool(submitted_payload),
+            "calls": [
+                {
+                    "index": call.index,
+                    "response": call.response,
+                    "error": call.error,
+                }
+                for call in calls
+            ],
         }
+        if tool_trace_rows:
+            tool_trace = index.setdefault("tool_trace", [])
+            tool_trace.extend(tool_trace_rows)
+
+    def _record_activated_skill(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        *,
+        skill_name: str | None,
+        source: str,
+        reason: str,
+    ) -> None:
+        activation = build_skill_activation_record(
+            skill_name,
+            source=source,
+            reason=reason,
+        )
+        if activation is None:
+            return
+        activated = state.document_metadata.setdefault("activated_skills", [])
+        if any(
+            item.get("skill_id") == activation["skill_id"]
+            and item.get("source") == activation["source"]
+            and item.get("reason") == activation["reason"]
+            for item in activated
+            if isinstance(item, dict)
+        ):
+            return
+        activated.append(activation)
+
+    async def _activate_base_skill(
+        self,
+        *,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        session,
+    ) -> list[Any]:
+        skill_name = job.request.skill_id
+        if not skill_name:
+            return []
+        result = await session.load_skill(skill_name)
+        if result.stop_reason != "completed":
+            raise RuntimeError(result.error or f"Failed to activate base skill: {skill_name}")
+        self._record_activated_skill(
+            job,
+            state,
+            skill_name=skill_name,
+            source="harness",
+            reason="output_mode_default",
+        )
+        return list(result.tool_results)
 
     def _write_runner_trace(self, job: GenerationJob, state: GenerationRuntimeState) -> None:
         if not self._job_has_agent_workspace(job):
@@ -1463,9 +1544,61 @@ class GenerationRunner:
             "slide_count": len(state.slides) if state.slides else len(job.slides),
             "issue_count": len(state.verification_issues),
             "failed_slide_indices": list(state.failed_slide_indices),
+            "run_metadata": job.run_metadata.model_dump(mode="json") if job.run_metadata else None,
             "agent_debug": deepcopy(state.document_metadata.get("agent_debug") or {}),
         }
         self._write_debug_json(job, state, "runner-trace.json", trace_payload)
+
+    def _sync_run_metadata(
+        self,
+        job: GenerationJob,
+        *,
+        state: GenerationRuntimeState | None = None,
+        latency_ms: int | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        payload = job.run_metadata.model_dump(mode="json") if job.run_metadata else {}
+        payload["run_id"] = payload.get("run_id") or f"run-{job.job_id}"
+        payload["skill_id"] = job.request.skill_id
+        payload["base_skill_id"] = job.request.skill_id
+        payload["output_mode"] = job.output_mode.value
+        if latency_ms is not None:
+            payload["latency_ms"] = latency_ms
+        if error_class:
+            payload["error_class"] = error_class
+        if state is not None:
+            payload["artifact_refs"] = deepcopy(state.document_metadata.get("agent_outputs") or {})
+            payload["token_usage"] = _aggregate_model_usage(
+                (state.document_metadata.get("agent_debug") or {}).get("runs") or {}
+            )
+            payload["tool_events"] = list((state.document_metadata.get("agent_debug") or {}).get("tool_trace") or [])
+            activated = list(state.document_metadata.get("activated_skills") or [])
+            for event in payload["tool_events"]:
+                result = event.get("result") if isinstance(event, dict) else None
+                if not isinstance(result, dict):
+                    continue
+                if str(result.get("tool_name") or "") != "load_skill" or bool(result.get("is_error")):
+                    continue
+                content = result.get("content")
+                if not isinstance(content, dict):
+                    continue
+                activation = build_skill_activation_record(
+                    str(content.get("name") or "").strip() or None,
+                    source="agent",
+                    reason="task_request",
+                )
+                if activation is None:
+                    continue
+                if any(
+                    item.get("skill_id") == activation["skill_id"] and item.get("source") == activation["source"]
+                    for item in activated
+                    if isinstance(item, dict)
+                ):
+                    continue
+                activated.append(activation)
+            payload["activated_skills"] = activated
+        job.run_metadata = RunMetadata.model_validate(payload)
+        job.document_metadata["run"] = deepcopy(payload)
 
     def _build_tool_registry(self, workspace_root: Path, allowed_builtin_tools: tuple[str, ...]) -> ToolRegistry:
         registry = create_builtin_registry(workspace_root, permissive_mode=False)
@@ -1634,6 +1767,7 @@ class GenerationRunner:
             allowed_builtin_tools=REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
+        preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         for attempt in range(2):
             prompt = (
@@ -1645,6 +1779,8 @@ class GenerationRunner:
                 )
             )
             result = await session.send(prompt)
+            if attempt == 0 and preload_tool_results:
+                result.tool_results = [*preload_tool_results, *result.tool_results]
             self._write_agent_run_debug(
                 job,
                 state,
@@ -1677,6 +1813,7 @@ class GenerationRunner:
             allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
+        preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         last_issues: list[str] = []
         for attempt in range(3):
@@ -1686,6 +1823,8 @@ class GenerationRunner:
                 else self._build_agent_presentation_retry_prompt(expected, last_issues, output_mode="structured")
             )
             result = await session.send(prompt)
+            if attempt == 0 and preload_tool_results:
+                result.tool_results = [*preload_tool_results, *result.tool_results]
             self._write_agent_run_debug(
                 job,
                 state,
@@ -1728,6 +1867,7 @@ class GenerationRunner:
             allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
+        preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         for attempt in range(3):
             prompt = (
@@ -1744,6 +1884,8 @@ class GenerationRunner:
                 )
             )
             result = await session.send(prompt)
+            if attempt == 0 and preload_tool_results:
+                result.tool_results = [*preload_tool_results, *result.tool_results]
             self._write_agent_run_debug(
                 job,
                 state,
@@ -1774,6 +1916,7 @@ class GenerationRunner:
             allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
+        preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
         expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
         for attempt in range(3):
             prompt = (
@@ -1790,6 +1933,8 @@ class GenerationRunner:
                 )
             )
             result = await session.send(prompt)
+            if attempt == 0 and preload_tool_results:
+                result.tool_results = [*preload_tool_results, *result.tool_results]
             self._write_agent_run_debug(
                 job,
                 state,
@@ -1825,6 +1970,7 @@ class GenerationRunner:
         builder.with_compact_token_threshold(6000)
         builder.with_compact_tail_turns(2)
         builder.with_permissive_tools(False)
+        builder.skill_catalog = build_skill_catalog(settings.project_root)
         builder.tool_registry = self._build_tool_registry(workspace_root, allowed_builtin_tools)
         for tool in extra_tools:
             builder.register_tool(tool)
@@ -2071,6 +2217,10 @@ class GenerationRunner:
         return hydrated
 
     def _build_agent_outline_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+        skill_context = build_skill_catalog_context(
+            output_mode=job.output_mode.value,
+            requested_skill=job.request.skill_id,
+        )
         return (
             "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 生成内核。\n"
             "你的工作不是解释，而是基于工作区素材，为后续 final presentation 生成提交一个严格结构化的大纲。\n\n"
@@ -2078,13 +2228,14 @@ class GenerationRunner:
             "- `request.json` 包含 topic、页数、mode、source_ids。\n"
             "- `sources/manifest.json` 描述所有可用来源。\n"
             "- `sources/*.md` 是来源解析文本；优先阅读这些文件，而不是只凭记忆生成。\n"
-            "- 你只有 `read_file` 和 `submit_outline` 两类工具，不要假设还有别的能力。\n\n"
+            "- 你有 `read_file`、`load_skill` 和 `submit_outline` 三类工具；只有任务确实匹配额外规则时才加载额外 skill。\n\n"
             "大纲要求：\n"
             f"- 必须严格提交 {state.num_pages} 页。\n"
             "- `role` 仅使用：cover, agenda, section-divider, narrative, evidence, comparison, process, highlight, closing。\n"
             "- 每页必须补齐 `objective`，并尽量提供 `keyPoints` 与 `contentHints`。\n"
             "- 这是一个故事化演示，不是文档摘抄；每页标题要清晰、可展示，并能支撑后续选择 layout。\n"
-            "- 最终只通过 `submit_outline` 提交结构化结果，不要只输出自然语言。\n"
+            "- 最终只通过 `submit_outline` 提交结构化结果，不要只输出自然语言。\n\n"
+            f"{skill_context}\n"
         )
 
     def _build_agent_outline_user_prompt(self, job: GenerationJob) -> str:
@@ -2097,6 +2248,10 @@ class GenerationRunner:
         )
 
     def _build_agent_presentation_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+        skill_context = build_skill_catalog_context(
+            output_mode=job.output_mode.value,
+            requested_skill=job.request.skill_id,
+        )
         outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
         source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
         palette = ", ".join(self._allowed_layout_palette(job))
@@ -2120,8 +2275,9 @@ class GenerationRunner:
                 "请基于工作区素材和已确认的大纲，产出一个可直接播放、可后续继续编辑的 Reveal HTML deck。\n\n"
                 "工作方式：\n"
                 "- 先使用本地素材摘要判断叙事与风格，再按需补读原始 source 文本。\n"
-                "- 你只有 `read_file` 和 `submit_html_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+                "- 你有 `read_file`、`load_skill` 和 `submit_html_deck` 三类工具，不要输出解释，也不要做仓库探索。\n"
                 "- 最终必须只通过 `submit_html_deck` 提交。\n\n"
+                f"{skill_context}\n\n"
                 "HTML 约束：\n"
                 f"- 严格输出 {state.num_pages} 页，且必须严格包含 {state.num_pages} 个 `<section>`。\n"
                 "- 每页必须是 16:9 演示页面，不要写成文档排版。\n"
@@ -2139,8 +2295,9 @@ class GenerationRunner:
                 "请基于工作区素材和已确认大纲，产出一个完整、可编译、可展示、可继续改稿的 Slidev markdown deck。\n\n"
                 "工作方式：\n"
                 "- 先使用本地素材摘要判断叙事、语气和视觉方向，再按需补读原始 source 文本。\n"
-                "- 你只有 `read_file` 和 `submit_slidev_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
+                "- 你有 `read_file`、`load_skill` 和 `submit_slidev_deck` 三类工具，不要输出解释，也不要做仓库探索。\n"
                 "- 最终必须只通过 `submit_slidev_deck` 提交 markdown 和 selected_style_id。\n\n"
+                f"{skill_context}\n\n"
                 "Slidev 约束：\n"
                 f"- 严格输出 {state.num_pages} 页。\n"
                 "- deck 必须由全局 frontmatter + `---` 分隔的 slides 组成。\n"
@@ -2158,8 +2315,9 @@ class GenerationRunner:
             "请基于工作区素材和已确认的大纲/本地摘要，直接产出当前 editor 可消费的完整 presentation。\n\n"
             "工作方式：\n"
             "- 先使用本地素材摘要判断故事线和页面结构，再按需要补读原始 source 文本。\n"
-            "- 你只有 `read_file` 和 `submit_presentation` 两类工具，不要输出解释，也不要做仓库探索。\n"
+            "- 你有 `read_file`、`load_skill` 和 `submit_presentation` 三类工具，不要输出解释，也不要做仓库探索。\n"
             "- 不要输出解释文本；最终只通过 `submit_presentation` 提交完整 presentation。\n\n"
+            f"{skill_context}\n\n"
             "Presentation 约束：\n"
             f"- 严格输出 {state.num_pages} 页。\n"
             f"- 仅使用这组 layoutId / layoutType：{palette}。\n"
@@ -2320,6 +2478,24 @@ def _serialize_tool_result(item: Any) -> dict[str, Any]:
         "content": deepcopy(getattr(item, "content", None)),
         "metadata": deepcopy(getattr(item, "metadata", {}) or {}),
     }
+
+
+def _aggregate_model_usage(runs: dict[str, Any]) -> dict[str, int]:
+    totals = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    for run in runs.values():
+        calls = run.get("calls") or []
+        for call in calls:
+            response = call.get("response") or {}
+            usage = response.get("usage") or {}
+            for key in totals:
+                value = usage.get(key)
+                if isinstance(value, int):
+                    totals[key] += value
+    return totals
 
 
 def _text_field(payload: dict[str, Any], key: str) -> str:

@@ -128,6 +128,8 @@ class SessionStore:
                     session_id TEXT PRIMARY KEY,
                     mode TEXT NOT NULL DEFAULT 'agentic',
                     status TEXT NOT NULL DEFAULT 'collecting_requirements',
+                    output_mode TEXT NOT NULL DEFAULT 'slidev',
+                    mode_selection_source TEXT NOT NULL DEFAULT 'default',
                     brief_json TEXT NOT NULL DEFAULT '{}',
                     outline_json TEXT NOT NULL DEFAULT '{}',
                     outline_version INTEGER NOT NULL DEFAULT 0,
@@ -211,6 +213,12 @@ class SessionStore:
                 conn.execute("ALTER TABLE workspace_sources ADD COLUMN content_hash TEXT")
             if not _has_column("session_planning_state", "mode"):
                 conn.execute("ALTER TABLE session_planning_state ADD COLUMN mode TEXT NOT NULL DEFAULT 'agentic'")
+            if not _has_column("session_planning_state", "output_mode"):
+                conn.execute("ALTER TABLE session_planning_state ADD COLUMN output_mode TEXT NOT NULL DEFAULT 'slidev'")
+            if not _has_column("session_planning_state", "mode_selection_source"):
+                conn.execute(
+                    "ALTER TABLE session_planning_state ADD COLUMN mode_selection_source TEXT NOT NULL DEFAULT 'default'"
+                )
             if not _has_column("session_planning_state", "source_digest"):
                 conn.execute("ALTER TABLE session_planning_state ADD COLUMN source_digest TEXT NOT NULL DEFAULT ''")
             if not _has_column("session_planning_state", "agent_workspace_root"):
@@ -1918,6 +1926,8 @@ class SessionStore:
                     ps.session_id,
                     ps.mode,
                     ps.status,
+                    ps.output_mode,
+                    ps.mode_selection_source,
                     ps.brief_json,
                     ps.outline_json,
                     ps.outline_version,
@@ -1942,6 +1952,8 @@ class SessionStore:
                 "session_id": row["session_id"],
                 "mode": row["mode"] or "agentic",
                 "status": row["status"],
+                "output_mode": row["output_mode"] or "slidev",
+                "mode_selection_source": row["mode_selection_source"] or "default",
                 "brief": json.loads(row["brief_json"] or "{}"),
                 "outline": json.loads(row["outline_json"] or "{}"),
                 "outline_version": int(row["outline_version"] or 0),
@@ -1970,6 +1982,8 @@ class SessionStore:
         outline_stale: bool | None = None,
         active_job_id: str | None = None,
         mode: str | None = None,
+        output_mode: str | None = None,
+        mode_selection_source: str | None = None,
         agent_workspace_root: str | None = None,
         agent_session_version: int | None = None,
         assistant_status: str | None = None,
@@ -1990,6 +2004,8 @@ class SessionStore:
                 outline_stale,
                 active_job_id,
                 mode,
+                output_mode,
+                mode_selection_source,
                 agent_workspace_root,
                 agent_session_version,
                 assistant_status,
@@ -2014,6 +2030,8 @@ class SessionStore:
         outline_stale: bool | None,
         active_job_id: str | None,
         mode: str | None,
+        output_mode: str | None,
+        mode_selection_source: str | None,
         agent_workspace_root: str | None,
         agent_session_version: int | None,
         assistant_status: str | None,
@@ -2033,7 +2051,7 @@ class SessionStore:
 
             current = conn.execute(
                 """
-                SELECT mode, status, brief_json, outline_json, outline_version, source_ids_json,
+                SELECT mode, status, output_mode, mode_selection_source, brief_json, outline_json, outline_version, source_ids_json,
                        source_digest, outline_stale, active_job_id, agent_workspace_root,
                        agent_session_version, assistant_status, topic_suggestions_json
                 FROM session_planning_state
@@ -2043,6 +2061,16 @@ class SessionStore:
             ).fetchone()
             merged_mode = mode or (current["mode"] if current else "agentic")
             merged_status = status or (current["status"] if current else "collecting_requirements")
+            merged_output_mode = (
+                str(output_mode).strip()
+                if output_mode is not None and str(output_mode).strip()
+                else str(current["output_mode"] or "slidev") if current else "slidev"
+            )
+            merged_mode_selection_source = (
+                str(mode_selection_source).strip()
+                if mode_selection_source is not None and str(mode_selection_source).strip()
+                else str(current["mode_selection_source"] or "default") if current else "default"
+            )
             merged_brief = brief if brief is not None else json.loads(current["brief_json"] or "{}") if current else {}
             merged_outline = outline if outline is not None else json.loads(current["outline_json"] or "{}") if current else {}
             merged_outline_version = (
@@ -2093,14 +2121,16 @@ class SessionStore:
             conn.execute(
                 """
                 INSERT INTO session_planning_state(
-                    session_id, mode, status, brief_json, outline_json, outline_version,
+                    session_id, mode, status, output_mode, mode_selection_source, brief_json, outline_json, outline_version,
                     source_ids_json, source_digest, outline_stale, active_job_id,
                     agent_workspace_root, agent_session_version, assistant_status,
                     topic_suggestions_json, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     mode=excluded.mode,
                     status=excluded.status,
+                    output_mode=excluded.output_mode,
+                    mode_selection_source=excluded.mode_selection_source,
                     brief_json=excluded.brief_json,
                     outline_json=excluded.outline_json,
                     outline_version=excluded.outline_version,
@@ -2118,6 +2148,8 @@ class SessionStore:
                     session_id,
                     merged_mode,
                     merged_status,
+                    merged_output_mode,
+                    merged_mode_selection_source,
                     json.dumps(merged_brief, ensure_ascii=False),
                     json.dumps(merged_outline, ensure_ascii=False),
                     merged_outline_version,

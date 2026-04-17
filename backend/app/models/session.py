@@ -68,6 +68,8 @@ class PlanningState(BaseModel):
     session_id: str
     mode: str = "agentic"
     status: str = "collecting_requirements"
+    output_mode: str = "slidev"
+    mode_selection_source: str = "default"
     brief: dict[str, Any] = Field(default_factory=dict)
     outline: dict[str, Any] = Field(default_factory=dict)
     outline_version: int = 0

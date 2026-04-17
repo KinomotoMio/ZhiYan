@@ -10,6 +10,7 @@ from app.models.generation import (
     GenerationJob,
     GenerationMode,
     GenerationRequestData,
+    RunMetadata,
     StageStatus,
 )
 from app.services.generation.agent_workspace import build_agent_workspace
@@ -17,6 +18,7 @@ from app.services.generation.loading_title import (
     DEFAULT_LOADING_TITLE,
     build_loading_title,
 )
+from app.services.skill_runtime.contracts import resolve_skill_name
 
 
 def _build_source_hints(
@@ -117,6 +119,11 @@ async def create_generation_job_record(
         else max(3, min(req.num_pages, settings.max_slide_pages))
     )
     normalized_mode = GenerationMode.AUTO if req.approved_outline else req.mode
+    skill_id = resolve_skill_name(
+        requested_skill=req.skill_id,
+        output_mode=req.output_mode.value,
+    )
+    run_id = f"run-{uuid4().hex[:12]}"
 
     job = GenerationJob(
         job_id=job_id,
@@ -132,15 +139,23 @@ async def create_generation_job_record(
             title=loading_title,
             resolved_content=combined or req.topic,
             output_mode=req.output_mode,
+            skill_id=skill_id,
         ),
         output_mode=req.output_mode,
         outline=approved_outline if isinstance(approved_outline, dict) else {},
         outline_accepted=bool(req.approved_outline) or normalized_mode == GenerationMode.AUTO,
+        run_metadata=RunMetadata(
+            run_id=run_id,
+            skill_id=skill_id,
+            base_skill_id=skill_id,
+            output_mode=req.output_mode,
+        ),
     )
     workspace_bundle = build_agent_workspace(
         root=settings.project_root / "data" / "agentic-runs" / job_id,
         request_payload={
             "job_id": job_id,
+            "run_id": run_id,
             "workspace_id": workspace_id,
             "session_id": session_id,
             "topic": req.topic,
@@ -150,6 +165,7 @@ async def create_generation_job_record(
             "num_pages": effective_num_pages,
             "mode": normalized_mode.value,
             "output_mode": req.output_mode.value,
+            "skill_id": skill_id,
             "title": loading_title,
         },
         source_records=source_records,
@@ -157,6 +173,12 @@ async def create_generation_job_record(
     job.document_metadata["agent_workspace"] = workspace_bundle.to_metadata()
     job.document_metadata["agent_workspace"]["workspace_id"] = workspace_id
     job.document_metadata["agent_workspace"]["source_hints"] = source_hints
+    job.document_metadata["run"] = {
+        "run_id": run_id,
+        "skill_id": skill_id,
+        "output_mode": req.output_mode.value,
+        "status": job.status.value,
+    }
 
     await job_store.create_job(job)
     await session_store.save_generation_job(job.job_id, session_id, job.status.value)

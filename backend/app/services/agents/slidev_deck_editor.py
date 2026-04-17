@@ -6,6 +6,8 @@ import json
 
 from pydantic import BaseModel, Field
 
+from app.services.skill_runtime.contracts import build_skill_prompt_bundle
+
 
 class SlidevDeckEditResult(BaseModel):
     assistant_reply: str
@@ -54,6 +56,7 @@ async def edit_slidev_deck(
     current_slide_index: int,
     slide_meta: dict | None,
     selected_style_id: str | None,
+    skill_id: str | None,
     history: list[dict[str, str]] | None = None,
 ) -> SlidevDeckEditResult:
     current_slide = None
@@ -62,6 +65,7 @@ async def edit_slidev_deck(
         if isinstance(slides, list) and 0 <= current_slide_index < len(slides):
             current_slide = slides[current_slide_index]
 
+    skill_bundle = build_skill_prompt_bundle(skill_id)
     prompt = (
         f"操作意图: {action_hint}\n"
         f"当前页索引: {current_slide_index}\n"
@@ -69,6 +73,7 @@ async def edit_slidev_deck(
         f"当前页信息: {json.dumps(current_slide or {}, ensure_ascii=False)}\n"
         f"全部页面信息: {json.dumps(slide_meta or {}, ensure_ascii=False)}\n\n"
         f"最近对话: {json.dumps(history or [], ensure_ascii=False)}\n\n"
+        f"{skill_bundle}\n\n"
         f"用户消息:\n{message.strip()}\n\n"
         f"当前 Slidev deck:\n{markdown}"
     )

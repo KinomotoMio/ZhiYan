@@ -57,6 +57,7 @@ class ChatRequest(BaseModel):
     presentation_context: dict | None = None
     current_slide_index: int = 0
     action_hint: ActionHint = "free_text"
+    skill_id: str | None = None
 
 
 def _resolve_preview_asset(preview_id: str, asset_path: str) -> Path:
@@ -137,6 +138,7 @@ async def chat(req: ChatRequest, request: Request):
                     slidev_markdown=slidev_markdown,
                     slidev_meta=slidev_meta,
                     selected_style_id=selected_style_id,
+                    skill_id=req.skill_id,
                     history=[
                         {"role": msg.role, "content": msg.content}
                         for msg in history
