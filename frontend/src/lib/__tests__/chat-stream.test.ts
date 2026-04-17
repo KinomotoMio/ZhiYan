@@ -46,7 +46,6 @@ test("chatStream parses assistant status and tool events", async () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       (event) => statuses.push(event.assistant_status),
       (event) => toolCalls.push(event.summary),
       (event) => toolResults.push(event.summary)

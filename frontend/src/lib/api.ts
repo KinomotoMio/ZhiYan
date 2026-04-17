@@ -92,6 +92,7 @@ export interface SessionSummary {
   source_count: number;
   chat_count: number;
   has_presentation: boolean;
+  output_mode: string | null;
 }
 
 export interface ChatRecord {
@@ -156,61 +157,7 @@ export interface SnapshotMeta {
   created_at: string;
 }
 
-export type PresentationOutputMode = "structured" | "html" | "slidev";
-
-export interface HtmlDeckArtifactMeta {
-  version: number;
-  slide_count: number;
-  updated_at: string;
-  artifact_version?: "legacy" | "runtime_v2" | string;
-  storage_path?: string;
-  meta_storage_path?: string;
-  manifest_storage_path?: string;
-  render_storage_path?: string;
-  document_storage_path?: string;
-}
-
-export interface HtmlRuntimeManifestSlide {
-  slideId: string;
-  title: string;
-  bodyHtml: string;
-  scopedCss?: string | null;
-  speakerNotes?: string | null;
-  actions?: Array<Record<string, unknown>>;
-  drilldowns?: Array<Record<string, unknown>>;
-  background?: Record<string, unknown> | null;
-  transition?: string | null;
-}
-
-export interface HtmlRuntimeManifest {
-  version: string;
-  title: string;
-  theme?: Record<string, unknown> | null;
-  presenter?: Record<string, unknown> | null;
-  export?: Record<string, unknown> | null;
-  slides: HtmlRuntimeManifestSlide[];
-}
-
-export interface HtmlRuntimeRenderSlide {
-  index: number;
-  slideId: string;
-  title: string;
-  html: string;
-  css?: string;
-  speakerNotes?: string | null;
-}
-
-export interface HtmlRuntimeRenderPayload {
-  artifactVersion: string;
-  runtimeVersion: string;
-  title: string;
-  slideCount: number;
-  theme?: Record<string, unknown> | null;
-  slides: HtmlRuntimeRenderSlide[];
-  documentHtml: string;
-  presenterCapabilities?: Record<string, unknown>;
-  exportCapabilities?: Record<string, unknown>;
-}
+export type PresentationOutputMode = "html" | "slidev";
 
 export interface SlidevDeckArtifactMeta {
   version: number;
@@ -244,7 +191,6 @@ export interface LatestPresentationRecord {
   artifact_available?: boolean;
   render_available?: boolean;
   artifacts?: {
-    html_deck?: HtmlDeckArtifactMeta;
     slidev_deck?: SlidevDeckArtifactMeta;
     slidev_build?: SlidevBuildArtifactMeta;
     [key: string]: unknown;
@@ -434,48 +380,6 @@ export async function getLatestSessionPresentation(sessionId: string): Promise<S
   return res.json();
 }
 
-export async function getLatestSessionPresentationHtml(sessionId: string): Promise<string | null> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html`, {
-    headers: withWorkspaceHeaders(),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`获取 HTML 演示稿失败: ${res.statusText}`);
-  return res.text();
-}
-
-export async function getLatestSessionPresentationHtmlMeta(
-  sessionId: string
-): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/meta`, {
-    headers: withWorkspaceHeaders(),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`获取 HTML 演示稿元数据失败: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getLatestSessionPresentationHtmlManifest(
-  sessionId: string
-): Promise<HtmlRuntimeManifest | null> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/manifest`, {
-    headers: withWorkspaceHeaders(),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`获取 HTML runtime manifest 失败: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getLatestSessionPresentationHtmlRender(
-  sessionId: string
-): Promise<HtmlRuntimeRenderPayload | null> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/html/render`, {
-    headers: withWorkspaceHeaders(),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`获取 HTML runtime render payload 失败: ${res.statusText}`);
-  return res.json();
-}
-
 export interface SlidevDeckResponse {
   markdown: string;
   meta: Record<string, unknown>;
@@ -532,6 +436,74 @@ export async function getLatestSessionPresentationSlidevSidecar(
   return res.json();
 }
 
+export interface CentiDeckSlidePayload {
+  slideId: string;
+  title: string;
+  plainText: string;
+  moduleSource: string;
+  notes?: string | null;
+  audioUrl?: string | null;
+  actions?: Record<string, unknown>[];
+  drilldowns?: Record<string, unknown>[];
+  background?: Record<string, unknown> | null;
+  transition?: string | null;
+}
+
+export interface CentiDeckArtifactPayload {
+  version: string;
+  title: string;
+  theme?: Record<string, unknown> | null;
+  presenter?: Record<string, unknown> | null;
+  export?: Record<string, unknown> | null;
+  slides: CentiDeckSlidePayload[];
+}
+
+export interface CentiDeckRenderPayload {
+  artifactVersion: string;
+  runtimeVersion: string;
+  title: string;
+  slideCount: number;
+  theme?: Record<string, unknown> | null;
+  slides: CentiDeckSlidePayload[];
+  presenterCapabilities: Record<string, unknown>;
+  exportCapabilities: Record<string, unknown>;
+}
+
+export interface CentiDeckSummaryResponse {
+  render: CentiDeckRenderPayload;
+  artifact_summary: { version: string; title: string; slide_count: number };
+  artifact_status?: string | null;
+  render_status?: string | null;
+  render_error?: string | null;
+  artifact_available?: boolean | null;
+  render_available?: boolean | null;
+  assets?: Record<string, unknown>;
+}
+
+export async function getLatestSessionPresentationCentiDeck(
+  sessionId: string
+): Promise<CentiDeckSummaryResponse | null> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/centi-deck`,
+    { headers: withWorkspaceHeaders() }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 centi-deck 演示稿失败: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getLatestSessionPresentationCentiDeckArtifact(
+  sessionId: string
+): Promise<CentiDeckArtifactPayload | null> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/centi-deck/artifact`,
+    { headers: withWorkspaceHeaders() }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 centi-deck artifact 失败: ${res.statusText}`);
+  return res.json();
+}
+
 export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/share-link`, {
     method: "POST",
@@ -559,28 +531,6 @@ export async function getPublicSharePlayback(token: string): Promise<PublicShare
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `获取分享播放内容失败: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-export async function getPublicShareHtml(token: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}/html`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `获取分享 HTML 演示稿失败: ${res.statusText}`);
-  }
-  return res.text();
-}
-
-export async function getPublicShareHtmlRender(token: string): Promise<HtmlRuntimeRenderPayload> {
-  const res = await fetch(`${API_BASE}/api/v1/public/shares/${encodeURIComponent(token)}/html/render`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `获取分享 HTML render payload 失败: ${res.statusText}`);
   }
   return res.json();
 }
@@ -615,29 +565,6 @@ export async function saveLatestSessionPresentation(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `保存会话演示稿失败: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-export async function saveLatestSessionHtmlPresentation(
-  sessionId: string,
-  presentation: Presentation,
-  manifest: HtmlRuntimeManifest,
-  source: "chat" | "editor" = "chat"
-): Promise<SnapshotMeta> {
-  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
-    method: "PUT",
-    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      presentation,
-      source,
-      output_mode: "html",
-      html_deck: { manifest },
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `保存 HTML 演示稿失败: ${res.statusText}`);
   }
   return res.json();
 }
@@ -1278,13 +1205,6 @@ interface SlideUpdateEvent {
   modifications: Record<string, unknown>[];
 }
 
-interface HtmlUpdateEvent {
-  html_manifest: HtmlRuntimeManifest;
-  html_render: HtmlRuntimeRenderPayload;
-  presentation: Presentation;
-  modifications?: Record<string, unknown>[];
-}
-
 interface SlidevUpdateEvent {
   markdown: string;
   meta: Record<string, unknown>;
@@ -1337,7 +1257,6 @@ export async function chatStream(
   onError?: (err: Error) => void,
   onSlideUpdate?: (update: SlideUpdateEvent) => void,
   onNoOp?: (event: ChatNoOpEvent) => void,
-  onHtmlUpdate?: (update: HtmlUpdateEvent) => void,
   onSlidevUpdate?: (update: SlidevUpdateEvent) => void,
   onAssistantStatus?: (event: ChatAssistantStatusEvent) => void,
   onToolCall?: (event: ChatToolCallEvent) => void,
@@ -1408,13 +1327,6 @@ export async function chatStream(
             } else if (parsed.type === "slide_update" && onSlideUpdate) {
               onSlideUpdate({
                 slides: parsed.slides,
-                modifications: parsed.modifications,
-              });
-            } else if (parsed.type === "html_update" && onHtmlUpdate) {
-              onHtmlUpdate({
-                html_manifest: parsed.html_manifest,
-                html_render: parsed.html_render,
-                presentation: parsed.presentation,
                 modifications: parsed.modifications,
               });
             } else if (parsed.type === "slidev_update" && onSlidevUpdate) {

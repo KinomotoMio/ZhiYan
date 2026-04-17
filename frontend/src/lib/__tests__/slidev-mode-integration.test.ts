@@ -28,7 +28,7 @@ test("slidev preview uses hash routing and api exposes slidev persistence helper
 
   assert.match(previewSource, /url\.hash = `#\/\$\{safeSlide \+ 1\}`/);
   assert.doesNotMatch(previewSource, /searchParams\.set\("slide"/);
-  assert.match(apiSource, /type PresentationOutputMode = "structured" \| "html" \| "slidev"/);
+  assert.match(apiSource, /type PresentationOutputMode = "html" \| "slidev"/);
   assert.match(apiSource, /getLatestSessionPresentationSlidev/);
   assert.match(apiSource, /saveLatestSessionSlidevPresentation/);
   assert.match(editorSource, /resolveSlidevPreviewState/);

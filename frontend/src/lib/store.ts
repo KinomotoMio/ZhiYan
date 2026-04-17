@@ -1,11 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Presentation, Slide } from "@/types/slide";
+import type { Slide } from "@/types/slide";
 import type { SourceMeta } from "@/types/source";
 import type {
-  HtmlDeckArtifactMeta,
-  HtmlRuntimeManifest,
-  HtmlRuntimeRenderPayload,
   PlanningOutlineItem,
   PlanningState,
   PresentationOutputMode,
@@ -16,14 +13,7 @@ import type {
   WorkspaceId,
 } from "@/lib/api";
 import type { LayoutRole } from "@/lib/layout-role";
-import { compactLoadingTitle, DEFAULT_LOADING_TITLE } from "@/lib/loading-title";
 import type { IssueDecisionStatus } from "@/lib/verification-issues";
-import {
-  buildShellSlides,
-  mergeGeneratedSlide,
-  mergeOutlineTitles,
-  type OutlineTitleItem,
-} from "@/components/generation/presentation-shell";
 import {
   getSessionTopicDraft,
   migrateLegacyTopicDraftState,
@@ -33,13 +23,6 @@ import {
 } from "@/lib/session-topic-drafts";
 import { compareUpdatedAt } from "@/lib/sort";
 
-function shouldSyncGeneratedSessionTitle(
-  session: SessionSummary | undefined,
-): boolean {
-  if (!session) return false;
-  return !session.title_edited_by_user;
-}
-
 export interface OutlineItem {
   slide_number: number;
   title: string;
@@ -47,6 +30,8 @@ export interface OutlineItem {
   // Legacy compatibility for persisted local state or older API payloads.
   suggested_layout_category?: string;
 }
+
+export type { LayoutRole };
 
 export interface ChatMessage {
   id: string;
@@ -79,12 +64,7 @@ interface AppState {
   currentSessionId: string | null;
 
   // Editor state
-  presentation: Presentation | null;
   presentationOutputMode: PresentationOutputMode;
-  presentationHtml: string | null;
-  presentationHtmlManifest: HtmlRuntimeManifest | null;
-  presentationHtmlRender: HtmlRuntimeRenderPayload | null;
-  presentationHtmlArtifact: HtmlDeckArtifactMeta | null;
   presentationSlidevMarkdown: string | null;
   presentationSlidevMeta: Record<string, unknown> | null;
   presentationSlidevDeckArtifact: SlidevDeckArtifactMeta | null;
@@ -95,6 +75,9 @@ interface AppState {
   presentationArtifactStatus: string | null;
   presentationRenderStatus: string | null;
   presentationRenderError: string | null;
+  // Placeholder fields for centi-deck renderer (populated by the next task).
+  presentationCentiDeckArtifact: unknown | null;
+  presentationCentiDeckRender: unknown | null;
   currentSlideIndex: number;
   isGenerating: boolean;
   jobId: string | null;
@@ -105,10 +88,8 @@ interface AppState {
   failedSlideIndices: number[];
   hardIssueSlideIds: string[];
   advisoryIssueCount: number;
-  fixPreviewSlides: Slide[];
   fixPreviewSourceIds: string[];
   fixPreviewSlidev: SlidevFixPreviewState | null;
-  selectedFixPreviewSlideIds: string[];
   issuePanelOpen: boolean;
   issuePanelSlideId: string | null;
   issueDecisionBySlideId: Record<string, IssueDecisionStatus>;
@@ -136,12 +117,7 @@ interface AppState {
   setSessionData: (payload: {
     sources: SourceMeta[];
     chatMessages: ChatMessage[];
-    presentation: Presentation | null;
     presentationOutputMode?: PresentationOutputMode;
-    presentationHtml?: string | null;
-    presentationHtmlManifest?: HtmlRuntimeManifest | null;
-    presentationHtmlRender?: HtmlRuntimeRenderPayload | null;
-    presentationHtmlArtifact?: HtmlDeckArtifactMeta | null;
     presentationSlidevMarkdown?: string | null;
     presentationSlidevMeta?: Record<string, unknown> | null;
     presentationSlidevDeckArtifact?: SlidevDeckArtifactMeta | null;
@@ -156,14 +132,6 @@ interface AppState {
   }) => void;
 
   // Editor actions
-  setPresentation: (p: Presentation | null) => void;
-  setPresentationHtmlState: (
-    outputMode: PresentationOutputMode,
-    html: string | null,
-    manifest?: HtmlRuntimeManifest | null,
-    render?: HtmlRuntimeRenderPayload | null,
-    artifact?: HtmlDeckArtifactMeta | null
-  ) => void;
   setPresentationSlidevState: (payload: {
     outputMode: PresentationOutputMode;
     markdown: string | null;
@@ -179,7 +147,9 @@ interface AppState {
     renderStatus?: string | null;
     renderError?: string | null;
   }) => void;
-  updateSlides: (slides: Slide[]) => void;
+  // Centi-deck placeholder setters (the next task will populate real logic).
+  setPresentationCentiDeckArtifact: (artifact: unknown | null) => void;
+  setPresentationCentiDeckRender: (render: unknown | null) => void;
   setCurrentSlideIndex: (i: number) => void;
   setIsGenerating: (v: boolean) => void;
   updateJobState: (patch: {
@@ -191,14 +161,10 @@ interface AppState {
     failedSlideIndices?: number[];
     hardIssueSlideIds?: string[];
     advisoryIssueCount?: number;
-    fixPreviewSlides?: Slide[];
     fixPreviewSourceIds?: string[];
     fixPreviewSlidev?: SlidevFixPreviewState | null;
-    selectedFixPreviewSlideIds?: string[];
   }) => void;
   resetJobState: () => void;
-  setFixPreviewSelection: (slideIds: string[]) => void;
-  toggleFixPreviewSelection: (slideId: string) => void;
   setIssuePanelOpen: (open: boolean) => void;
   openIssuePanelForSlide: (slideId: string | null) => void;
   setIssueDecision: (slideId: string, status: IssueDecisionStatus) => void;
@@ -212,14 +178,7 @@ interface AppState {
   setOutlineStale: (value: boolean) => void;
   setActiveGenerationCard: (card: GenerationCardState | null) => void;
   setPlanningOutputMode: (mode: PresentationOutputMode) => void;
-  getCurrentSlide: () => Slide | null;
 
-  // Progressive generation actions
-  initGenerationShell: (title: string, pageCount: number) => void;
-  setPresentationTitle: (title: string) => void;
-  patchSlideTitlesFromOutline: (items: OutlineTitleItem[]) => void;
-  initSkeletonPresentation: (title: string, outlineItems: OutlineItem[]) => void;
-  updateSlideAtIndex: (index: number, slide: Slide) => void;
   finishGeneration: () => void;
 
   // Create view actions
@@ -247,12 +206,7 @@ export const useAppStore = create<AppState>()(
       currentSessionId: null,
 
       // Editor state
-      presentation: null,
-      presentationOutputMode: "structured",
-      presentationHtml: null,
-      presentationHtmlManifest: null,
-      presentationHtmlRender: null,
-      presentationHtmlArtifact: null,
+      presentationOutputMode: "slidev",
       presentationSlidevMarkdown: null,
       presentationSlidevMeta: null,
       presentationSlidevDeckArtifact: null,
@@ -263,6 +217,8 @@ export const useAppStore = create<AppState>()(
       presentationArtifactStatus: null,
       presentationRenderStatus: null,
       presentationRenderError: null,
+      presentationCentiDeckArtifact: null,
+      presentationCentiDeckRender: null,
       currentSlideIndex: 0,
       isGenerating: false,
       jobId: null,
@@ -273,10 +229,8 @@ export const useAppStore = create<AppState>()(
       failedSlideIndices: [],
       hardIssueSlideIds: [],
       advisoryIssueCount: 0,
-      fixPreviewSlides: [],
       fixPreviewSourceIds: [],
       fixPreviewSlidev: null,
-      selectedFixPreviewSlideIds: [],
       issuePanelOpen: false,
       issuePanelSlideId: null,
       issueDecisionBySlideId: {},
@@ -333,12 +287,7 @@ export const useAppStore = create<AppState>()(
       setSessionData: ({
         sources,
         chatMessages,
-        presentation,
         presentationOutputMode,
-        presentationHtml,
-        presentationHtmlManifest,
-        presentationHtmlRender,
-        presentationHtmlArtifact,
         presentationSlidevMarkdown,
         presentationSlidevMeta,
         presentationSlidevDeckArtifact,
@@ -360,12 +309,7 @@ export const useAppStore = create<AppState>()(
             state.currentSessionId
           ),
           chatMessages,
-          presentation,
-          presentationOutputMode: presentationOutputMode ?? "structured",
-          presentationHtml: presentationHtml ?? null,
-          presentationHtmlManifest: presentationHtmlManifest ?? null,
-          presentationHtmlRender: presentationHtmlRender ?? null,
-          presentationHtmlArtifact: presentationHtmlArtifact ?? null,
+          presentationOutputMode: presentationOutputMode ?? "slidev",
           presentationSlidevMarkdown: presentationSlidevMarkdown ?? null,
           presentationSlidevMeta: presentationSlidevMeta ?? null,
           presentationSlidevDeckArtifact: presentationSlidevDeckArtifact ?? null,
@@ -376,6 +320,8 @@ export const useAppStore = create<AppState>()(
           presentationArtifactStatus: presentationArtifactStatus ?? null,
           presentationRenderStatus: presentationRenderStatus ?? null,
           presentationRenderError: presentationRenderError ?? null,
+          presentationCentiDeckArtifact: null,
+          presentationCentiDeckRender: null,
           planningState: planningState ?? null,
           planningOutputMode:
             planningState?.output_mode === "html" || planningState?.output_mode === "slidev"
@@ -400,53 +346,14 @@ export const useAppStore = create<AppState>()(
           currentSlideIndex: 0,
           hardIssueSlideIds: [],
           advisoryIssueCount: 0,
-          fixPreviewSlides: [],
           fixPreviewSourceIds: [],
           fixPreviewSlidev: null,
-          selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,
           issueDecisionBySlideId: {},
         })),
 
       // Editor actions
-      setPresentation: (p) =>
-        set((state) => {
-          if (!p) {
-            return { presentation: null };
-          }
-          const currentSession = state.sessions.find(
-            (session) => session.id === state.currentSessionId
-          );
-          const shouldSyncSessionTitle =
-            p.title.trim().length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
-          return {
-            presentation: p,
-            sessions:
-              shouldSyncSessionTitle && state.currentSessionId
-                ? state.sessions.map((session) =>
-                    session.id === state.currentSessionId
-                      ? { ...session, title: p.title }
-                      : session
-                  )
-                : state.sessions,
-          };
-        }),
-      setPresentationHtmlState: (outputMode, html, manifest, render, artifact) =>
-        set({
-          presentationOutputMode: outputMode,
-          presentationHtml: html,
-          presentationHtmlManifest: manifest ?? null,
-          presentationHtmlRender: render ?? null,
-          presentationHtmlArtifact: artifact ?? null,
-          presentationSlidevMarkdown: outputMode === "slidev" ? get().presentationSlidevMarkdown : null,
-          presentationSlidevMeta: outputMode === "slidev" ? get().presentationSlidevMeta : null,
-          presentationSlidevDeckArtifact: outputMode === "slidev" ? get().presentationSlidevDeckArtifact : null,
-          presentationSlidevBuildArtifact: outputMode === "slidev" ? get().presentationSlidevBuildArtifact : null,
-          presentationSlidevBuildUrl: outputMode === "slidev" ? get().presentationSlidevBuildUrl : null,
-          presentationSlidevNotesState: outputMode === "slidev" ? get().presentationSlidevNotesState : {},
-          presentationSlidevAudioState: outputMode === "slidev" ? get().presentationSlidevAudioState : {},
-        }),
       setPresentationSlidevState: ({
         outputMode,
         markdown,
@@ -459,17 +366,15 @@ export const useAppStore = create<AppState>()(
       }) =>
         set({
           presentationOutputMode: outputMode,
-          presentationHtml: outputMode === "slidev" ? get().presentationHtml : null,
-          presentationHtmlManifest: outputMode === "slidev" ? get().presentationHtmlManifest : null,
-          presentationHtmlRender: outputMode === "slidev" ? get().presentationHtmlRender : null,
-          presentationHtmlArtifact: outputMode === "slidev" ? get().presentationHtmlArtifact : null,
           presentationSlidevMarkdown: markdown,
           presentationSlidevMeta: meta ?? null,
           presentationSlidevDeckArtifact: deckArtifact ?? null,
           presentationSlidevBuildArtifact: buildArtifact ?? null,
           presentationSlidevBuildUrl: buildUrl ?? null,
-          presentationSlidevNotesState: notesState ?? (outputMode === "slidev" ? get().presentationSlidevNotesState : {}),
-          presentationSlidevAudioState: audioState ?? (outputMode === "slidev" ? get().presentationSlidevAudioState : {}),
+          presentationSlidevNotesState:
+            notesState ?? (outputMode === "slidev" ? get().presentationSlidevNotesState : {}),
+          presentationSlidevAudioState:
+            audioState ?? (outputMode === "slidev" ? get().presentationSlidevAudioState : {}),
         }),
       setPresentationRenderState: ({ artifactStatus, renderStatus, renderError }) =>
         set((state) => ({
@@ -480,17 +385,10 @@ export const useAppStore = create<AppState>()(
           presentationRenderError:
             renderError !== undefined ? renderError : state.presentationRenderError,
         })),
-      updateSlides: (slides) =>
-        set((state) => {
-          if (!state.presentation) return {};
-          return {
-            presentation: { ...state.presentation, slides },
-            currentSlideIndex: Math.min(
-              state.currentSlideIndex,
-              Math.max(0, slides.length - 1)
-            ),
-          };
-        }),
+      setPresentationCentiDeckArtifact: (artifact) =>
+        set({ presentationCentiDeckArtifact: artifact ?? null }),
+      setPresentationCentiDeckRender: (render) =>
+        set({ presentationCentiDeckRender: render ?? null }),
       setCurrentSlideIndex: (i) => set({ currentSlideIndex: i }),
       setIsGenerating: (v) => set({ isGenerating: v }),
       updateJobState: (patch) =>
@@ -503,12 +401,9 @@ export const useAppStore = create<AppState>()(
           failedSlideIndices: patch.failedSlideIndices ?? state.failedSlideIndices,
           hardIssueSlideIds: patch.hardIssueSlideIds ?? state.hardIssueSlideIds,
           advisoryIssueCount: patch.advisoryIssueCount ?? state.advisoryIssueCount,
-          fixPreviewSlides: patch.fixPreviewSlides ?? state.fixPreviewSlides,
           fixPreviewSourceIds: patch.fixPreviewSourceIds ?? state.fixPreviewSourceIds,
           fixPreviewSlidev:
             patch.fixPreviewSlidev !== undefined ? patch.fixPreviewSlidev : state.fixPreviewSlidev,
-          selectedFixPreviewSlideIds:
-            patch.selectedFixPreviewSlideIds ?? state.selectedFixPreviewSlideIds,
           activeGenerationCard:
             state.activeGenerationCard &&
             (patch.jobId ?? state.jobId) === state.activeGenerationCard.jobId
@@ -530,29 +425,11 @@ export const useAppStore = create<AppState>()(
           failedSlideIndices: [],
           hardIssueSlideIds: [],
           advisoryIssueCount: 0,
-          fixPreviewSlides: [],
           fixPreviewSourceIds: [],
           fixPreviewSlidev: null,
-          selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,
           issueDecisionBySlideId: {},
-        }),
-      setFixPreviewSelection: (slideIds) =>
-        set({
-          selectedFixPreviewSlideIds: Array.from(
-            new Set(slideIds.filter((id) => id.trim().length > 0))
-          ),
-        }),
-      toggleFixPreviewSelection: (slideId) =>
-        set((state) => {
-          if (!slideId) return {};
-          const exists = state.selectedFixPreviewSlideIds.includes(slideId);
-          return {
-            selectedFixPreviewSlideIds: exists
-              ? state.selectedFixPreviewSlideIds.filter((id) => id !== slideId)
-              : [...state.selectedFixPreviewSlideIds, slideId],
-          };
         }),
       setIssuePanelOpen: (issuePanelOpen) => set({ issuePanelOpen }),
       openIssuePanelForSlide: (slideId) =>
@@ -586,10 +463,8 @@ export const useAppStore = create<AppState>()(
         set({
           hardIssueSlideIds: [],
           advisoryIssueCount: 0,
-          fixPreviewSlides: [],
           fixPreviewSourceIds: [],
           fixPreviewSlidev: null,
-          selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,
         }),
@@ -645,103 +520,6 @@ export const useAppStore = create<AppState>()(
         })),
       setActiveGenerationCard: (card) => set({ activeGenerationCard: card }),
       setPlanningOutputMode: (planningOutputMode) => set({ planningOutputMode }),
-
-      getCurrentSlide: () => {
-        const { presentation, currentSlideIndex } = get();
-        return presentation?.slides[currentSlideIndex] ?? null;
-      },
-
-      // Progressive generation actions
-      initGenerationShell: (title, pageCount) =>
-        set((state) => {
-          const safeTitle = compactLoadingTitle(title, DEFAULT_LOADING_TITLE);
-          const currentPresentationId =
-            state.presentation?.presentationId || "pres-skeleton";
-          const currentSession = state.sessions.find(
-            (session) => session.id === state.currentSessionId
-          );
-          const sessions = shouldSyncGeneratedSessionTitle(currentSession)
-            ? state.sessions.map((session) =>
-                session.id === state.currentSessionId
-                  ? { ...session, title: safeTitle }
-                  : session
-              )
-            : state.sessions;
-          return {
-            presentation: {
-              presentationId: currentPresentationId,
-              title: safeTitle,
-              slides: buildShellSlides(pageCount, safeTitle),
-            },
-            currentSlideIndex: 0,
-            isGenerating: true,
-            sessions,
-          };
-        }),
-      setPresentationTitle: (title) =>
-        set((state) => {
-          if (!state.presentation) return {};
-          const safeTitle = title.trim();
-          if (!safeTitle) return {};
-          const currentSession = state.sessions.find(
-            (session) => session.id === state.currentSessionId
-          );
-          const shouldSyncSessionTitle =
-            safeTitle.length > 0 && shouldSyncGeneratedSessionTitle(currentSession);
-          return {
-            presentation: {
-              ...state.presentation,
-              title: safeTitle,
-            },
-            sessions:
-              shouldSyncSessionTitle && state.currentSessionId
-                ? state.sessions.map((session) =>
-                    session.id === state.currentSessionId
-                      ? { ...session, title: safeTitle }
-                      : session
-                  )
-                : state.sessions,
-          };
-        }),
-      patchSlideTitlesFromOutline: (items) =>
-        set((state) => {
-          if (!state.presentation) return {};
-          return {
-            presentation: {
-              ...state.presentation,
-              slides: mergeOutlineTitles(state.presentation.slides, items),
-            },
-          };
-        }),
-      initSkeletonPresentation: (title, outlineItems) => {
-        const skeletonSlides = mergeOutlineTitles(
-          buildShellSlides(outlineItems.length, title),
-          outlineItems.map((item) => ({
-            slide_number: item.slide_number,
-            title: item.title,
-          }))
-        );
-        set({
-          presentation: {
-            presentationId: "pres-skeleton",
-            title,
-            slides: skeletonSlides,
-          },
-          currentSlideIndex: 0,
-          isGenerating: true,
-        });
-      },
-
-      updateSlideAtIndex: (index, slide) =>
-        set((state) => {
-          if (!state.presentation) return {};
-          return {
-            presentation: {
-              ...state.presentation,
-              slides: mergeGeneratedSlide(state.presentation.slides, index, slide),
-            },
-          };
-        }),
 
       finishGeneration: () => set({ isGenerating: false }),
 

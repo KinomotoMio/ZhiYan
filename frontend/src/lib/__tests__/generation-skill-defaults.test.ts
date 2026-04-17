@@ -11,6 +11,3 @@ test("default skill resolution maps HTML to html-default", () => {
   assert.equal(defaultSkillIdForOutputMode("html"), "html-default");
 });
 
-test("default skill resolution leaves structured unset", () => {
-  assert.equal(defaultSkillIdForOutputMode("structured"), undefined);
-});

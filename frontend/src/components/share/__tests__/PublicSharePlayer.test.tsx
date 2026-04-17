@@ -18,28 +18,17 @@ test("public share player view renders error state", () => {
   assert.match(html, /分享链接无效或已失效/);
 });
 
-test("public share player view renders structured playback iframe", () => {
+test("public share player view renders centi-deck upgrade placeholder", () => {
   const html = renderToStaticMarkup(
     <PublicSharePlayerView
       playback={{
         title: "公开演示",
-        outputMode: "structured",
-        presentation: {
-          presentationId: "pres-1",
-          title: "公开演示",
-          slides: [
-            {
-              slideId: "slide-1",
-              layoutType: "blank",
-              contentData: {},
-              components: [],
-            },
-          ],
-        },
+        outputMode: "slidev",
+        presentation: null,
       }}
     />
   );
 
   assert.match(html, /公开演示/);
-  assert.match(html, /Presentation preview/);
+  assert.match(html, /centi-deck/);
 });
