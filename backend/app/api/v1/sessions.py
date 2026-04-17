@@ -49,6 +49,7 @@ from app.services.planning import (
 from app.services.sessions import session_store
 from app.services.sessions.workspace import WORKSPACE_HEADER, get_workspace_id_from_request
 from app.services.slidev import build_slidev_spa, prepare_slidev_deck_artifact
+from app.services.centi_deck import normalize_centi_deck_submission
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -186,21 +187,7 @@ async def _resolve_latest_export_context(workspace_id: str, session_id: str) -> 
     if not latest:
         raise HTTPException(status_code=404, detail="当前会话暂无可导出的演示稿")
     presentation = dict(latest.get("presentation") or {})
-    output_mode = str(latest.get("output_mode") or "structured").strip() or "structured"
-    if output_mode == "html":
-        from app.services.html_runtime import build_html_runtime_artifact
-
-        runtime = await session_store.get_latest_html_runtime(workspace_id, session_id)
-        if not runtime:
-            raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
-        manifest, render = runtime
-        _normalized_manifest, _normalized_render, projection = build_html_runtime_artifact(
-            manifest_payload=manifest,
-            fallback_title=str(manifest.get("title") or presentation.get("title") or "新演示文稿"),
-            expected_slide_count=int(render.get("slideCount") or 0) or None,
-            existing_slides=list(presentation.get("slides") or []),
-        )
-        return projection, render, output_mode
+    output_mode = str(latest.get("output_mode") or "slidev").strip() or "slidev"
     return presentation, {}, output_mode
 
 
@@ -673,6 +660,7 @@ async def confirm_session_planning(
         source_ids=ready_source_ids,
         outline_stale=False,
         active_job_id=job.job_id,
+        output_mode=effective_output_mode.value,
     )
     await session_store.add_chat_message(
         workspace_id=workspace_id,
@@ -958,54 +946,6 @@ async def get_latest_presentation(session_id: str, request: Request):
     return latest
 
 
-@router.get("/{session_id}/presentations/latest/html")
-async def get_latest_presentation_html(session_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    latest = await session_store.get_latest_html_deck(workspace_id, sid)
-    if not latest:
-        raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
-    html, _meta = latest
-    return PlainTextResponse(content=html, media_type="text/html")
-
-
-@router.get("/{session_id}/presentations/latest/html/meta")
-async def get_latest_presentation_html_meta(session_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    latest = await session_store.get_latest_html_deck(workspace_id, sid)
-    if not latest:
-        raise HTTPException(status_code=404, detail="当前会话暂无 HTML 演示稿")
-    _html, meta = latest
-    return JSONResponse(content=meta)
-
-
-@router.get("/{session_id}/presentations/latest/html/manifest")
-async def get_latest_presentation_html_manifest(session_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    latest = await session_store.get_latest_html_runtime(workspace_id, sid)
-    if not latest:
-        raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
-    manifest, _render = latest
-    return JSONResponse(content=manifest)
-
-
-@router.get("/{session_id}/presentations/latest/html/render")
-async def get_latest_presentation_html_render(session_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
-    sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
-    latest = await session_store.get_latest_html_runtime(workspace_id, sid)
-    if not latest:
-        raise HTTPException(status_code=404, detail="当前会话暂无 HTML Runtime 演示稿")
-    _manifest, render = latest
-    return JSONResponse(content=render)
-
-
 @router.post("/{session_id}/export/pptx")
 async def export_latest_session_pptx(session_id: str, request: Request):
     from app.api.v1.export import _build_content_disposition
@@ -1015,7 +955,12 @@ async def export_latest_session_pptx(session_id: str, request: Request):
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
-    presentation_payload, _html_render, _output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    presentation_payload, _html_render, output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    if output_mode == "html":
+        raise HTTPException(
+            status_code=501,
+            detail="centi-deck 模式的 PPTX 导出正在开发中，请先用 Slidev 模式导出。",
+        )
     presentation = PresentationModel.model_validate(presentation_payload)
     pptx_bytes = do_export(presentation)
 
@@ -1032,22 +977,21 @@ async def export_latest_session_pdf(session_id: str, request: Request):
     from app.services.export.pdf_exporter import (
         build_presentation_html,
         export_pdf as do_export,
-        export_runtime_viewer_pdf,
     )
 
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
-    presentation_payload, html_render, output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    presentation_payload, _html_render, output_mode = await _resolve_latest_export_context(workspace_id, sid)
+    if output_mode == "html":
+        raise HTTPException(
+            status_code=501,
+            detail="centi-deck 模式的 PDF 导出正在开发中，请先用 Slidev 模式导出。",
+        )
     title = str(presentation_payload.get("title") or "新演示文稿")
 
     try:
-        if output_mode == "html":
-            pdf_bytes = await export_runtime_viewer_pdf(
-                document_html=str(html_render.get("documentHtml") or "")
-            )
-        else:
-            pdf_bytes = await do_export(build_presentation_html(presentation_payload))
+        pdf_bytes = await do_export(build_presentation_html(presentation_payload))
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1147,6 +1091,48 @@ async def get_latest_presentation_slidev_build_asset(
     return FileResponse(target)
 
 
+@router.get("/{session_id}/presentations/latest/centi-deck")
+async def get_latest_presentation_centi_deck(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_presentation(workspace_id, sid)
+    if not latest:
+        raise HTTPException(status_code=404, detail="当前会话暂无演示稿")
+    if latest.get("output_mode") != "html":
+        raise HTTPException(status_code=404, detail="当前会话暂无 centi-deck 演示稿")
+    result = await session_store.get_latest_centi_deck(workspace_id, sid)
+    if not result:
+        raise HTTPException(status_code=404, detail="当前会话暂无 centi-deck 演示稿")
+    artifact, render = result
+    return {
+        "render": render,
+        "artifact_summary": {
+            "version": artifact.get("version"),
+            "title": artifact.get("title"),
+            "slide_count": len(artifact.get("slides") or []),
+        },
+        "artifact_status": latest.get("artifact_status"),
+        "render_status": latest.get("render_status"),
+        "render_error": latest.get("render_error"),
+        "artifact_available": latest.get("artifact_available"),
+        "render_available": latest.get("render_available"),
+        "assets": latest.get("artifacts", {}),
+    }
+
+
+@router.get("/{session_id}/presentations/latest/centi-deck/artifact")
+async def get_latest_presentation_centi_deck_artifact(session_id: str, request: Request):
+    workspace_id = get_workspace_id_from_request(request)
+    sid = _ensure_session_id(session_id)
+    await _assert_session_access(workspace_id, sid)
+    result = await session_store.get_latest_centi_deck(workspace_id, sid)
+    if not result:
+        raise HTTPException(status_code=404, detail="当前会话暂无 centi-deck 演示稿")
+    artifact, _render = result
+    return JSONResponse(content=artifact)
+
+
 @router.post("/{session_id}/share-link", response_model=SessionShareLinkResponse)
 async def create_or_get_session_share_link(session_id: str, request: Request):
     workspace_id = get_workspace_id_from_request(request)
@@ -1157,13 +1143,9 @@ async def create_or_get_session_share_link(session_id: str, request: Request):
     if not latest:
         raise HTTPException(status_code=404, detail="当前会话暂无可分享的演示稿")
 
-    output_mode = str(latest.get("output_mode") or "structured")
+    output_mode = str(latest.get("output_mode") or "slidev")
     if output_mode == "slidev":
         raise HTTPException(status_code=422, detail="当前暂不支持分享 Slidev 演示稿")
-    if output_mode == "html":
-        html_deck = await session_store.get_latest_html_deck(workspace_id, sid)
-        if not html_deck:
-            raise HTTPException(status_code=404, detail="当前会话暂无可分享的 HTML 演示稿")
 
     share = await session_store.create_or_get_share_link(workspace_id, sid)
     token = str(share["token"])
@@ -1186,11 +1168,32 @@ async def save_latest_presentation(
     await _assert_session_access(workspace_id, sid)
     slidev_deck = req.slidev_deck
     slidev_build = None
+    centi_deck_payload: dict | None = None
     presentation_payload = req.presentation
     temp_root: Path | None = None
     render_status = "ready"
     render_error = None
     try:
+        if (req.output_mode or "").strip() == "html" and req.centi_deck is not None:
+            centi_input = req.centi_deck
+            raw_artifact = centi_input.get("artifact") if isinstance(centi_input, dict) else None
+            if not isinstance(raw_artifact, dict):
+                # Allow flat submissions where the body IS the artifact
+                raw_artifact = centi_input if isinstance(centi_input, dict) else None
+            if not isinstance(raw_artifact, dict):
+                raise HTTPException(status_code=422, detail="保存 centi-deck 演示稿时缺少 artifact 字段")
+            try:
+                artifact_dict, render_dict = normalize_centi_deck_submission(
+                    payload=raw_artifact,
+                    fallback_title=str((presentation_payload or {}).get("title") or raw_artifact.get("title") or "新演示文稿"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            centi_deck_payload = {"artifact": artifact_dict, "render": render_dict}
+            presentation_payload = {
+                "title": artifact_dict["title"],
+                "outputMode": "html",
+            }
         if (req.output_mode or "").strip() == "slidev":
             if not isinstance(slidev_deck, dict):
                 raise HTTPException(status_code=422, detail="保存 Slidev 演示稿时缺少 slidev_deck")
@@ -1245,16 +1248,22 @@ async def save_latest_presentation(
         presentation_payload["renderStatus"] = render_status
         presentation_payload["renderError"] = render_error
         presentation_payload["artifactAvailable"] = True
-        presentation_payload["renderAvailable"] = slidev_build is not None or (req.output_mode or "").strip() != "slidev"
+        mode_str = (req.output_mode or "").strip()
+        if mode_str == "slidev":
+            presentation_payload["renderAvailable"] = slidev_build is not None
+        elif mode_str == "html":
+            presentation_payload["renderAvailable"] = centi_deck_payload is not None
+        else:
+            presentation_payload["renderAvailable"] = True
         saved = await session_store.save_presentation(
             session_id=sid,
             payload=presentation_payload,
             is_snapshot=False,
             snapshot_label=None,
             output_mode=req.output_mode,
-            html_deck=req.html_deck,
             slidev_deck=slidev_deck,
             slidev_build=slidev_build,
+            centi_deck=centi_deck_payload,
         )
         return SnapshotMeta.model_validate(saved)
     finally:

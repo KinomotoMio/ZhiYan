@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from app.models.slide import Slide
+from app.services.generation.centi_deck_verifier import inspect_centi_deck_artifact
 from app.services.generation.runtime_state import GenerationRuntimeState, ProgressHook
 from app.services.presentations import normalize_presentation_payload
 
@@ -29,6 +30,7 @@ async def stage_verify_slides(
         if report["failed"]:
             failed_indices.append(index)
 
+    issues.extend(_inspect_centi_deck_payload(state))
     state.verification_issues = issues
     state.failed_slide_indices = failed_indices
 
@@ -70,6 +72,9 @@ async def stage_fix_slides_once(
 
 
 def _inspect_slide(slide: Slide) -> dict[str, Any]:
+    if _is_centi_deck_slide(slide):
+        return {"failed": False, "issue": None, "normalized_slide": None}
+
     payload = {
         "presentationId": "pres-verify",
         "title": "验证",
@@ -159,6 +164,21 @@ def _pick_title(data: dict[str, Any]) -> str:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
     return ""
+
+
+def _inspect_centi_deck_payload(state: GenerationRuntimeState) -> list[dict[str, Any]]:
+    agent_outputs = state.document_metadata.get("agent_outputs") if isinstance(state.document_metadata, dict) else None
+    centi_payload = agent_outputs.get("centi_deck") if isinstance(agent_outputs, dict) else None
+    artifact = centi_payload.get("artifact") if isinstance(centi_payload, dict) else None
+    if not isinstance(artifact, dict):
+        return []
+    return inspect_centi_deck_artifact(artifact)
+
+
+def _is_centi_deck_slide(slide: Slide) -> bool:
+    layout_id = str(slide.layout_id or slide.layout_type or "").strip().lower()
+    content_data = slide.content_data if isinstance(slide.content_data, dict) else {}
+    return layout_id == "centi-deck" or bool(content_data.get("_centiDeck"))
 
 
 def _pick_body(data: dict[str, Any]) -> str:

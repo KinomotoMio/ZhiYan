@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
-from app.services.agents.modifications import SlideModification
 from app.services.agents.editor_loop import EditorLoopOutcome, editor_loop_service
 from app.services.generation.agentic.models import ModelUsage
 from app.services.generation.agentic.types import AssistantMessage, ToolCall
@@ -78,7 +77,7 @@ def test_chat_free_text_emits_loop_events_and_sanitizes_think(monkeypatch, tmp_p
             "action_hint": "free_text",
             "presentation_context": {
                 "title": "演示",
-                "output_mode": "structured",
+                "output_mode": "slidev",
                 "slides": [
                     {
                         "slideId": "s-1",
@@ -112,186 +111,6 @@ def test_chat_free_text_emits_loop_events_and_sanitizes_think(monkeypatch, tmp_p
     assert "<think>" not in records[-1]["content"]
 
 
-def test_chat_structured_action_emits_slide_update(monkeypatch, tmp_path):
-    _install_temp_session_store(monkeypatch, tmp_path)
-    fake_model = FakeModel(
-        responses=[
-            AssistantMessage(
-                tool_calls=[
-                    ToolCall(
-                        tool_name="modify_slide_content",
-                        args={
-                            "slide_index": 0,
-                            "field_path": "description",
-                            "new_value": "把三项指标都补充成更完整的解释。",
-                        },
-                        tool_call_id="call-1",
-                    )
-                ]
-            ),
-            AssistantMessage(content="我已经补充了当前页说明。"),
-        ]
-    )
-    _install_fake_model(monkeypatch, fake_model)
-
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/chat",
-        headers={"X-Workspace-Id": "ws-chat"},
-        json={
-            "message": "请给这一页补充更多细节",
-            "messages": [],
-            "action_hint": "add_detail",
-            "presentation_context": {
-                "title": "结构化演示",
-                "output_mode": "structured",
-                "slides": [
-                    {
-                        "slideId": "s-1",
-                        "layoutId": "metrics-slide",
-                        "layoutType": "metrics-slide",
-                        "contentData": {
-                            "title": "增长指标",
-                            "description": "原始说明",
-                            "metrics": [{"value": "12%", "label": "增长"}],
-                        },
-                        "components": [],
-                    }
-                ],
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    events = _parse_sse(response.text)
-    slide_updates = [evt for evt in events if evt.get("type") == "slide_update"]
-    assert len(slide_updates) == 1
-    assert slide_updates[0]["slides"][0]["contentData"]["description"] == "把三项指标都补充成更完整的解释。"
-    assert slide_updates[0]["modifications"][0]["action"] == "update_content_data"
-
-
-def test_chat_action_hint_notes_only_is_no_op(monkeypatch, tmp_path):
-    _install_temp_session_store(monkeypatch, tmp_path)
-    fake_model = FakeModel(
-        responses=[
-            AssistantMessage(
-                tool_calls=[
-                    ToolCall(
-                        tool_name="modify_slide_speaker_notes",
-                        args={"slide_index": 0, "new_notes": "补充一段内部备注"},
-                        tool_call_id="call-1",
-                    )
-                ]
-            ),
-            AssistantMessage(content="我先给这页加了一点注释。"),
-        ]
-    )
-    _install_fake_model(monkeypatch, fake_model)
-
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/chat",
-        headers={"X-Workspace-Id": "ws-chat"},
-        json={
-            "message": "请为当前页添加更多细节",
-            "messages": [],
-            "action_hint": "add_detail",
-            "presentation_context": {
-                "title": "结构化演示",
-                "output_mode": "structured",
-                "slides": [
-                    {
-                        "slideId": "s-1",
-                        "layoutId": "two-column-compare",
-                        "layoutType": "two-column-compare",
-                        "contentData": {
-                            "title": "测试",
-                            "left": {"heading": "A", "items": ["a1"]},
-                            "right": {"heading": "B", "items": ["b1"]},
-                        },
-                        "components": [],
-                    }
-                ],
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    events = _parse_sse(response.text)
-    assert not any(evt.get("type") == "slide_update" for evt in events)
-    assert any(evt.get("type") == "no_op" for evt in events)
-    text_events = [evt.get("content", "") for evt in events if evt.get("type") == "text"]
-    assert any("未执行改稿" in content for content in text_events)
-
-
-def test_chat_html_mode_emits_html_update(monkeypatch, tmp_path):
-    _install_temp_session_store(monkeypatch, tmp_path)
-    fake_model = FakeModel(
-        responses=[
-            AssistantMessage(
-                tool_calls=[
-                    ToolCall(
-                        tool_name="submit_html_runtime_revision",
-                        args={
-                            "title": "HTML 改稿",
-                            "slides": [
-                                {
-                                    "slideId": "slide-1",
-                                    "title": "封面",
-                                    "bodyHtml": "<div><h1>封面</h1><p>新的视觉样式</p></div>",
-                                }
-                            ],
-                            "summary": "强化当前页视觉层次",
-                        },
-                        tool_call_id="call-1",
-                    )
-                ]
-            ),
-            AssistantMessage(content="我已重做当前页的 HTML 表达。"),
-        ]
-    )
-    _install_fake_model(monkeypatch, fake_model)
-
-    client = TestClient(app)
-    response = client.post(
-        "/api/v1/chat",
-        headers={"X-Workspace-Id": "ws-chat"},
-        json={
-            "message": "请把当前页做得更有设计感",
-            "messages": [],
-            "action_hint": "enrich_visual",
-            "current_slide_index": 0,
-            "presentation_context": {
-                "title": "HTML 演示",
-                "output_mode": "html",
-                "html_content": (
-                    "<!DOCTYPE html><html><head><title>HTML 演示</title></head><body>"
-                    '<section data-slide-id="slide-1" data-slide-title="封面">'
-                    "<div><h1>封面</h1></div>"
-                    "</section>"
-                    "</body></html>"
-                ),
-                "slides": [
-                    {
-                        "slideId": "slide-1",
-                        "layoutId": "blank",
-                        "layoutType": "blank",
-                        "contentData": {"title": "封面"},
-                        "components": [],
-                    }
-                ],
-            },
-        },
-    )
-
-    assert response.status_code == 200
-    events = _parse_sse(response.text)
-    html_updates = [evt for evt in events if evt.get("type") == "html_update"]
-    assert len(html_updates) == 1
-    assert html_updates[0]["presentation"]["title"] == "HTML 改稿"
-    assert "<section data-slide-id=\"slide-1\"" in html_updates[0]["html_content"]
-
-
 def test_chat_snapshot_reuses_history_until_base_signature_changes(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
     fake_model = FakeModel(
@@ -313,13 +132,13 @@ def test_chat_snapshot_reuses_history_until_base_signature_changes(monkeypatch, 
         "messages": [],
         "action_hint": "free_text",
         "presentation_context": {
-            "title": "结构化演示",
-            "output_mode": "structured",
+            "title": "Slidev 演示",
+            "output_mode": "slidev",
             "slides": [
                 {
                     "slideId": "s-1",
-                    "layoutId": "metrics-slide",
-                    "layoutType": "metrics-slide",
+                    "layoutId": "slidev-index",
+                    "layoutType": "slidev-index",
                     "contentData": {"title": "测试页"},
                     "components": [],
                 }
@@ -369,11 +188,11 @@ def test_chat_slidev_mode_emits_slidev_update(monkeypatch, tmp_path):
                 {"type": "assistant_status", "assistant_status": "ready"},
             ],
             modifications=[
-                SlideModification(
-                    slide_index=0,
-                    action="update_slidev_deck",
-                    data={"selected_style_id": "tech-launch"},
-                )
+                {
+                    "slide_index": 0,
+                    "action": "update_slidev_deck",
+                    "data": {"selected_style_id": "tech-launch"},
+                }
             ],
             slides=[
                 {
@@ -391,26 +210,6 @@ def test_chat_slidev_mode_emits_slidev_update(monkeypatch, tmp_path):
                     "components": [],
                 },
             ],
-            normalized_presentation={
-                "presentationId": "pres-slidev-chat",
-                "title": "Slidev 改稿",
-                "slides": [
-                    {
-                        "slideId": "slide-1",
-                        "layoutType": "blank",
-                        "layoutId": "blank",
-                        "contentData": {"title": "新封面"},
-                        "components": [],
-                    },
-                    {
-                        "slideId": "slide-2",
-                        "layoutType": "blank",
-                        "layoutId": "blank",
-                        "contentData": {"title": "新结尾"},
-                        "components": [],
-                    },
-                ],
-            },
             slidev_markdown="---\ntitle: Slidev 改稿\n---\n\n# 新封面\n\n---\n\n# 新结尾\n",
             slidev_meta={
                 "title": "Slidev 改稿",

@@ -133,6 +133,7 @@ async def ensure_speaker_audio_for_slide(
     output_mode = str(latest.get("output_mode") or "").strip()
     presentation = deepcopy(latest.get("presentation")) if isinstance(latest.get("presentation"), dict) else None
     slidev_meta: dict | None = None
+    centi_artifact: dict | None = None
 
     if output_mode == "slidev":
         latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id)
@@ -146,6 +147,26 @@ async def ensure_speaker_audio_for_slide(
         if not notes:
             raise ValueError("当前页还没有演讲者注解")
         speaker_audio = sidecar["speaker_audio"].get(slide_id)
+    elif output_mode == "html":
+        centi = await session_store.get_latest_centi_deck(workspace_id, session_id)
+        if centi is None:
+            raise ValueError("当前会话暂无 centi-deck 演示稿")
+        centi_artifact, _centi_render = centi
+        target_slide = next(
+            (
+                slide
+                for slide in (centi_artifact.get("slides") or [])
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+        # Prefer explicit notes field; fall back to plainText
+        notes = str(target_slide.get("notes") or target_slide.get("plainText") or "").strip()
+        if not notes:
+            raise ValueError("当前页还没有演讲者注解")
+        speaker_audio = target_slide.get("speakerAudio") if isinstance(target_slide.get("speakerAudio"), dict) else None
     else:
         if not isinstance(presentation, dict):
             raise ValueError("当前会话暂无演示稿")
@@ -196,29 +217,26 @@ async def ensure_speaker_audio_for_slide(
         "generatedAt": _utc_now_iso(),
     }
     if output_mode == "html":
-        artifacts = dict(latest.get("artifacts") or {}) if isinstance(latest.get("artifacts"), dict) else {}
-        if not isinstance(presentation, dict):
-            raise ValueError("当前会话暂无演示稿")
-        target_slide = next(
-            (
-                slide
-                for slide in list(presentation.get("slides") or [])
-                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
-            ),
-            None,
-        )
-        if target_slide is None:
-            raise ValueError("指定 slide 不存在")
-        target_slide["speakerAudio"] = next_audio
-        presentation["outputMode"] = "html"
-        if artifacts:
-            presentation["artifacts"] = artifacts
-        await session_store.save_presentation(
+        if centi_artifact is None:
+            raise ValueError("当前会话暂无 centi-deck 演示稿")
+        centi = await session_store.get_latest_centi_deck(workspace_id, session_id)
+        if centi is None:
+            raise ValueError("当前会话暂无 centi-deck 演示稿")
+        stored_artifact, stored_render = centi
+        updated_artifact = deepcopy(stored_artifact)
+        updated_render = deepcopy(stored_render)
+        for slide in list(updated_artifact.get("slides") or []):
+            if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id:
+                slide["speakerAudio"] = next_audio
+                break
+        for slide in list(updated_render.get("slides") or []):
+            if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id:
+                slide["speakerAudio"] = next_audio
+                break
+        await session_store.set_latest_centi_deck(
             session_id=session_id,
-            payload=presentation,
-            is_snapshot=False,
-            snapshot_label=None,
-            output_mode="html",
+            artifact=updated_artifact,
+            render=updated_render,
         )
     elif output_mode == "slidev":
         sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
@@ -279,6 +297,22 @@ async def resolve_speaker_audio_path(
             raise ValueError("指定 slide 不存在")
         sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
         speaker_audio = sidecar["speaker_audio"].get(slide_id)
+    elif output_mode == "html":
+        centi = await session_store.get_latest_centi_deck(workspace_id, session_id)
+        if centi is None:
+            raise ValueError("当前会话暂无 centi-deck 演示稿")
+        centi_artifact, _centi_render = centi
+        target_slide = next(
+            (
+                slide
+                for slide in (centi_artifact.get("slides") or [])
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+        speaker_audio = target_slide.get("speakerAudio") if isinstance(target_slide.get("speakerAudio"), dict) else None
     else:
         slides = list((latest.get("presentation") or {}).get("slides") or [])
         target_slide = next(

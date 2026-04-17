@@ -19,7 +19,6 @@ class GenerationMode(str, Enum):
 
 
 class PresentationOutputMode(str, Enum):
-    STRUCTURED = "structured"
     HTML = "html"
     SLIDEV = "slidev"
 
@@ -107,7 +106,7 @@ class GenerationRequestData(BaseModel):
     num_pages: int = 5
     title: str = "新演示文稿"
     resolved_content: str = ""
-    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    output_mode: PresentationOutputMode = PresentationOutputMode.SLIDEV
     skill_id: str | None = None
 
 
@@ -134,7 +133,7 @@ class RunMetadata(BaseModel):
     skill_id: str | None = None
     base_skill_id: str | None = None
     activated_skills: list[ActivatedSkill] = Field(default_factory=list)
-    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    output_mode: PresentationOutputMode = PresentationOutputMode.SLIDEV
     latency_ms: int | None = None
     token_usage: RunTokenUsage = Field(default_factory=RunTokenUsage)
     tool_events: list[dict[str, Any]] = Field(default_factory=list)
@@ -176,7 +175,7 @@ class GenerationJob(BaseModel):
     updated_at: str = Field(default_factory=now_iso)
 
     request: GenerationRequestData
-    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    output_mode: PresentationOutputMode = PresentationOutputMode.SLIDEV
 
     document_metadata: dict[str, Any] = Field(default_factory=dict)
     outline: dict[str, Any] = Field(default_factory=dict)
@@ -246,5 +245,5 @@ class CreateJobRequest(BaseModel):
     num_pages: int = 5
     mode: GenerationMode = GenerationMode.AUTO
     approved_outline: dict[str, Any] | None = None
-    output_mode: PresentationOutputMode = PresentationOutputMode.STRUCTURED
+    output_mode: PresentationOutputMode = PresentationOutputMode.SLIDEV
     skill_id: str | None = None

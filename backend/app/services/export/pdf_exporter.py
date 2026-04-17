@@ -4,9 +4,6 @@
 """
 
 import logging
-from contextlib import suppress
-from pathlib import Path
-import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -68,31 +65,6 @@ async def export_pdf(html_content: str) -> bytes:
 
         await browser.close()
         return pdf_bytes
-
-
-async def export_runtime_viewer_pdf(
-    *,
-    document_html: str | None = None,
-    viewer_path: str | Path | None = None,
-) -> bytes:
-    """Open the HTML runtime viewer in print mode and export it to PDF."""
-    temp_path: Path | None = None
-    try:
-        if viewer_path is not None:
-            resolved_path = Path(viewer_path).resolve()
-        else:
-            html = str(document_html or "").strip()
-            if not html:
-                raise RuntimeError("HTML runtime viewer 内容为空，无法导出 PDF。")
-            with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as handle:
-                handle.write(html)
-                temp_path = Path(handle.name)
-            resolved_path = temp_path.resolve()
-        return await _export_pdf_from_url(f"{resolved_path.as_uri()}?mode=print")
-    finally:
-        if temp_path is not None:
-            with suppress(Exception):
-                temp_path.unlink()
 
 
 def build_presentation_html(presentation_dict: dict) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.sessions import session_store
@@ -46,52 +46,14 @@ async def _resolve_shared_presentation(token: str) -> tuple[dict[str, Any], dict
 @router.get("/{token}", response_model=PublicSharePlaybackResponse)
 async def get_public_share_playback(token: str):
     _share, latest = await _resolve_shared_presentation(token)
-    output_mode = str(latest.get("output_mode") or "structured")
+    output_mode = str(latest.get("output_mode") or "slidev")
     presentation = latest.get("presentation")
     response = PublicSharePlaybackResponse(
         title=str((presentation or {}).get("title") or "新演示文稿"),
         outputMode=output_mode,
-        presentation=presentation if output_mode != "html" else None,
+        presentation=presentation,
     )
     return JSONResponse(
         content=response.model_dump(mode="json", by_alias=True),
         headers=_NO_STORE_HEADERS,
     )
-
-
-@router.get("/{token}/html")
-async def get_public_share_html(token: str):
-    share, latest = await _resolve_shared_presentation(token)
-    if str(latest.get("output_mode") or "structured") != "html":
-        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
-
-    html_deck = await session_store.get_latest_html_deck(
-        str(share["workspace_id"]),
-        str(share["session_id"]),
-    )
-    if not html_deck:
-        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
-
-    html, _meta = html_deck
-    return PlainTextResponse(
-        content=html,
-        media_type="text/html",
-        headers=_NO_STORE_HEADERS,
-    )
-
-
-@router.get("/{token}/html/render")
-async def get_public_share_html_render(token: str):
-    share, latest = await _resolve_shared_presentation(token)
-    if str(latest.get("output_mode") or "structured") != "html":
-        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
-
-    runtime = await session_store.get_latest_html_runtime(
-        str(share["workspace_id"]),
-        str(share["session_id"]),
-    )
-    if not runtime:
-        raise HTTPException(status_code=404, detail="当前分享暂无 HTML 演示稿")
-
-    _manifest, render = runtime
-    return JSONResponse(content=render, headers=_NO_STORE_HEADERS)

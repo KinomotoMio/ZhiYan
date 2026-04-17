@@ -45,28 +45,6 @@ VISIBLE_CONTENT_ACTIONS: set[ActionHint] = {
 }
 
 
-def _legacy_html_preview_from_manifest(manifest: dict[str, Any]) -> str:
-    title = str(manifest.get("title") or "新演示文稿").strip() or "新演示文稿"
-    sections: list[str] = []
-    raw_slides = manifest.get("slides")
-    if isinstance(raw_slides, list):
-        for index, slide in enumerate(raw_slides, start=1):
-            if not isinstance(slide, dict):
-                continue
-            slide_id = str(slide.get("slideId") or f"slide-{index}")
-            slide_title = str(slide.get("title") or f"第 {index} 页")
-            body_html = str(slide.get("bodyHtml") or "")
-            notes = str(slide.get("speakerNotes") or "").strip()
-            notes_html = f'<aside class="notes">{notes}</aside>' if notes else ""
-            sections.append(
-                f'<section data-slide-id="{slide_id}" data-slide-title="{slide_title}">{body_html}{notes_html}</section>'
-            )
-    return (
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\" />"
-        f"<title>{title}</title></head><body>{''.join(sections)}</body></html>"
-    )
-
-
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
@@ -127,16 +105,15 @@ async def chat(req: ChatRequest, request: Request):
     strict_tool_mode = req.action_hint != "free_text"
     provider = settings.strong_model.split(":", 1)[0] if settings.strong_model else ""
     presentation_context = req.presentation_context if isinstance(req.presentation_context, dict) else {}
-    output_mode = str(presentation_context.get("output_mode") or "structured").strip() or "structured"
-    html_content = str(presentation_context.get("html_content") or "").strip() or None
-    raw_html_manifest = presentation_context.get("html_manifest")
-    html_manifest = dict(raw_html_manifest) if isinstance(raw_html_manifest, dict) else None
-    raw_html_render = presentation_context.get("html_render")
-    html_render = dict(raw_html_render) if isinstance(raw_html_render, dict) else None
+    output_mode = str(presentation_context.get("output_mode") or "slidev").strip() or "slidev"
     slidev_markdown = str(presentation_context.get("slidev_markdown") or "").strip() or None
     raw_slidev_meta = presentation_context.get("slidev_meta")
     slidev_meta = dict(raw_slidev_meta) if isinstance(raw_slidev_meta, dict) else None
     selected_style_id = str(presentation_context.get("selected_style_id") or "").strip() or None
+    raw_centi_artifact = presentation_context.get("centi_deck_artifact")
+    centi_deck_artifact = dict(raw_centi_artifact) if isinstance(raw_centi_artifact, dict) else None
+    raw_centi_render = presentation_context.get("centi_deck_render")
+    centi_deck_render = dict(raw_centi_render) if isinstance(raw_centi_render, dict) else None
     presentation_title = str(presentation_context.get("title") or "新演示文稿").strip() or "新演示文稿"
 
     async def event_stream():
@@ -145,9 +122,8 @@ async def chat(req: ChatRequest, request: Request):
         assistant_text = ""
         modification_count = 0
         effective_modification_count = 0
-        slide_update: dict[str, Any] | None = None
-        html_update: dict[str, Any] | None = None
         slidev_update: dict[str, Any] | None = None
+        centi_deck_update: dict[str, Any] | None = None
 
         try:
             outcome = await editor_loop_service.run(
@@ -160,12 +136,11 @@ async def chat(req: ChatRequest, request: Request):
                     presentation_title=presentation_title,
                     slides=slides,
                     output_mode=output_mode,
-                    html_content=html_content,
-                    html_manifest=html_manifest,
-                    html_render=html_render,
                     slidev_markdown=slidev_markdown,
                     slidev_meta=slidev_meta,
                     selected_style_id=selected_style_id,
+                    centi_deck_artifact=centi_deck_artifact,
+                    centi_deck_render=centi_deck_render,
                     skill_id=req.skill_id,
                     history=[
                         {"role": msg.role, "content": msg.content}
@@ -179,16 +154,7 @@ async def chat(req: ChatRequest, request: Request):
                 req.action_hint,
                 outcome.modifications,
             )
-            if output_mode == "html" and outcome.html_manifest and outcome.html_render and outcome.normalized_presentation:
-                html_update = {
-                    "type": "html_update",
-                    "html_content": _legacy_html_preview_from_manifest(outcome.html_manifest),
-                    "html_manifest": outcome.html_manifest,
-                    "html_render": outcome.html_render,
-                    "presentation": outcome.normalized_presentation,
-                    "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
-                }
-            elif (
+            if (
                 output_mode == "slidev"
                 and outcome.slidev_markdown
                 and outcome.slidev_meta
@@ -200,13 +166,26 @@ async def chat(req: ChatRequest, request: Request):
                     "meta": outcome.slidev_meta,
                     "selected_style_id": outcome.selected_style_id,
                     "preview_url": outcome.slidev_preview_url,
-                    "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
+                    "modifications": list(outcome.modifications),
                 }
-            elif outcome.modifications:
-                slide_update = {
-                    "type": "slide_update",
-                    "slides": outcome.slides,
-                    "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
+            if (
+                output_mode == "html"
+                and outcome.centi_deck_artifact
+                and outcome.centi_deck_render
+            ):
+                centi_deck_update = {
+                    "type": "centi_deck_update",
+                    "artifact": outcome.centi_deck_artifact,
+                    "render": outcome.centi_deck_render,
+                    "summary": next(
+                        (
+                            (mod.get("data") or {}).get("summary")
+                            for mod in outcome.modifications
+                            if isinstance(mod, dict) and mod.get("action") == "update_centi_deck"
+                        ),
+                        None,
+                    ),
+                    "modifications": list(outcome.modifications),
                 }
 
             if strict_tool_mode and effective_modification_count == 0:
@@ -224,13 +203,11 @@ async def chat(req: ChatRequest, request: Request):
                     ensure_ascii=False,
                 )
                 yield f"data: {text_data}\n\n"
-            if html_update is not None and not no_op:
-                yield f"data: {json.dumps(html_update, ensure_ascii=False)}\n\n"
-            elif slidev_update is not None and not no_op:
+            if slidev_update is not None and not no_op:
                 yield f"data: {json.dumps(slidev_update, ensure_ascii=False)}\n\n"
-            elif slide_update is not None and effective_modification_count > 0:
-                yield f"data: {json.dumps(slide_update, ensure_ascii=False)}\n\n"
-            elif strict_tool_mode:
+            if centi_deck_update is not None and not no_op:
+                yield f"data: {json.dumps(centi_deck_update, ensure_ascii=False)}\n\n"
+            if slidev_update is None and centi_deck_update is None and strict_tool_mode:
                 no_op_data = json.dumps(
                     {
                         "type": "no_op",
@@ -313,7 +290,7 @@ def _count_effective_modifications(action_hint: ActionHint, modifications: list[
     return sum(
         1
         for mod in modifications
-        if getattr(mod, "action", None) != "update_notes"
+        if (mod.get("action") if isinstance(mod, dict) else getattr(mod, "action", None)) != "update_notes"
     )
 
 

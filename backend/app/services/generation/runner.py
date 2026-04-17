@@ -20,8 +20,6 @@ from app.core.config import settings
 from app.core.model_status import parse_provider
 from app.models.generation import EventType, GenerationEvent, GenerationJob, JobStatus, RunMetadata, StageResult, StageStatus, now_iso
 from app.models.slide import Presentation, Slide, Theme
-from app.services.html_deck import normalize_html_deck
-from app.services.html_runtime import build_html_runtime_artifact
 from app.services.generation.agentic import (
     AgentBuilder,
     LiteLLMModelClient,
@@ -39,7 +37,6 @@ from app.services.generation.job_store import GenerationJobStore
 from app.services.generation.runtime_state import GenerationRuntimeState
 from app.services.generation.verifier import stage_fix_slides_once, stage_verify_slides
 from app.services.model_clients import create_model_client
-from app.services.presentations import normalize_presentation_payload
 from app.services.skill_runtime.contracts import (
     build_skill_activation_record,
     build_skill_catalog_context,
@@ -52,6 +49,7 @@ from app.services.slidev import (
     inspect_slidev_markdown_submission,
     prepare_slidev_deck_artifact,
 )
+from app.services.centi_deck import normalize_centi_deck_submission
 
 logger = logging.getLogger(__name__)
 
@@ -97,28 +95,6 @@ class _SubmitOutlineArgs(BaseModel):
     items: list[dict[str, Any]]
 
 
-class _SubmitPresentationArgs(BaseModel):
-    presentation_id: str | None = Field(None, alias="presentationId")
-    title: str = ""
-    theme: dict[str, Any] | None = None
-    slides: list[dict[str, Any]]
-
-    model_config = {"populate_by_name": True}
-
-
-class _SubmitHtmlDeckArgs(BaseModel):
-    title: str = ""
-    html: str
-
-
-class _SubmitHtmlRuntimeDeckArgs(BaseModel):
-    title: str = ""
-    theme: dict[str, Any] | None = None
-    presenter: dict[str, Any] | None = None
-    export: dict[str, Any] | None = None
-    slides: list[dict[str, Any]]
-
-
 class _SubmitSlidevDeckArgs(BaseModel):
     title: str = ""
     markdown: str
@@ -127,14 +103,21 @@ class _SubmitSlidevDeckArgs(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class _SubmitCentiDeckArgs(BaseModel):
+    title: str = ""
+    theme: dict[str, Any] | None = None
+    presenter: dict[str, Any] | None = None
+    export: dict[str, Any] | None = None
+    slides: list[dict[str, Any]]
+    summary: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
 AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
     "read_file",
     "read_skill_resource",
     "load_skill",
-)
-
-HTML_PRESENTATION_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
-    "read_file",
 )
 
 REVIEW_OUTLINE_ALLOWED_BUILTIN_TOOLS: tuple[str, ...] = (
@@ -1278,23 +1261,14 @@ class GenerationRunner:
         from app.services.sessions import session_store
 
         agent_outputs = state.document_metadata.get("agent_outputs", {}) if isinstance(state.document_metadata, dict) else {}
-        html_output = agent_outputs.get("html_deck") if isinstance(agent_outputs, dict) else None
         slidev_output = agent_outputs.get("slidev_deck") if isinstance(agent_outputs, dict) else None
         slidev_build_output = agent_outputs.get("slidev_build") if isinstance(agent_outputs, dict) else None
+        centi_output = agent_outputs.get("centi_deck") if isinstance(agent_outputs, dict) else None
         saved = await session_store.save_presentation(
             session_id=job.request.session_id,
             payload=presentation_payload,
             is_snapshot=False,
             output_mode=job.output_mode.value,
-            html_deck=(
-                {
-                    "manifest": html_output.get("manifest"),
-                    "render": html_output.get("render"),
-                    "expected_slide_count": len(job.slides),
-                }
-                if job.output_mode.value == "html" and isinstance(html_output, dict)
-                else None
-            ),
             slidev_deck=(
                 {
                     "markdown": slidev_output.get("markdown"),
@@ -1313,6 +1287,14 @@ class GenerationRunner:
                 if include_render_artifact
                 and job.output_mode.value == "slidev"
                 and isinstance(slidev_build_output, dict)
+                else None
+            ),
+            centi_deck=(
+                {
+                    "artifact": centi_output.get("artifact"),
+                    "render": centi_output.get("render"),
+                }
+                if job.output_mode.value == "html" and isinstance(centi_output, dict)
                 else None
             ),
         )
@@ -1550,9 +1532,6 @@ class GenerationRunner:
             )
             await self._sync_state_to_job(job, state)
 
-        if job.output_mode.value == "html":
-            return True
-
         await self._run_stage(
             job,
             state,
@@ -1577,20 +1556,10 @@ class GenerationRunner:
         state.document_metadata.setdefault("agent_workspace", workspace_meta)
         if progress_hook:
             await progress_hook("parse", 1, 3, "准备 Agent 工作区与素材清单...")
-        if job.output_mode.value != "html":
-            brief = self._build_local_source_brief(job)
-            state.document_metadata["source_brief"] = brief
-        else:
-            state.document_metadata.pop("source_brief", None)
+        brief = self._build_local_source_brief(job)
+        state.document_metadata["source_brief"] = brief
         if progress_hook:
-            await progress_hook(
-                "parse",
-                2,
-                3,
-                "整理 Agent 工作区输入与原始素材引用..."
-                if job.output_mode.value == "html"
-                else "整理本地素材摘要与结构线索...",
-            )
+            await progress_hook("parse", 2, 3, "整理本地素材摘要与结构线索...")
             await progress_hook("parse", 3, 3, "工作区已准备完成。")
 
     async def _stage_generate_agent_outline(
@@ -1619,45 +1588,7 @@ class GenerationRunner:
     ) -> None:
         if progress_hook:
             await progress_hook("slides", 1, 3, "Agent 正在生成完整演示内容...")
-        if job.output_mode.value == "html":
-            html_payload, presentation = await self._generate_html_deck_with_agent(job, state)
-            state.layout_selections = [
-                {
-                    "slide_number": index + 1,
-                    "layout_id": slide.layout_id or slide.layout_type,
-                }
-                for index, slide in enumerate(presentation.slides)
-            ]
-            state.slides = list(presentation.slides)
-            state.slide_contents = [
-                {
-                    "slide_number": index + 1,
-                    "layout_id": slide.layout_id or slide.layout_type,
-                    "content_data": slide.content_data or {},
-                }
-                for index, slide in enumerate(presentation.slides)
-            ]
-            state.document_metadata.setdefault("agent_outputs", {})
-            state.document_metadata["agent_outputs"]["html_deck"] = {
-                "title": html_payload["title"],
-                "html": str((html_payload.get("render") or {}).get("documentHtml") or ""),
-                "meta": {
-                    "title": html_payload["title"],
-                    "slide_count": int((html_payload.get("render") or {}).get("slideCount") or 0),
-                    "slides": list((html_payload.get("render") or {}).get("slides") or []),
-                },
-                "manifest": html_payload["manifest"],
-                "render": html_payload["render"],
-            }
-            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
-                mode="json",
-                by_alias=True,
-                exclude_none=True,
-            )
-            for index, slide in enumerate(presentation.slides):
-                if slide_hook:
-                    await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
-        elif job.output_mode.value == "slidev":
+        if job.output_mode.value == "slidev":
             slidev_payload, slidev_runtime_slides = await self._generate_slidev_deck_with_agent(job, state)
             state.layout_selections = [
                 {
@@ -1687,44 +1618,39 @@ class GenerationRunner:
             for index, slide in enumerate(state.slides):
                 if slide_hook:
                     await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
-        else:
-            submitted_payload, presentation = await self._generate_presentation_with_agent(job, state)
-            audit = self._audit_generated_presentation(job, submitted_payload, presentation)
-            if audit["issues"]:
-                raise ValueError("Presentation audit failed: " + " | ".join(audit["issues"]))
-            expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-            if len(presentation.slides) != expected:
-                raise ValueError(
-                    f"Presentation slide count mismatch after correction: expected {expected}, got {len(presentation.slides)}"
-                )
+        elif job.output_mode.value == "html":
+            centi_payload, centi_runtime_slides = await self._generate_centi_deck_with_agent(job, state)
             state.layout_selections = [
                 {
                     "slide_number": index + 1,
-                    "layout_id": slide.layout_id or slide.layout_type,
+                    "layout_id": "centi-deck",
                 }
-                for index, slide in enumerate(presentation.slides)
+                for index, _slide in enumerate(centi_runtime_slides)
             ]
-            state.slides = list(presentation.slides)
+            state.slides = [Slide.model_validate(slide) for slide in centi_runtime_slides]
             state.slide_contents = [
                 {
-                    "slide_number": int(str(slide.slide_id).replace("slide-", "") or "0"),
-                    "layout_id": slide.layout_id or slide.layout_type,
+                    "slide_number": index + 1,
+                    "layout_id": "centi-deck",
                     "content_data": slide.content_data or {},
                 }
-                for slide in presentation.slides
+                for index, slide in enumerate(state.slides)
             ]
             state.document_metadata.setdefault("agent_outputs", {})
-            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
-                mode="json",
-                by_alias=True,
-                exclude_none=True,
-            )
-            state.document_metadata["agent_outputs"]["presentation_audit"] = audit
-            for key in ("deck", "deck_audit", "deck_metadata"):
-                state.document_metadata["agent_outputs"].pop(key, None)
-            for index, slide in enumerate(presentation.slides):
+            state.document_metadata["agent_outputs"]["centi_deck"] = {
+                "title": centi_payload["artifact"]["title"],
+                "artifact": centi_payload["artifact"],
+                "render": centi_payload["render"],
+                "summary": centi_payload.get("summary"),
+            }
+            state.document_metadata["agent_outputs"].pop("slidev_deck", None)
+            state.document_metadata["agent_outputs"].pop("slidev_build", None)
+            state.document_metadata["agent_outputs"].pop("presentation", None)
+            for index, slide in enumerate(state.slides):
                 if slide_hook:
                     await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
+        else:
+            raise NotImplementedError(f"Unknown output mode: {job.output_mode.value}")
         if progress_hook:
             await progress_hook("slides", 3, 3, "Agent 已直接提交当前编辑器可用的演示结果。")
 
@@ -2091,97 +2017,6 @@ class GenerationRunner:
             palette.extend(DATA_LAYOUTS)
         return sorted(set(palette))
 
-    def _audit_generated_presentation(
-        self,
-        job: GenerationJob,
-        presentation_payload: dict[str, Any],
-        presentation: Presentation,
-    ) -> dict[str, Any]:
-        issues: list[str] = []
-        warnings: list[str] = []
-        slides = presentation.slides
-        raw_slides = list(presentation_payload.get("slides") or []) if isinstance(
-            presentation_payload.get("slides"),
-            list,
-        ) else []
-        layout_ids = [slide.layout_id or slide.layout_type for slide in slides]
-        layout_counts: dict[str, int] = {}
-        for layout_id in layout_ids:
-            layout_counts[layout_id] = layout_counts.get(layout_id, 0) + 1
-        dominant_layout = max(layout_counts.values(), default=0)
-        if job.request.num_pages >= 6 and dominant_layout > max(2, job.request.num_pages // 2):
-            warnings.append("布局重复过多：请增加版式变化，不要让大多数页面都使用同一类 layout。")
-        if job.request.num_pages >= 5 and len(set(layout_ids)) < 3:
-            warnings.append("布局种类过少：至少使用 3 种不同 layout。")
-
-        title_counts: dict[str, int] = {}
-        subtitle_counts: dict[str, int] = {}
-        for index, slide in enumerate(slides):
-            raw_slide = raw_slides[index] if index < len(raw_slides) and isinstance(raw_slides[index], dict) else {}
-            content = raw_slide.get("contentData") if isinstance(raw_slide.get("contentData"), dict) else {}
-            title = _text_field(content, "title")
-            subtitle = _text_field(content, "subtitle")
-            if title:
-                title_counts[title] = title_counts.get(title, 0) + 1
-            if subtitle:
-                subtitle_counts[subtitle] = subtitle_counts.get(subtitle, 0) + 1
-            layout_id = slide.layout_id or slide.layout_type
-            if layout_id in {"bullet-with-icons", "bullet-with-icons-cards"}:
-                bullet_items = _list_field(content, "items")
-                if len(bullet_items) < 3:
-                    warnings.append(f"{title or slide.slide_id}: bullet 类页面最好提供 3-4 个 items。")
-                if any(not _text_field(item, "description") for item in bullet_items if isinstance(item, dict)):
-                    warnings.append(f"{title or slide.slide_id}: bullet 类页面的 items.description 为空。")
-            if layout_id in {"outline-slide", "outline-slide-rail"}:
-                sections = _list_field(content, "sections")
-                if any(not _text_field(section, "description") for section in sections if isinstance(section, dict)):
-                    warnings.append(f"{title or slide.slide_id}: outline 类页面的 sections.description 为空。")
-            if layout_id in {"numbered-bullets", "numbered-bullets-track"}:
-                items = _list_field(content, "items")
-                if len(items) < 3:
-                    warnings.append(f"{title or slide.slide_id}: process 类页面最好至少有 3 个 items。")
-                if any(not _text_field(item, "description") for item in items if isinstance(item, dict)):
-                    warnings.append(f"{title or slide.slide_id}: process 类页面的 items.description 为空。")
-            if layout_id in {"thank-you", "thank-you-contact"} and not (
-                _text_field(content, "subtitle") or _text_field(content, "contact")
-            ):
-                warnings.append(f"{title or slide.slide_id}: closing 页面目前只有标题。")
-            if layout_id in {"quote-slide", "quote-banner"} and not _text_field(content, "quote"):
-                warnings.append(f"{title or slide.slide_id}: highlight 页面缺少 quote。")
-            if layout_id == "two-column-compare" and not (
-                isinstance(content.get("left"), dict) and isinstance(content.get("right"), dict)
-            ):
-                warnings.append(f"{title or slide.slide_id}: comparison 页面缺少 left/right。")
-            if layout_id == "challenge-outcome":
-                entries = _list_field(content, "items")
-                if len(entries) < 2:
-                    warnings.append(f"{title or slide.slide_id}: challenge-outcome 页面最好有 2 组以上 challenge/outcome。")
-
-        repeated_titles = sorted(title for title, count in title_counts.items() if count > 1)
-        if repeated_titles:
-            warnings.append("标题重复过多：" + " / ".join(repeated_titles[:4]))
-        repeated_subtitles = sorted(title for title, count in subtitle_counts.items() if count > 1)
-        if repeated_subtitles:
-            warnings.append("副标题重复过多：" + " / ".join(repeated_subtitles[:4]))
-
-        _normalized, _changed, report = normalize_presentation_payload(presentation_payload)
-        repair_types = sorted(set(report.get("repair_types") or []))
-        invalid_slide_count = int(report.get("invalid_slide_count") or 0)
-        if invalid_slide_count > 0:
-            issues.append(f"存在 {invalid_slide_count} 页结构无效，无法安全落盘。")
-        noisy = sorted(HARD_FAIL_REPAIR_TYPES.intersection(repair_types))
-        if noisy:
-            warnings.append("模板修复噪声偏高：" + " / ".join(noisy))
-
-        return {
-            "issues": issues,
-            "warnings": warnings,
-            "layout_ids": layout_ids,
-            "repair_types": repair_types,
-            "invalid_slide_count": invalid_slide_count,
-            "repaired_slide_count": int(report.get("repaired_slide_count") or 0),
-        }
-
     async def _generate_outline_with_agent(self, job: GenerationJob, state: GenerationRuntimeState) -> AgentOutline:
         payload_holder: dict[str, Any] = {}
         agent, traced_model = self._build_generation_agent(
@@ -2224,108 +2059,164 @@ class GenerationRunner:
             payload_holder.clear()
         raise ValueError(f"Outline item count mismatch: expected {expected}")
 
-    async def _generate_presentation_with_agent(
+    async def _generate_centi_deck_with_agent(
         self,
         job: GenerationJob,
         state: GenerationRuntimeState,
-    ) -> tuple[dict[str, Any], Presentation]:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         payload_holder: dict[str, Any] = {}
         agent, traced_model = self._build_generation_agent(
             job=job,
-            extra_tools=[self._make_presentation_submit_tool(payload_holder)],
-            system_prompt=self._build_agent_presentation_prompt(job, state),
+            extra_tools=[self._make_centi_deck_submit_tool(job, state, payload_holder)],
+            system_prompt=self._build_agent_centi_deck_prompt(job, state),
             allowed_builtin_tools=AUTO_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
         )
         session = agent.start_session()
         preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
-        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        last_issues: list[str] = []
-        for attempt in range(3):
-            prompt = (
-                self._build_agent_presentation_user_prompt(job, state)
-                if attempt == 0
-                else self._build_agent_presentation_retry_prompt(expected, last_issues, output_mode="structured")
-            )
-            result = await session.send(prompt)
-            if attempt == 0 and preload_tool_results:
-                result.tool_results = [*preload_tool_results, *result.tool_results]
-            self._write_agent_run_debug(
-                job,
-                state,
-                stage_name="presentation",
-                prompt=prompt,
-                session=session,
-                result=result,
-                traced_model=traced_model,
-                submitted_payload=payload_holder.get("presentation"),
-                attempt=attempt + 1,
-            )
-            extracted = self._extract_presentation_submission(job, payload_holder)
-            if extracted is None:
-                raise RuntimeError(result.error or "Agent did not submit a presentation.")
-            presentation_payload, presentation = extracted
-            audit = self._audit_generated_presentation(job, presentation_payload, presentation)
-            if len(presentation.slides) == expected and not audit["issues"]:
-                return presentation_payload, presentation
-            last_issues = list(audit["issues"])
-            if len(presentation.slides) != expected:
-                last_issues.insert(
-                    0,
-                    f"页数错误：必须严格输出 {expected} 页，当前是 {len(presentation.slides)} 页。",
-                )
-            payload_holder.clear()
-        if last_issues:
-            raise ValueError("Presentation audit failed: " + " | ".join(last_issues))
-        raise ValueError(f"Presentation slide count mismatch: expected {expected}")
+        prompt = self._build_agent_centi_deck_user_prompt(job, state)
+        result = await session.send(prompt)
+        if preload_tool_results:
+            result.tool_results = [*preload_tool_results, *result.tool_results]
+        self._write_agent_run_debug(
+            job,
+            state,
+            stage_name="presentation",
+            prompt=prompt,
+            session=session,
+            result=result,
+            traced_model=traced_model,
+            submitted_payload=payload_holder.get("centi_deck"),
+            attempt=1,
+        )
+        extracted = await self._extract_centi_deck_submission(job, state, payload_holder)
+        if extracted is None:
+            raise RuntimeError("Agent did not submit a centi-deck.")
+        return extracted
 
-    async def _generate_html_deck_with_agent(
+    def _make_centi_deck_submit_tool(
         self,
         job: GenerationJob,
         state: GenerationRuntimeState,
-    ) -> tuple[dict[str, Any], Presentation]:
-        payload_holder: dict[str, Any] = {}
-        agent, traced_model = self._build_generation_agent(
-            job=job,
-            extra_tools=[
-                self._make_html_runtime_submit_tool(job, payload_holder),
-            ],
-            system_prompt=self._build_agent_presentation_prompt(job, state),
-            allowed_builtin_tools=HTML_PRESENTATION_ALLOWED_BUILTIN_TOOLS,
-        )
-        session = agent.start_session()
-        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        for attempt in range(2):
-            prompt = (
-                self._build_agent_presentation_user_prompt(job, state)
-                if attempt == 0
-                else self._build_agent_presentation_retry_prompt(
-                    expected,
-                    [
-                        "必须提交完整的 HTML runtime manifest。",
-                        f"slides 数量必须严格等于 {expected}。",
-                        "每个页面都要有稳定的 slideId、title、bodyHtml。",
-                        "不要提交完整 HTML 文档壳，只提交页面片段。",
-                    ],
-                    output_mode="html",
+        payload_holder: dict[str, Any],
+    ) -> Tool:
+        async def _handler(args: _SubmitCentiDeckArgs, context: ToolContext) -> dict[str, Any]:
+            payload = args.model_dump(mode="json", by_alias=True, exclude_none=True)
+            fallback_title = str(payload.get("title") or job.request.title or "新演示文稿")
+            outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
+            expected_count = len(outline_items) or max(1, job.request.num_pages)
+            try:
+                artifact_dict, render_dict = normalize_centi_deck_submission(
+                    payload=payload,
+                    fallback_title=fallback_title,
+                    expected_slide_count=expected_count,
                 )
+            except ValueError as exc:
+                return {"status": "error", "message": str(exc)}
+            payload_holder["centi_deck"] = {
+                "artifact": artifact_dict,
+                "render": render_dict,
+                "summary": str(payload.get("summary") or "").strip() or None,
+            }
+            artifacts_dir = context.workspace_root / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "centi-deck.json").write_text(
+                json.dumps(artifact_dict, ensure_ascii=False, indent=2),
+                encoding="utf-8",
             )
-            result = await session.send(prompt)
-            self._write_agent_run_debug(
-                job,
-                state,
-                stage_name="presentation",
-                prompt=prompt,
-                session=session,
-                result=result,
-                traced_model=traced_model,
-                submitted_payload=payload_holder.get("html_runtime_deck") or payload_holder.get("html_deck"),
-                attempt=attempt + 1,
+            return {
+                "status": "ok",
+                "slide_count": len(artifact_dict.get("slides") or []),
+                "title": artifact_dict.get("title"),
+                "path": str((artifacts_dir / "centi-deck.json").resolve()),
+            }
+
+        return Tool(
+            name="submit_centi_deck",
+            description=(
+                "Submit the final centi-deck artifact (title, theme, slides with slideId/title/plainText/moduleSource/notes/etc.). "
+                "Call this exactly once when the deck is ready."
+            ),
+            args_model=_SubmitCentiDeckArgs,
+            handler=_handler,
+            source="embedded",
+        )
+
+    async def _extract_centi_deck_submission(
+        self,
+        job: GenerationJob,
+        state: GenerationRuntimeState,
+        payload_holder: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+        payload = payload_holder.get("centi_deck")
+        if not isinstance(payload, dict):
+            return None
+        artifact = payload.get("artifact")
+        if not isinstance(artifact, dict):
+            return None
+        slides_raw = artifact.get("slides") or []
+        runtime_slides: list[dict[str, Any]] = []
+        for index, slide in enumerate(slides_raw):
+            if not isinstance(slide, dict):
+                continue
+            runtime_slides.append(
+                {
+                    "slideId": str(slide.get("slideId") or f"slide-{index + 1}"),
+                    "layoutType": "centi-deck",
+                    "layoutId": "centi-deck",
+                    "contentData": {
+                        "_centiDeck": True,
+                        "slideId": str(slide.get("slideId") or f"slide-{index + 1}"),
+                        "title": str(slide.get("title") or f"第 {index + 1} 页"),
+                        "plainText": str(slide.get("plainText") or ""),
+                    },
+                    "components": [],
+                }
             )
-            extracted = self._extract_html_deck_submission(job, payload_holder)
-            if extracted is not None and len(extracted[1].slides) == expected:
-                return extracted
-            payload_holder.clear()
-        raise RuntimeError("Agent did not submit a valid HTML runtime manifest.")
+        return payload, runtime_slides
+
+    def _build_agent_centi_deck_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+        skill_context = build_skill_catalog_context(
+            output_mode=job.output_mode.value,
+            requested_skill=job.request.skill_id,
+        )
+        outline_json = (
+            json.dumps(state.outline, ensure_ascii=False, indent=2)
+            if state.outline
+            else "(auto 模式无大纲，直接按素材生成)"
+        )
+        source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
+        return (
+            "你是 ZhiYan 当前创建页按钮背后的 centi-deck 演示生成内核。\n"
+            "centi-deck 是一个 JS-module-first 的演示框架：每页是一个 ES 模块，default 导出一个对象，对象包含 id/title/render()/可选 enter(el, ctx)/leave(el, ctx)。\n"
+            "Write one ES module per slide that exports a default object with `id`, `title`, `render()` returning an HTML string, and optional `enter(el, ctx)` / `leave(el, ctx)` lifecycle hooks.\n"
+            "Use `ctx.gsap` for animations (timeline / stagger / ease). Never use `import`, `fetch`, `eval`, `new Function`, or access `document.cookie` / `localStorage`.\n\n"
+            "工作方式：\n"
+            "- 先用本地素材摘要判断叙事方向，再按需补读 source 文件。\n"
+            "- 你有 `read_file`、`read_skill_resource`、`load_skill` 和 `submit_centi_deck` 四类工具。\n"
+            "- skill 下的 references/scripts/assets 必须通过 `read_skill_resource` 读取。\n"
+            "- 对 html-default，先读 `references/render-rules.md`、`references/anti-patterns.md`，再按页面需要读取 `references/page-recipes/` 中对应 recipe。\n"
+            "- 每页先选一个 recipe，再写 render()；不要直接自由发挥成网页 section 或报告段落。\n"
+            "- 最终只通过 `submit_centi_deck` 提交完整 artifact（title + slides[]）。\n\n"
+            f"{skill_context}\n\n"
+            "centi-deck 约束：\n"
+            f"- 严格输出 {state.num_pages} 页。\n"
+            "- 每个 slide 必须包含 slideId、title、plainText、moduleSource；plainText 用于 speaker/搜索/导出场景，要能完整概述这页口述内容。\n"
+            "- moduleSource 必须是一段可直接用 `new Function('module', 'exports', source)` 形式解析的 ES 模块源码，并至少包含 `export default`。\n"
+            "- 禁止使用 import/require/fetch/eval/new Function/document.cookie/localStorage/sessionStorage/indexedDB/WebSocket/Worker。\n"
+            "- 不要生成报告式长段落；页面密度要贴近 presentation。\n\n"
+            f"本地素材摘要：\n{source_brief}\n\n"
+            f"已确认大纲：\n{outline_json}\n"
+        )
+
+    def _build_agent_centi_deck_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
+        del state
+        return (
+            "请生成完整 centi-deck 演示。\n"
+            f"主题：{job.request.topic or job.request.title}\n"
+            f"补充指令：{job.request.content or '无'}\n"
+            f"目标页数：{job.request.num_pages}\n"
+            "完成后调用 `submit_centi_deck`。"
+        )
 
     async def _generate_slidev_deck_with_agent(
         self,
@@ -2414,134 +2305,6 @@ class GenerationRunner:
             source="embedded",
         )
 
-    def _make_presentation_submit_tool(self, payload_holder: dict[str, Any]) -> Tool:
-        async def _handler(args: _SubmitPresentationArgs, context: ToolContext) -> dict[str, Any]:
-            payload = args.model_dump(mode="json", by_alias=True, exclude_none=True)
-            payload_holder["presentation"] = payload
-            artifacts_dir = context.workspace_root / "artifacts"
-            artifacts_dir.mkdir(parents=True, exist_ok=True)
-            (artifacts_dir / "presentation.json").write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            return {
-                "status": "ok",
-                "slide_count": len(payload.get("slides") or []),
-                "path": str((artifacts_dir / "presentation.json").resolve()),
-            }
-
-        return Tool(
-            name="submit_presentation",
-            description="Submit the final editor presentation as structured JSON. Call this exactly once when the presentation is complete.",
-            args_model=_SubmitPresentationArgs,
-            handler=_handler,
-            source="embedded",
-        )
-
-    def _make_html_runtime_submit_tool(self, job: GenerationJob, payload_holder: dict[str, Any]) -> Tool:
-        async def _handler(args: _SubmitHtmlRuntimeDeckArgs, context: ToolContext) -> dict[str, Any]:
-            artifacts_dir = context.workspace_root / "artifacts"
-            artifacts_dir.mkdir(parents=True, exist_ok=True)
-            manifest, render, presentation = build_html_runtime_artifact(
-                manifest_payload={
-                    "version": "runtime_v2",
-                    "title": args.title or job.request.title or "新演示文稿",
-                    "theme": args.theme,
-                    "presenter": args.presenter,
-                    "export": args.export,
-                    "slides": args.slides,
-                },
-                fallback_title=args.title or job.request.title or "新演示文稿",
-                expected_slide_count=max(3, min(job.request.num_pages, settings.max_slide_pages)),
-                existing_slides=None,
-            )
-            payload = {
-                "title": manifest["title"],
-                "manifest": manifest,
-                "render": render,
-                "presentation": presentation,
-            }
-            payload_holder["html_runtime_deck"] = payload
-            (artifacts_dir / "html-runtime.manifest.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            (artifacts_dir / "html-runtime.render.json").write_text(
-                json.dumps(render, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            document_html = str(render.get("documentHtml") or "")
-            (artifacts_dir / "html-runtime.document.html").write_text(
-                document_html,
-                encoding="utf-8",
-            )
-            (artifacts_dir / "presentation.html").write_text(document_html, encoding="utf-8")
-            (artifacts_dir / "presentation.meta.json").write_text(
-                json.dumps(render, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            return {
-                "status": "ok",
-                "slide_count": int(render.get("slideCount") or 0),
-                "path": str((artifacts_dir / "html-runtime.document.html").resolve()),
-            }
-
-        return Tool(
-            name="submit_html_runtime_deck",
-            description="Submit the final HTML runtime manifest. Call this exactly once when the deck is ready.",
-            args_model=_SubmitHtmlRuntimeDeckArgs,
-            handler=_handler,
-            source="embedded",
-        )
-
-    def _make_legacy_html_deck_submit_tool(self, job: GenerationJob, payload_holder: dict[str, Any]) -> Tool:
-        async def _handler(args: _SubmitHtmlDeckArgs, context: ToolContext) -> dict[str, Any]:
-            artifacts_dir = context.workspace_root / "artifacts"
-            artifacts_dir.mkdir(parents=True, exist_ok=True)
-            manifest, render, presentation = build_html_runtime_artifact(
-                legacy_html=args.html,
-                fallback_title=args.title or job.request.title or "新演示文稿",
-                expected_slide_count=max(3, min(job.request.num_pages, settings.max_slide_pages)),
-                existing_slides=None,
-            )
-            payload_holder["html_deck"] = {
-                "title": manifest["title"],
-                "manifest": manifest,
-                "render": render,
-                "presentation": presentation,
-            }
-            (artifacts_dir / "html-runtime.manifest.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            (artifacts_dir / "html-runtime.render.json").write_text(
-                json.dumps(render, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            document_html = str(render.get("documentHtml") or "")
-            (artifacts_dir / "html-runtime.document.html").write_text(
-                document_html,
-                encoding="utf-8",
-            )
-            (artifacts_dir / "presentation.html").write_text(document_html, encoding="utf-8")
-            (artifacts_dir / "presentation.meta.json").write_text(
-                json.dumps(render, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            return {
-                "status": "ok",
-                "slide_count": int(render.get("slideCount") or 0),
-                "path": str((artifacts_dir / "html-runtime.document.html").resolve()),
-            }
-
-        return Tool(
-            name="submit_html_deck",
-            description="Submit the final legacy HTML deck. This is kept for backward compatibility.",
-            args_model=_SubmitHtmlDeckArgs,
-            handler=_handler,
-            source="embedded",
-        )
-
     def _make_slidev_deck_submit_tool(
         self,
         job: GenerationJob,
@@ -2605,44 +2368,6 @@ class GenerationRunner:
             return None
         return AgentOutline.model_validate(payload)
 
-    def _extract_presentation_submission(
-        self,
-        job: GenerationJob,
-        payload_holder: dict[str, Any],
-    ) -> tuple[dict[str, Any], Presentation] | None:
-        payload = payload_holder.get("presentation")
-        if not isinstance(payload, dict):
-            return None
-        hydrated_payload = self._hydrate_submitted_presentation(job, payload)
-        normalized_payload, _changed, _report = normalize_presentation_payload(hydrated_payload)
-        return hydrated_payload, Presentation.model_validate(normalized_payload)
-
-    def _extract_html_deck_submission(
-        self,
-        job: GenerationJob,
-        payload_holder: dict[str, Any],
-    ) -> tuple[dict[str, Any], Presentation] | None:
-        payload = payload_holder.get("html_runtime_deck")
-        if not isinstance(payload, dict):
-            payload = payload_holder.get("html_deck")
-        if not isinstance(payload, dict):
-            return None
-        manifest = payload.get("manifest")
-        render = payload.get("render")
-        presentation = payload.get("presentation")
-        if not isinstance(manifest, dict) or not isinstance(render, dict):
-            return None
-        if not isinstance(presentation, dict):
-            return None
-        normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
-        validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
-        return {
-            "title": str(manifest.get("title") or job.request.title or "新演示文稿"),
-            "manifest": manifest,
-            "render": render,
-            "presentation": normalized_payload,
-        }, validated
-
     async def _extract_slidev_deck_submission(
         self,
         job: GenerationJob,
@@ -2688,39 +2413,6 @@ class GenerationRunner:
 
         return Path(workspace).resolve()
 
-    @staticmethod
-    def _hydrate_submitted_presentation(job: GenerationJob, payload: dict[str, Any]) -> dict[str, Any]:
-        hydrated = deepcopy(payload)
-        presentation_id = hydrated.get("presentationId")
-        if not isinstance(presentation_id, str) or not presentation_id.strip():
-            hydrated["presentationId"] = f"pres-{uuid4().hex[:8]}"
-
-        title = hydrated.get("title")
-        if not isinstance(title, str) or not title.strip():
-            hydrated["title"] = job.request.title or job.request.topic or "新演示文稿"
-
-        raw_slides = hydrated.get("slides")
-        slides = list(raw_slides) if isinstance(raw_slides, list) else []
-        for index, slide in enumerate(slides, start=1):
-            if not isinstance(slide, dict):
-                continue
-            slide_id = slide.get("slideId")
-            if not isinstance(slide_id, str) or not slide_id.strip():
-                slide["slideId"] = f"slide-{index}"
-            layout_type = slide.get("layoutType")
-            if not isinstance(layout_type, str) or not layout_type.strip():
-                slide["layoutType"] = "bullet-with-icons"
-            layout_id = slide.get("layoutId")
-            if not isinstance(layout_id, str) or not layout_id.strip():
-                slide["layoutId"] = str(slide["layoutType"])
-            if not isinstance(slide.get("contentData"), dict) and isinstance(slide.get("content"), dict):
-                slide["contentData"] = deepcopy(slide["content"])
-            slide.pop("content", None)
-            if not isinstance(slide.get("contentData"), dict):
-                slide["contentData"] = {}
-        hydrated["slides"] = slides
-        return hydrated
-
     def _build_agent_outline_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         skill_context = build_skill_catalog_context(
             output_mode=job.output_mode.value,
@@ -2760,7 +2452,6 @@ class GenerationRunner:
         )
         outline_json = json.dumps(state.outline, ensure_ascii=False, indent=2) if state.outline else "(auto 模式无大纲，直接按素材生成)"
         source_brief = str((state.document_metadata.get("source_brief") or {}).get("summary_markdown") or "").strip()
-        palette = ", ".join(self._allowed_layout_palette(job))
         outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
         slidev_refs = build_slidev_role_reference_bundle(outline_items) if outline_items else {
             "selected_layouts": [],
@@ -2775,124 +2466,37 @@ class GenerationRunner:
             ensure_ascii=False,
             indent=2,
         )
-        if job.output_mode.value == "html":
-            return (
-                "你是 ZhiYan 当前创建页按钮背后的 HTML Runtime 生成内核。\n"
-                "请基于工作区素材和已确认的大纲，产出一个可直接播放、可后续继续编辑的 HTML runtime manifest。\n\n"
-                "工作方式：\n"
-                "- 优先阅读工作区里的 request.json、sources/manifest.json 和 sources/*.md，再按需补读原始 source 文本。\n"
-                "- 你只有 `read_file` 和 `submit_html_runtime_deck` 两类工具，不要输出解释，也不要做仓库探索。\n"
-                "- 你的职责只有读取上下文并提交完整 manifest；不要尝试加载 skill，也不要提交 legacy HTML 文档壳。\n"
-                "- 最终必须只通过 `submit_html_runtime_deck` 提交。\n\n"
-                "提交 contract：\n"
-                f"- 严格输出 {state.num_pages} 页，slides 数量必须等于 {state.num_pages}。\n"
-                "- 每页必须提交 `slideId`、`title`、`bodyHtml`；可选 `scopedCss`、`speakerNotes`。\n"
-                "- 只提交页面片段，不要提交完整 HTML 文档壳，不要包含 <html>/<head>/<body>/<script>/<iframe>。\n"
-                "- 必须体现强视觉设计：鲜明但克制的主题、明确的版式层级、面向展示的文案密度、符合主题的艺术方向。\n"
-                "- 内容要贴合素材，不要空泛，不要出现“待补充”“内容生成中”等占位文本。\n\n"
-                f"已确认大纲：\n{outline_json}\n"
-            )
-        if job.output_mode.value == "slidev":
-            return (
-                "你是 ZhiYan 当前创建页按钮背后的 Slidev 演示生成内核。\n"
-                "Slidev 是一个 markdown-first 的演示框架：一份 deck 由全局 frontmatter 和多个用 `---` 分隔的 slide 组成，目标是生成能被 `slidev build` 编译的 presentation markdown，而不是文章 markdown。\n"
-                "请基于工作区素材和已确认大纲，产出一个完整、可编译、可展示、可继续改稿的 Slidev markdown deck。\n\n"
-                "工作方式：\n"
-                "- 先使用本地素材摘要判断叙事、语气和视觉方向，再按需补读原始 source 文本。\n"
-                "- 你有 `read_file`、`read_skill_resource`、`load_skill` 和 `submit_slidev_deck` 四类工具，不要输出解释，也不要做仓库探索。\n"
-                "- skill 下的 references/scripts/assets 必须通过 `read_skill_resource` 读取，不要对 skill 绝对路径使用 `read_file`。\n"
-                "- 最终必须只通过 `submit_slidev_deck` 提交 markdown 和 selected_style_id。\n\n"
-                f"{skill_context}\n\n"
-                "Slidev 约束：\n"
-                f"- 严格输出 {state.num_pages} 页。\n"
-                "- deck 必须由全局 frontmatter + `---` 分隔的 slides 组成。\n"
-                "- 输出目标是可被 `slidev build` 编译的 presentation markdown，不是普通文档 markdown。\n"
-                "- 允许使用 Slidev 原生结构：theme、themeConfig、layout、class、Mermaid、表格、双栏、callout、quote 等。\n"
-                "- 不要把页面写成长段落文档，不要出现“待补充”“内容生成中”等占位语。\n"
-                "- 只能从本地 style preset 中选择一个 deck 风格，并通过 selected_style_id 提交。\n"
-                "- 默认保持演示语气和页面密度，重点让页面像 presentation，而不是报告正文。\n\n"
-                f"本地 Slidev preset / role 参考：\n{slidev_ref_json}\n\n"
-                f"本地素材摘要：\n{source_brief}\n\n"
-                f"已确认大纲：\n{outline_json}\n"
-            )
         return (
-            "你是 ZhiYan 当前创建页按钮背后的第一代 AgentLoop 演示生成内核。\n"
-            "请基于工作区素材和已确认的大纲/本地摘要，直接产出当前 editor 可消费的完整 presentation。\n\n"
+            "你是 ZhiYan 当前创建页按钮背后的 Slidev 演示生成内核。\n"
+            "Slidev 是一个 markdown-first 的演示框架：一份 deck 由全局 frontmatter 和多个用 `---` 分隔的 slide 组成，目标是生成能被 `slidev build` 编译的 presentation markdown，而不是文章 markdown。\n"
+            "请基于工作区素材和已确认大纲，产出一个完整、可编译、可展示、可继续改稿的 Slidev markdown deck。\n\n"
             "工作方式：\n"
-            "- 先使用本地素材摘要判断故事线和页面结构，再按需要补读原始 source 文本。\n"
-            "- 你有 `read_file`、`read_skill_resource`、`load_skill` 和 `submit_presentation` 四类工具，不要输出解释，也不要做仓库探索。\n"
+            "- 先使用本地素材摘要判断叙事、语气和视觉方向，再按需补读原始 source 文本。\n"
+            "- 你有 `read_file`、`read_skill_resource`、`load_skill` 和 `submit_slidev_deck` 四类工具，不要输出解释，也不要做仓库探索。\n"
             "- skill 下的 references/scripts/assets 必须通过 `read_skill_resource` 读取，不要对 skill 绝对路径使用 `read_file`。\n"
-            "- 不要输出解释文本；最终只通过 `submit_presentation` 提交完整 presentation。\n\n"
+            "- 最终必须只通过 `submit_slidev_deck` 提交 markdown 和 selected_style_id。\n\n"
             f"{skill_context}\n\n"
-            "Presentation 约束：\n"
+            "Slidev 约束：\n"
             f"- 严格输出 {state.num_pages} 页。\n"
-            f"- 仅使用这组 layoutId / layoutType：{palette}。\n"
-            "- 每页都必须提交 `slideId`、`layoutType`、`layoutId`、`contentData`；`layoutId` 默认与 `layoutType` 相同。\n"
-            "- 禁止把页面写成提纲词条；每页都必须是可展示内容。\n"
-            "- `bullet-with-icons` / `bullet-with-icons-cards`：`contentData = {title, items[{title,description,icon?}]}`，items 必须 3-4 个且 description 非空。\n"
-            "- `outline-slide` / `outline-slide-rail`：`contentData = {title, subtitle?, sections[{title,description}]}`。\n"
-            "- `numbered-bullets` / `numbered-bullets-track`：`contentData = {title, items[{title,description}]}`，items 至少 3 个。\n"
-            "- `metrics-slide` / `metrics-slide-band`：`contentData = {title, metrics[{value,label,description?}], conclusion?}`。\n"
-            "- `two-column-compare`：`contentData = {title, left{heading,items}, right{heading,items}}`。\n"
-            "- `challenge-outcome`：`contentData = {title, items[{challenge,outcome}]}`。\n"
-            "- `timeline`：`contentData = {title, events[{date,title,description}]}`。\n"
-            "- `quote-slide` / `quote-banner`：`contentData = {quote, author?, context?}`。\n"
-            "- `thank-you` / `thank-you-contact`：`contentData = {title, subtitle?, contact?}`，不能只有标题。\n"
-            "- `intro-slide` / `intro-slide-left`：`contentData = {title, subtitle?, author?, date?}`。\n"
-            "- 如果你拿不准某页，就退回文本安全 layout，不要发明 schema。\n\n"
+            "- deck 必须由全局 frontmatter + `---` 分隔的 slides 组成。\n"
+            "- 输出目标是可被 `slidev build` 编译的 presentation markdown，不是普通文档 markdown。\n"
+            "- 允许使用 Slidev 原生结构：theme、themeConfig、layout、class、Mermaid、表格、双栏、callout、quote 等。\n"
+            "- 不要把页面写成长段落文档，不要出现“待补充”“内容生成中”等占位语。\n"
+            "- 只能从本地 style preset 中选择一个 deck 风格，并通过 selected_style_id 提交。\n"
+            "- 默认保持演示语气和页面密度，重点让页面像 presentation，而不是报告正文。\n\n"
+            f"本地 Slidev preset / role 参考：\n{slidev_ref_json}\n\n"
             f"本地素材摘要：\n{source_brief}\n\n"
             f"已确认大纲：\n{outline_json}\n"
         )
 
     def _build_agent_presentation_user_prompt(self, job: GenerationJob, state: GenerationRuntimeState) -> str:
         del state
-        if job.output_mode.value == "html":
-            return (
-                "请生成完整 HTML runtime manifest。\n"
-                f"主题：{job.request.topic or job.request.title}\n"
-                f"补充指令：{job.request.content or '无'}\n"
-                f"目标页数：{job.request.num_pages}\n"
-                "完成后调用 `submit_html_runtime_deck`。"
-            )
-        if job.output_mode.value == "slidev":
-            return (
-                "请生成完整 Slidev markdown deck。\n"
-                f"主题：{job.request.topic or job.request.title}\n"
-                f"补充指令：{job.request.content or '无'}\n"
-                f"目标页数：{job.request.num_pages}\n"
-                "完成后调用 `submit_slidev_deck`。"
-            )
         return (
-            "请生成完整 presentation。\n"
+            "请生成完整 Slidev markdown deck。\n"
             f"主题：{job.request.topic or job.request.title}\n"
             f"补充指令：{job.request.content or '无'}\n"
             f"目标页数：{job.request.num_pages}\n"
-            "完成后调用 `submit_presentation`。"
-        )
-
-    def _build_agent_presentation_retry_prompt(
-        self,
-        expected: int,
-        issues: list[str],
-        *,
-        output_mode: str,
-    ) -> str:
-        issue_text = "\n".join(f"- {issue}" for issue in issues[:8]) or "- 上一次 presentation 未通过本地审计。"
-        if output_mode == "html":
-            submit_tool = "submit_html_runtime_deck"
-            label = "HTML runtime manifest"
-        elif output_mode == "slidev":
-            submit_tool = "submit_slidev_deck"
-            label = "Slidev deck"
-        else:
-            submit_tool = "submit_presentation"
-            label = "presentation"
-        return (
-            f"请修正上一版 {label} 并重新提交。\n"
-            f"必须严格输出 {expected} 页。\n"
-            "以下问题必须全部修正：\n"
-            f"{issue_text}\n"
-            f"修正后再次调用 `{submit_tool}`。"
+            "完成后调用 `submit_slidev_deck`。"
         )
 
     @staticmethod

@@ -21,6 +21,7 @@ class SessionSummary(BaseModel):
     source_count: int = 0
     chat_count: int = 0
     has_presentation: bool = False
+    output_mode: str | None = None
 
 
 class ChatRecord(BaseModel):
@@ -43,8 +44,8 @@ class LatestPresentationWriteRequest(BaseModel):
     presentation: dict | None = None
     source: str | None = "editor"
     output_mode: str | None = None
-    html_deck: dict[str, Any] | None = None
     slidev_deck: dict[str, Any] | None = None
+    centi_deck: dict[str, Any] | None = None
 
 
 class LatestGenerationJobMeta(BaseModel):

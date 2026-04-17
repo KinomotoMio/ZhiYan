@@ -24,6 +24,10 @@ def test_build_skill_summary_includes_resource_listing():
     assert summary["name"] == "slidev-default"
     assert "references/generation-contract.md" in summary["resources"]
 
+    html_summary = build_skill_summary("html-default")
+    assert "references/render-rules.md" in html_summary["resources"]
+    assert "references/page-recipes/cover-hero.md" in html_summary["resources"]
+
 
 def test_build_skill_catalog_context_mentions_mode_and_base_skill():
     context = build_skill_catalog_context(output_mode="slidev", requested_skill="slidev-default")
@@ -38,3 +42,11 @@ def test_build_skill_activation_record_includes_scope_and_resources():
     assert activation["source"] == "harness"
     assert activation["scope"] == "builtin"
     assert "references/generation-contract.md" in activation["resources"]
+
+    html_activation = build_skill_activation_record(
+        "html-default",
+        source="harness",
+        reason="output_mode_default",
+    )
+    assert html_activation is not None
+    assert "references/render-rules.md" in html_activation["resources"]

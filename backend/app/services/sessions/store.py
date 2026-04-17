@@ -14,8 +14,6 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from app.services.html_deck import normalize_html_deck
-from app.services.html_runtime import build_html_runtime_artifact, build_legacy_html_document
 from app.services.presentations import normalize_presentation_payload
 from app.services.slidev import parse_slidev_markdown
 
@@ -378,7 +376,15 @@ class SessionStore:
                 SELECT s.*,
                   (SELECT COUNT(*) FROM session_source_links sl WHERE sl.session_id=s.id) AS source_count,
                   (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count,
-                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation
+                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation,
+                  COALESCE(
+                    (SELECT json_extract(sp.payload_json, '$.outputMode')
+                       FROM session_presentations sp
+                       WHERE sp.session_id=s.id
+                       ORDER BY sp.version_no DESC
+                       LIMIT 1),
+                    (SELECT ps.output_mode FROM session_planning_state ps WHERE ps.session_id=s.id LIMIT 1)
+                  ) AS planning_output_mode
                 FROM sessions s
                 WHERE {where}
                 ORDER BY s.is_pinned DESC, s.updated_at DESC
@@ -409,7 +415,15 @@ class SessionStore:
                 SELECT s.*,
                   (SELECT COUNT(*) FROM session_source_links sl WHERE sl.session_id=s.id) AS source_count,
                   (SELECT COUNT(*) FROM session_chat_messages cm WHERE cm.session_id=s.id) AS chat_count,
-                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation
+                  (SELECT COUNT(*) > 0 FROM session_presentations sp WHERE sp.session_id=s.id) AS has_presentation,
+                  COALESCE(
+                    (SELECT json_extract(sp.payload_json, '$.outputMode')
+                       FROM session_presentations sp
+                       WHERE sp.session_id=s.id
+                       ORDER BY sp.version_no DESC
+                       LIMIT 1),
+                    (SELECT ps.output_mode FROM session_planning_state ps WHERE ps.session_id=s.id LIMIT 1)
+                  ) AS planning_output_mode
                 FROM sessions s
                 WHERE s.id = ? AND s.workspace_id = ? AND s.archived_at IS NULL
                 """,
@@ -1375,10 +1389,10 @@ class SessionStore:
         is_snapshot: bool = False,
         snapshot_label: str | None = None,
         output_mode: str | None = None,
-        html_deck: dict | None = None,
         slidev_deck: dict | None = None,
         slidev_build: dict | None = None,
         slidev_sidecar: dict | None = None,
+        centi_deck: dict | None = None,
     ) -> dict:
         now = _now_iso()
         pid = f"sp-{uuid4().hex[:12]}"
@@ -1391,10 +1405,10 @@ class SessionStore:
                 is_snapshot,
                 snapshot_label,
                 output_mode,
-                html_deck,
                 slidev_deck,
                 slidev_build,
                 slidev_sidecar,
+                centi_deck,
                 now,
             )
 
@@ -1406,10 +1420,10 @@ class SessionStore:
         is_snapshot: bool,
         snapshot_label: str | None,
         output_mode: str | None,
-        html_deck: dict | None,
         slidev_deck: dict | None,
         slidev_build: dict | None,
         slidev_sidecar: dict | None,
+        centi_deck: dict | None,
         now: str,
     ) -> dict:
         stored_payload = dict(payload or {})
@@ -1422,20 +1436,6 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
             version_no = int(row["next_no"]) if row else 1
-            if html_deck is not None:
-                artifact_meta = self._persist_html_deck_artifact_sync(
-                    session_id=session_id,
-                    presentation_id=presentation_id,
-                    version_no=version_no,
-                    html_deck=html_deck,
-                    presentation_payload=stored_payload,
-                    fallback_title=normalized_title or "新演示文稿",
-                    now=now,
-                )
-                artifacts = stored_payload.get("artifacts")
-                artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
-                artifacts_dict["html_deck"] = artifact_meta
-                stored_payload["artifacts"] = artifacts_dict
             if slidev_deck is not None:
                 deck_meta = self._persist_slidev_deck_artifact_sync(
                     session_id=session_id,
@@ -1472,6 +1472,19 @@ class SessionStore:
                 artifacts = stored_payload.get("artifacts")
                 artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
                 artifacts_dict["slidev_sidecar"] = sidecar_meta
+                stored_payload["artifacts"] = artifacts_dict
+            if centi_deck is not None:
+                centi_meta = self._persist_centi_deck_artifact_sync(
+                    session_id=session_id,
+                    presentation_id=presentation_id,
+                    version_no=version_no,
+                    centi_deck=centi_deck,
+                    fallback_title=normalized_title or "新演示文稿",
+                    now=now,
+                )
+                artifacts = stored_payload.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
+                artifacts_dict["centi_deck"] = centi_meta
                 stored_payload["artifacts"] = artifacts_dict
             conn.execute(
                 """
@@ -1729,109 +1742,6 @@ class SessionStore:
             output_mode=self._extract_output_mode(latest),
         )
 
-    async def get_latest_html_deck(
-        self,
-        workspace_id: str,
-        session_id: str,
-    ) -> tuple[str, dict[str, Any]] | None:
-        async with self._write_lock:
-            return await asyncio.to_thread(
-                self._get_latest_html_deck_sync,
-                workspace_id,
-                session_id,
-            )
-
-    def _get_latest_html_deck_sync(
-        self,
-        workspace_id: str,
-        session_id: str,
-    ) -> tuple[str, dict[str, Any]] | None:
-        latest = self._get_latest_presentation_sync(workspace_id, session_id)
-        if not latest:
-            return None
-        artifacts = latest.get("artifacts")
-        deck = artifacts.get("html_deck") if isinstance(artifacts, dict) else None
-        if not isinstance(deck, dict):
-            return None
-        if str(deck.get("artifact_version") or "").strip() == "runtime_v2":
-            runtime = self._get_latest_html_runtime_sync(workspace_id, session_id)
-            if not runtime:
-                return None
-            manifest, render = runtime
-            return (
-                build_legacy_html_document(manifest),
-                {
-                    "title": manifest.get("title") or latest.get("presentation", {}).get("title") or "新演示文稿",
-                    "slide_count": int(render.get("slideCount") or 0),
-                    "slides": list(render.get("slides") or []),
-                },
-            )
-        storage_path = str(deck.get("storage_path") or "").strip()
-        meta_path = str(deck.get("meta_storage_path") or "").strip()
-        if not storage_path:
-            return None
-        html_path = Path(storage_path)
-        if not html_path.exists():
-            return None
-        html = html_path.read_text(encoding="utf-8")
-        meta: dict[str, Any] = {}
-        if meta_path:
-            meta_file = Path(meta_path)
-            if meta_file.exists():
-                with suppress(Exception):
-                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
-        if not meta:
-            meta = {
-                "title": latest.get("presentation", {}).get("title") or "新演示文稿",
-                "slide_count": int(deck.get("slide_count") or 0),
-                "slides": [],
-            }
-        return html, meta
-
-    async def get_latest_html_runtime(
-        self,
-        workspace_id: str,
-        session_id: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
-        async with self._write_lock:
-            return await asyncio.to_thread(
-                self._get_latest_html_runtime_sync,
-                workspace_id,
-                session_id,
-            )
-
-    def _get_latest_html_runtime_sync(
-        self,
-        workspace_id: str,
-        session_id: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
-        latest = self._get_latest_presentation_sync(workspace_id, session_id)
-        if not latest:
-            return None
-        artifacts = latest.get("artifacts")
-        deck = artifacts.get("html_deck") if isinstance(artifacts, dict) else None
-        if not isinstance(deck, dict):
-            return None
-        artifact_version = str(deck.get("artifact_version") or "").strip()
-        manifest_path = Path(str(deck.get("manifest_storage_path") or "").strip()) if deck.get("manifest_storage_path") else None
-        render_path = Path(str(deck.get("render_storage_path") or "").strip()) if deck.get("render_storage_path") else None
-        if artifact_version == "runtime_v2" and manifest_path and render_path and manifest_path.exists() and render_path.exists():
-            return (
-                json.loads(manifest_path.read_text(encoding="utf-8")),
-                json.loads(render_path.read_text(encoding="utf-8")),
-            )
-        html_path = Path(str(deck.get("storage_path") or "").strip())
-        if not html_path.exists():
-            return None
-        legacy_html = html_path.read_text(encoding="utf-8")
-        manifest, render, _presentation = build_html_runtime_artifact(
-            legacy_html=legacy_html,
-            fallback_title=latest.get("presentation", {}).get("title") or "新演示文稿",
-            expected_slide_count=int(deck.get("slide_count") or 0) or None,
-            existing_slides=list((latest.get("presentation") or {}).get("slides") or []),
-        )
-        return manifest, render
-
     async def get_latest_slidev_deck(
         self,
         workspace_id: str,
@@ -1885,6 +1795,76 @@ class SessionStore:
                 "slides": parsed["slides"],
             }
         return markdown, meta
+
+    async def get_latest_centi_deck(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_centi_deck_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_centi_deck_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        latest = self._get_latest_presentation_sync(workspace_id, session_id)
+        if not latest:
+            return None
+        artifacts = latest.get("artifacts")
+        deck = artifacts.get("centi_deck") if isinstance(artifacts, dict) else None
+        if not isinstance(deck, dict):
+            return None
+        artifact_path = str(deck.get("artifact_storage_path") or "").strip()
+        render_path = str(deck.get("render_storage_path") or "").strip()
+        if not artifact_path or not render_path:
+            return None
+        artifact_file = Path(artifact_path)
+        render_file = Path(render_path)
+        if not artifact_file.exists() or not render_file.exists():
+            return None
+        try:
+            artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
+            render = json.loads(render_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(artifact, dict) or not isinstance(render, dict):
+            return None
+        return artifact, render
+
+    async def set_latest_centi_deck(
+        self,
+        *,
+        session_id: str,
+        artifact: dict[str, Any],
+        render: dict[str, Any],
+        is_snapshot: bool = False,
+        snapshot_label: str | None = None,
+    ) -> dict:
+        title = str((artifact or {}).get("title") or "新演示文稿").strip() or "新演示文稿"
+        return await self.save_presentation(
+            session_id=session_id,
+            payload={
+                "title": title,
+                "outputMode": "html",
+                "artifactStatus": "ready",
+                "renderStatus": "ready",
+                "artifactAvailable": True,
+                "renderAvailable": True,
+            },
+            is_snapshot=is_snapshot,
+            snapshot_label=snapshot_label,
+            output_mode="html",
+            centi_deck={
+                "artifact": artifact,
+                "render": render,
+            },
+        )
 
     async def get_latest_slidev_sidecar(
         self,
@@ -1958,9 +1938,9 @@ class SessionStore:
     @staticmethod
     def _extract_output_mode(payload: dict | None) -> str:
         if not isinstance(payload, dict):
-            return "structured"
+            return "slidev"
         raw = payload.get("outputMode")
-        return str(raw).strip() if isinstance(raw, str) and str(raw).strip() else "structured"
+        return str(raw).strip() if isinstance(raw, str) and str(raw).strip() else "slidev"
 
     @staticmethod
     def _extract_runtime_field(
@@ -1994,77 +1974,6 @@ class SessionStore:
             return {}
         artifacts = payload.get("artifacts")
         return dict(artifacts) if isinstance(artifacts, dict) else {}
-
-    def _persist_html_deck_artifact_sync(
-        self,
-        *,
-        session_id: str,
-        presentation_id: str,
-        version_no: int,
-        html_deck: dict,
-        presentation_payload: dict | None,
-        fallback_title: str,
-        now: str,
-    ) -> dict[str, Any]:
-        expected_slide_count = html_deck.get("expected_slide_count")
-        existing_slides = (
-            list((presentation_payload or {}).get("slides") or [])
-            if isinstance(presentation_payload, dict)
-            else None
-        )
-        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "html-runtime"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-
-        manifest_payload = html_deck.get("manifest")
-        if isinstance(manifest_payload, dict):
-            manifest, render, _presentation = build_html_runtime_artifact(
-                manifest_payload=manifest_payload,
-                fallback_title=fallback_title,
-                expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
-                existing_slides=existing_slides,
-            )
-            manifest_path = artifact_dir / "manifest.json"
-            render_path = artifact_dir / "render.json"
-            document_path = artifact_dir / "viewer.html"
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            render_path.write_text(json.dumps(render, ensure_ascii=False, indent=2), encoding="utf-8")
-            document_path.write_text(str(render.get("documentHtml") or ""), encoding="utf-8")
-            return {
-                "version": version_no,
-                "artifact_version": "runtime_v2",
-                "slide_count": int(render.get("slideCount") or 0),
-                "updated_at": now,
-                "manifest_storage_path": str(manifest_path.resolve()),
-                "render_storage_path": str(render_path.resolve()),
-                "document_storage_path": str(document_path.resolve()),
-                "storage_path": str(document_path.resolve()),
-                "meta_storage_path": str(render_path.resolve()),
-            }
-
-        raw_html = str(html_deck.get("html") or "").strip()
-        if not raw_html:
-            raise ValueError("HTML deck content is empty.")
-        normalized_html, meta, _presentation = normalize_html_deck(
-            html=raw_html,
-            fallback_title=fallback_title,
-            expected_slide_count=expected_slide_count if isinstance(expected_slide_count, int) else None,
-            existing_slides=existing_slides,
-        )
-        html_path = artifact_dir / "presentation.html"
-        meta_path = artifact_dir / "presentation.meta.json"
-        html_path.write_text(normalized_html, encoding="utf-8")
-        meta_path.write_text(
-            json.dumps(meta, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return {
-            "version": version_no,
-            "artifact_version": "legacy",
-            "slide_count": meta["slide_count"],
-            "updated_at": now,
-            "storage_path": str(html_path.resolve()),
-            "meta_storage_path": str(meta_path.resolve()),
-        }
 
     def _persist_slidev_deck_artifact_sync(
         self,
@@ -2134,6 +2043,43 @@ class SessionStore:
             "build_root": str(artifact_dir.resolve()),
             "entry_storage_path": str(copied_entry.resolve()),
             "entry_relative_path": str(copied_entry.relative_to(artifact_dir)),
+        }
+
+    def _persist_centi_deck_artifact_sync(
+        self,
+        *,
+        session_id: str,
+        presentation_id: str,
+        version_no: int,
+        centi_deck: dict,
+        fallback_title: str,
+        now: str,
+    ) -> dict[str, Any]:
+        artifact = centi_deck.get("artifact")
+        render = centi_deck.get("render")
+        if not isinstance(artifact, dict) or not isinstance(render, dict):
+            raise ValueError("centi_deck artifact/render payload is missing.")
+        title = str(artifact.get("title") or fallback_title or "新演示文稿").strip() or "新演示文稿"
+        slides = artifact.get("slides") if isinstance(artifact.get("slides"), list) else []
+        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "centi-deck"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = artifact_dir / "artifact.json"
+        render_path = artifact_dir / "render.json"
+        artifact_path.write_text(
+            json.dumps(artifact, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        render_path.write_text(
+            json.dumps(render, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "version": version_no,
+            "slide_count": len(slides),
+            "title": title,
+            "updated_at": now,
+            "artifact_storage_path": str(artifact_path.resolve()),
+            "render_storage_path": str(render_path.resolve()),
         }
 
     def _persist_slidev_sidecar_artifact_sync(
@@ -2590,6 +2536,9 @@ class SessionStore:
             "source_count": int(row["source_count"] or 0),
             "chat_count": int(row["chat_count"] or 0),
             "has_presentation": bool(row["has_presentation"]),
+            "output_mode": (
+                row["planning_output_mode"] if "planning_output_mode" in row.keys() else None
+            ),
         }
 
     @staticmethod

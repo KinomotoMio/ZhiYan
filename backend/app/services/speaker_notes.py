@@ -269,14 +269,16 @@ async def generate_speaker_notes_for_session(
 
     latest = await session_store.get_latest_presentation(workspace_id, session_id)
     output_mode = str((latest or {}).get("output_mode") or "").strip()
-    artifacts = dict((latest or {}).get("artifacts") or {}) if isinstance((latest or {}).get("artifacts"), dict) else {}
-    latest_html = await session_store.get_latest_html_deck(workspace_id, session_id) if output_mode == "html" else None
-    latest_html_runtime = await session_store.get_latest_html_runtime(workspace_id, session_id) if output_mode == "html" else None
     latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id) if output_mode == "slidev" else None
     latest_slidev_sidecar = (
         normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
         if output_mode == "slidev"
         else empty_slidev_sidecar()
+    )
+    latest_centi = (
+        await session_store.get_latest_centi_deck(workspace_id, session_id)
+        if output_mode == "html"
+        else None
     )
 
     normalized: dict[str, object]
@@ -285,7 +287,38 @@ async def generate_speaker_notes_for_session(
     response_presentation: dict | None
     response_slidev_notes_state: dict[str, str] | None = None
 
-    if output_mode == "slidev":
+    if output_mode == "html" and latest_centi is not None:
+        centi_artifact, _centi_render = latest_centi
+        centi_slides = list(centi_artifact.get("slides") or [])
+        # Build a presentation-shaped payload from centi-deck slides using plainText.
+        presentation_slides_payload: list[dict[str, Any]] = []
+        for slide in centi_slides:
+            if not isinstance(slide, dict):
+                continue
+            sid_value = str(slide.get("slideId") or "")
+            presentation_slides_payload.append(
+                {
+                    "slideId": sid_value,
+                    "layoutId": "centi-deck",
+                    "layoutType": "centi-deck",
+                    "contentData": {
+                        "_centiDeck": True,
+                        "slideId": sid_value,
+                        "title": str(slide.get("title") or ""),
+                        "plainText": str(slide.get("plainText") or ""),
+                    },
+                    "components": [],
+                    "speakerNotes": str(slide.get("notes") or ""),
+                }
+            )
+        normalized = {
+            "title": str(centi_artifact.get("title") or "新演示文稿"),
+            "slides": presentation_slides_payload,
+        }
+        presentation = Presentation.model_validate(normalized)
+        target_slide_ids = _extract_target_slide_ids(presentation, scope, current_slide_index)
+        response_presentation = normalized
+    elif output_mode == "slidev":
         if latest_slidev is None:
             raise ValueError("当前会话暂无 Slidev 演示稿")
         slidev_markdown, slidev_meta = latest_slidev
@@ -412,6 +445,34 @@ async def generate_speaker_notes_for_session(
             slidev_sidecar=next_sidecar,
         )
         response_slidev_notes_state = dict(next_sidecar["speaker_notes"])
+    elif output_mode == "html" and latest_centi is not None:
+        stored_artifact, stored_render = latest_centi
+        updated_artifact = deepcopy(stored_artifact)
+        updated_render = deepcopy(stored_render)
+        for slide in list(updated_artifact.get("slides") or []):
+            if not isinstance(slide, dict):
+                continue
+            sid_value = str(slide.get("slideId") or "")
+            next_notes = notes_by_slide_id.get(sid_value)
+            if next_notes is None:
+                continue
+            if str(slide.get("notes") or "").strip() != next_notes:
+                slide.pop("speakerAudio", None)
+            slide["notes"] = next_notes
+        for slide in list(updated_render.get("slides") or []):
+            if not isinstance(slide, dict):
+                continue
+            sid_value = str(slide.get("slideId") or "")
+            next_notes = notes_by_slide_id.get(sid_value)
+            if next_notes is None:
+                continue
+            slide["notes"] = next_notes
+        await session_store.set_latest_centi_deck(
+            session_id=session_id,
+            artifact=updated_artifact,
+            render=updated_render,
+        )
+        response_presentation = normalized
     else:
         updated_presentation = deepcopy(normalized)
         for slide in list(updated_presentation.get("slides") or []):
@@ -425,43 +486,12 @@ async def generate_speaker_notes_for_session(
                 slide.pop("speakerAudio", None)
             slide["speakerNotes"] = next_notes
 
-        if output_mode == "html":
-            updated_presentation["outputMode"] = "html"
-            if artifacts:
-                updated_presentation["artifacts"] = artifacts
-            html_manifest = None
-            if latest_html_runtime is not None:
-                html_manifest = dict(latest_html_runtime[0])
-                slides = html_manifest.get("slides")
-                if isinstance(slides, list):
-                    for slide in slides:
-                        if not isinstance(slide, dict):
-                            continue
-                        slide_id = str(slide.get("slideId") or "")
-                        next_notes = notes_by_slide_id.get(slide_id)
-                        if next_notes is not None:
-                            slide["speakerNotes"] = next_notes
-            await session_store.save_presentation(
-                session_id=session_id,
-                payload=updated_presentation,
-                is_snapshot=False,
-                snapshot_label=None,
-                output_mode="html",
-                html_deck=(
-                    {"manifest": html_manifest}
-                    if isinstance(html_manifest, dict)
-                    else {"html": latest_html[0]}
-                    if latest_html is not None
-                    else None
-                ),
-            )
-        else:
-            await session_store.save_presentation(
-                session_id=session_id,
-                payload=updated_presentation,
-                is_snapshot=False,
-                snapshot_label=None,
-            )
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=updated_presentation,
+            is_snapshot=False,
+            snapshot_label=None,
+        )
         response_presentation = updated_presentation
 
     (artifacts_dir / "run-summary.json").write_text(
