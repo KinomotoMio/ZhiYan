@@ -26,12 +26,14 @@ import {
   type SlidevDeckResponse,
 } from "@/lib/api";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
+import HomeLoadingOverlay from "@/components/home/HomeLoadingOverlay";
 import SlidevPreview from "@/components/slides/SlidevPreview";
 import SessionListDialog from "@/components/home/SessionListDialog";
 import UserMenu from "@/components/settings/UserMenu";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
 import { useAppStore } from "@/lib/store";
 import { getSessionEditorPath } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 import type { Presentation as PresentationModel } from "@/types/slide";
 
 const DESKTOP_BREAKPOINT = 1280;
@@ -145,6 +147,9 @@ export default function HomeView() {
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [isDraftDialogOpen, setIsDraftDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [introStage, setIntroStage] = useState<"visible" | "exit" | "hidden">(
+    "visible"
+  );
 
   const { status: settingsStatus, message: settingsMessage } = useSettingsStatus();
 
@@ -448,8 +453,22 @@ export default function HomeView() {
     `更新时间：${formatUpdatedAt(session.updated_at)}`;
 
   return (
-    <div className="zy-bg-home min-h-screen xl:h-screen xl:overflow-hidden">
-      <main className="relative mx-auto h-full w-full max-w-none px-4 py-8 md:px-6 xl:px-6 xl:py-5">
+    <div
+      className={cn(
+        "zy-bg-home min-h-screen xl:h-screen xl:overflow-hidden",
+        introStage !== "hidden" && "overflow-hidden"
+      )}
+    >
+      <HomeLoadingOverlay loading={loading} onStageChange={setIntroStage} />
+
+      <main
+        className={cn(
+          "relative mx-auto h-full w-full max-w-none px-4 py-8 transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.16,1,0.3,1)] md:px-6 xl:px-6 xl:py-5",
+          introStage === "visible"
+            ? "opacity-0 translate-y-4 scale-[0.985] blur-md"
+            : "opacity-100 translate-y-0 scale-100 blur-0"
+        )}
+      >
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-[rgba(var(--zy-brand-blue),0.18)] blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-[rgba(var(--zy-brand-red),0.16)] blur-3xl" />
 
