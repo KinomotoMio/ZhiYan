@@ -363,12 +363,12 @@ export default function HomeView() {
     return Array.isArray(slides) ? slides.length : 0;
   }, [latestResultSession, latestResultSlidev, latestResultCentiDeck]);
 
+  // Clamp previewSlideIndex when the underlying deck shrinks.
   useEffect(() => {
-    if (previewTotalSlides <= 1) return;
-    const timer = window.setInterval(() => {
-      setPreviewSlideIndex((current) => (current + 1) % previewTotalSlides);
-    }, 4000);
-    return () => window.clearInterval(timer);
+    if (previewTotalSlides <= 0) return;
+    setPreviewSlideIndex((current) =>
+      current >= previewTotalSlides ? previewTotalSlides - 1 : current
+    );
   }, [previewTotalSlides]);
 
   const handleNewPpt = async () => {
@@ -679,30 +679,59 @@ export default function HomeView() {
                 <div className="min-h-0 flex-1">
                   {(latestResultSession.output_mode ?? "slidev") === "html" ? (
                     latestResultCentiDeck ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleOpenSession(latestResultSession, {
-                            slide: previewSlideIndex + 1,
-                          })
-                        }
-                        className="group relative block w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
-                        aria-label="打开 HTML 编辑器"
-                      >
-                        <div className="aspect-video w-full overflow-hidden bg-slate-950">
-                          <CentiDeckPreview
-                            artifactOverride={latestResultCentiDeck}
-                            startSlide={previewSlideIndex}
-                            mode="thumbnail"
-                            className="pointer-events-none h-full w-full"
-                          />
+                      <div className="flex h-full min-h-0 flex-col gap-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleOpenSession(latestResultSession, {
+                              slide: previewSlideIndex + 1,
+                            })
+                          }
+                          className="group relative block w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
+                          aria-label="打开 HTML 编辑器"
+                        >
+                          <div className="aspect-video w-full overflow-hidden bg-slate-950">
+                            <CentiDeckPreview
+                              artifactOverride={latestResultCentiDeck}
+                              startSlide={previewSlideIndex}
+                              mode="thumbnail"
+                              className="pointer-events-none h-full w-full"
+                            />
+                          </div>
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/55 via-slate-900/10 to-transparent px-3 py-2">
+                            <p className="text-xs font-medium text-white/90">
+                              第 {previewSlideIndex + 1} / {latestResultCentiDeck.slides.length} 页 · 点击进入编辑器
+                            </p>
+                          </div>
+                        </button>
+                        <div className="grid grid-flow-col auto-cols-fr gap-2 overflow-x-auto">
+                          {latestResultCentiDeck.slides.map((slide, index) => {
+                            const slideId = String(slide.slideId ?? `slide-${index + 1}`);
+                            const isActive = index === previewSlideIndex;
+                            return (
+                              <button
+                                key={slideId}
+                                type="button"
+                                onClick={() => setPreviewSlideIndex(index)}
+                                className={`relative block aspect-video overflow-hidden rounded-lg border bg-slate-950 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70 ${
+                                  isActive
+                                    ? "border-[rgba(var(--zy-brand-red),0.55)] shadow-[0_0_0_2px_rgba(var(--zy-brand-red),0.35)]"
+                                    : "border-white/60 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow"
+                                }`}
+                                aria-label={`第 ${index + 1} 页`}
+                                aria-current={isActive ? "true" : undefined}
+                              >
+                                <CentiDeckPreview
+                                  artifactOverride={latestResultCentiDeck}
+                                  startSlide={index}
+                                  mode="thumbnail"
+                                  className="pointer-events-none h-full w-full"
+                                />
+                              </button>
+                            );
+                          })}
                         </div>
-                        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/55 via-slate-900/10 to-transparent px-3 py-2">
-                          <p className="text-xs font-medium text-white/90">
-                            共 {latestResultCentiDeck.slides.length} 页 · 点击进入编辑器
-                          </p>
-                        </div>
-                      </button>
+                      </div>
                     ) : (
                       <button
                         type="button"
