@@ -16,6 +16,8 @@ interface CentiDeckPreviewProps {
   artifactOverride?: CentiDeckArtifactPayload | null;
   startSlide?: number;
   onSlideChange?: (slideIndex: number) => void;
+  /** Fires once the artifact is loaded; useful for host UIs that need slide count. */
+  onReady?: (meta: { slideCount: number }) => void;
   mode?: CentiDeckRuntimeMode;
   className?: string;
 }
@@ -39,6 +41,7 @@ export default function CentiDeckPreview({
   artifactOverride = null,
   startSlide = 0,
   onSlideChange,
+  onReady,
   mode = "interactive",
   className = "",
 }: CentiDeckPreviewProps) {
@@ -124,6 +127,14 @@ export default function CentiDeckPreview({
     if (runtime.activeIndex === startSlide) return;
     runtime.goTo(startSlide);
   }, [startSlide]);
+
+  // Notify the host once the artifact becomes available (used by presenter /
+  // editor chrome that needs slideCount for page indicators and navigation).
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    onReady?.({ slideCount: state.artifact.slides.length });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status === "ready" ? state.artifact : null]);
 
   // Rescale the fixed-size inner canvas whenever the host container resizes.
   useEffect(() => {
