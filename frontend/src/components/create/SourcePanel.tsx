@@ -96,6 +96,7 @@ type HydratedGenerationJob = {
   advisory_issue_count?: number;
   fix_preview_slides?: Slide[];
   fix_preview_source_ids?: string[];
+  fix_preview_slidev?: { markdown: string; meta: Record<string, unknown>; preview_url: string; selected_style_id?: string | null } | null;
 };
 
 function toTimestamp(source: SourceMeta): number {
@@ -222,6 +223,7 @@ export default function SourcePanel() {
           : detail.latest_generation_job?.status ?? null;
       let hydratedJob: HydratedGenerationJob | null = null;
       let hydratedPresentation = detail.latest_presentation?.presentation ?? null;
+      const latestOutputMode = detail.latest_presentation?.output_mode ?? "structured";
       const shouldHydrateJob =
         Boolean(detail.latest_generation_job?.job_id) &&
         (resolvedJobStatus === "running" ||
@@ -233,7 +235,12 @@ export default function SourcePanel() {
         try {
           const job = await getJob(sessionId, detail.latest_generation_job.job_id);
           hydratedJob = job as unknown as HydratedGenerationJob;
-          if (!hydratedPresentation && Array.isArray(job.slides) && job.slides.length > 0) {
+          if (
+            !hydratedPresentation &&
+            latestOutputMode !== "slidev" &&
+            Array.isArray(job.slides) &&
+            job.slides.length > 0
+          ) {
             hydratedPresentation = {
               presentationId:
                 (typeof job.presentation?.presentationId === "string" &&
@@ -289,6 +296,10 @@ export default function SourcePanel() {
             hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
               ? hydratedJob.fix_preview_source_ids
               : [],
+          fixPreviewSlidev:
+            hydratedJob && hydratedJob.fix_preview_slidev
+              ? hydratedJob.fix_preview_slidev
+              : null,
           selectedFixPreviewSlideIds:
             hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
               ? hydratedJob.fix_preview_source_ids
@@ -307,6 +318,7 @@ export default function SourcePanel() {
           advisoryIssueCount: 0,
           fixPreviewSlides: [],
           fixPreviewSourceIds: [],
+          fixPreviewSlidev: null,
           selectedFixPreviewSlideIds: [],
         });
         setIsGenerating(false);

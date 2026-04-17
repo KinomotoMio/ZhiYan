@@ -396,6 +396,12 @@ class SessionStore:
             raise ValueError("会话不存在")
         return result
 
+    async def get_session_workspace_id(self, session_id: str) -> str:
+        result = await asyncio.to_thread(self._get_session_workspace_id_sync, session_id)
+        if result is None:
+            raise ValueError("会话不存在")
+        return result
+
     def _get_session_sync(self, workspace_id: str, session_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -412,6 +418,20 @@ class SessionStore:
         if not row:
             return None
         return self._row_to_session_summary(row)
+
+    def _get_session_workspace_id_sync(self, session_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT workspace_id
+                FROM sessions
+                WHERE id = ? AND archived_at IS NULL
+                """,
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["workspace_id"])
 
     async def touch_session(self, workspace_id: str, session_id: str) -> None:
         now = _now_iso()
@@ -1351,13 +1371,14 @@ class SessionStore:
         self,
         *,
         session_id: str,
-        payload: dict,
+        payload: dict | None,
         is_snapshot: bool = False,
         snapshot_label: str | None = None,
         output_mode: str | None = None,
         html_deck: dict | None = None,
         slidev_deck: dict | None = None,
         slidev_build: dict | None = None,
+        slidev_sidecar: dict | None = None,
     ) -> dict:
         now = _now_iso()
         pid = f"sp-{uuid4().hex[:12]}"
@@ -1373,6 +1394,7 @@ class SessionStore:
                 html_deck,
                 slidev_deck,
                 slidev_build,
+                slidev_sidecar,
                 now,
             )
 
@@ -1380,13 +1402,14 @@ class SessionStore:
         self,
         session_id: str,
         presentation_id: str,
-        payload: dict,
+        payload: dict | None,
         is_snapshot: bool,
         snapshot_label: str | None,
         output_mode: str | None,
         html_deck: dict | None,
         slidev_deck: dict | None,
         slidev_build: dict | None,
+        slidev_sidecar: dict | None,
         now: str,
     ) -> dict:
         stored_payload = dict(payload or {})
@@ -1437,6 +1460,18 @@ class SessionStore:
                 artifacts = stored_payload.get("artifacts")
                 artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
                 artifacts_dict["slidev_build"] = build_meta
+                stored_payload["artifacts"] = artifacts_dict
+            if slidev_sidecar is not None:
+                sidecar_meta = self._persist_slidev_sidecar_artifact_sync(
+                    session_id=session_id,
+                    presentation_id=presentation_id,
+                    version_no=version_no,
+                    slidev_sidecar=slidev_sidecar,
+                    now=now,
+                )
+                artifacts = stored_payload.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, dict) else {}
+                artifacts_dict["slidev_sidecar"] = sidecar_meta
                 stored_payload["artifacts"] = artifacts_dict
             conn.execute(
                 """
@@ -1627,14 +1662,17 @@ class SessionStore:
                     },
                 )
 
+            output_mode = self._extract_output_mode(normalized_payload)
+            presentation_payload = None if output_mode == "slidev" else normalized_payload
+
             return {
                 "id": row["id"],
                 "version_no": row["version_no"],
                 "is_snapshot": bool(row["is_snapshot"]),
                 "snapshot_label": row["snapshot_label"],
                 "created_at": row["created_at"],
-                "presentation": normalized_payload,
-                "output_mode": self._extract_output_mode(normalized_payload),
+                "presentation": presentation_payload,
+                "output_mode": output_mode,
                 "artifacts": self._extract_artifacts(normalized_payload),
                 "artifact_status": self._extract_runtime_field(normalized_payload, "artifactStatus", default="ready"),
                 "render_status": self._extract_runtime_field(normalized_payload, "renderStatus", default="ready"),
@@ -1673,6 +1711,16 @@ class SessionStore:
             if not latest_row:
                 raise ValueError("当前会话暂无可快照内容")
             latest = latest_row["presentation"]
+            if latest is None:
+                latest = {
+                    "outputMode": latest_row.get("output_mode") or "slidev",
+                    "artifacts": latest_row.get("artifacts") or {},
+                    "artifactStatus": latest_row.get("artifact_status"),
+                    "renderStatus": latest_row.get("render_status"),
+                    "renderError": latest_row.get("render_error"),
+                    "artifactAvailable": latest_row.get("artifact_available"),
+                    "renderAvailable": latest_row.get("render_available"),
+                }
         return await self.save_presentation(
             session_id=session_id,
             payload=latest,
@@ -1825,7 +1873,11 @@ class SessionStore:
         if not meta:
             parsed = parse_slidev_markdown(
                 markdown=markdown,
-                fallback_title=latest.get("presentation", {}).get("title") or "新演示文稿",
+                fallback_title=str(
+                    (latest.get("presentation") or {}).get("title")
+                    or meta.get("title")
+                    or "新演示文稿"
+                ),
             )
             meta = {
                 "title": parsed["title"],
@@ -1833,6 +1885,41 @@ class SessionStore:
                 "slides": parsed["slides"],
             }
         return markdown, meta
+
+    async def get_latest_slidev_sidecar(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._get_latest_slidev_sidecar_sync,
+                workspace_id,
+                session_id,
+            )
+
+    def _get_latest_slidev_sidecar_sync(
+        self,
+        workspace_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        latest = self._get_latest_presentation_sync(workspace_id, session_id)
+        if not latest:
+            return self._empty_slidev_sidecar()
+        artifacts = latest.get("artifacts")
+        sidecar = artifacts.get("slidev_sidecar") if isinstance(artifacts, dict) else None
+        if not isinstance(sidecar, dict):
+            return self._empty_slidev_sidecar()
+        storage_path = str(sidecar.get("storage_path") or "").strip()
+        if not storage_path:
+            return self._empty_slidev_sidecar()
+        sidecar_path = Path(storage_path)
+        if not sidecar_path.exists():
+            return self._empty_slidev_sidecar()
+        with suppress(Exception):
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            return self._normalize_slidev_sidecar(payload)
+        return self._empty_slidev_sidecar()
 
     async def get_latest_slidev_build(
         self,
@@ -2047,6 +2134,68 @@ class SessionStore:
             "build_root": str(artifact_dir.resolve()),
             "entry_storage_path": str(copied_entry.resolve()),
             "entry_relative_path": str(copied_entry.relative_to(artifact_dir)),
+        }
+
+    def _persist_slidev_sidecar_artifact_sync(
+        self,
+        *,
+        session_id: str,
+        presentation_id: str,
+        version_no: int,
+        slidev_sidecar: dict,
+        now: str,
+    ) -> dict[str, Any]:
+        normalized = self._normalize_slidev_sidecar(slidev_sidecar)
+        artifact_dir = self.uploads_dir / "presentations" / session_id / presentation_id / "slidev-sidecar"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path = artifact_dir / "state.json"
+        sidecar_path.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "version": version_no,
+            "updated_at": now,
+            "storage_path": str(sidecar_path.resolve()),
+            "speaker_notes_count": len(normalized["speaker_notes"]),
+            "speaker_audio_count": len(normalized["speaker_audio"]),
+        }
+
+    @staticmethod
+    def _empty_slidev_sidecar() -> dict[str, Any]:
+        return {
+            "speaker_notes": {},
+            "speaker_audio": {},
+        }
+
+    @classmethod
+    def _normalize_slidev_sidecar(cls, payload: dict | None) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return cls._empty_slidev_sidecar()
+
+        raw_notes = payload.get("speaker_notes")
+        raw_audio = payload.get("speaker_audio")
+        speaker_notes = (
+            {
+                str(slide_id): str(notes).strip()
+                for slide_id, notes in raw_notes.items()
+                if str(slide_id).strip() and isinstance(notes, str)
+            }
+            if isinstance(raw_notes, dict)
+            else {}
+        )
+        speaker_audio = (
+            {
+                str(slide_id): dict(meta)
+                for slide_id, meta in raw_audio.items()
+                if str(slide_id).strip() and isinstance(meta, dict)
+            }
+            if isinstance(raw_audio, dict)
+            else {}
+        )
+        return {
+            "speaker_notes": speaker_notes,
+            "speaker_audio": speaker_audio,
         }
 
     async def get_planning_state(

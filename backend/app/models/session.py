@@ -40,7 +40,7 @@ class SnapshotMeta(BaseModel):
 
 
 class LatestPresentationWriteRequest(BaseModel):
-    presentation: dict
+    presentation: dict | None = None
     source: str | None = "editor"
     output_mode: str | None = None
     html_deck: dict[str, Any] | None = None

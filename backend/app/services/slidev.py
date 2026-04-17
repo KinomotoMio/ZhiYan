@@ -1,4 +1,4 @@
-"""Slidev deck normalization, validation, review, and build helpers."""
+"""Slidev deck parse/build helpers."""
 
 from __future__ import annotations
 
@@ -182,29 +182,10 @@ def parse_slidev_markdown(
             }
         )
 
-    presentation = {
-        "presentationId": "pres-slidev",
-        "title": title,
-        "slides": [
-            {
-                "slideId": slide["slide_id"],
-                "layoutType": "blank",
-                "layoutId": "blank",
-                "contentData": {
-                    "title": slide["title"],
-                    "role": slide["role"],
-                    "_slidevDeck": True,
-                },
-                "components": [],
-            }
-            for slide in slide_meta
-        ],
-    }
     return {
         "title": title,
         "slide_count": len(slide_meta),
         "slides": slide_meta,
-        "presentation": presentation,
     }
 
 
@@ -403,65 +384,33 @@ async def prepare_slidev_deck_artifact(
     expected_pages: int,
     paginate: bool = True,
 ) -> dict[str, Any]:
-    style_id, selected_style = select_slidev_style(
-        requested_style_id=selected_style_id,
-        topic=topic,
-        outline_items=outline_items,
-    )
-    normalized_markdown = normalize_slidev_markdown(
-        markdown=markdown,
-        fallback_title=fallback_title,
-        selected_style=selected_style,
-        paginate=paginate,
-    )
-    validation = await validate_slidev_deck(
-        markdown=normalized_markdown,
-        expected_pages=expected_pages,
-        selected_style=selected_style,
-        outline_items=outline_items,
-    )
-    if not bool(validation.get("ok")):
-        issues = validation.get("issues") if isinstance(validation.get("issues"), list) else []
-        summary = " | ".join(str(item.get("message") or item.get("code") or "validation failed") for item in issues[:6])
-        raise ValueError(f"Slidev deck validation failed: {summary or 'invalid deck'}")
-
-    review = await review_slidev_deck(
-        markdown=normalized_markdown,
-        selected_style=selected_style,
-        outline_items=outline_items,
-    )
-    if review_issues := review.get("issues"):
-        if isinstance(review_issues, list) and review_issues:
-            summary = " | ".join(str(item.get("message") or item.get("code") or "review failed") for item in review_issues[:6])
-            raise ValueError(f"Slidev deck review failed: {summary}")
-
+    del topic, paginate
+    raw_markdown = str(markdown or "").strip()
+    if not raw_markdown:
+        raise ValueError("Slidev markdown is empty.")
     meta = parse_slidev_markdown(
-        markdown=normalized_markdown,
+        markdown=raw_markdown,
         outline_items=outline_items,
         fallback_title=fallback_title,
         normalize_composition=False,
     )
-    if meta["slide_count"] != expected_pages:
-        raise ValueError(
-            f"Slidev deck slide count mismatch: expected {expected_pages}, got {meta['slide_count']}."
-        )
+    page_count_check = {
+        "expected_slide_count": max(1, int(expected_pages or 1)),
+        "submitted_slide_count": meta["slide_count"],
+        "matches_expected": meta["slide_count"] == max(1, int(expected_pages or 1)),
+        "mode": "soft",
+    }
     return {
         "title": meta["title"],
-        "markdown": normalized_markdown,
+        "markdown": raw_markdown + "\n",
         "meta": {
             "title": meta["title"],
             "slide_count": meta["slide_count"],
             "slides": meta["slides"],
-            "selected_style_id": style_id,
-            "selected_style": selected_style,
-            "selected_theme": {"theme": selected_style.get("theme") or "seriph"},
-            "validation": validation,
-            "review": review,
+            "selected_style_id": selected_style_id,
+            "page_count_check": page_count_check,
         },
-        "presentation": meta["presentation"],
-        "selected_style_id": style_id,
-        "selected_style": selected_style,
-        "selected_theme": {"theme": selected_style.get("theme") or "seriph"},
+        "selected_style_id": selected_style_id,
     }
 
 

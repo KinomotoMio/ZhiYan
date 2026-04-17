@@ -5,11 +5,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import EditorWorkspace from "@/components/editor/EditorWorkspace";
 import {
-  buildLatestSessionPresentationSlidevUrl,
   getJob,
   getLatestSessionPresentationHtmlManifest,
   getLatestSessionPresentationHtmlRender,
   getLatestSessionPresentationSlidev,
+  getLatestSessionPresentationSlidevSidecar,
   getSessionDetail,
   updateSession,
 } from "@/lib/api";
@@ -19,6 +19,7 @@ import {
   buildShellSlides,
   mergeGeneratedSlide,
 } from "@/components/generation/presentation-shell";
+import { resolveSlidevPreviewState } from "@/lib/slidev-preview-state";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import type { Presentation, Slide } from "@/types/slide";
 
@@ -34,6 +35,7 @@ type HydratedGenerationJob = {
   advisory_issue_count?: number;
   fix_preview_slides?: Slide[];
   fix_preview_source_ids?: string[];
+  fix_preview_slidev?: { markdown: string; meta: Record<string, unknown>; preview_url: string; selected_style_id?: string | null } | null;
 };
 
 function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessage[] {
@@ -156,11 +158,19 @@ export default function SessionEditorPage() {
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationSlidevBuildUrl
             : null;
+        let presentationSlidevNotesState =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationSlidevNotesState
+            : {};
+        let presentationSlidevAudioState =
+          currentStore.currentSessionId === sessionId
+            ? currentStore.presentationSlidevAudioState
+            : {};
         const presentationArtifactStatus =
           detail.latest_presentation?.artifact_status ?? null;
-        const presentationRenderStatus =
+        let presentationRenderStatus =
           detail.latest_presentation?.render_status ?? null;
-        const presentationRenderError =
+        let presentationRenderError =
           detail.latest_presentation?.render_error ?? null;
         const latestJob = detail.latest_generation_job;
         const resolvedJobStatus =
@@ -185,7 +195,7 @@ export default function SessionEditorPage() {
           try {
             const job = await getJob(sessionId, latestJob.job_id);
             hydratedJob = job as unknown as HydratedGenerationJob;
-            if (!presentation) {
+            if (!presentation && latestOutputMode !== "slidev") {
               const rawNumPages =
                 typeof job.request?.num_pages === "number"
                   ? job.request.num_pages
@@ -218,6 +228,7 @@ export default function SessionEditorPage() {
           } catch {
             if (
               !presentation &&
+              latestOutputMode !== "slidev" &&
               (resolvedJobStatus === "running" || resolvedJobStatus === "waiting_outline_review")
             ) {
               presentation = {
@@ -245,21 +256,40 @@ export default function SessionEditorPage() {
           }
         } else if (latestOutputMode === "slidev") {
           try {
-            const slidev = await getLatestSessionPresentationSlidev(sessionId);
+            const [slidev, slidevSidecar] = await Promise.all([
+              getLatestSessionPresentationSlidev(sessionId),
+              getLatestSessionPresentationSlidevSidecar(sessionId),
+            ]);
+            const resolvedPreviewState = resolveSlidevPreviewState({
+              buildUrl: slidev?.build_url ?? null,
+              renderStatus: slidev?.render_status ?? presentationRenderStatus,
+              renderError: slidev?.render_error ?? presentationRenderError,
+            });
             presentationSlidevMarkdown = slidev?.markdown ?? null;
             presentationSlidevMeta = slidev?.meta ?? null;
-            presentationSlidevBuildUrl =
-              slidev?.build_url ?? buildLatestSessionPresentationSlidevUrl(sessionId);
+            presentationSlidevBuildUrl = resolvedPreviewState.buildUrl;
+            presentationSlidevNotesState = slidevSidecar?.speaker_notes ?? {};
+            presentationSlidevAudioState = slidevSidecar?.speaker_audio ?? {};
+            presentationRenderStatus = resolvedPreviewState.renderStatus;
+            presentationRenderError = resolvedPreviewState.renderError;
+            presentation = null;
           } catch {
             presentationSlidevMarkdown = null;
             presentationSlidevMeta = null;
-            presentationSlidevBuildUrl = buildLatestSessionPresentationSlidevUrl(sessionId);
+            presentationSlidevBuildUrl = null;
+            presentationSlidevNotesState = {};
+            presentationSlidevAudioState = {};
+            presentation = null;
           }
         }
 
         const initialSlideIndex = parseSlideQueryToIndex(
           requestedSlide,
-          presentation?.slides.length ?? 0
+          latestOutputMode === "slidev"
+            ? Array.isArray(presentationSlidevMeta?.slides)
+              ? presentationSlidevMeta.slides.length
+              : 0
+            : presentation?.slides.length ?? 0
         );
 
         setCurrentSessionId(sessionId);
@@ -277,6 +307,8 @@ export default function SessionEditorPage() {
           presentationSlidevDeckArtifact: detail.latest_presentation?.artifacts?.slidev_deck ?? null,
           presentationSlidevBuildArtifact: detail.latest_presentation?.artifacts?.slidev_build ?? null,
           presentationSlidevBuildUrl,
+          presentationSlidevNotesState,
+          presentationSlidevAudioState,
           presentationArtifactStatus,
           presentationRenderStatus,
           presentationRenderError,
@@ -296,6 +328,8 @@ export default function SessionEditorPage() {
           deckArtifact: detail.latest_presentation?.artifacts?.slidev_deck ?? null,
           buildArtifact: detail.latest_presentation?.artifacts?.slidev_build ?? null,
           buildUrl: presentationSlidevBuildUrl,
+          notesState: presentationSlidevNotesState,
+          audioState: presentationSlidevAudioState,
         });
         if (latestJob?.job_id) {
           updateJobState({
@@ -327,6 +361,10 @@ export default function SessionEditorPage() {
               hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
                 ? hydratedJob.fix_preview_source_ids
                 : [],
+            fixPreviewSlidev:
+              hydratedJob && hydratedJob.fix_preview_slidev
+                ? hydratedJob.fix_preview_slidev
+                : null,
             selectedFixPreviewSlideIds:
               hydratedJob && Array.isArray(hydratedJob.fix_preview_source_ids)
                 ? hydratedJob.fix_preview_source_ids
@@ -345,6 +383,7 @@ export default function SessionEditorPage() {
             advisoryIssueCount: 0,
             fixPreviewSlides: [],
             fixPreviewSourceIds: [],
+            fixPreviewSlidev: null,
             selectedFixPreviewSlideIds: [],
           });
           setIsGenerating(false);

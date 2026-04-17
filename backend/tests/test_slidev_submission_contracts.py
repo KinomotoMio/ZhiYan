@@ -33,42 +33,41 @@ def test_real_slidev_failure_fixture_normalizes_to_five_pages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finalize_slidev_deck_uses_normalized_page_count(monkeypatch, tmp_path: Path) -> None:
-    markdown = _real_failure_fixture_path().read_text(encoding="utf-8")
-
-    async def fake_validate_slidev_deck(**kwargs):  # noqa: ANN003
-        parsed = slidev_mod.parse_slidev_markdown(markdown=str(kwargs["markdown"]))
-        return {"ok": True, "issues": [], "slide_count": parsed["slide_count"]}
-
-    async def fake_review_slidev_deck(**kwargs):  # noqa: ANN003
-        parsed = slidev_mod.parse_slidev_markdown(markdown=str(kwargs["markdown"]))
-        return {"issues": [], "slide_count": parsed["slide_count"]}
-
-    async def fake_build_slidev_spa(**kwargs):  # noqa: ANN003
-        out_dir = Path(kwargs["out_dir"])
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "index.html").write_text("<html><body>ok</body></html>", encoding="utf-8")
-
-    monkeypatch.setattr(slidev_mod, "validate_slidev_deck", fake_validate_slidev_deck)
-    monkeypatch.setattr(slidev_mod, "review_slidev_deck", fake_review_slidev_deck)
-    monkeypatch.setattr(slidev_mod, "build_slidev_spa", fake_build_slidev_spa)
-
-    finalized = await slidev_mod.finalize_slidev_deck(
-        markdown=markdown,
-        fallback_title="Claude Code Prompt Suggestions",
-        selected_style_id="tech-launch",
-        topic="Claude Code Prompt Suggestions",
-        outline_items=[
-            {"slide_number": 1, "title": "Prompt，不只是文字", "suggested_slide_role": "cover"},
-            {"slide_number": 2, "title": "藏在提示词背后的三次转向", "suggested_slide_role": "narrative"},
-            {"slide_number": 3, "title": "PART 01", "suggested_slide_role": "section-divider"},
-            {"slide_number": 4, "title": "协作者模式：沉默是金", "suggested_slide_role": "narrative"},
-            {"slide_number": 5, "title": "四岁小孩就会的事", "suggested_slide_role": "closing"},
-        ],
-        expected_pages=5,
-        build_base_path="/slidev/build/",
-        build_out_dir=tmp_path / "dist",
+async def test_prepare_slidev_deck_artifact_preserves_markdown_and_soft_page_count(monkeypatch) -> None:
+    markdown = (
+        "---\n"
+        "title: Slidev Soft Count\n"
+        "---\n\n"
+        "# 封面\n\n"
+        "---\n\n"
+        "# 第 2 页\n"
     )
 
-    assert finalized["meta"]["slide_count"] == 5
-    assert finalized["presentation"]["slides"][0]["contentData"]["title"] == "Prompt，不只是文字"
+    async def _unexpected_validate(**kwargs):  # noqa: ANN003
+        raise AssertionError("validate_slidev_deck should not be called")
+
+    async def _unexpected_review(**kwargs):  # noqa: ANN003
+        raise AssertionError("review_slidev_deck should not be called")
+
+    monkeypatch.setattr(slidev_mod, "validate_slidev_deck", _unexpected_validate)
+    monkeypatch.setattr(slidev_mod, "review_slidev_deck", _unexpected_review)
+
+    prepared = await slidev_mod.prepare_slidev_deck_artifact(
+        markdown=markdown,
+        fallback_title="Slidev Soft Count",
+        selected_style_id="tech-launch",
+        topic="Slidev Soft Count",
+        outline_items=[],
+        expected_pages=3,
+    )
+
+    assert prepared["markdown"] == markdown
+    assert prepared["selected_style_id"] == "tech-launch"
+    assert prepared["meta"]["slide_count"] == 2
+    assert prepared["meta"]["selected_style_id"] == "tech-launch"
+    assert prepared["meta"]["page_count_check"] == {
+        "expected_slide_count": 3,
+        "submitted_slide_count": 2,
+        "matches_expected": False,
+        "mode": "soft",
+    }

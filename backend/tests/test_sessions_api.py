@@ -1312,12 +1312,24 @@ def test_slidev_latest_presentation_endpoints(monkeypatch, tmp_path):
     assert build_entry.status_code == 200
     assert "slidev deck" in build_entry.text
 
+    build_entry_without_header = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/slidev/build",
+    )
+    assert build_entry_without_header.status_code == 200
+    assert "slidev deck" in build_entry_without_header.text
+
     build_asset = client.get(
         f"/api/v1/sessions/{session_id}/presentations/latest/slidev/build/assets/entry.js",
         headers=headers,
     )
     assert build_asset.status_code == 200
     assert "console.log('slidev')" in build_asset.text
+
+    build_asset_without_header = client.get(
+        f"/api/v1/sessions/{session_id}/presentations/latest/slidev/build/assets/entry.js",
+    )
+    assert build_asset_without_header.status_code == 200
+    assert "console.log('slidev')" in build_asset_without_header.text
 
 
 def test_slidev_latest_presentation_survives_build_failure(monkeypatch, tmp_path):

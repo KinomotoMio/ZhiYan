@@ -464,7 +464,6 @@ def test_chat_slidev_mode_emits_slidev_update(monkeypatch, tmp_path):
     slidev_updates = [evt for evt in events if evt.get("type") == "slidev_update"]
     assert len(slidev_updates) == 1
     slidev_update = slidev_updates[0]
-    assert slidev_update["presentation"]["title"] == "Slidev 改稿"
     assert slidev_update["meta"]["slides"][0]["title"] == "新封面"
     assert slidev_update["selected_style_id"] == "tech-launch"
     assert slidev_update["preview_url"] == "/api/v1/slidev-previews/spv-test-1"

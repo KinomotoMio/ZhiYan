@@ -47,7 +47,7 @@ from app.services.planning import (
     normalize_planning_outline,
 )
 from app.services.sessions import session_store
-from app.services.sessions.workspace import get_workspace_id_from_request
+from app.services.sessions.workspace import WORKSPACE_HEADER, get_workspace_id_from_request
 from app.services.slidev import build_slidev_spa, prepare_slidev_deck_artifact
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -77,7 +77,7 @@ class SessionChatWriteRequest(BaseModel):
 
 def _slidev_outline_items_from_payload(
     slidev_deck: dict[str, object] | None,
-    presentation: dict[str, object],
+    presentation: dict[str, object] | None,
 ) -> list[dict[str, object]]:
     if isinstance(slidev_deck, dict):
         raw_meta = slidev_deck.get("meta")
@@ -98,7 +98,7 @@ def _slidev_outline_items_from_payload(
                     )
                 if items:
                     return items
-    raw_slides = presentation.get("slides")
+    raw_slides = presentation.get("slides") if isinstance(presentation, dict) else None
     if not isinstance(raw_slides, list):
         return []
     items = []
@@ -221,6 +221,18 @@ async def _get_generation_job_for_session(
 async def _assert_session_access(workspace_id: str, session_id: str) -> None:
     try:
         await session_store.get_session(workspace_id, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+async def _resolve_slidev_build_workspace_id(request: Request, session_id: str) -> str:
+    explicit_header = request.headers.get(WORKSPACE_HEADER) or request.headers.get(WORKSPACE_HEADER.lower())
+    if explicit_header:
+        workspace_id = get_workspace_id_from_request(request)
+        await _assert_session_access(workspace_id, session_id)
+        return workspace_id
+    try:
+        return await session_store.get_session_workspace_id(session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -1097,11 +1109,22 @@ async def get_latest_presentation_slidev_meta(session_id: str, request: Request)
     return JSONResponse(content=meta)
 
 
-@router.get("/{session_id}/presentations/latest/slidev/build")
-async def get_latest_presentation_slidev_build(session_id: str, request: Request):
+@router.get("/{session_id}/presentations/latest/slidev/sidecar")
+async def get_latest_presentation_slidev_sidecar(session_id: str, request: Request):
     workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
     await _assert_session_access(workspace_id, sid)
+    latest = await session_store.get_latest_presentation(workspace_id, sid)
+    if not latest or latest.get("output_mode") != "slidev":
+        raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 演示稿")
+    sidecar = await session_store.get_latest_slidev_sidecar(workspace_id, sid)
+    return JSONResponse(content=sidecar)
+
+
+@router.get("/{session_id}/presentations/latest/slidev/build")
+async def get_latest_presentation_slidev_build(session_id: str, request: Request):
+    sid = _ensure_session_id(session_id)
+    workspace_id = await _resolve_slidev_build_workspace_id(request, sid)
     build = await session_store.get_latest_slidev_build(workspace_id, sid)
     if not build:
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")
@@ -1115,9 +1138,8 @@ async def get_latest_presentation_slidev_build_asset(
     asset_path: str,
     request: Request,
 ):
-    workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
+    workspace_id = await _resolve_slidev_build_workspace_id(request, sid)
     build = await session_store.get_latest_slidev_build(workspace_id, sid)
     if not build:
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")
@@ -1182,15 +1204,17 @@ async def save_latest_presentation(
             try:
                 finalized = await prepare_slidev_deck_artifact(
                     markdown=markdown,
-                    fallback_title=str(presentation_payload.get("title") or "新演示文稿"),
+                    fallback_title=str(
+                        (presentation_payload or {}).get("title")
+                        or "新演示文稿"
+                    ),
                     selected_style_id=str(slidev_deck.get("selected_style_id") or "").strip() or None,
-                    topic=str(presentation_payload.get("title") or ""),
+                    topic=str((presentation_payload or {}).get("title") or ""),
                     outline_items=outline_items,
                     expected_pages=max(
                         1, len(outline_items) or int(slidev_deck.get("expected_slide_count") or 0) or 1
                     ),
                 )
-                presentation_payload = finalized["presentation"]
                 slidev_deck = {
                     "markdown": finalized["markdown"],
                     "meta": finalized["meta"],
@@ -1212,6 +1236,10 @@ async def save_latest_presentation(
             except RuntimeError as exc:
                 render_status = "failed"
                 render_error = str(exc)
+            presentation_payload = {
+                "title": finalized["meta"]["title"],
+                "outputMode": "slidev",
+            }
         presentation_payload = dict(presentation_payload or {})
         presentation_payload["artifactStatus"] = "ready"
         presentation_payload["renderStatus"] = render_status

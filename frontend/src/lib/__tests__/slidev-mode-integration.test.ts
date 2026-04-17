@@ -23,10 +23,15 @@ test("planning panel and editor wire the slidev mode explicitly", () => {
 test("slidev preview uses hash routing and api exposes slidev persistence helpers", () => {
   const previewSource = readSourceFile("../../components/slides/SlidevPreview.tsx");
   const apiSource = readSourceFile("../api.ts");
+  const editorSource = readSourceFile("../../components/editor/EditorWorkspace.tsx");
+  const pageSource = readSourceFile("../../app/sessions/[sessionId]/editor/page.tsx");
 
   assert.match(previewSource, /url\.hash = `#\/\$\{safeSlide \+ 1\}`/);
   assert.doesNotMatch(previewSource, /searchParams\.set\("slide"/);
   assert.match(apiSource, /type PresentationOutputMode = "structured" \| "html" \| "slidev"/);
   assert.match(apiSource, /getLatestSessionPresentationSlidev/);
   assert.match(apiSource, /saveLatestSessionSlidevPresentation/);
+  assert.match(editorSource, /resolveSlidevPreviewState/);
+  assert.match(editorSource, /slidevPreviewState\.previewReady/);
+  assert.match(pageSource, /resolveSlidevPreviewState/);
 });

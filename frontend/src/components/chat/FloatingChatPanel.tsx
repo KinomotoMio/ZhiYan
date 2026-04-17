@@ -358,14 +358,16 @@ export default function FloatingChatPanel() {
 
   const handleRollbackPending = () => {
     if (!pendingChange) return;
-    const currentPresentation = useAppStore.getState().presentation;
-    if (currentPresentation) {
-      setPresentation({
-        ...currentPresentation,
-        slides: cloneSlides(pendingChange.previousSlides),
-      });
-    } else {
-      updateSlides(cloneSlides(pendingChange.previousSlides));
+    if (pendingChange.mode !== "slidev") {
+      const currentPresentation = useAppStore.getState().presentation;
+      if (currentPresentation) {
+        setPresentation({
+          ...currentPresentation,
+          slides: cloneSlides(pendingChange.previousSlides),
+        });
+      } else {
+        updateSlides(cloneSlides(pendingChange.previousSlides));
+      }
     }
     setPresentationHtmlState(
       pendingChange.mode,
@@ -400,7 +402,7 @@ export default function FloatingChatPanel() {
   const handleApplyPending = async () => {
     if (!pendingChange || !currentSessionId) return;
     const latestPresentation = useAppStore.getState().presentation;
-    if (!latestPresentation) {
+    if (pendingChange.mode !== "slidev" && !latestPresentation) {
       toast.error("当前没有可保存的演示稿");
       return;
     }
@@ -408,6 +410,9 @@ export default function FloatingChatPanel() {
     setPendingChange((prev) => (prev ? { ...prev, saving: true } : prev));
     try {
       if (pendingChange.mode === "html") {
+        if (!latestPresentation) {
+          throw new Error("当前没有可保存的演示稿");
+        }
         await saveLatestSessionHtmlPresentation(
           currentSessionId,
           latestPresentation,
@@ -421,13 +426,16 @@ export default function FloatingChatPanel() {
       } else if (pendingChange.mode === "slidev") {
         await saveLatestSessionSlidevPresentation(
           currentSessionId,
-          latestPresentation,
           pendingChange.proposedSlidevMarkdown || "",
           pendingChange.selectedStyleId ?? presentationSlidevDeckArtifact?.selected_style_id ?? null,
           pendingChange.proposedSlidevMeta ?? undefined,
+          latestPresentation,
           "chat"
         );
       } else {
+        if (!latestPresentation) {
+          throw new Error("当前没有可保存的演示稿");
+        }
         await saveLatestSessionPresentation(currentSessionId, latestPresentation, "chat");
       }
       setPendingChange(null);
@@ -486,22 +494,26 @@ export default function FloatingChatPanel() {
         message: text,
         session_id: currentSessionId,
         messages: historyForApi,
-        presentation_context: presentation
-          ? {
-              slides: presentation.slides,
-              title: presentation.title,
-              output_mode: presentationOutputMode,
-              html_manifest: presentationOutputMode === "html" ? presentationHtmlManifest : undefined,
-              html_render: presentationOutputMode === "html" ? presentationHtmlRender : undefined,
-              slidev_markdown:
-                presentationOutputMode === "slidev" ? presentationSlidevMarkdown : undefined,
-              slidev_meta: presentationOutputMode === "slidev" ? presentationSlidevMeta : undefined,
-              selected_style_id:
-                presentationOutputMode === "slidev"
-                  ? presentationSlidevDeckArtifact?.selected_style_id
-                  : undefined,
-            }
-          : undefined,
+        presentation_context:
+          presentation || presentationOutputMode === "slidev"
+            ? {
+                slides: presentation?.slides ?? [],
+                title:
+                  presentation?.title ??
+                  String((presentationSlidevMeta as { title?: unknown } | null)?.title || "新演示文稿"),
+                output_mode: presentationOutputMode,
+                html_content: presentationOutputMode === "html" ? presentationHtml : undefined,
+                html_manifest: presentationOutputMode === "html" ? presentationHtmlManifest : undefined,
+                html_render: presentationOutputMode === "html" ? presentationHtmlRender : undefined,
+                slidev_markdown:
+                  presentationOutputMode === "slidev" ? presentationSlidevMarkdown : undefined,
+                slidev_meta: presentationOutputMode === "slidev" ? presentationSlidevMeta : undefined,
+                selected_style_id:
+                  presentationOutputMode === "slidev"
+                    ? presentationSlidevDeckArtifact?.selected_style_id
+                    : undefined,
+              }
+            : undefined,
         current_slide_index: currentSlideIndex,
         action_hint: actionHint,
         skill_id: defaultSkillIdForOutputMode(presentationOutputMode),
@@ -603,7 +615,6 @@ export default function FloatingChatPanel() {
         const previousSlidesSnapshot = pendingChange?.previousSlides
           ? cloneSlides(pendingChange.previousSlides)
           : cloneSlides(currentSlides);
-        setPresentation(slidevUpdate.presentation);
         setPresentationSlidevState({
           outputMode: "slidev",
           markdown: slidevUpdate.markdown,
@@ -615,7 +626,7 @@ export default function FloatingChatPanel() {
         setPendingChange({
           mode: "slidev",
           previousSlides: previousSlidesSnapshot,
-          proposedSlides: cloneSlides(slidevUpdate.presentation.slides),
+          proposedSlides: previousSlidesSnapshot,
           previousHtml: currentHtml,
           proposedHtml: currentHtml,
           previousHtmlManifest: presentationHtmlManifest,

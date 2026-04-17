@@ -10,6 +10,7 @@ import type {
   PlanningState,
   PresentationOutputMode,
   SessionSummary,
+  SlidevFixPreviewState,
   SlidevBuildArtifactMeta,
   SlidevDeckArtifactMeta,
   WorkspaceId,
@@ -89,6 +90,8 @@ interface AppState {
   presentationSlidevDeckArtifact: SlidevDeckArtifactMeta | null;
   presentationSlidevBuildArtifact: SlidevBuildArtifactMeta | null;
   presentationSlidevBuildUrl: string | null;
+  presentationSlidevNotesState: Record<string, string>;
+  presentationSlidevAudioState: Record<string, Slide["speakerAudio"] | undefined>;
   presentationArtifactStatus: string | null;
   presentationRenderStatus: string | null;
   presentationRenderError: string | null;
@@ -104,6 +107,7 @@ interface AppState {
   advisoryIssueCount: number;
   fixPreviewSlides: Slide[];
   fixPreviewSourceIds: string[];
+  fixPreviewSlidev: SlidevFixPreviewState | null;
   selectedFixPreviewSlideIds: string[];
   issuePanelOpen: boolean;
   issuePanelSlideId: string | null;
@@ -143,6 +147,8 @@ interface AppState {
     presentationSlidevDeckArtifact?: SlidevDeckArtifactMeta | null;
     presentationSlidevBuildArtifact?: SlidevBuildArtifactMeta | null;
     presentationSlidevBuildUrl?: string | null;
+    presentationSlidevNotesState?: Record<string, string>;
+    presentationSlidevAudioState?: Record<string, Slide["speakerAudio"] | undefined>;
     presentationArtifactStatus?: string | null;
     presentationRenderStatus?: string | null;
     presentationRenderError?: string | null;
@@ -165,6 +171,8 @@ interface AppState {
     deckArtifact?: SlidevDeckArtifactMeta | null;
     buildArtifact?: SlidevBuildArtifactMeta | null;
     buildUrl?: string | null;
+    notesState?: Record<string, string>;
+    audioState?: Record<string, Slide["speakerAudio"] | undefined>;
   }) => void;
   setPresentationRenderState: (payload: {
     artifactStatus?: string | null;
@@ -185,6 +193,7 @@ interface AppState {
     advisoryIssueCount?: number;
     fixPreviewSlides?: Slide[];
     fixPreviewSourceIds?: string[];
+    fixPreviewSlidev?: SlidevFixPreviewState | null;
     selectedFixPreviewSlideIds?: string[];
   }) => void;
   resetJobState: () => void;
@@ -249,6 +258,8 @@ export const useAppStore = create<AppState>()(
       presentationSlidevDeckArtifact: null,
       presentationSlidevBuildArtifact: null,
       presentationSlidevBuildUrl: null,
+      presentationSlidevNotesState: {},
+      presentationSlidevAudioState: {},
       presentationArtifactStatus: null,
       presentationRenderStatus: null,
       presentationRenderError: null,
@@ -264,6 +275,7 @@ export const useAppStore = create<AppState>()(
       advisoryIssueCount: 0,
       fixPreviewSlides: [],
       fixPreviewSourceIds: [],
+      fixPreviewSlidev: null,
       selectedFixPreviewSlideIds: [],
       issuePanelOpen: false,
       issuePanelSlideId: null,
@@ -332,6 +344,8 @@ export const useAppStore = create<AppState>()(
         presentationSlidevDeckArtifact,
         presentationSlidevBuildArtifact,
         presentationSlidevBuildUrl,
+        presentationSlidevNotesState,
+        presentationSlidevAudioState,
         presentationArtifactStatus,
         presentationRenderStatus,
         presentationRenderError,
@@ -357,6 +371,8 @@ export const useAppStore = create<AppState>()(
           presentationSlidevDeckArtifact: presentationSlidevDeckArtifact ?? null,
           presentationSlidevBuildArtifact: presentationSlidevBuildArtifact ?? null,
           presentationSlidevBuildUrl: presentationSlidevBuildUrl ?? null,
+          presentationSlidevNotesState: presentationSlidevNotesState ?? {},
+          presentationSlidevAudioState: presentationSlidevAudioState ?? {},
           presentationArtifactStatus: presentationArtifactStatus ?? null,
           presentationRenderStatus: presentationRenderStatus ?? null,
           presentationRenderError: presentationRenderError ?? null,
@@ -386,6 +402,7 @@ export const useAppStore = create<AppState>()(
           advisoryIssueCount: 0,
           fixPreviewSlides: [],
           fixPreviewSourceIds: [],
+          fixPreviewSlidev: null,
           selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,
@@ -427,6 +444,8 @@ export const useAppStore = create<AppState>()(
           presentationSlidevDeckArtifact: outputMode === "slidev" ? get().presentationSlidevDeckArtifact : null,
           presentationSlidevBuildArtifact: outputMode === "slidev" ? get().presentationSlidevBuildArtifact : null,
           presentationSlidevBuildUrl: outputMode === "slidev" ? get().presentationSlidevBuildUrl : null,
+          presentationSlidevNotesState: outputMode === "slidev" ? get().presentationSlidevNotesState : {},
+          presentationSlidevAudioState: outputMode === "slidev" ? get().presentationSlidevAudioState : {},
         }),
       setPresentationSlidevState: ({
         outputMode,
@@ -435,6 +454,8 @@ export const useAppStore = create<AppState>()(
         deckArtifact,
         buildArtifact,
         buildUrl,
+        notesState,
+        audioState,
       }) =>
         set({
           presentationOutputMode: outputMode,
@@ -447,6 +468,8 @@ export const useAppStore = create<AppState>()(
           presentationSlidevDeckArtifact: deckArtifact ?? null,
           presentationSlidevBuildArtifact: buildArtifact ?? null,
           presentationSlidevBuildUrl: buildUrl ?? null,
+          presentationSlidevNotesState: notesState ?? (outputMode === "slidev" ? get().presentationSlidevNotesState : {}),
+          presentationSlidevAudioState: audioState ?? (outputMode === "slidev" ? get().presentationSlidevAudioState : {}),
         }),
       setPresentationRenderState: ({ artifactStatus, renderStatus, renderError }) =>
         set((state) => ({
@@ -482,6 +505,8 @@ export const useAppStore = create<AppState>()(
           advisoryIssueCount: patch.advisoryIssueCount ?? state.advisoryIssueCount,
           fixPreviewSlides: patch.fixPreviewSlides ?? state.fixPreviewSlides,
           fixPreviewSourceIds: patch.fixPreviewSourceIds ?? state.fixPreviewSourceIds,
+          fixPreviewSlidev:
+            patch.fixPreviewSlidev !== undefined ? patch.fixPreviewSlidev : state.fixPreviewSlidev,
           selectedFixPreviewSlideIds:
             patch.selectedFixPreviewSlideIds ?? state.selectedFixPreviewSlideIds,
           activeGenerationCard:
@@ -507,6 +532,7 @@ export const useAppStore = create<AppState>()(
           advisoryIssueCount: 0,
           fixPreviewSlides: [],
           fixPreviewSourceIds: [],
+          fixPreviewSlidev: null,
           selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,
@@ -562,6 +588,7 @@ export const useAppStore = create<AppState>()(
           advisoryIssueCount: 0,
           fixPreviewSlides: [],
           fixPreviewSourceIds: [],
+          fixPreviewSlidev: null,
           selectedFixPreviewSlideIds: [],
           issuePanelOpen: false,
           issuePanelSlideId: null,

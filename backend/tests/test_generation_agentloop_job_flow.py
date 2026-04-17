@@ -686,7 +686,7 @@ def test_agentic_auto_job_generates_slidev_deck(monkeypatch, tmp_path):
     }
 
 
-def test_agentic_auto_job_retries_slidev_submit_on_page_count_mismatch(monkeypatch, tmp_path):
+def test_agentic_auto_job_accepts_slidev_page_count_mismatch_as_soft_signal(monkeypatch, tmp_path):
     _install_temp_session_store(monkeypatch, tmp_path)
     runner = _install_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "project_root", tmp_path)
@@ -702,6 +702,7 @@ def test_agentic_auto_job_retries_slidev_submit_on_page_count_mismatch(monkeypat
 
     async def fake_prepare_slidev_deck_artifact(**kwargs):  # noqa: ANN003
         markdown = str(kwargs["markdown"])
+        slide_count = markdown.count("\n\n---\n\n") + 1
         slides = [
             {
                 "index": index,
@@ -710,36 +711,24 @@ def test_agentic_auto_job_retries_slidev_submit_on_page_count_mismatch(monkeypat
                 "role": "cover" if index == 0 else "narrative",
                 "layout": "default",
             }
-            for index in range(4)
+            for index in range(slide_count)
         ]
         return {
             "title": "AI Agent Runtime 架构演进",
             "markdown": markdown,
             "meta": {
                 "title": "AI Agent Runtime 架构演进",
-                "slide_count": 4,
+                "slide_count": slide_count,
                 "slides": slides,
                 "selected_style_id": "tech-launch",
-                "validation": {"ok": True, "issues": []},
-                "review": {"issues": []},
-            },
-            "presentation": {
-                "presentationId": "pres-slidev-agent",
-                "title": "AI Agent Runtime 架构演进",
-                "slides": [
-                    {
-                        "slideId": slide["slide_id"],
-                        "layoutType": "blank",
-                        "layoutId": "blank",
-                        "contentData": {"title": slide["title"]},
-                        "components": [],
-                    }
-                    for slide in slides
-                ],
+                "page_count_check": {
+                    "expected_slide_count": int(kwargs["expected_pages"]),
+                    "submitted_slide_count": slide_count,
+                    "matches_expected": slide_count == int(kwargs["expected_pages"]),
+                    "mode": "soft",
+                },
             },
             "selected_style_id": "tech-launch",
-            "selected_style": {"name": "tech-launch", "theme": "seriph"},
-            "selected_theme": {"theme": "seriph"},
         }
 
     async def fake_build_slidev_spa(*, out_dir, **kwargs):  # noqa: ANN003
@@ -751,7 +740,7 @@ def test_agentic_auto_job_retries_slidev_submit_on_page_count_mismatch(monkeypat
     monkeypatch.setattr(runner_mod, "prepare_slidev_deck_artifact", fake_prepare_slidev_deck_artifact)
     monkeypatch.setattr(runner_mod, "build_slidev_spa", fake_build_slidev_spa)
 
-    slidev_model = _slidev_retrying_model(5, 4)
+    slidev_model = _slidev_deck_model(5)
     models = [slidev_model]
 
     def fake_model_factory():
@@ -796,26 +785,23 @@ def test_agentic_auto_job_retries_slidev_submit_on_page_count_mismatch(monkeypat
     assert job_detail.status_code == 200
     body = job_detail.json()
     assert body["status"] == "completed"
+    assert len(body["slides"]) == 5
     tool_events = list((body.get("run_metadata") or {}).get("tool_events") or [])
-    slidev_errors = [
+    slidev_submits = [
         event
         for event in tool_events
         if (event.get("result") or {}).get("tool_name") == "submit_slidev_deck"
-        and (event.get("result") or {}).get("is_error")
     ]
-    assert slidev_errors
-    first_error = slidev_errors[0]["result"]["content"]
-    assert first_error["expected_slide_count"] == 4
-    assert first_error["submitted_slide_count_raw"] > first_error["submitted_slide_count_normalized"]
-    assert first_error["submitted_slide_count_normalized"] == 5
-    assert first_error["page_count_check_stage"] == "submit_tool"
-    retry_user_messages = [
-        message.content
-        for seen in slidev_model.seen_messages[1:]
-        for message in seen
-        if getattr(message, "role", "") == "user"
-    ]
-    assert any("raw=" in message and "normalized=" in message for message in retry_user_messages)
+    assert slidev_submits
+    assert all(not (event.get("result") or {}).get("is_error") for event in slidev_submits)
+    submit_content = slidev_submits[0]["result"]["content"]
+    assert submit_content["expected_slide_count"] == 4
+    assert submit_content["submitted_slide_count_normalized"] == 5
+    assert submit_content["matches_expected"] is False
+    slidev_meta = body["document_metadata"]["agent_outputs"]["slidev_deck"]["meta"]
+    assert slidev_meta["page_count_check"]["expected_slide_count"] == 4
+    assert slidev_meta["page_count_check"]["submitted_slide_count"] == 5
+    assert slidev_meta["page_count_check"]["matches_expected"] is False
 
 
 def test_agentic_auto_job_exposes_artifact_when_slidev_render_fails(monkeypatch, tmp_path):
@@ -875,7 +861,9 @@ def test_agentic_auto_job_exposes_artifact_when_slidev_render_fails(monkeypatch,
         }
 
     async def fake_build_slidev_spa(**kwargs):  # noqa: ANN003
-        raise RuntimeError("Slidev build failed: broken scaffold css")
+        raise RuntimeError(
+            "Slidev build failed: Slide 2 starts with `layout:`/`class:` lines but does not wrap them in a Slidev frontmatter fence."
+        )
 
     monkeypatch.setattr(runner_mod, "stage_verify_slides", fake_verify)
     monkeypatch.setattr(runner_mod, "prepare_slidev_deck_artifact", fake_prepare_slidev_deck_artifact)
@@ -930,7 +918,7 @@ def test_agentic_auto_job_exposes_artifact_when_slidev_render_fails(monkeypatch,
     assert body["render_status"] == "failed"
     assert body["artifact_available"] is True
     assert body["render_available"] is False
-    assert "broken scaffold css" in body["render_error"]
+    assert "frontmatter fence" in body["render_error"]
 
     latest = client.get(f"/api/v1/sessions/{session_id}/presentations/latest", headers=headers)
     assert latest.status_code == 200

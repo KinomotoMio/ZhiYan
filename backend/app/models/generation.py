@@ -188,6 +188,7 @@ class GenerationJob(BaseModel):
     advisory_issue_count: int = 0
     fix_preview_slides: list[dict[str, Any]] = Field(default_factory=list)
     fix_preview_source_ids: list[str] = Field(default_factory=list)
+    fix_preview_slidev: dict[str, Any] | None = None
 
     outline_accepted: bool = False
     fix_passes: int = 0

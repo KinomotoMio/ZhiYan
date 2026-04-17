@@ -8,6 +8,11 @@ from pathlib import Path
 import httpx
 
 from app.core.config import settings
+from app.services.slidev_sidecar import (
+    build_slidev_persistence_payload,
+    normalize_slidev_sidecar,
+    validate_slidev_slide_id,
+)
 from app.utils.security import get_safe_httpx_client
 
 
@@ -125,22 +130,41 @@ async def ensure_speaker_audio_for_slide(
     latest = await session_store.get_latest_presentation(workspace_id, session_id)
     if not latest:
         raise ValueError("当前会话暂无演示稿")
-    presentation = deepcopy(latest["presentation"])
-    slides = list(presentation.get("slides") or [])
-    target_slide = next(
-        (
-            slide
-            for slide in slides
-            if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
-        ),
-        None,
-    )
-    if target_slide is None:
-        raise ValueError("指定 slide 不存在")
+    output_mode = str(latest.get("output_mode") or "").strip()
+    presentation = deepcopy(latest.get("presentation")) if isinstance(latest.get("presentation"), dict) else None
+    slidev_meta: dict | None = None
 
-    notes = str(target_slide.get("speakerNotes") or "").strip()
-    if not notes:
-        raise ValueError("当前页还没有演讲者注解")
+    if output_mode == "slidev":
+        latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id)
+        if latest_slidev is None:
+            raise ValueError("当前会话暂无 Slidev 演示稿")
+        _markdown, slidev_meta = latest_slidev
+        if validate_slidev_slide_id(slidev_meta, slide_id) is None:
+            raise ValueError("指定 slide 不存在")
+        sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
+        notes = str(sidecar["speaker_notes"].get(slide_id) or "").strip()
+        if not notes:
+            raise ValueError("当前页还没有演讲者注解")
+        speaker_audio = sidecar["speaker_audio"].get(slide_id)
+    else:
+        if not isinstance(presentation, dict):
+            raise ValueError("当前会话暂无演示稿")
+        slides = list(presentation.get("slides") or [])
+        target_slide = next(
+            (
+                slide
+                for slide in slides
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+
+        notes = str(target_slide.get("speakerNotes") or "").strip()
+        if not notes:
+            raise ValueError("当前页还没有演讲者注解")
+        speaker_audio = target_slide.get("speakerAudio")
 
     text_hash = compute_speaker_notes_hash(notes)
     storage_path = _resolve_storage_path(
@@ -149,14 +173,13 @@ async def ensure_speaker_audio_for_slide(
         slide_id=slide_id,
         text_hash=text_hash,
     )
-    speaker_audio = target_slide.get("speakerAudio")
     if isinstance(speaker_audio, dict):
         existing_hash = str(speaker_audio.get("textHash") or "").strip()
         existing_path = str(speaker_audio.get("storagePath") or "").strip()
         if existing_hash == text_hash and existing_path:
             path = _sanitize_existing_storage_path(existing_path)
             if path.exists() and path.is_file():
-                return speaker_audio, presentation
+                return speaker_audio, presentation or {}
 
     if not storage_path.exists() or not storage_path.is_file():
         audio_bytes = await _request_minimax_tts(notes)
@@ -172,10 +195,21 @@ async def ensure_speaker_audio_for_slide(
         "mimeType": "audio/mpeg",
         "generatedAt": _utc_now_iso(),
     }
-    target_slide["speakerAudio"] = next_audio
-    output_mode = str(latest.get("output_mode") or "").strip()
-    artifacts = dict(latest.get("artifacts") or {}) if isinstance(latest.get("artifacts"), dict) else {}
     if output_mode == "html":
+        artifacts = dict(latest.get("artifacts") or {}) if isinstance(latest.get("artifacts"), dict) else {}
+        if not isinstance(presentation, dict):
+            raise ValueError("当前会话暂无演示稿")
+        target_slide = next(
+            (
+                slide
+                for slide in list(presentation.get("slides") or [])
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+        target_slide["speakerAudio"] = next_audio
         presentation["outputMode"] = "html"
         if artifacts:
             presentation["artifacts"] = artifacts
@@ -186,14 +220,42 @@ async def ensure_speaker_audio_for_slide(
             snapshot_label=None,
             output_mode="html",
         )
+    elif output_mode == "slidev":
+        sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
+        sidecar["speaker_audio"][slide_id] = next_audio
+        payload = build_slidev_persistence_payload(
+            latest,
+            title=str((slidev_meta or {}).get("title") or "新演示文稿"),
+        )
+        await session_store.save_presentation(
+            session_id=session_id,
+            payload=payload,
+            is_snapshot=False,
+            snapshot_label=None,
+            output_mode="slidev",
+            slidev_sidecar=sidecar,
+        )
     else:
+        if not isinstance(presentation, dict):
+            raise ValueError("当前会话暂无演示稿")
+        target_slide = next(
+            (
+                slide
+                for slide in list(presentation.get("slides") or [])
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+        target_slide["speakerAudio"] = next_audio
         await session_store.save_presentation(
             session_id=session_id,
             payload=presentation,
             is_snapshot=False,
             snapshot_label=None,
         )
-    return next_audio, presentation
+    return next_audio, presentation or {}
 
 
 async def resolve_speaker_audio_path(
@@ -207,18 +269,29 @@ async def resolve_speaker_audio_path(
     latest = await session_store.get_latest_presentation(workspace_id, session_id)
     if not latest:
         raise ValueError("当前会话暂无演示稿")
-    slides = list((latest.get("presentation") or {}).get("slides") or [])
-    target_slide = next(
-        (
-            slide
-            for slide in slides
-            if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
-        ),
-        None,
-    )
-    if target_slide is None:
-        raise ValueError("指定 slide 不存在")
-    speaker_audio = target_slide.get("speakerAudio")
+    output_mode = str(latest.get("output_mode") or "").strip()
+    if output_mode == "slidev":
+        latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id)
+        if latest_slidev is None:
+            raise ValueError("当前会话暂无 Slidev 演示稿")
+        _markdown, slidev_meta = latest_slidev
+        if validate_slidev_slide_id(slidev_meta, slide_id) is None:
+            raise ValueError("指定 slide 不存在")
+        sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
+        speaker_audio = sidecar["speaker_audio"].get(slide_id)
+    else:
+        slides = list((latest.get("presentation") or {}).get("slides") or [])
+        target_slide = next(
+            (
+                slide
+                for slide in slides
+                if isinstance(slide, dict) and str(slide.get("slideId") or "") == slide_id
+            ),
+            None,
+        )
+        if target_slide is None:
+            raise ValueError("指定 slide 不存在")
+        speaker_audio = target_slide.get("speakerAudio")
     if not isinstance(speaker_audio, dict):
         raise ValueError("当前页还没有生成录音")
     storage_path = str(speaker_audio.get("storagePath") or "").strip()

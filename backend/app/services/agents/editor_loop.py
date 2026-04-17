@@ -314,6 +314,30 @@ def _derive_slidev_meta_from_slides(
     }
 
 
+def _derive_runtime_slides_from_slidev_meta(slide_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    slides = slide_meta.get("slides") if isinstance(slide_meta, dict) else None
+    if not isinstance(slides, list):
+        return []
+    runtime_slides: list[dict[str, Any]] = []
+    for index, slide in enumerate(slides):
+        if not isinstance(slide, dict):
+            continue
+        runtime_slides.append(
+            {
+                "slideId": str(slide.get("slide_id") or f"slide-{index + 1}"),
+                "layoutType": "slidev-index",
+                "layoutId": "slidev-index",
+                "contentData": {
+                    "title": str(slide.get("title") or f"第 {index + 1} 页"),
+                    "role": str(slide.get("role") or "narrative"),
+                    "layout": str(slide.get("layout") or "default"),
+                },
+                "components": [],
+            }
+        )
+    return runtime_slides
+
+
 def _slidev_outline_items(slide_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
     slides = slide_meta.get("slides") if isinstance(slide_meta, dict) else None
     if not isinstance(slides, list):
@@ -387,7 +411,13 @@ class EditorLoopService:
         runtime = _EditorRuntimeState(
             request=request,
             current_slide_index=request.current_slide_index,
-            slides=json.loads(json.dumps(request.slides, ensure_ascii=False)),
+            slides=(
+                json.loads(json.dumps(request.slides, ensure_ascii=False))
+                if request.slides
+                else _derive_runtime_slides_from_slidev_meta(request.slidev_meta)
+                if request.output_mode == "slidev"
+                else []
+            ),
             html_content=request.html_content,
             html_manifest=dict(request.html_manifest) if isinstance(request.html_manifest, dict) else None,
             html_render=dict(request.html_render) if isinstance(request.html_render, dict) else None,
@@ -706,10 +736,8 @@ class EditorLoopService:
             runtime.slidev_meta = preview["meta"]
             runtime.slidev_preview_url = f"/api/v1/slidev-previews/{preview['preview_id']}"
             runtime.selected_style_id = preview["selected_style_id"]
-            runtime.normalized_presentation = preview["presentation"]
-            runtime.slides = json.loads(
-                json.dumps(preview["presentation"].get("slides") or [], ensure_ascii=False)
-            )
+            runtime.normalized_presentation = None
+            runtime.slides = _derive_runtime_slides_from_slidev_meta(runtime.slidev_meta)
             runtime.modifications.append(
                 SlideModification(
                     slide_index=max(0, runtime.current_slide_index),
