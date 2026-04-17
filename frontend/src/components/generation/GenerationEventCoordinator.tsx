@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import {
-  buildLatestSessionPresentationSlidevUrl,
   getLatestSessionPresentationHtml,
   getLatestSessionPresentationSlidev,
   subscribeJobEvents,
@@ -64,15 +63,16 @@ export default function GenerationEventCoordinator() {
     setPresentation,
     setPresentationHtmlState,
     setPresentationSlidevState,
+    setPresentationRenderState,
     setIsGenerating,
     finishGeneration,
   } = useAppStore();
 
   useEffect(() => {
-    if (!currentSessionId || !jobId || jobStatus !== "running") {
+    if (!currentSessionId || !jobId || (jobStatus !== "running" && jobStatus !== "artifact_ready")) {
       return;
     }
-    setIsGenerating(true);
+    setIsGenerating(jobStatus === "running");
     const afterSeq = useAppStore.getState().lastJobEventSeq;
 
     const controller = new AbortController();
@@ -83,9 +83,14 @@ export default function GenerationEventCoordinator() {
         onEvent: (evt) => {
           updateJobState({ lastJobEventSeq: evt.seq });
           if (evt.stage) {
+            const currentJobStatus = useAppStore.getState().jobStatus;
             updateJobState({
               jobId,
-              jobStatus: "running",
+              jobStatus:
+                currentJobStatus === "artifact_ready" &&
+                (evt.stage === "artifact_render" || evt.stage === "artifact_publish")
+                  ? "artifact_ready"
+                  : "running",
               currentStage: evt.stage,
             });
           }
@@ -190,12 +195,83 @@ export default function GenerationEventCoordinator() {
             return;
           }
 
+          if (evt.type === "artifact_ready") {
+            const payload = evt.payload as Record<string, unknown>;
+            const presentation = payload.presentation as Presentation | undefined;
+            if (presentation) {
+              setPresentation(presentation);
+            }
+            setPresentationRenderState({
+              artifactStatus:
+                typeof payload.artifact_status === "string" ? payload.artifact_status : "ready",
+              renderStatus:
+                typeof payload.render_status === "string" ? payload.render_status : "pending",
+              renderError:
+                typeof payload.render_error === "string" ? payload.render_error : null,
+            });
+            if (payload.output_mode === "html" && currentSessionId) {
+              void getLatestSessionPresentationHtml(currentSessionId)
+                .then((html) => {
+                  const artifacts =
+                    payload.artifacts && typeof payload.artifacts === "object"
+                      ? (payload.artifacts as { html_deck?: HtmlDeckArtifactMeta })
+                      : undefined;
+                  setPresentationHtmlState("html", html, artifacts?.html_deck ?? null);
+                })
+                .catch(() => {
+                  setPresentationHtmlState("html", null, null);
+                });
+            } else if (payload.output_mode === "slidev" && currentSessionId) {
+              void getLatestSessionPresentationSlidev(currentSessionId)
+                .then((slidev) => {
+                  const artifacts =
+                    payload.artifacts && typeof payload.artifacts === "object"
+                      ? (payload.artifacts as {
+                          slidev_deck?: SlidevDeckArtifactMeta;
+                          slidev_build?: SlidevBuildArtifactMeta;
+                        })
+                      : undefined;
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: slidev?.markdown ?? null,
+                    meta: slidev?.meta ?? null,
+                    deckArtifact: artifacts?.slidev_deck ?? null,
+                    buildArtifact: artifacts?.slidev_build ?? null,
+                    buildUrl: slidev?.build_url ?? null,
+                  });
+                })
+                .catch(() => {
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: null,
+                    meta: null,
+                    buildUrl: null,
+                  });
+                });
+            }
+            updateJobState({
+              jobId,
+              jobStatus: "artifact_ready",
+              currentStage: evt.stage ?? "artifact_publish",
+            });
+            finishGeneration();
+            return;
+          }
+
           if (evt.type === "job_completed") {
             const payload = evt.payload as Record<string, unknown>;
             const presentation = payload.presentation as Presentation | undefined;
             if (presentation) {
               setPresentation(presentation);
             }
+            setPresentationRenderState({
+              artifactStatus:
+                typeof payload.artifact_status === "string" ? payload.artifact_status : "ready",
+              renderStatus:
+                typeof payload.render_status === "string" ? payload.render_status : "ready",
+              renderError:
+                typeof payload.render_error === "string" ? payload.render_error : null,
+            });
             if (payload.output_mode === "html" && currentSessionId) {
               void getLatestSessionPresentationHtml(currentSessionId)
                 .then((html) => {
@@ -230,8 +306,7 @@ export default function GenerationEventCoordinator() {
                     meta: slidev?.meta ?? null,
                     deckArtifact: artifacts?.slidev_deck ?? null,
                     buildArtifact: artifacts?.slidev_build ?? null,
-                    buildUrl:
-                      slidev?.build_url ?? buildLatestSessionPresentationSlidevUrl(currentSessionId),
+                    buildUrl: slidev?.build_url ?? null,
                   });
                 })
                 .catch(() => {
@@ -239,7 +314,7 @@ export default function GenerationEventCoordinator() {
                     outputMode: "slidev",
                     markdown: null,
                     meta: null,
-                    buildUrl: buildLatestSessionPresentationSlidevUrl(currentSessionId),
+                    buildUrl: null,
                   });
                 });
             } else {
@@ -290,9 +365,51 @@ export default function GenerationEventCoordinator() {
             if (presentation) {
               setPresentation(presentation);
             }
+            const nextJobStatus =
+              payload.job_status === "render_failed" ? "render_failed" : "failed";
+            setPresentationRenderState({
+              artifactStatus:
+                typeof payload.artifact_status === "string" ? payload.artifact_status : null,
+              renderStatus:
+                typeof payload.render_status === "string" ? payload.render_status : null,
+              renderError:
+                typeof payload.render_error === "string"
+                  ? payload.render_error
+                  : typeof payload.error_message === "string"
+                    ? payload.error_message
+                    : null,
+            });
+            if (payload.output_mode === "slidev" && currentSessionId) {
+              void getLatestSessionPresentationSlidev(currentSessionId)
+                .then((slidev) => {
+                  const artifacts =
+                    payload.artifacts && typeof payload.artifacts === "object"
+                      ? (payload.artifacts as {
+                          slidev_deck?: SlidevDeckArtifactMeta;
+                          slidev_build?: SlidevBuildArtifactMeta;
+                        })
+                      : undefined;
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: slidev?.markdown ?? null,
+                    meta: slidev?.meta ?? null,
+                    deckArtifact: artifacts?.slidev_deck ?? null,
+                    buildArtifact: artifacts?.slidev_build ?? null,
+                    buildUrl: slidev?.build_url ?? null,
+                  });
+                })
+                .catch(() => {
+                  setPresentationSlidevState({
+                    outputMode: "slidev",
+                    markdown: null,
+                    meta: null,
+                    buildUrl: null,
+                  });
+                });
+            }
             updateJobState({
               jobId,
-              jobStatus: "failed",
+              jobStatus: nextJobStatus,
               currentStage: null,
               hardIssueSlideIds: [],
               advisoryIssueCount: 0,
@@ -303,7 +420,11 @@ export default function GenerationEventCoordinator() {
             clearFixReviewState();
             resetIssueReviewState();
             finishGeneration();
-            toast.error(toErrorMessage(evt));
+            if (nextJobStatus === "render_failed") {
+              toast.warning(toErrorMessage(evt));
+            } else {
+              toast.error(toErrorMessage(evt));
+            }
             return;
           }
 
@@ -363,6 +484,8 @@ export default function GenerationEventCoordinator() {
     setFixPreviewSelection,
     setPresentation,
     setPresentationHtmlState,
+    setPresentationRenderState,
+    setPresentationSlidevState,
     setPresentationTitle,
     updateJobState,
     updateSlideAtIndex,

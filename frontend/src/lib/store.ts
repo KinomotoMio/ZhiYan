@@ -85,6 +85,9 @@ interface AppState {
   presentationSlidevDeckArtifact: SlidevDeckArtifactMeta | null;
   presentationSlidevBuildArtifact: SlidevBuildArtifactMeta | null;
   presentationSlidevBuildUrl: string | null;
+  presentationArtifactStatus: string | null;
+  presentationRenderStatus: string | null;
+  presentationRenderError: string | null;
   currentSlideIndex: number;
   isGenerating: boolean;
   jobId: string | null;
@@ -134,6 +137,9 @@ interface AppState {
     presentationSlidevDeckArtifact?: SlidevDeckArtifactMeta | null;
     presentationSlidevBuildArtifact?: SlidevBuildArtifactMeta | null;
     presentationSlidevBuildUrl?: string | null;
+    presentationArtifactStatus?: string | null;
+    presentationRenderStatus?: string | null;
+    presentationRenderError?: string | null;
     planningState?: PlanningState | null;
   }) => void;
 
@@ -151,6 +157,11 @@ interface AppState {
     deckArtifact?: SlidevDeckArtifactMeta | null;
     buildArtifact?: SlidevBuildArtifactMeta | null;
     buildUrl?: string | null;
+  }) => void;
+  setPresentationRenderState: (payload: {
+    artifactStatus?: string | null;
+    renderStatus?: string | null;
+    renderError?: string | null;
   }) => void;
   updateSlides: (slides: Slide[]) => void;
   setCurrentSlideIndex: (i: number) => void;
@@ -228,6 +239,9 @@ export const useAppStore = create<AppState>()(
       presentationSlidevDeckArtifact: null,
       presentationSlidevBuildArtifact: null,
       presentationSlidevBuildUrl: null,
+      presentationArtifactStatus: null,
+      presentationRenderStatus: null,
+      presentationRenderError: null,
       currentSlideIndex: 0,
       isGenerating: false,
       jobId: null,
@@ -306,6 +320,9 @@ export const useAppStore = create<AppState>()(
         presentationSlidevDeckArtifact,
         presentationSlidevBuildArtifact,
         presentationSlidevBuildUrl,
+        presentationArtifactStatus,
+        presentationRenderStatus,
+        presentationRenderError,
         planningState,
       }) =>
         set((state) => ({
@@ -326,6 +343,9 @@ export const useAppStore = create<AppState>()(
           presentationSlidevDeckArtifact: presentationSlidevDeckArtifact ?? null,
           presentationSlidevBuildArtifact: presentationSlidevBuildArtifact ?? null,
           presentationSlidevBuildUrl: presentationSlidevBuildUrl ?? null,
+          presentationArtifactStatus: presentationArtifactStatus ?? null,
+          presentationRenderStatus: presentationRenderStatus ?? null,
+          presentationRenderError: presentationRenderError ?? null,
           planningState: planningState ?? null,
           planningOutputMode:
             planningState?.output_mode === "html" || planningState?.output_mode === "slidev"
@@ -410,6 +430,15 @@ export const useAppStore = create<AppState>()(
           presentationSlidevBuildArtifact: buildArtifact ?? null,
           presentationSlidevBuildUrl: buildUrl ?? null,
         }),
+      setPresentationRenderState: ({ artifactStatus, renderStatus, renderError }) =>
+        set((state) => ({
+          presentationArtifactStatus:
+            artifactStatus !== undefined ? artifactStatus : state.presentationArtifactStatus,
+          presentationRenderStatus:
+            renderStatus !== undefined ? renderStatus : state.presentationRenderStatus,
+          presentationRenderError:
+            renderError !== undefined ? renderError : state.presentationRenderError,
+        })),
       updateSlides: (slides) =>
         set((state) => {
           if (!state.presentation) return {};

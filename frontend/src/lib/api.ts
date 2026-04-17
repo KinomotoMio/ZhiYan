@@ -192,6 +192,11 @@ export interface LatestPresentationRecord {
   created_at: string;
   presentation: Presentation;
   output_mode?: PresentationOutputMode;
+  artifact_status?: string | null;
+  render_status?: string | null;
+  render_error?: string | null;
+  artifact_available?: boolean;
+  render_available?: boolean;
   artifacts?: {
     html_deck?: HtmlDeckArtifactMeta;
     slidev_deck?: SlidevDeckArtifactMeta;
@@ -406,7 +411,12 @@ export async function getLatestSessionPresentationHtmlMeta(
 export interface SlidevDeckResponse {
   markdown: string;
   meta: Record<string, unknown>;
-  build_url: string;
+  build_url: string | null;
+  artifact_status?: string | null;
+  render_status?: string | null;
+  render_error?: string | null;
+  artifact_available?: boolean;
+  render_available?: boolean;
   assets?: {
     slidev_deck?: SlidevDeckArtifactMeta;
     slidev_build?: SlidevBuildArtifactMeta;
@@ -425,7 +435,12 @@ export async function getLatestSessionPresentationSlidev(
   const payload = (await res.json()) as SlidevDeckResponse;
   return {
     ...payload,
-    build_url: payload.build_url.startsWith("http") ? payload.build_url : `${API_BASE}${payload.build_url}`,
+    build_url:
+      typeof payload.build_url === "string" && payload.build_url.length > 0
+        ? payload.build_url.startsWith("http")
+          ? payload.build_url
+          : `${API_BASE}${payload.build_url}`
+        : null,
   };
 }
 
@@ -712,8 +727,10 @@ export type GenerationMode = "auto" | "review_outline";
 export type JobStatus =
   | "pending"
   | "running"
+  | "artifact_ready"
   | "waiting_outline_review"
   | "waiting_fix_review"
+  | "render_failed"
   | "completed"
   | "failed"
   | "cancelled";
@@ -722,6 +739,10 @@ export type StageStatus =
   | "outline"
   | "layout"
   | "slides"
+  | "agent_generate_artifact"
+  | "artifact_validate"
+  | "artifact_render"
+  | "artifact_publish"
   | "assets"
   | "verify"
   | "fix"
@@ -733,6 +754,7 @@ export type EventType =
   | "outline_ready"
   | "layout_ready"
   | "slide_ready"
+  | "artifact_ready"
   | "job_waiting_fix_review"
   | "fix_preview_ready"
   | "stage_failed"
@@ -838,6 +860,11 @@ export interface GenerationJob {
   job_id: string;
   status: JobStatus;
   current_stage: StageStatus | null;
+  artifact_status?: string | null;
+  render_status?: string | null;
+  artifact_available?: boolean;
+  render_available?: boolean;
+  render_error?: string | null;
   events_seq?: number;
   output_mode?: PresentationOutputMode;
   request?: GenerationRequestDataLite;

@@ -147,6 +147,12 @@ export default function SessionEditorPage() {
           currentStore.currentSessionId === sessionId
             ? currentStore.presentationSlidevBuildUrl
             : null;
+        const presentationArtifactStatus =
+          detail.latest_presentation?.artifact_status ?? null;
+        const presentationRenderStatus =
+          detail.latest_presentation?.render_status ?? null;
+        const presentationRenderError =
+          detail.latest_presentation?.render_error ?? null;
         const latestJob = detail.latest_generation_job;
         const resolvedJobStatus =
           latestJob?.status === "pending" &&
@@ -160,8 +166,10 @@ export default function SessionEditorPage() {
         const shouldHydrateJob =
           Boolean(latestJob?.job_id) &&
           (resolvedJobStatus === "running" ||
+            resolvedJobStatus === "artifact_ready" ||
             resolvedJobStatus === "waiting_outline_review" ||
             resolvedJobStatus === "waiting_fix_review" ||
+            resolvedJobStatus === "render_failed" ||
             resolvedJobStatus === "completed");
 
         if (shouldHydrateJob && latestJob?.job_id) {
@@ -250,6 +258,9 @@ export default function SessionEditorPage() {
           presentationSlidevDeckArtifact: detail.latest_presentation?.artifacts?.slidev_deck ?? null,
           presentationSlidevBuildArtifact: detail.latest_presentation?.artifacts?.slidev_build ?? null,
           presentationSlidevBuildUrl,
+          presentationArtifactStatus,
+          presentationRenderStatus,
+          presentationRenderError,
           planningState: detail.planning_state ?? null,
         });
         setPresentationHtmlState(

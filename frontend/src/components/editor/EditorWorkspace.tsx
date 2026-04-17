@@ -29,8 +29,10 @@ import {
   createOrGetSessionShareLink,
   getLatestSessionPresentation,
   getLatestSessionPresentationHtml,
+  getLatestSessionPresentationSlidev,
   saveLatestSessionPresentation,
   saveLatestSessionHtmlPresentation,
+  saveLatestSessionSlidevPresentation,
 } from "@/lib/api";
 import { collectIssueSlideIds, groupIssuesBySlide } from "@/lib/verification-issues";
 import {
@@ -74,6 +76,12 @@ function getJobStatusBadge(jobStatus: string | null, isGenerating: boolean) {
       className: "border-cyan-200 bg-cyan-50 text-cyan-700",
     };
   }
+  if (jobStatus === "artifact_ready") {
+    return {
+      label: "原始产物已就绪",
+      className: "border-sky-200 bg-sky-50 text-sky-700",
+    };
+  }
   if (jobStatus === "waiting_outline_review") {
     return {
       label: "等待确认大纲",
@@ -90,6 +98,12 @@ function getJobStatusBadge(jobStatus: string | null, isGenerating: boolean) {
     return {
       label: "已完成",
       className: "border-slate-200 bg-white/80 text-slate-600",
+    };
+  }
+  if (jobStatus === "render_failed") {
+    return {
+      label: "预览构建失败",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
     };
   }
   if (jobStatus === "failed") {
@@ -120,7 +134,11 @@ export default function EditorWorkspace({
     presentationHtml,
     presentationSlidevBuildUrl,
     presentationSlidevMeta,
+    presentationSlidevMarkdown,
     presentationHtmlArtifact,
+    presentationSlidevDeckArtifact,
+    presentationRenderStatus,
+    presentationRenderError,
     currentSessionId,
     currentSlideIndex,
     setCurrentSlideIndex,
@@ -145,6 +163,8 @@ export default function EditorWorkspace({
     issueDecisionBySlideId,
     setPresentation,
     setPresentationHtmlState,
+    setPresentationSlidevState,
+    setPresentationRenderState,
     updateSlides,
   } = useAppStore();
   const [showReveal, setShowReveal] = useState(false);
@@ -158,6 +178,7 @@ export default function EditorWorkspace({
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
   const [acceptingOutline, setAcceptingOutline] = useState(false);
+  const [retryingSlidevRender, setRetryingSlidevRender] = useState(false);
   const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
   const [generatingSpeakerNotesScope, setGeneratingSpeakerNotesScope] = useState<
@@ -187,6 +208,27 @@ export default function EditorWorkspace({
       latestHtml,
       latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
     );
+  };
+
+  const refreshSlidevPreviewState = async () => {
+    if (!currentSessionId) return;
+    const [latestPresentation, latestSlidev] = await Promise.all([
+      getLatestSessionPresentation(currentSessionId),
+      getLatestSessionPresentationSlidev(currentSessionId),
+    ]);
+    setPresentationSlidevState({
+      outputMode: "slidev",
+      markdown: latestSlidev?.markdown ?? presentationSlidevMarkdown,
+      meta: latestSlidev?.meta ?? presentationSlidevMeta,
+      deckArtifact: latestPresentation?.artifacts?.slidev_deck ?? presentationSlidevDeckArtifact,
+      buildArtifact: latestPresentation?.artifacts?.slidev_build ?? null,
+      buildUrl: latestSlidev?.build_url ?? null,
+    });
+    setPresentationRenderState({
+      artifactStatus: latestPresentation?.artifact_status ?? latestSlidev?.artifact_status ?? null,
+      renderStatus: latestPresentation?.render_status ?? latestSlidev?.render_status ?? null,
+      renderError: latestPresentation?.render_error ?? latestSlidev?.render_error ?? null,
+    });
   };
 
   const handleResume = async () => {
@@ -263,6 +305,40 @@ export default function EditorWorkspace({
       toast.error(err instanceof Error ? err.message : "生成分享链接失败");
     } finally {
       setCreatingShareLink(false);
+    }
+  };
+
+  const handleRetrySlidevRender = async () => {
+    if (
+      retryingSlidevRender ||
+      !currentSessionId ||
+      !presentation ||
+      !presentationSlidevMarkdown ||
+      !isSlidevMode
+    ) {
+      return;
+    }
+    setRetryingSlidevRender(true);
+    try {
+      await saveLatestSessionSlidevPresentation(
+        currentSessionId,
+        presentation,
+        presentationSlidevMarkdown,
+        presentationSlidevDeckArtifact?.selected_style_id ?? null,
+        presentationSlidevMeta ?? undefined,
+        "editor"
+      );
+      await refreshSlidevPreviewState();
+      const nextState = useAppStore.getState().presentationRenderStatus;
+      if (nextState === "ready") {
+        toast.success("已重新完成 Slidev 预览构建");
+      } else {
+        toast.warning("已重新尝试构建，但预览仍不可用");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "重新构建 Slidev 预览失败");
+    } finally {
+      setRetryingSlidevRender(false);
     }
   };
 
@@ -838,7 +914,7 @@ export default function EditorWorkspace({
                 setRevealSlideIndex(currentSlideIndex);
                 setShowReveal(true);
               }}
-              disabled={isGenerating}
+              disabled={isGenerating || (isSlidevMode && !presentationSlidevBuildUrl)}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-medium text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-cyan-500/70 disabled:opacity-50"
             >
               <Play className="h-3.5 w-3.5" />
@@ -969,7 +1045,7 @@ export default function EditorWorkspace({
                       </div>
                     )
                   ) : isSlidevMode ? (
-                    presentationSlidevBuildUrl ? (
+                    presentationSlidevBuildUrl && presentationRenderStatus !== "failed" ? (
                       <div className="w-full max-w-5xl">
                         <div className="aspect-[16/9] overflow-hidden rounded-[20px] border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
                           <SlidevPreview
@@ -978,6 +1054,38 @@ export default function EditorWorkspace({
                             onSlideChange={setCurrentSlideIndex}
                             className="rounded-[20px]"
                           />
+                        </div>
+                      </div>
+                    ) : presentationSlidevMarkdown ? (
+                      <div className="flex w-full max-w-5xl flex-col gap-4">
+                        <div className="rounded-[20px] border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-900">
+                          <div className="font-medium">
+                            {presentationRenderStatus === "failed"
+                              ? "Slidev 预览构建失败，已保留原始 markdown artifact。"
+                              : "Slidev 预览尚未就绪，先展示原始 markdown artifact。"}
+                          </div>
+                          {presentationRenderError && (
+                            <div className="mt-2 whitespace-pre-wrap text-xs leading-6 text-amber-800">
+                              {presentationRenderError}
+                            </div>
+                          )}
+                          <div className="mt-3 flex gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleRetrySlidevRender();
+                              }}
+                              disabled={retryingSlidevRender || isGenerating}
+                              className="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-white/90 px-3 py-2 text-sm font-medium text-amber-900 transition hover:bg-white disabled:opacity-50"
+                            >
+                              {retryingSlidevRender ? "重试中..." : "手动重试渲染"}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="overflow-hidden rounded-[20px] border border-white/80 bg-slate-950 shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]">
+                          <pre className="max-h-[65vh] overflow-auto p-5 text-xs leading-6 text-slate-100">
+                            <code>{presentationSlidevMarkdown}</code>
+                          </pre>
                         </div>
                       </div>
                     ) : (

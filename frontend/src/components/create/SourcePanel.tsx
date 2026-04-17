@@ -223,7 +223,9 @@ export default function SourcePanel() {
       const shouldHydrateJob =
         Boolean(detail.latest_generation_job?.job_id) &&
         (resolvedJobStatus === "running" ||
+          resolvedJobStatus === "artifact_ready" ||
           resolvedJobStatus === "waiting_fix_review" ||
+          resolvedJobStatus === "render_failed" ||
           resolvedJobStatus === "completed");
       if (shouldHydrateJob && detail.latest_generation_job?.job_id) {
         try {
@@ -250,6 +252,9 @@ export default function SourcePanel() {
         sources: detail.sources,
         chatMessages,
         presentation: hydratedPresentation,
+        presentationArtifactStatus: detail.latest_presentation?.artifact_status ?? null,
+        presentationRenderStatus: detail.latest_presentation?.render_status ?? null,
+        presentationRenderError: detail.latest_presentation?.render_error ?? null,
         planningState: detail.planning_state ?? null,
       });
       if (detail.latest_generation_job?.job_id) {
