@@ -16,14 +16,17 @@ import {
   getCurrentWorkspace,
   getLatestSessionPresentation,
   getLatestSessionPresentationHtml,
+  getLatestSessionPresentationSlidev,
   listSessions,
   listWorkspaceSources,
   removeSession,
   updateSession,
   type PresentationOutputMode,
   type SessionSummary,
+  type SlidevDeckResponse,
 } from "@/lib/api";
 import RecentResultCarousel from "@/components/home/RecentResultCarousel";
+import SlidevPreview from "@/components/slides/SlidevPreview";
 import SessionListDialog from "@/components/home/SessionListDialog";
 import UserMenu from "@/components/settings/UserMenu";
 import { useSettingsStatus } from "@/hooks/useSettingsStatus";
@@ -131,6 +134,8 @@ export default function HomeView() {
   const [latestResultOutputMode, setLatestResultOutputMode] =
     useState<PresentationOutputMode>("structured");
   const [latestResultHtml, setLatestResultHtml] = useState<string | null>(null);
+  const [latestResultSlidev, setLatestResultSlidev] =
+    useState<SlidevDeckResponse | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
   const [isPreviewHovered, setIsPreviewHovered] = useState(false);
   const [resultPreviewCount, setResultPreviewCount] =
@@ -315,6 +320,7 @@ export default function HomeView() {
       setLatestResultPresentation(null);
       setLatestResultOutputMode("structured");
       setLatestResultHtml(null);
+      setLatestResultSlidev(null);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
       return () => {
@@ -325,20 +331,26 @@ export default function HomeView() {
     setLatestResultPresentation(null);
     setLatestResultOutputMode("structured");
     setLatestResultHtml(null);
+    setLatestResultSlidev(null);
     setPreviewSlideIndex(0);
     setIsPreviewHovered(false);
 
     const run = async () => {
       const latest = await getLatestSessionPresentation(latestResultSession.id);
       const outputMode = latest?.output_mode ?? "structured";
-      const html =
+      const [html, slidev] = await Promise.all([
         outputMode === "html"
-          ? await getLatestSessionPresentationHtml(latestResultSession.id)
-          : null;
+          ? getLatestSessionPresentationHtml(latestResultSession.id)
+          : null,
+        outputMode === "slidev"
+          ? getLatestSessionPresentationSlidev(latestResultSession.id)
+          : null,
+      ]);
       if (cancelled) return;
       setLatestResultPresentation(latest?.presentation ?? null);
       setLatestResultOutputMode(outputMode);
       setLatestResultHtml(html);
+      setLatestResultSlidev(slidev);
       setPreviewSlideIndex(0);
       setIsPreviewHovered(false);
     };
@@ -643,7 +655,65 @@ export default function HomeView() {
                 <p className="text-xs leading-5 text-slate-600">
                   更新时间：{formatUpdatedAt(latestResultSession.updated_at)}
                 </p>
-                {latestResultPresentation?.slides?.length ? (
+                {latestResultOutputMode === "slidev" ? (
+                  <div className="min-h-0 flex-1">
+                    {latestResultSlidev?.build_url ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleOpenSession(latestResultSession, { slide: previewSlideIndex + 1 })
+                        }
+                        className="group relative block w-full overflow-hidden rounded-xl border border-blue-100/80 bg-white/75 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
+                        aria-label="打开 Slidev 编辑器"
+                      >
+                        <div className="aspect-video w-full overflow-hidden">
+                          <SlidevPreview
+                            src={latestResultSlidev.build_url}
+                            startSlide={previewSlideIndex}
+                            onSlideChange={setPreviewSlideIndex}
+                            className="w-full rounded-none"
+                          />
+                        </div>
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/55 via-slate-900/10 to-transparent px-3 py-2">
+                          <p className="text-xs font-medium text-white/90">
+                            共{" "}
+                            {Array.isArray(latestResultSlidev.meta?.slides)
+                              ? (latestResultSlidev.meta.slides as unknown[]).length
+                              : "?"}{" "}
+                            页 · 点击进入编辑器
+                          </p>
+                        </div>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSession(latestResultSession)}
+                        className="flex w-full flex-1 flex-col gap-2 rounded-xl border border-blue-100/80 bg-white/75 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600/70"
+                        aria-label="打开 Slidev 编辑器"
+                      >
+                        <p className="text-xs font-medium text-slate-500">
+                          Slidev 演示稿 ·{" "}
+                          {Array.isArray(latestResultSlidev?.meta?.slides)
+                            ? `${(latestResultSlidev.meta.slides as unknown[]).length} 页`
+                            : "预览尚未就绪"}
+                        </p>
+                        {Array.isArray(latestResultSlidev?.meta?.slides) && (
+                          <ul className="space-y-1 text-sm text-slate-700">
+                            {(
+                              latestResultSlidev.meta.slides as Array<Record<string, unknown>>
+                            ).map((s, i) => (
+                              <li key={String(s.slide_id ?? i)} className="truncate">
+                                <span className="mr-2 text-xs text-slate-400">{i + 1}.</span>
+                                {String(s.title ?? `第 ${i + 1} 页`)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-1 text-xs text-blue-600">点击进入编辑器 →</p>
+                      </button>
+                    )}
+                  </div>
+                ) : latestResultPresentation?.slides?.length ? (
                   <div className="min-h-0 flex-1">
                     <RecentResultCarousel
                       presentation={latestResultPresentation}

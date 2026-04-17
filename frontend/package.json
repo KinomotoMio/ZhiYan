@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "@slidev/cli": "^52.14.1",
+    "@slidev/theme-default": "^0.25.0",
     "@slidev/theme-seriph": "^0.25.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

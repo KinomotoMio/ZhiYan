@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,13 @@ from app.services.generation.agent_workspace import build_agent_workspace
 from app.services.generation.agentic.builder import AgentBuilder
 from app.services.generation.agentic.tools import Tool, ToolContext, ToolRegistry, create_builtin_registry
 from app.services.model_clients import create_model_client
+from app.services.slidev_sidecar import (
+    build_slidev_context_presentation,
+    build_slidev_persistence_payload,
+    empty_slidev_sidecar,
+    normalize_slidev_sidecar,
+    validate_slidev_slide_id,
+)
 
 
 class SubmittedSpeakerNote(BaseModel):
@@ -27,9 +35,59 @@ class SubmitSpeakerNotesArgs(BaseModel):
 
 
 class SpeakerNotesGenerationResult(BaseModel):
-    presentation: dict
+    presentation: dict | None = None
+    slidev_notes_state: dict[str, str] | None = None
     updated_slide_ids: list[str]
     workspace_root: str
+
+
+async def save_slidev_speaker_notes_for_slide(
+    *,
+    workspace_id: str,
+    session_id: str,
+    slide_id: str,
+    notes: str,
+) -> dict[str, Any]:
+    from app.services.sessions import session_store
+
+    latest = await session_store.get_latest_presentation(workspace_id, session_id)
+    if not latest or str(latest.get("output_mode") or "").strip() != "slidev":
+        raise ValueError("当前会话不是 Slidev 模式")
+    latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id)
+    if latest_slidev is None:
+        raise ValueError("当前会话暂无 Slidev 演示稿")
+    _markdown, slidev_meta = latest_slidev
+    if validate_slidev_slide_id(slidev_meta, slide_id) is None:
+        raise ValueError("指定 slide 不存在")
+
+    sidecar = normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
+    next_notes = str(notes).strip()
+    previous_notes = str(sidecar["speaker_notes"].get(slide_id) or "").strip()
+    if next_notes:
+        sidecar["speaker_notes"][slide_id] = next_notes
+    else:
+        sidecar["speaker_notes"].pop(slide_id, None)
+    if previous_notes != next_notes:
+        sidecar["speaker_audio"].pop(slide_id, None)
+
+    payload = build_slidev_persistence_payload(
+        latest,
+        title=str((slidev_meta or {}).get("title") or "新演示文稿"),
+    )
+    await session_store.save_presentation(
+        session_id=session_id,
+        payload=payload,
+        is_snapshot=False,
+        snapshot_label=None,
+        output_mode="slidev",
+        slidev_sidecar=sidecar,
+    )
+    return {
+        "slide_id": slide_id,
+        "speaker_notes": sidecar["speaker_notes"].get(slide_id),
+        "speaker_audio": sidecar["speaker_audio"].get(slide_id),
+        "slidev_notes_state": dict(sidecar["speaker_notes"]),
+    }
 
 
 def _create_agent_model_client():
@@ -202,7 +260,8 @@ async def generate_speaker_notes_for_session(
     *,
     workspace_id: str,
     session_id: str,
-    presentation_payload: dict,
+    presentation_payload: dict | None,
+    slidev_notes_state: dict[str, str] | None,
     scope: str,
     current_slide_index: int,
 ) -> SpeakerNotesGenerationResult:
@@ -212,14 +271,61 @@ async def generate_speaker_notes_for_session(
     output_mode = str((latest or {}).get("output_mode") or "").strip()
     artifacts = dict((latest or {}).get("artifacts") or {}) if isinstance((latest or {}).get("artifacts"), dict) else {}
     latest_html = await session_store.get_latest_html_deck(workspace_id, session_id) if output_mode == "html" else None
-
-    normalized = Presentation.model_validate(presentation_payload).model_dump(
-        mode="json",
-        by_alias=True,
-        exclude_none=True,
+    latest_slidev = await session_store.get_latest_slidev_deck(workspace_id, session_id) if output_mode == "slidev" else None
+    latest_slidev_sidecar = (
+        normalize_slidev_sidecar(await session_store.get_latest_slidev_sidecar(workspace_id, session_id))
+        if output_mode == "slidev"
+        else empty_slidev_sidecar()
     )
-    presentation = Presentation.model_validate(normalized)
-    target_slide_ids = _extract_target_slide_ids(presentation, scope, current_slide_index)
+
+    normalized: dict[str, object]
+    target_slide_ids: list[str]
+    persisted_slidev_sidecar = latest_slidev_sidecar
+    response_presentation: dict | None
+    response_slidev_notes_state: dict[str, str] | None = None
+
+    if output_mode == "slidev":
+        if latest_slidev is None:
+            raise ValueError("当前会话暂无 Slidev 演示稿")
+        slidev_markdown, slidev_meta = latest_slidev
+        provided_notes = (
+            {
+                str(slide_id): str(notes).strip()
+                for slide_id, notes in slidev_notes_state.items()
+                if str(slide_id).strip() and isinstance(notes, str)
+            }
+            if isinstance(slidev_notes_state, dict)
+            else {}
+        )
+        active_sidecar = {
+            "speaker_notes": {
+                **latest_slidev_sidecar["speaker_notes"],
+                **provided_notes,
+            },
+            "speaker_audio": dict(latest_slidev_sidecar["speaker_audio"]),
+        }
+        normalized = build_slidev_context_presentation(
+            markdown=slidev_markdown,
+            meta=slidev_meta,
+            sidecar=active_sidecar,
+        )
+        target_slide_ids = _extract_target_slide_ids(
+            Presentation.model_validate(normalized),
+            scope,
+            current_slide_index,
+        )
+        response_presentation = None
+    else:
+        if not isinstance(presentation_payload, dict):
+            raise ValueError("缺少可用于生成演讲者注解的 presentation")
+        normalized = Presentation.model_validate(presentation_payload).model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+        )
+        presentation = Presentation.model_validate(normalized)
+        target_slide_ids = _extract_target_slide_ids(presentation, scope, current_slide_index)
+        response_presentation = normalized
 
     source_metas = await session_store.list_sources(workspace_id, session_id)
     source_ids = [str(item["id"]) for item in source_metas if item.get("id")]
@@ -277,38 +383,66 @@ async def generate_speaker_notes_for_session(
     )
 
     submitted_notes = _validate_submission(payload_holder, target_slide_ids=target_slide_ids)
-    updated_presentation = deepcopy(normalized)
     notes_by_slide_id = {item.slide_id: item.notes.strip() for item in submitted_notes}
-    for slide in list(updated_presentation.get("slides") or []):
-        if not isinstance(slide, dict):
-            continue
-        slide_id = str(slide.get("slideId") or "")
-        next_notes = notes_by_slide_id.get(slide_id)
-        if next_notes is None:
-            continue
-        if str(slide.get("speakerNotes") or "").strip() != next_notes:
-            slide.pop("speakerAudio", None)
-        slide["speakerNotes"] = next_notes
+    if output_mode == "slidev":
+        next_sidecar = normalize_slidev_sidecar(
+            {
+                "speaker_notes": dict(persisted_slidev_sidecar["speaker_notes"]),
+                "speaker_audio": dict(persisted_slidev_sidecar["speaker_audio"]),
+            }
+        )
+        for slide_id, next_notes in notes_by_slide_id.items():
+            previous_notes = str(next_sidecar["speaker_notes"].get(slide_id) or "").strip()
+            next_sidecar["speaker_notes"][slide_id] = next_notes
+            if previous_notes != next_notes:
+                next_sidecar["speaker_audio"].pop(slide_id, None)
 
-    if output_mode == "html":
-        updated_presentation["outputMode"] = "html"
-        if artifacts:
-            updated_presentation["artifacts"] = artifacts
+        payload = build_slidev_persistence_payload(
+            latest,
+            title=str((normalized.get("title") or "")) or "新演示文稿",
+        )
         await session_store.save_presentation(
             session_id=session_id,
-            payload=updated_presentation,
+            payload=payload,
             is_snapshot=False,
             snapshot_label=None,
-            output_mode="html",
-            html_deck={"html": latest_html[0]} if latest_html is not None else None,
+            output_mode="slidev",
+            slidev_sidecar=next_sidecar,
         )
+        response_slidev_notes_state = dict(next_sidecar["speaker_notes"])
     else:
-        await session_store.save_presentation(
-            session_id=session_id,
-            payload=updated_presentation,
-            is_snapshot=False,
-            snapshot_label=None,
-        )
+        updated_presentation = deepcopy(normalized)
+        for slide in list(updated_presentation.get("slides") or []):
+            if not isinstance(slide, dict):
+                continue
+            slide_id = str(slide.get("slideId") or "")
+            next_notes = notes_by_slide_id.get(slide_id)
+            if next_notes is None:
+                continue
+            if str(slide.get("speakerNotes") or "").strip() != next_notes:
+                slide.pop("speakerAudio", None)
+            slide["speakerNotes"] = next_notes
+
+        if output_mode == "html":
+            updated_presentation["outputMode"] = "html"
+            if artifacts:
+                updated_presentation["artifacts"] = artifacts
+            await session_store.save_presentation(
+                session_id=session_id,
+                payload=updated_presentation,
+                is_snapshot=False,
+                snapshot_label=None,
+                output_mode="html",
+                html_deck={"html": latest_html[0]} if latest_html is not None else None,
+            )
+        else:
+            await session_store.save_presentation(
+                session_id=session_id,
+                payload=updated_presentation,
+                is_snapshot=False,
+                snapshot_label=None,
+            )
+        response_presentation = updated_presentation
 
     (artifacts_dir / "run-summary.json").write_text(
         json.dumps(
@@ -325,7 +459,8 @@ async def generate_speaker_notes_for_session(
     )
 
     return SpeakerNotesGenerationResult(
-        presentation=updated_presentation,
+        presentation=response_presentation,
+        slidev_notes_state=response_slidev_notes_state,
         updated_slide_ids=target_slide_ids,
         workspace_root=str(workspace_root),
     )

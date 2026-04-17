@@ -5,12 +5,14 @@ import { toast } from "sonner";
 import {
   getLatestSessionPresentationHtml,
   getLatestSessionPresentationSlidev,
+  getLatestSessionPresentationSlidevSidecar,
   subscribeJobEvents,
   type GenerationErrorCode,
   type GenerationEvent,
   type HtmlDeckArtifactMeta,
   type SlidevBuildArtifactMeta,
   type SlidevDeckArtifactMeta,
+  type SlidevFixPreviewState,
 } from "@/lib/api";
 import { collectIssueSlideIds } from "@/lib/verification-issues";
 import { useAppStore } from "@/lib/store";
@@ -167,6 +169,7 @@ export default function GenerationEventCoordinator() {
                   : 0,
               fixPreviewSlides: [],
               fixPreviewSourceIds: [],
+              fixPreviewSlidev: null,
               selectedFixPreviewSlideIds: [],
             });
             for (const slideId of collectIssueSlideIds(normalizedIssues)) {
@@ -185,9 +188,14 @@ export default function GenerationEventCoordinator() {
             const sourceIds = Array.isArray(payload.fix_preview_source_ids)
               ? (payload.fix_preview_source_ids as string[])
               : [];
+            const slidevPreview =
+              payload.fix_preview_slidev && typeof payload.fix_preview_slidev === "object"
+                ? (payload.fix_preview_slidev as SlidevFixPreviewState)
+                : null;
             updateJobState({
-              fixPreviewSlides: previewSlides,
+              fixPreviewSlides: slidevPreview ? [] : previewSlides,
               fixPreviewSourceIds: sourceIds,
+              fixPreviewSlidev: slidevPreview,
               selectedFixPreviewSlideIds: sourceIds,
             });
             setFixPreviewSelection(sourceIds);
@@ -198,7 +206,7 @@ export default function GenerationEventCoordinator() {
           if (evt.type === "artifact_ready") {
             const payload = evt.payload as Record<string, unknown>;
             const presentation = payload.presentation as Presentation | undefined;
-            if (presentation) {
+            if (presentation && payload.output_mode !== "slidev") {
               setPresentation(presentation);
             }
             setPresentationRenderState({
@@ -222,8 +230,11 @@ export default function GenerationEventCoordinator() {
                   setPresentationHtmlState("html", null, null);
                 });
             } else if (payload.output_mode === "slidev" && currentSessionId) {
-              void getLatestSessionPresentationSlidev(currentSessionId)
-                .then((slidev) => {
+              void Promise.all([
+                getLatestSessionPresentationSlidev(currentSessionId),
+                getLatestSessionPresentationSlidevSidecar(currentSessionId),
+              ])
+                .then(([slidev, slidevSidecar]) => {
                   const artifacts =
                     payload.artifacts && typeof payload.artifacts === "object"
                       ? (payload.artifacts as {
@@ -238,6 +249,8 @@ export default function GenerationEventCoordinator() {
                     deckArtifact: artifacts?.slidev_deck ?? null,
                     buildArtifact: artifacts?.slidev_build ?? null,
                     buildUrl: slidev?.build_url ?? null,
+                    notesState: slidevSidecar?.speaker_notes ?? {},
+                    audioState: slidevSidecar?.speaker_audio ?? {},
                   });
                 })
                 .catch(() => {
@@ -246,6 +259,8 @@ export default function GenerationEventCoordinator() {
                     markdown: null,
                     meta: null,
                     buildUrl: null,
+                    notesState: {},
+                    audioState: {},
                   });
                 });
             }
@@ -261,7 +276,7 @@ export default function GenerationEventCoordinator() {
           if (evt.type === "job_completed") {
             const payload = evt.payload as Record<string, unknown>;
             const presentation = payload.presentation as Presentation | undefined;
-            if (presentation) {
+            if (presentation && payload.output_mode !== "slidev") {
               setPresentation(presentation);
             }
             setPresentationRenderState({
@@ -291,8 +306,13 @@ export default function GenerationEventCoordinator() {
                   setPresentationHtmlState("html", null, null);
                 });
             } else if (payload.output_mode === "slidev" && currentSessionId) {
-              void getLatestSessionPresentationSlidev(currentSessionId)
-                .then((slidev) => {
+              const sid = currentSessionId;
+              const expectBuildReady = payload.render_status === "ready";
+              void Promise.all([
+                getLatestSessionPresentationSlidev(sid),
+                getLatestSessionPresentationSlidevSidecar(sid),
+              ])
+                .then(([slidev, slidevSidecar]) => {
                   const artifacts =
                     payload.artifacts && typeof payload.artifacts === "object"
                       ? (payload.artifacts as {
@@ -307,7 +327,29 @@ export default function GenerationEventCoordinator() {
                     deckArtifact: artifacts?.slidev_deck ?? null,
                     buildArtifact: artifacts?.slidev_build ?? null,
                     buildUrl: slidev?.build_url ?? null,
+                    notesState: slidevSidecar?.speaker_notes ?? {},
+                    audioState: slidevSidecar?.speaker_audio ?? {},
                   });
+                  if (expectBuildReady && !slidev?.build_url) {
+                    setTimeout(() => {
+                      void getLatestSessionPresentationSlidev(sid)
+                        .then((retry) => {
+                          if (retry?.build_url) {
+                            setPresentationSlidevState({
+                              outputMode: "slidev",
+                              markdown: retry.markdown ?? slidev?.markdown ?? null,
+                              meta: retry.meta ?? slidev?.meta ?? null,
+                              deckArtifact: artifacts?.slidev_deck ?? null,
+                              buildArtifact: artifacts?.slidev_build ?? null,
+                              buildUrl: retry.build_url,
+                              notesState: slidevSidecar?.speaker_notes ?? {},
+                              audioState: slidevSidecar?.speaker_audio ?? {},
+                            });
+                          }
+                        })
+                        .catch(() => {});
+                    }, 1000);
+                  }
                 })
                 .catch(() => {
                   setPresentationSlidevState({
@@ -315,6 +357,8 @@ export default function GenerationEventCoordinator() {
                     markdown: null,
                     meta: null,
                     buildUrl: null,
+                    notesState: {},
+                    audioState: {},
                   });
                 });
             } else {
@@ -324,6 +368,8 @@ export default function GenerationEventCoordinator() {
                 markdown: null,
                 meta: null,
                 buildUrl: null,
+                notesState: {},
+                audioState: {},
               });
             }
             const normalizedIssues = Array.isArray(payload.issues)
@@ -346,6 +392,7 @@ export default function GenerationEventCoordinator() {
                   : 0,
               fixPreviewSlides: [],
               fixPreviewSourceIds: [],
+              fixPreviewSlidev: null,
               selectedFixPreviewSlideIds: [],
             });
             clearFixReviewState();
@@ -362,7 +409,7 @@ export default function GenerationEventCoordinator() {
           if (evt.type === "job_failed") {
             const payload = evt.payload as Record<string, unknown>;
             const presentation = payload.presentation as Presentation | undefined;
-            if (presentation) {
+            if (presentation && payload.output_mode !== "slidev") {
               setPresentation(presentation);
             }
             const nextJobStatus =
@@ -380,8 +427,11 @@ export default function GenerationEventCoordinator() {
                     : null,
             });
             if (payload.output_mode === "slidev" && currentSessionId) {
-              void getLatestSessionPresentationSlidev(currentSessionId)
-                .then((slidev) => {
+              void Promise.all([
+                getLatestSessionPresentationSlidev(currentSessionId),
+                getLatestSessionPresentationSlidevSidecar(currentSessionId),
+              ])
+                .then(([slidev, slidevSidecar]) => {
                   const artifacts =
                     payload.artifacts && typeof payload.artifacts === "object"
                       ? (payload.artifacts as {
@@ -396,6 +446,8 @@ export default function GenerationEventCoordinator() {
                     deckArtifact: artifacts?.slidev_deck ?? null,
                     buildArtifact: artifacts?.slidev_build ?? null,
                     buildUrl: slidev?.build_url ?? null,
+                    notesState: slidevSidecar?.speaker_notes ?? {},
+                    audioState: slidevSidecar?.speaker_audio ?? {},
                   });
                 })
                 .catch(() => {
@@ -404,6 +456,8 @@ export default function GenerationEventCoordinator() {
                     markdown: null,
                     meta: null,
                     buildUrl: null,
+                    notesState: {},
+                    audioState: {},
                   });
                 });
             }
@@ -415,6 +469,7 @@ export default function GenerationEventCoordinator() {
               advisoryIssueCount: 0,
               fixPreviewSlides: [],
               fixPreviewSourceIds: [],
+              fixPreviewSlidev: null,
               selectedFixPreviewSlideIds: [],
             });
             clearFixReviewState();
@@ -437,6 +492,7 @@ export default function GenerationEventCoordinator() {
               advisoryIssueCount: 0,
               fixPreviewSlides: [],
               fixPreviewSourceIds: [],
+              fixPreviewSlidev: null,
               selectedFixPreviewSlideIds: [],
             });
             clearFixReviewState();
@@ -450,12 +506,13 @@ export default function GenerationEventCoordinator() {
             jobId,
             jobStatus: "failed",
             currentStage: null,
-            hardIssueSlideIds: [],
-            advisoryIssueCount: 0,
-            fixPreviewSlides: [],
-            fixPreviewSourceIds: [],
-            selectedFixPreviewSlideIds: [],
-          });
+              hardIssueSlideIds: [],
+              advisoryIssueCount: 0,
+              fixPreviewSlides: [],
+              fixPreviewSourceIds: [],
+              fixPreviewSlidev: null,
+              selectedFixPreviewSlideIds: [],
+            });
           clearFixReviewState();
           resetIssueReviewState();
           finishGeneration();

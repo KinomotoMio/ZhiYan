@@ -190,7 +190,7 @@ export interface LatestPresentationRecord {
   is_snapshot: boolean;
   snapshot_label: string | null;
   created_at: string;
-  presentation: Presentation;
+  presentation: Presentation | null;
   output_mode?: PresentationOutputMode;
   artifact_status?: string | null;
   render_status?: string | null;
@@ -424,6 +424,11 @@ export interface SlidevDeckResponse {
   };
 }
 
+export interface SlidevSidecarResponse {
+  speaker_notes?: Record<string, string>;
+  speaker_audio?: Record<string, NonNullable<Slide["speakerAudio"]>>;
+}
+
 export async function getLatestSessionPresentationSlidev(
   sessionId: string
 ): Promise<SlidevDeckResponse | null> {
@@ -446,6 +451,17 @@ export async function getLatestSessionPresentationSlidev(
 
 export function buildLatestSessionPresentationSlidevUrl(sessionId: string): string {
   return `${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/slidev/build`;
+}
+
+export async function getLatestSessionPresentationSlidevSidecar(
+  sessionId: string
+): Promise<SlidevSidecarResponse | null> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest/slidev/sidecar`, {
+    headers: withWorkspaceHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`获取 Slidev sidecar 失败: ${res.statusText}`);
+  return res.json();
 }
 
 export async function createOrGetSessionShareLink(sessionId: string): Promise<SessionShareLink> {
@@ -549,10 +565,10 @@ export async function saveLatestSessionHtmlPresentation(
 
 export async function saveLatestSessionSlidevPresentation(
   sessionId: string,
-  presentation: Presentation,
   markdown: string,
   selectedStyleId?: string | null,
   meta?: Record<string, unknown>,
+  presentation?: Presentation | null,
   source: "chat" | "editor" = "chat"
 ): Promise<SnapshotMeta> {
   const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/presentations/latest`, {
@@ -868,6 +884,13 @@ export interface GenerationRequestDataLite {
   skill_id?: string | null;
 }
 
+export interface SlidevFixPreviewState {
+  markdown: string;
+  meta: Record<string, unknown>;
+  preview_url: string;
+  selected_style_id?: string | null;
+}
+
 export interface GenerationJob {
   job_id: string;
   status: JobStatus;
@@ -889,6 +912,7 @@ export interface GenerationJob {
   advisory_issue_count?: number;
   fix_preview_slides?: Slide[];
   fix_preview_source_ids?: string[];
+  fix_preview_slidev?: SlidevFixPreviewState | null;
   error: string | null;
   presentation?: Presentation | null;
   run_metadata?: CreateJobResponse["run_metadata"];
@@ -1160,7 +1184,6 @@ interface HtmlUpdateEvent {
 interface SlidevUpdateEvent {
   markdown: string;
   meta: Record<string, unknown>;
-  presentation: Presentation;
   selected_style_id?: string | null;
   preview_url: string;
   modifications?: Record<string, unknown>[];
@@ -1293,7 +1316,6 @@ export async function chatStream(
               onSlidevUpdate({
                 markdown: parsed.markdown,
                 meta: parsed.meta,
-                presentation: parsed.presentation,
                 selected_style_id: parsed.selected_style_id,
                 preview_url:
                   typeof parsed.preview_url === "string" && parsed.preview_url.startsWith("http")
@@ -1522,9 +1544,16 @@ export async function validateApiKey(
   return res.json();
 }
 export interface SpeakerNotesGenerateResponse {
-  presentation: Presentation;
+  presentation: Presentation | null;
+  slidevNotesState?: Record<string, string> | null;
   updatedSlideIds: string[];
   workspaceRoot: string;
+}
+
+export interface SlideSpeakerNotesWriteResponse {
+  slideId: string;
+  speakerNotes?: string | null;
+  slidevNotesState?: Record<string, string> | null;
 }
 
 export interface SpeakerAudioEnsureResponse {
@@ -1536,7 +1565,8 @@ export interface SpeakerAudioEnsureResponse {
 export async function generateSpeakerNotes(
   sessionId: string,
   payload: {
-    presentation: Presentation;
+    presentation?: Presentation | null;
+    slidevNotesState?: Record<string, string>;
     scope: "current" | "all";
     currentSlideIndex: number;
   }
@@ -1549,6 +1579,23 @@ export async function generateSpeakerNotes(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `生成演讲者注解失败: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function saveSlidevSpeakerNotes(
+  sessionId: string,
+  slideId: string,
+  speakerNotes: string
+): Promise<SlideSpeakerNotesWriteResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/sessions/${sessionId}/slides/${slideId}/speaker-notes`, {
+    method: "PUT",
+    headers: withWorkspaceHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ speakerNotes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `保存演讲者注解失败: ${res.statusText}`);
   }
   return res.json();
 }

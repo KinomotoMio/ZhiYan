@@ -32,7 +32,6 @@ from app.services.generation.agentic import (
     create_builtin_registry,
 )
 from app.services.generation.agentic.models import ModelClient, ModelResponse, normalize_litellm_model
-from app.services.generation.agentic.tools import ToolExecutionError
 from app.services.generation.agent_adapter import AgentOutline, outline_to_job_outline
 from app.services.generation.event_bus import GenerationEventBus
 from app.services.generation.job_store import GenerationJobStore
@@ -48,6 +47,7 @@ from app.services.skill_runtime.registry import build_skill_catalog
 from app.services.slidev import (
     build_slidev_spa,
     build_slidev_role_reference_bundle,
+    create_slidev_preview,
     inspect_slidev_markdown_submission,
     prepare_slidev_deck_artifact,
 )
@@ -59,6 +59,27 @@ ERROR_PROVIDER_NETWORK = "PROVIDER_NETWORK"
 ERROR_PROVIDER_RATE_LIMIT = "PROVIDER_RATE_LIMIT"
 ERROR_CANCELLED = "CANCELLED"
 ERROR_UNKNOWN = "UNKNOWN"
+
+
+def _build_slidev_runtime_slides(meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    raw_slides = meta.get("slides") if isinstance(meta, dict) else None
+    if not isinstance(raw_slides, list):
+        return []
+    return [
+        {
+            "slideId": str(slide.get("slide_id") or f"slide-{index + 1}"),
+            "layoutType": "slidev-index",
+            "layoutId": "slidev-index",
+            "contentData": {
+                "title": str(slide.get("title") or f"第 {index + 1} 页"),
+                "role": str(slide.get("role") or "narrative"),
+                "layout": str(slide.get("layout") or "default"),
+            },
+            "components": [],
+        }
+        for index, slide in enumerate(raw_slides)
+        if isinstance(slide, dict)
+    ]
 
 
 @dataclass(frozen=True)
@@ -312,6 +333,7 @@ class GenerationRunner:
                 job.advisory_issue_count = advisory_count
                 job.fix_preview_slides = []
                 job.fix_preview_source_ids = []
+                job.fix_preview_slidev = None
                 self._write_runner_trace(job, state)
                 job.updated_at = now_iso()
                 await self._store.save_job(job)
@@ -402,7 +424,7 @@ class GenerationRunner:
                 payload={
                     "run_id": job.run_metadata.run_id if job.run_metadata else None,
                     "skill_id": job.request.skill_id,
-                    "presentation": job.presentation,
+                    "presentation": None if job.output_mode.value == "slidev" else job.presentation,
                     "output_mode": job.output_mode.value,
                     "artifacts": job.presentation.get("artifacts") if isinstance(job.presentation, dict) else {},
                     "job_status": job.status.value,
@@ -570,6 +592,44 @@ class GenerationRunner:
         if not target_ids:
             raise RuntimeError("当前任务没有可修复的硬错误页面")
 
+        if job.output_mode.value == "slidev":
+            slidev_output = self._current_slidev_agent_output(job)
+            markdown = str(slidev_output.get("markdown") or "").strip()
+            meta = slidev_output.get("meta")
+            if not markdown or not isinstance(meta, dict):
+                raise RuntimeError("当前任务缺少可用于修复预览的 Slidev deck")
+            preview = await create_slidev_preview(
+                markdown=markdown,
+                fallback_title=str(slidev_output.get("title") or job.request.title or "新演示文稿"),
+                selected_style_id=str(slidev_output.get("selected_style_id") or "").strip() or None,
+                topic=job.request.topic or job.request.title,
+                outline_items=list(job.outline.get("items") or []) if isinstance(job.outline, dict) else [],
+                expected_pages=max(1, int(meta.get("slide_count") or len(meta.get("slides") or []) or job.request.num_pages or 1)),
+                preview_id=f"spv-fix-{job.job_id}-{uuid4().hex[:10]}",
+            )
+            job.fix_preview_slides = []
+            job.fix_preview_source_ids = list(target_ids)
+            job.fix_preview_slidev = {
+                "markdown": preview["markdown"],
+                "meta": preview["meta"],
+                "preview_url": f"/api/v1/slidev-previews/{preview['preview_id']}",
+                "selected_style_id": preview["selected_style_id"],
+            }
+            job.updated_at = now_iso()
+            await self._store.save_job(job)
+            await self._emit_event(
+                job,
+                EventType.FIX_PREVIEW_READY,
+                stage=StageStatus.FIX,
+                message="Slidev 修复预览已生成，请在真实预览中确认",
+                payload={
+                    "fix_preview_source_ids": job.fix_preview_source_ids,
+                    "fix_preview_slidev": job.fix_preview_slidev,
+                    "requested_slide_ids": target_ids,
+                },
+            )
+            return job
+
         preview_state = self._build_state(job)
         await stage_fix_slides_once(
             preview_state,
@@ -628,6 +688,100 @@ class GenerationRunner:
             raise ValueError("Job not found")
         if job.status != JobStatus.WAITING_FIX_REVIEW:
             raise RuntimeError(f"当前状态不支持应用修复: {job.status.value}")
+        if job.output_mode.value == "slidev":
+            if not isinstance(job.fix_preview_slidev, dict):
+                raise RuntimeError("暂无 Slidev 修复预览，请先生成修复建议")
+            selected = [sid for sid in slide_ids if sid]
+            if not selected:
+                raise RuntimeError("请至少确认一页受影响的问题后再应用修复")
+            known_source_ids = [sid for sid in job.fix_preview_source_ids if sid]
+            unknown = [sid for sid in selected if sid not in known_source_ids]
+            if unknown:
+                raise RuntimeError("存在无效问题页，请重新生成修复预览")
+            preview_meta = job.fix_preview_slidev.get("meta")
+            preview_markdown = str(job.fix_preview_slidev.get("markdown") or "").strip()
+            preview_url = str(job.fix_preview_slidev.get("preview_url") or "").strip()
+            if not preview_markdown or not isinstance(preview_meta, dict) or not preview_url:
+                raise RuntimeError("Slidev 修复预览不完整，请重新生成")
+            preview_id = preview_url.rstrip("/").split("/")[-1]
+            preview_root = settings.uploads_dir / "slidev-previews" / preview_id
+            build_root = preview_root / "dist"
+            entry_path = build_root / "index.html"
+            if not build_root.exists() or not entry_path.exists():
+                raise RuntimeError("Slidev 修复预览构建产物缺失，请重新生成")
+
+            job.slides = _build_slidev_runtime_slides(preview_meta)
+            job.document_metadata.setdefault("agent_outputs", {})
+            job.document_metadata["agent_outputs"]["slidev_deck"] = {
+                "title": str(preview_meta.get("title") or job.request.title or "新演示文稿"),
+                "markdown": preview_markdown,
+                "meta": preview_meta,
+                "selected_style_id": job.fix_preview_slidev.get("selected_style_id"),
+            }
+            job.document_metadata["agent_outputs"]["slidev_build"] = {
+                "build_root": str(build_root.resolve()),
+                "entry_path": str(entry_path.resolve()),
+                "slide_count": int(preview_meta.get("slide_count") or len(preview_meta.get("slides") or [])),
+            }
+            job.fix_preview_slides = []
+            job.fix_preview_source_ids = []
+            job.fix_preview_slidev = None
+            job.presentation = self._build_presentation_payload(
+                job,
+                [Slide.model_validate(slide) for slide in job.slides],
+            )
+            job.status = JobStatus.COMPLETED
+            job.current_stage = StageStatus.COMPLETE
+            self._set_artifact_runtime_state(
+                job,
+                artifact_status="ready",
+                render_status="ready",
+                artifact_available=True,
+                render_available=True,
+                render_error=None,
+            )
+            self._write_runner_trace(job, self._build_state(job))
+            job.updated_at = now_iso()
+            await self._store.save_job(job)
+
+            if job.request.session_id:
+                from app.services.sessions import session_store
+                await session_store.save_presentation(
+                    session_id=job.request.session_id,
+                    payload=job.presentation,
+                    is_snapshot=False,
+                    output_mode="slidev",
+                    slidev_deck={
+                        "markdown": preview_markdown,
+                        "meta": preview_meta,
+                        "selected_style_id": job.document_metadata["agent_outputs"]["slidev_deck"].get("selected_style_id"),
+                    },
+                    slidev_build={
+                        "build_root": str(build_root.resolve()),
+                        "entry_path": str(entry_path.resolve()),
+                        "slide_count": int(preview_meta.get("slide_count") or len(preview_meta.get("slides") or [])),
+                    },
+                )
+                await session_store.update_generation_job_status(
+                    job.job_id,
+                    JobStatus.COMPLETED.value,
+                )
+
+            await self._emit_event(
+                job,
+                EventType.JOB_COMPLETED,
+                stage=StageStatus.COMPLETE,
+                message="已应用 Slidev 修复预览并完成任务",
+                payload={
+                    "presentation": None,
+                    "issues": job.issues,
+                    "failed_slide_indices": job.failed_slide_indices,
+                    "applied_slide_ids": selected,
+                    "output_mode": "slidev",
+                },
+            )
+            return job
+
         if not job.fix_preview_slides:
             raise RuntimeError("暂无修复候选，请先生成修复建议")
 
@@ -684,7 +838,7 @@ class GenerationRunner:
             stage=StageStatus.COMPLETE,
             message="已按选择应用修复并完成任务",
             payload={
-                "presentation": job.presentation,
+                "presentation": None if job.output_mode.value == "slidev" else job.presentation,
                 "issues": job.issues,
                 "failed_slide_indices": job.failed_slide_indices,
                 "applied_slide_ids": selected,
@@ -702,6 +856,7 @@ class GenerationRunner:
         slides = [Slide.model_validate(slide) for slide in job.slides]
         job.fix_preview_slides = []
         job.fix_preview_source_ids = []
+        job.fix_preview_slidev = None
         job.presentation = self._build_presentation_payload(job, slides)
         job.status = JobStatus.COMPLETED
         job.current_stage = StageStatus.COMPLETE
@@ -727,7 +882,7 @@ class GenerationRunner:
             stage=StageStatus.COMPLETE,
             message="已跳过修复并完成任务",
             payload={
-                "presentation": job.presentation,
+                "presentation": None if job.output_mode.value == "slidev" else job.presentation,
                 "issues": job.issues,
                 "failed_slide_indices": job.failed_slide_indices,
                 "fix_skipped": True,
@@ -1005,21 +1160,29 @@ class GenerationRunner:
     def _build_presentation_payload(job: GenerationJob, slides: list[Slide]) -> dict:
         existing = job.presentation if isinstance(job.presentation, dict) else {}
         agent_outputs = job.document_metadata.get("agent_outputs") if isinstance(job.document_metadata, dict) else {}
-        generated = agent_outputs.get("presentation") if isinstance(agent_outputs, dict) else {}
+        generated = agent_outputs.get("presentation") if isinstance(agent_outputs, dict) else None
+        if not isinstance(generated, dict):
+            generated = {}
 
         title = str(existing.get("title") or generated.get("title") or job.request.title or "新演示文稿")
-        presentation_id = existing.get("presentationId") or generated.get("presentationId")
-        if not isinstance(presentation_id, str) or not presentation_id.strip():
-            presentation_id = f"pres-{uuid4().hex[:8]}"
-        theme_payload = existing.get("theme") or generated.get("theme")
-        theme = Theme.model_validate(theme_payload) if isinstance(theme_payload, dict) else None
-        payload = Presentation(
-            presentationId=presentation_id,
-            title=title,
-            theme=theme,
-            slides=slides,
-        ).model_dump(mode="json", by_alias=True, exclude_none=True)
         output_mode = str(existing.get("outputMode") or job.output_mode.value).strip()
+        if output_mode == "slidev":
+            payload = {
+                "title": title,
+                "outputMode": output_mode,
+            }
+        else:
+            presentation_id = existing.get("presentationId") or generated.get("presentationId")
+            if not isinstance(presentation_id, str) or not presentation_id.strip():
+                presentation_id = f"pres-{uuid4().hex[:8]}"
+            theme_payload = existing.get("theme") or generated.get("theme")
+            theme = Theme.model_validate(theme_payload) if isinstance(theme_payload, dict) else None
+            payload = Presentation(
+                presentationId=presentation_id,
+                title=title,
+                theme=theme,
+                slides=slides,
+            ).model_dump(mode="json", by_alias=True, exclude_none=True)
         if output_mode:
             payload["outputMode"] = output_mode
         payload["artifactStatus"] = job.artifact_status or existing.get("artifactStatus") or "pending"
@@ -1173,7 +1336,7 @@ class GenerationRunner:
             stage=StageStatus.ARTIFACT_PUBLISH,
             message="Artifact 已就绪，可进入编辑器",
             payload={
-                "presentation": job.presentation,
+                "presentation": None if job.output_mode.value == "slidev" else job.presentation,
                 "output_mode": job.output_mode.value,
                 "artifacts": job.presentation.get("artifacts") if isinstance(job.presentation, dict) else {},
                 "artifact_status": job.artifact_status,
@@ -1250,7 +1413,7 @@ class GenerationRunner:
                 "error_message": message,
                 "retriable": False,
                 "stage": StageStatus.ARTIFACT_RENDER.value,
-                "presentation": job.presentation,
+                "presentation": None if job.output_mode.value == "slidev" else job.presentation,
                 "output_mode": job.output_mode.value,
                 "artifacts": job.presentation.get("artifacts") if isinstance(job.presentation, dict) else {},
                 "job_status": JobStatus.RENDER_FAILED.value,
@@ -1462,22 +1625,22 @@ class GenerationRunner:
                 if slide_hook:
                     await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         elif job.output_mode.value == "slidev":
-            slidev_payload, presentation = await self._generate_slidev_deck_with_agent(job, state)
+            slidev_payload, slidev_runtime_slides = await self._generate_slidev_deck_with_agent(job, state)
             state.layout_selections = [
                 {
                     "slide_number": index + 1,
                     "layout_id": "slidev",
                 }
-                for index, _slide in enumerate(presentation.slides)
+                for index, _slide in enumerate(slidev_runtime_slides)
             ]
-            state.slides = list(presentation.slides)
+            state.slides = [Slide.model_validate(slide) for slide in slidev_runtime_slides]
             state.slide_contents = [
                 {
                     "slide_number": index + 1,
                     "layout_id": "slidev",
                     "content_data": slide.content_data or {},
                 }
-                for index, slide in enumerate(presentation.slides)
+                for index, slide in enumerate(state.slides)
             ]
             state.document_metadata.setdefault("agent_outputs", {})
             state.document_metadata["agent_outputs"]["slidev_deck"] = {
@@ -1485,16 +1648,10 @@ class GenerationRunner:
                 "markdown": slidev_payload["markdown"],
                 "meta": slidev_payload["meta"],
                 "selected_style_id": slidev_payload["selected_style_id"],
-                "selected_style": slidev_payload["selected_style"],
-                "selected_theme": slidev_payload["selected_theme"],
             }
             state.document_metadata["agent_outputs"].pop("slidev_build", None)
-            state.document_metadata["agent_outputs"]["presentation"] = presentation.model_dump(
-                mode="json",
-                by_alias=True,
-                exclude_none=True,
-            )
-            for index, slide in enumerate(presentation.slides):
+            state.document_metadata["agent_outputs"].pop("presentation", None)
+            for index, slide in enumerate(state.slides):
                 if slide_hook:
                     await slide_hook({"slide_index": index, "slide": slide.model_dump(mode="json", by_alias=True)})
         else:
@@ -1565,6 +1722,18 @@ class GenerationRunner:
         if job.slides:
             state.slides = [Slide.model_validate(slide) for slide in job.slides]
         return state
+
+    @staticmethod
+    def _current_slidev_agent_output(job: GenerationJob) -> dict[str, Any]:
+        agent_outputs = (
+            job.document_metadata.get("agent_outputs")
+            if isinstance(job.document_metadata, dict)
+            else None
+        )
+        slidev_output = agent_outputs.get("slidev_deck") if isinstance(agent_outputs, dict) else None
+        if not isinstance(slidev_output, dict):
+            raise RuntimeError("当前任务缺少 Slidev deck 产物")
+        return slidev_output
 
     def _debug_dir_for_job(self, job: GenerationJob) -> Path:
         return self._workspace_root_for_job(job) / "artifacts" / "debug"
@@ -2129,7 +2298,7 @@ class GenerationRunner:
         self,
         job: GenerationJob,
         state: GenerationRuntimeState,
-    ) -> tuple[dict[str, Any], Presentation]:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         payload_holder: dict[str, Any] = {}
         agent, traced_model = self._build_generation_agent(
             job=job,
@@ -2139,51 +2308,25 @@ class GenerationRunner:
         )
         session = agent.start_session()
         preload_tool_results = await self._activate_base_skill(job=job, state=state, session=session)
-        expected = max(3, min(job.request.num_pages, settings.max_slide_pages))
-        retry_issues = [
-            "必须输出可被 slidev build 编译的完整 Slidev markdown deck。",
-            f"必须严格包含 {expected} 页，且由全局 frontmatter + Slidev 页面分隔组成。",
-            "必须只通过 submit_slidev_deck 提交 markdown 和 selected_style_id。",
-        ]
-        last_error: Exception | None = None
-        for attempt in range(3):
-            prompt = (
-                self._build_agent_presentation_user_prompt(job, state)
-                if attempt == 0
-                else self._build_agent_presentation_retry_prompt(
-                    expected,
-                    retry_issues,
-                    output_mode="slidev",
-                )
-            )
-            result = await session.send(prompt)
-            if attempt == 0 and preload_tool_results:
-                result.tool_results = [*preload_tool_results, *result.tool_results]
-            self._write_agent_run_debug(
-                job,
-                state,
-                stage_name="presentation",
-                prompt=prompt,
-                session=session,
-                result=result,
-                traced_model=traced_model,
-                submitted_payload=payload_holder.get("slidev_deck"),
-                attempt=attempt + 1,
-            )
-            retry_issues = self._slidev_retry_issues_from_tool_results(result.tool_results, expected)
-            try:
-                extracted = await self._extract_slidev_deck_submission(job, state, payload_holder)
-            except Exception as exc:
-                last_error = exc
-                retry_issues = self._slidev_retry_issues_from_exception(exc, expected, payload_holder)
-                payload_holder.clear()
-                continue
-            if extracted is not None and len(extracted[1].slides) == expected:
-                return extracted
-            payload_holder.clear()
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Agent did not submit a valid Slidev deck.")
+        prompt = self._build_agent_presentation_user_prompt(job, state)
+        result = await session.send(prompt)
+        if preload_tool_results:
+            result.tool_results = [*preload_tool_results, *result.tool_results]
+        self._write_agent_run_debug(
+            job,
+            state,
+            stage_name="presentation",
+            prompt=prompt,
+            session=session,
+            result=result,
+            traced_model=traced_model,
+            submitted_payload=payload_holder.get("slidev_deck"),
+            attempt=1,
+        )
+        extracted = await self._extract_slidev_deck_submission(job, state, payload_holder)
+        if extracted is None:
+            raise RuntimeError("Agent did not submit a Slidev deck.")
+        return extracted
 
     def _build_generation_agent(
         self,
@@ -2311,48 +2454,42 @@ class GenerationRunner:
             markdown = str(payload.get("markdown") or "").strip()
             if not markdown:
                 raise ValueError("Slidev deck markdown is empty.")
-            outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
-            inspection = inspect_slidev_markdown_submission(
-                markdown=markdown,
-                outline_items=outline_items,
-                fallback_title=str(payload.get("title") or job.request.title or "新演示文稿"),
-            )
             expected_pages = max(3, min(job.request.num_pages, settings.max_slide_pages))
-            payload_holder["slidev_submission_check"] = {
-                "submitted_slide_count_raw": inspection["raw_slide_count"],
-                "submitted_slide_count_normalized": inspection["normalized_slide_count"],
+            payload_holder["slidev_deck"] = payload
+            page_count_check: dict[str, Any] = {
                 "expected_slide_count": expected_pages,
                 "page_count_check_stage": "submit_tool",
-                "normalization": inspection["normalization"],
+                "mode": "soft",
             }
-            if int(inspection["normalized_slide_count"]) != expected_pages:
-                error_content = {
-                    "error": (
-                        "Slidev deck page count mismatch. "
-                        f"Expected {expected_pages}, raw={inspection['raw_slide_count']}, "
-                        f"normalized={inspection['normalized_slide_count']}."
-                    ),
-                    "expected_slide_count": expected_pages,
-                    "submitted_slide_count_raw": inspection["raw_slide_count"],
-                    "submitted_slide_count_normalized": inspection["normalized_slide_count"],
-                    "page_count_check_stage": "submit_tool",
-                    "normalization": inspection["normalization"],
-                }
-                payload_holder["slidev_submission_error"] = error_content
-                raise ToolExecutionError(error_content["error"], content=error_content)
-            payload_holder["slidev_deck"] = payload
+            outline_items = list(state.outline.get("items") or []) if isinstance(state.outline, dict) else []
+            with suppress(Exception):
+                inspection = inspect_slidev_markdown_submission(
+                    markdown=markdown,
+                    outline_items=outline_items,
+                    fallback_title=str(payload.get("title") or job.request.title or "新演示文稿"),
+                )
+                page_count_check["submitted_slide_count_raw"] = inspection["raw_slide_count"]
+                page_count_check["submitted_slide_count_normalized"] = inspection["normalized_slide_count"]
+                page_count_check["normalization"] = inspection["normalization"]
+                page_count_check["matches_expected"] = int(inspection["normalized_slide_count"]) == expected_pages
+            payload_holder["slidev_submission_check"] = page_count_check
             artifacts_dir = context.workspace_root / "artifacts"
             artifacts_dir.mkdir(parents=True, exist_ok=True)
             (artifacts_dir / "slides.md").write_text(markdown, encoding="utf-8")
-            return {
+            response = {
                 "status": "ok",
                 "selected_style_id": payload.get("selectedStyleId"),
-                "submitted_slide_count_raw": inspection["raw_slide_count"],
-                "submitted_slide_count_normalized": inspection["normalized_slide_count"],
                 "expected_slide_count": expected_pages,
                 "page_count_check_stage": "submit_tool",
                 "path": str((artifacts_dir / "slides.md").resolve()),
             }
+            if "submitted_slide_count_raw" in page_count_check:
+                response["submitted_slide_count_raw"] = page_count_check["submitted_slide_count_raw"]
+            if "submitted_slide_count_normalized" in page_count_check:
+                response["submitted_slide_count_normalized"] = page_count_check["submitted_slide_count_normalized"]
+            if "matches_expected" in page_count_check:
+                response["matches_expected"] = page_count_check["matches_expected"]
+            return response
 
         return Tool(
             name="submit_slidev_deck",
@@ -2401,7 +2538,7 @@ class GenerationRunner:
         job: GenerationJob,
         state: GenerationRuntimeState,
         payload_holder: dict[str, Any],
-    ) -> tuple[dict[str, Any], Presentation] | None:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
         payload = payload_holder.get("slidev_deck")
         if not isinstance(payload, dict):
             return None
@@ -2421,13 +2558,16 @@ class GenerationRunner:
         if isinstance(submission_check, dict):
             meta_payload = finalized.get("meta")
             if isinstance(meta_payload, dict):
-                meta_payload["page_count_check"] = deepcopy(submission_check)
-        presentation = finalized.get("presentation")
-        if not isinstance(presentation, dict):
+                current = meta_payload.get("page_count_check")
+                if isinstance(current, dict):
+                    current.update(deepcopy(submission_check))
+                else:
+                    meta_payload["page_count_check"] = deepcopy(submission_check)
+        meta_payload = finalized.get("meta")
+        if not isinstance(meta_payload, dict):
             return None
-        normalized_payload, _changed, _report = normalize_presentation_payload(presentation)
-        validated = Presentation.model_validate(self._hydrate_submitted_presentation(job, normalized_payload))
-        return finalized, validated
+        slides = _build_slidev_runtime_slides(meta_payload)
+        return finalized, slides
 
     @staticmethod
     def _workspace_root_for_job(job: GenerationJob):
@@ -2647,51 +2787,6 @@ class GenerationRunner:
             f"{issue_text}\n"
             f"修正后再次调用 `{submit_tool}`。"
         )
-
-    @staticmethod
-    def _slidev_retry_issues_from_tool_results(tool_results: list[Any], expected: int) -> list[str]:
-        for item in tool_results:
-            if str(getattr(item, "tool_name", "")) != "submit_slidev_deck" or not bool(getattr(item, "is_error", False)):
-                continue
-            content = getattr(item, "content", None)
-            if not isinstance(content, dict):
-                continue
-            error = str(content.get("error") or "Slidev deck 提交失败。").strip()
-            expected_count = content.get("expected_slide_count", expected)
-            raw_count = content.get("submitted_slide_count_raw")
-            normalized_count = content.get("submitted_slide_count_normalized")
-            stage = str(content.get("page_count_check_stage") or "submit_tool")
-            return [
-                error,
-                f"预期页数: {expected_count}。",
-                f"本次提交页数: raw={raw_count}, normalized={normalized_count}，检查阶段={stage}。",
-                "请修正 metadata-only frontmatter / 重复分隔符，提交一份规范化后页数仍然正确的 deck。",
-            ]
-        return [
-            "必须输出可被 slidev build 编译的完整 Slidev markdown deck。",
-            f"必须严格包含 {expected} 页，且由全局 frontmatter + Slidev 页面分隔组成。",
-            "必须只通过 submit_slidev_deck 提交 markdown 和 selected_style_id。",
-        ]
-
-    @staticmethod
-    def _slidev_retry_issues_from_exception(
-        exc: Exception,
-        expected: int,
-        payload_holder: dict[str, Any],
-    ) -> list[str]:
-        check = payload_holder.get("slidev_submission_check")
-        issues = [str(exc)]
-        if isinstance(check, dict):
-            issues.append(
-                "页数检查信息: "
-                f"expected={check.get('expected_slide_count', expected)}, "
-                f"raw={check.get('submitted_slide_count_raw')}, "
-                f"normalized={check.get('submitted_slide_count_normalized')}, "
-                f"stage={check.get('page_count_check_stage') or 'unknown'}。"
-            )
-        if "slide count mismatch" in str(exc).lower():
-            issues.append("请检查是否把每页 frontmatter 写成了独立 metadata-only slide。")
-        return issues
 
     @staticmethod
     def _infer_start_stage(job: GenerationJob) -> StageStatus:

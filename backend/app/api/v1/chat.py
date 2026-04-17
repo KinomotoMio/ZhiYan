@@ -163,13 +163,11 @@ async def chat(req: ChatRequest, request: Request):
                 and outcome.slidev_markdown
                 and outcome.slidev_meta
                 and outcome.slidev_preview_url
-                and outcome.normalized_presentation
             ):
                 slidev_update = {
                     "type": "slidev_update",
                     "markdown": outcome.slidev_markdown,
                     "meta": outcome.slidev_meta,
-                    "presentation": outcome.normalized_presentation,
                     "selected_style_id": outcome.selected_style_id,
                     "preview_url": outcome.slidev_preview_url,
                     "modifications": [item.model_dump(mode="json") for item in outcome.modifications],
