@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   canHoverPreviewSource,
   getSourcePreviewKind,
+  resolveHoverPreviewLayout,
 } from "@/components/create/source-preview";
 
 test("ready image sources use image preview mode", () => {
@@ -66,4 +67,42 @@ test("hover preview is enabled for ready images and text snippets only", () => {
     }),
     false
   );
+});
+
+test("right placement keeps the hover preview on the trigger's right side", () => {
+  const layout = resolveHoverPreviewLayout({
+    triggerRect: {
+      top: 280,
+      left: 20,
+      right: 380,
+      bottom: 376,
+      width: 360,
+    },
+    viewportWidth: 1600,
+    viewportHeight: 900,
+    placement: "right",
+  });
+
+  assert.equal(layout.left, 388);
+  assert.equal(layout.top, 280);
+  assert.equal(layout.width, 380);
+  assert.equal(layout.maxHeight, 876);
+});
+
+test("right placement clamps horizontally when the viewport is tight", () => {
+  const layout = resolveHoverPreviewLayout({
+    triggerRect: {
+      top: 120,
+      left: 40,
+      right: 290,
+      bottom: 216,
+      width: 250,
+    },
+    viewportWidth: 560,
+    viewportHeight: 700,
+    placement: "right",
+  });
+
+  assert.equal(layout.left, 248);
+  assert.equal(layout.width, 300);
 });

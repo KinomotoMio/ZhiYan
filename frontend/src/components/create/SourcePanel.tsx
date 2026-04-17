@@ -2,10 +2,11 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
+  addWorkspaceTextSource,
   appendSessionChat,
   createSession,
   createSessionSnapshot,
@@ -23,6 +24,7 @@ import { resolveGenerationRequestTitle } from "@/lib/loading-title";
 import SourceItem from "./SourceItem";
 import SourcePreviewModal from "./SourcePreviewModal";
 import AddSourceArea from "./AddSourceArea";
+import CircleCheckbox from "@/components/ui/CircleCheckbox";
 import { cn } from "@/lib/utils";
 import {
   getSessionEditorPath,
@@ -85,8 +87,6 @@ function toStoreChatMessages(records: Array<Record<string, unknown>>): ChatMessa
     .filter((item) => item.content.trim().length > 0);
 }
 
-type SourceFilterMode = "all" | "selected" | "unselected";
-
 type HydratedGenerationJob = {
   slides?: Slide[];
   request?: { title?: string; topic?: string };
@@ -103,6 +103,19 @@ function toTimestamp(source: SourceMeta): number {
   if (!raw) return 0;
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function matchesSourceQuery(source: SourceMeta, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    source.name.toLowerCase().includes(normalized) ||
+    (source.previewSnippet || "").toLowerCase().includes(normalized)
+  );
+}
+
+function compareSourceOrder(a: SourceMeta, b: SourceMeta): number {
+  return toTimestamp(b) - toTimestamp(a);
 }
 
 export default function SourcePanel() {
@@ -129,15 +142,12 @@ export default function SourcePanel() {
     selectedSourceIds,
     addSelectedSource,
     removeSelectedSource,
-    selectAllSources,
-    deselectAllSources,
   } = useAppStore();
 
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [loadingWorkspaceSources, setLoadingWorkspaceSources] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
-  const [sourceFilterMode, setSourceFilterMode] = useState<SourceFilterMode>("all");
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const bootstrappedRef = useRef(false);
   const effectiveSelectedSourceIds = useMemo(
@@ -149,28 +159,24 @@ export default function SourcePanel() {
   const selectedCount = readySources.filter((s) =>
     effectiveSelectedSourceIds.includes(s.id)
   ).length;
-  const allSelected = readySources.length > 0 && selectedCount === readySources.length;
 
   const visibleSources = useMemo(() => {
-    const selectedSet = new Set(effectiveSelectedSourceIds);
-    const filtered = workspaceSources.filter((source) => {
-      if (workspaceQuery.trim()) {
-        const normalized = workspaceQuery.trim().toLowerCase();
-        if (!source.name.toLowerCase().includes(normalized)) {
-          return false;
-        }
-      }
-      if (sourceFilterMode === "selected") return selectedSet.has(source.id);
-      if (sourceFilterMode === "unselected") return !selectedSet.has(source.id);
-      return true;
-    });
-    return filtered.sort((a, b) => {
-      const selectedA = selectedSet.has(a.id) ? 1 : 0;
-      const selectedB = selectedSet.has(b.id) ? 1 : 0;
-      if (selectedA !== selectedB) return selectedB - selectedA;
-      return toTimestamp(b) - toTimestamp(a);
-    });
-  }, [effectiveSelectedSourceIds, sourceFilterMode, workspaceQuery, workspaceSources]);
+    return [...workspaceSources]
+      .filter((source) => matchesSourceQuery(source, workspaceQuery))
+      .sort(compareSourceOrder);
+  }, [workspaceQuery, workspaceSources]);
+
+  const visibleReadySourceIds = useMemo(
+    () =>
+      visibleSources
+        .filter((source) => source.status === "ready")
+        .map((source) => source.id),
+    [visibleSources]
+  );
+
+  const allSelected =
+    visibleReadySourceIds.length > 0 &&
+    visibleReadySourceIds.every((id) => effectiveSelectedSourceIds.includes(id));
 
   const refreshSessions = useCallback(
     async (q = "") => {
@@ -544,6 +550,57 @@ export default function SourcePanel() {
     ]
   );
 
+  const handleTextSubmit = useCallback(
+    async (name: string, content: string) => {
+      const sessionId = await ensureSession();
+      const tempId = `temp-text-${Date.now()}`;
+      addWorkspaceSource({
+        id: tempId,
+        name,
+        type: "text",
+        fileCategory: "text",
+        size: new TextEncoder().encode(content).length,
+        status: "parsing",
+        previewSnippet: content.trim().slice(0, 200) || undefined,
+      });
+
+      try {
+        const meta = await addWorkspaceTextSource(name, content);
+        await linkSourcesToSession(sessionId, [meta.id]);
+        removeWorkspaceSource(tempId);
+        addSelectedSource(meta.id);
+        await refreshWorkspaceSources();
+        refreshSessions().catch((err) => {
+          console.error("Failed to refresh sessions:", err);
+        });
+        if (planningState?.outline?.items && planningState.outline.items.length > 0) {
+          setOutlineStale(true);
+        }
+        if (meta.deduped) {
+          toast.info("检测到重复素材，已复用已有内容");
+        } else {
+          toast.success("文本素材已保存并选中");
+        }
+      } catch (err) {
+        updateWorkspaceSource(tempId, {
+          status: "error",
+          error: err instanceof Error ? err.message : "文本保存失败",
+        });
+      }
+    },
+    [
+      addSelectedSource,
+      addWorkspaceSource,
+      ensureSession,
+      planningState?.outline?.items,
+      refreshSessions,
+      refreshWorkspaceSources,
+      removeWorkspaceSource,
+      setOutlineStale,
+      updateWorkspaceSource,
+    ]
+  );
+
   const handleToggleSessionSource = useCallback(
     async (sourceId: string) => {
       if (isBootstrapping) return;
@@ -590,10 +647,10 @@ export default function SourcePanel() {
     if (isBootstrapping) return;
     const sessionId = await ensureSession();
     if (allSelected) {
-      const toUnlink = readySources
-        .map((source) => source.id)
-        .filter((id) => effectiveSelectedSourceIds.includes(id));
-      deselectAllSources();
+      const toUnlink = visibleReadySourceIds.filter((id) =>
+        effectiveSelectedSourceIds.includes(id)
+      );
+      toUnlink.forEach((id) => removeSelectedSource(id));
       await Promise.all(
         toUnlink.map((id) =>
           unlinkSourceFromSession(sessionId, id).catch((err) => {
@@ -612,11 +669,11 @@ export default function SourcePanel() {
       return;
     }
 
-    const toLink = readySources
-      .map((source) => source.id)
-      .filter((id) => !effectiveSelectedSourceIds.includes(id));
+    const toLink = visibleReadySourceIds.filter(
+      (id) => !effectiveSelectedSourceIds.includes(id)
+    );
     if (toLink.length === 0) return;
-    selectAllSources();
+    toLink.forEach((id) => addSelectedSource(id));
     try {
       await linkSourcesToSession(sessionId, toLink);
       if (planningState?.outline?.items && planningState.outline.items.length > 0) {
@@ -630,16 +687,14 @@ export default function SourcePanel() {
   }, [
     addSelectedSource,
     allSelected,
-    deselectAllSources,
     ensureSession,
     effectiveSelectedSourceIds,
     isBootstrapping,
     planningState?.outline?.items,
-    readySources,
     refreshSessions,
     removeSelectedSource,
     setOutlineStale,
-    selectAllSources,
+    visibleReadySourceIds,
   ]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -691,11 +746,22 @@ export default function SourcePanel() {
     [handleUploadFiles, handleUrlSubmit]
   );
 
+  const filteredSelectedCount = visibleReadySourceIds.filter((id) =>
+    effectiveSelectedSourceIds.includes(id)
+  ).length;
+  const hasSearchQuery = workspaceQuery.trim().length > 0;
+  const emptyStateTitle = hasSearchQuery ? "没有找到匹配素材" : "素材库还是空的";
+  const emptyStateMessage = loadingWorkspaceSources
+    ? "素材加载中..."
+    : hasSearchQuery
+      ? "可以换个关键词，或直接上传新的素材。"
+      : "拖拽文件、粘贴网页链接，或新建文本素材后再开始选择。";
+
   return (
     <>
-        <div
+      <div
         className={cn(
-          "relative flex w-[332px] shrink-0 flex-col border-r border-white/55 bg-white/34 backdrop-blur-xl",
+          "relative flex w-[440px] shrink-0 flex-col border-r border-white/80 bg-white/46 backdrop-blur-xl",
           isDragOver && "ring-2 ring-inset ring-cyan-500/50"
         )}
         onDragOver={handleDragOver}
@@ -705,130 +771,144 @@ export default function SourcePanel() {
         tabIndex={0}
       >
         {isDragOver && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary/5">
-            <p className="text-sm font-medium text-primary">松开以上传素材</p>
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-[28px] bg-[rgba(var(--zy-brand-blue),0.08)] backdrop-blur-sm">
+            <p className="text-sm font-medium text-[rgb(var(--zy-brand-blue))]">松开以上传素材</p>
           </div>
         )}
 
-        <div className="border-b border-white/55 px-4 pb-4 pt-5">
-          <div className="flex items-center gap-2">
-            {readySources.length > 0 && (
-              <input
-                type="checkbox"
-                checked={allSelected}
-                disabled={isBootstrapping}
-                onChange={() => {
-                  void handleToggleAll();
-                }}
-                className="h-4 w-4 cursor-pointer rounded border-gray-300 accent-primary"
-                aria-label="全选来源"
-              />
-            )}
-            <h2 className="text-sm font-semibold text-slate-900">素材库</h2>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            {loadingWorkspaceSources
-              ? "加载素材中..."
-              : readySources.length > 0
-                ? `当前会话已选中 ${selectedCount}/${readySources.length} 份可用素材`
-                : `共 ${workspaceSources.length} 份素材`}
-          </p>
-        </div>
-
-        <div className="border-b border-white/55 px-4 py-4">
-          <input
-            value={workspaceQuery}
-            onChange={(e) => setWorkspaceQuery(e.target.value)}
-            placeholder="检索素材..."
-            className="h-10 w-full rounded-2xl border border-white/90 bg-white/88 px-3 text-sm text-slate-700 shadow-[0_12px_24px_-24px_rgba(15,23,42,0.5)] outline-none transition placeholder:text-slate-400 focus:border-cyan-200 focus:ring-2 focus:ring-cyan-500/15"
-          />
-          <div className="mt-3 flex flex-wrap gap-2">
+        <div className="border-b border-white/75 bg-white/66 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-semibold text-slate-900">素材库</h2>
+                <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-900 px-2 text-[11px] font-medium text-white">
+                  {workspaceSources.length}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                {loadingWorkspaceSources
+                  ? "素材加载中..."
+                  : readySources.length > 0
+                    ? `当前会话已选择 ${selectedCount}/${readySources.length} 条可用素材`
+                    : `共 ${workspaceSources.length} 条素材`}
+              </p>
+            </div>
             <button
-              onClick={() => setSourceFilterMode("all")}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-                sourceFilterMode === "all"
-                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
-                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
-              )}
+              type="button"
+              onClick={() => {
+                void refreshWorkspaceSources();
+              }}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white/80 text-slate-600 transition-all duration-200 hover:shadow-sm"
+              aria-label="刷新素材"
             >
-              全部
-            </button>
-            <button
-              onClick={() => setSourceFilterMode("selected")}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-                sourceFilterMode === "selected"
-                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
-                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
-              )}
-            >
-              已选择
-            </button>
-            <button
-              onClick={() => setSourceFilterMode("unselected")}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-                sourceFilterMode === "unselected"
-                  ? "border-slate-200 bg-white text-slate-900 shadow-[0_10px_22px_-20px_rgba(15,23,42,0.45)]"
-                  : "border-transparent bg-white/55 text-slate-500 hover:border-white/90 hover:bg-white/80 hover:text-slate-700"
-              )}
-            >
-              未选择
+              <Loader2 className={cn("h-4 w-4", loadingWorkspaceSources && "animate-spin")} />
             </button>
             <button
               onClick={() => router.push("/assets")}
-              className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs text-slate-500 transition hover:bg-white/70 hover:text-slate-700"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-300 bg-white/80 px-3 text-sm text-slate-600 transition-all duration-200 hover:shadow-sm"
             >
-              <FolderOpen className="h-3.5 w-3.5" />
-              管理素材库
+              <FolderOpen className="h-4 w-4" />
+              管理
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {visibleSources.length === 0 ? (
-            <div className="flex flex-col items-center justify-center px-5 py-12 text-center text-sm text-slate-500">
-              <p className="font-medium text-slate-700">这里还没有可用素材</p>
-              <p className="mt-2 text-xs leading-6">
-                上传文件或贴上链接后，就可以让知演围绕这些内容帮你整理演示结构。
-              </p>
+        <div className="flex flex-col gap-2 border-b border-white/75 px-5 py-2.5">
+          <div className="rounded-xl border border-white/80 bg-white/72 p-2.5">
+            <input
+              value={workspaceQuery}
+              onChange={(e) => setWorkspaceQuery(e.target.value)}
+              placeholder="搜索素材名称..."
+              className="h-9 w-full rounded-lg border border-slate-300 bg-white/80 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-white/80 bg-white/75 p-3">
+            <AddSourceArea
+              onFilesSelected={(files) => {
+                void handleUploadFiles(files);
+              }}
+              onUrlSubmit={(url) => {
+                void handleUrlSubmit(url);
+              }}
+              onTextSubmit={(name, content) => {
+                void handleTextSubmit(name, content);
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 border-b border-white/75 px-5 py-3">
+          <CircleCheckbox
+            checked={allSelected}
+            disabled={visibleReadySourceIds.length === 0 || isBootstrapping}
+            onChange={() => {
+              void handleToggleAll();
+            }}
+            aria-label="全选当前筛选素材"
+          />
+          <span className="text-sm text-slate-500">
+            当前筛选已选 {filteredSelectedCount}/{visibleReadySourceIds.length || 0}
+          </span>
+          <span className="ml-auto text-xs text-slate-400">列表中共 {visibleSources.length} 条</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loadingWorkspaceSources && visibleSources.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-500">{emptyStateMessage}</p>
+          ) : visibleSources.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-6 py-12 text-center">
+              <p className="text-sm font-medium text-slate-700">{emptyStateTitle}</p>
+              <p className="mt-2 text-sm text-slate-500">{emptyStateMessage}</p>
             </div>
           ) : (
-            <div className="space-y-2.5">
-              {visibleSources.map((source) => (
-                <SourceItem
-                  key={source.id}
-                  source={source}
-                  isSelected={effectiveSelectedSourceIds.includes(source.id)}
-                  onToggleSelect={(id) => {
-                    void handleToggleSessionSource(id);
-                  }}
-                  onPreview={setPreviewSource}
-                  showRemove={false}
-                  hoverPreviewVariant="create"
-                  extraMeta={
-                    typeof source.linked_session_count === "number"
-                      ? `已关联 ${source.linked_session_count} 个会话`
-                      : undefined
-                  }
-                />
-              ))}
+            <div className="space-y-3">
+              {visibleSources.map((source) => {
+                const isSelected = effectiveSelectedSourceIds.includes(source.id);
+                const isReady = source.status === "ready";
+                const statusDetail =
+                  source.status === "error" ? source.error || "导入失败，请稍后重试" : undefined;
+
+                return (
+                  <div
+                    key={source.id}
+                    className="relative z-0 flex min-h-[96px] items-center gap-3 rounded-2xl border border-slate-200 bg-white/85 p-3 transition-all duration-200 hover:z-30 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-28px_rgba(15,23,42,0.35)] focus-within:z-30"
+                  >
+                    {isReady ? (
+                      <CircleCheckbox
+                        checked={isSelected}
+                        onChange={() => {
+                          void handleToggleSessionSource(source.id);
+                        }}
+                        aria-label={isSelected ? "取消选择素材" : "选择素材"}
+                      />
+                    ) : (
+                      <div className="h-5 w-5 shrink-0 rounded-full border border-dashed border-slate-300/80 bg-white/60" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <SourceItem
+                        source={source}
+                        isSelected={isSelected}
+                        onToggleSelect={() => {}}
+                        onPreview={setPreviewSource}
+                        showSelectionCheckbox={false}
+                        showRemove={false}
+                        hoverPreviewVariant="assets"
+                        hoverPreviewPlacement="right"
+                        statusDetail={statusDetail}
+                        extraMeta={
+                          typeof source.linked_session_count === "number"
+                            ? `已关联 ${source.linked_session_count} 个会话`
+                            : undefined
+                        }
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
-
-        <div className="border-t border-white/55 px-4 py-4">
-          <AddSourceArea
-            onFilesSelected={(files) => {
-              void handleUploadFiles(files);
-            }}
-            onUrlSubmit={(url) => {
-              void handleUrlSubmit(url);
-            }}
-          />
-        </div>
-
       </div>
 
       {previewSource && (

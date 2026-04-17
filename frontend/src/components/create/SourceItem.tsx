@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import {
   canHoverPreviewSource,
   getSourcePreviewKind,
+  resolveHoverPreviewLayout,
+  type HoverPreviewPlacement,
 } from "@/components/create/source-preview";
 
 const CATEGORY_ICON: Record<string, typeof FileText> = {
@@ -70,6 +72,7 @@ interface SourceItemProps {
   onAction?: (source: SourceMeta) => void;
   actionDisabled?: boolean;
   hoverPreviewVariant?: "default" | "assets" | "create";
+  hoverPreviewPlacement?: HoverPreviewPlacement;
 }
 
 interface HoverPreviewPosition {
@@ -93,6 +96,7 @@ export default function SourceItem({
   onAction,
   actionDisabled = false,
   hoverPreviewVariant = "default",
+  hoverPreviewPlacement = "auto",
 }: SourceItemProps) {
   const [showPopover, setShowPopover] = useState(false);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
@@ -133,42 +137,22 @@ export default function SourceItem({
       if (!triggerRef.current) return;
 
       const triggerRect = triggerRef.current.getBoundingClientRect();
-      const viewportMargin = HOVER_PREVIEW_VIEWPORT_MARGIN;
-      const gap = HOVER_PREVIEW_GAP;
-      const maxWidth = Math.min(HOVER_PREVIEW_MAX_WIDTH, window.innerWidth - viewportMargin * 2);
-      const width = Math.min(
-        Math.max(triggerRect.width + HOVER_PREVIEW_WIDTH_PADDING, HOVER_PREVIEW_MIN_WIDTH),
-        maxWidth
+      setHoverPreviewPosition(
+        resolveHoverPreviewLayout({
+          triggerRect,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          placement: hoverPreviewPlacement,
+          viewportMargin: HOVER_PREVIEW_VIEWPORT_MARGIN,
+          gap: HOVER_PREVIEW_GAP,
+          maxWidth: HOVER_PREVIEW_MAX_WIDTH,
+          minWidth: HOVER_PREVIEW_MIN_WIDTH,
+          widthPadding: HOVER_PREVIEW_WIDTH_PADDING,
+          fallbackHeight: HOVER_PREVIEW_FALLBACK_HEIGHT,
+          minHeight: HOVER_PREVIEW_MIN_HEIGHT,
+          minVisibleHeight: HOVER_PREVIEW_MIN_VISIBLE_HEIGHT,
+        })
       );
-      const belowSpace = Math.max(
-        0,
-        window.innerHeight - triggerRect.bottom - gap - viewportMargin
-      );
-      const aboveSpace = Math.max(0, triggerRect.top - gap - viewportMargin);
-      const placeBelow =
-        belowSpace >= HOVER_PREVIEW_MIN_HEIGHT || belowSpace >= aboveSpace;
-      const availableHeight = placeBelow ? belowSpace : aboveSpace;
-      const left = Math.max(
-        viewportMargin,
-        Math.min(triggerRect.left, window.innerWidth - width - viewportMargin)
-      );
-      const maxHeight = Math.max(
-        Math.min(HOVER_PREVIEW_MIN_VISIBLE_HEIGHT, Math.max(belowSpace, aboveSpace)),
-        availableHeight
-      );
-      const top = placeBelow
-        ? triggerRect.bottom + gap
-        : Math.max(
-            viewportMargin,
-            triggerRect.top - gap - Math.min(HOVER_PREVIEW_FALLBACK_HEIGHT, maxHeight)
-          );
-
-      setHoverPreviewPosition({
-        top,
-        left,
-        width,
-        maxHeight,
-      });
     };
 
     updateHoverPreviewPosition();
@@ -183,6 +167,7 @@ export default function SourceItem({
     };
   }, [
     hasHoverPreview,
+    hoverPreviewPlacement,
     hoverPreviewVariant,
     showPopover,
   ]);
