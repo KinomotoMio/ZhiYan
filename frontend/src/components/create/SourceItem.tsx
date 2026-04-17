@@ -64,6 +64,7 @@ interface SourceItemProps {
   onToggleSelect: (id: string) => void;
   onRemove?: (id: string) => void;
   onPreview: (source: SourceMeta) => void;
+  clickBehavior?: "preview" | "toggle-select";
   showSelectionCheckbox?: boolean;
   showRemove?: boolean;
   extraMeta?: string;
@@ -88,6 +89,7 @@ export default function SourceItem({
   onToggleSelect,
   onRemove,
   onPreview,
+  clickBehavior = "preview",
   showSelectionCheckbox = true,
   showRemove = false,
   extraMeta,
@@ -230,6 +232,15 @@ export default function SourceItem({
     }, HOVER_PREVIEW_CLOSE_DELAY_MS);
   };
 
+  const handleItemClick = () => {
+    if (!isReady) return;
+    if (clickBehavior === "toggle-select") {
+      onToggleSelect(source.id);
+      return;
+    }
+    onPreview(source);
+  };
+
   const renderImagePreview = (maxHeightClass: string, loaderHeightClass: string, radiusClass: string) => (
     <div
       className={cn(
@@ -359,7 +370,7 @@ export default function SourceItem({
               : "cursor-pointer border-white/85 bg-white/78 hover:-translate-y-0.5 hover:border-slate-200 hover:bg-white/92 hover:shadow-[0_18px_36px_-30px_rgba(15,23,42,0.4)] dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-slate-600 dark:hover:bg-slate-800"
             : "border-white/80 bg-white/70 dark:border-slate-700 dark:bg-slate-800/80"
       )}
-      onClick={() => isReady && onPreview(source)}
+      onClick={handleItemClick}
       onMouseEnter={openHoverPreview}
       onMouseLeave={scheduleHoverPreviewClose}
     >

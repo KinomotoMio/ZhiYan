@@ -142,7 +142,7 @@ export default function AddSourceArea({
     <div
       ref={containerRef}
       className={cn(
-        "rounded-[24px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(247,249,252,0.82))] p-3 shadow-[0_20px_44px_-36px_rgba(15,23,42,0.42)]",
+        "w-full rounded-[24px] border border-white/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(247,249,252,0.82))] p-3 shadow-[0_20px_44px_-36px_rgba(15,23,42,0.42)]",
         isAssetsVariant && "w-full space-y-4 rounded-none border-0 bg-transparent p-0 shadow-none"
       )}
     >
@@ -205,7 +205,7 @@ export default function AddSourceArea({
           ) : null}
         </div>
       ) : (
-        <>
+        <div className="space-y-3">
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex w-full items-center justify-center gap-2 rounded-[18px] border border-dashed border-slate-300/90 bg-white/80 px-4 py-3 text-sm font-medium text-slate-600 transition-all duration-200 hover:border-slate-400 hover:bg-white hover:text-slate-900 hover:shadow-[0_16px_32px_-28px_rgba(15,23,42,0.45)]"
@@ -213,18 +213,32 @@ export default function AddSourceArea({
             <Plus className="h-4 w-4" />
             添加素材
           </button>
-          <div className="flex flex-wrap gap-2">
+          <div
+            className={cn(
+              "grid gap-2",
+              onTextSubmit ? "grid-cols-2" : "grid-cols-1"
+            )}
+          >
             <button
               type="button"
               onClick={() => setMode("url")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors",
+                "flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm font-medium transition-all duration-200",
                 showUrlInput
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-500 hover:bg-white/80 hover:text-slate-700"
+                  ? "border-[rgba(var(--zy-brand-blue),0.22)] bg-[linear-gradient(135deg,rgba(247,250,255,0.98),rgba(236,244,255,0.96))] text-[rgb(var(--zy-brand-blue))] shadow-[0_16px_30px_-26px_rgba(15,23,42,0.38)]"
+                  : "border-white/90 bg-white/82 text-slate-600 hover:-translate-y-0.5 hover:border-slate-200 hover:bg-white hover:text-slate-800 hover:shadow-[0_16px_28px_-24px_rgba(15,23,42,0.32)]"
               )}
             >
-              <Link className="h-3 w-3" />
+              <span
+                className={cn(
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                  showUrlInput
+                    ? "bg-[rgba(var(--zy-brand-blue),0.12)]"
+                    : "bg-slate-100"
+                )}
+              >
+                <Link className="h-3.5 w-3.5" />
+              </span>
               粘贴网页链接
             </button>
             {onTextSubmit ? (
@@ -232,18 +246,27 @@ export default function AddSourceArea({
                 type="button"
                 onClick={() => setMode("text")}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors",
+                  "flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm font-medium transition-all duration-200",
                   showTextInput
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-500 hover:bg-white/80 hover:text-slate-700"
+                    ? "border-[rgba(var(--zy-brand-blue),0.22)] bg-[linear-gradient(135deg,rgba(247,250,255,0.98),rgba(236,244,255,0.96))] text-[rgb(var(--zy-brand-blue))] shadow-[0_16px_30px_-26px_rgba(15,23,42,0.38)]"
+                    : "border-white/90 bg-white/82 text-slate-600 hover:-translate-y-0.5 hover:border-slate-200 hover:bg-white hover:text-slate-800 hover:shadow-[0_16px_28px_-24px_rgba(15,23,42,0.32)]"
                 )}
               >
-                <FileText className="h-3 w-3" />
+                <span
+                  className={cn(
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                    showTextInput
+                      ? "bg-[rgba(var(--zy-brand-blue),0.12)]"
+                      : "bg-slate-100"
+                  )}
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                </span>
                 新建文本素材
               </button>
             ) : null}
           </div>
-        </>
+        </div>
       )}
       <input
         ref={fileInputRef}
@@ -320,10 +343,6 @@ export default function AddSourceArea({
             </button>
           </div>
         </div>
-      ) : !isAssetsVariant ? (
-        <p className="text-xs text-slate-500">
-          也可以粘贴网页链接补充来源。
-        </p>
       ) : null}
     </div>
   );

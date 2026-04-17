@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FolderOpen, Loader2 } from "lucide-react";
+import { FolderOpen, Grid2x2, List, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore, type ChatMessage } from "@/lib/store";
 import {
@@ -149,16 +149,12 @@ export default function SourcePanel() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewSource, setPreviewSource] = useState<SourceMeta | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [sourceViewMode, setSourceViewMode] = useState<"single" | "double">("double");
   const bootstrappedRef = useRef(false);
   const effectiveSelectedSourceIds = useMemo(
     () => (isBootstrapping ? [] : selectedSourceIds),
     [isBootstrapping, selectedSourceIds]
   );
-
-  const readySources = workspaceSources.filter((s) => s.status === "ready");
-  const selectedCount = readySources.filter((s) =>
-    effectiveSelectedSourceIds.includes(s.id)
-  ).length;
 
   const visibleSources = useMemo(() => {
     return [...workspaceSources]
@@ -777,21 +773,9 @@ export default function SourcePanel() {
         )}
 
         <div className="border-b border-white/75 bg-white/66 px-5 py-4">
-          <div className="flex items-start gap-3">
+          <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-slate-900">素材库</h2>
-                <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-900 px-2 text-[11px] font-medium text-white">
-                  {workspaceSources.length}
-                </span>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                {loadingWorkspaceSources
-                  ? "素材加载中..."
-                  : readySources.length > 0
-                    ? `当前会话已选择 ${selectedCount}/${readySources.length} 条可用素材`
-                    : `共 ${workspaceSources.length} 条素材`}
-              </p>
+              <h2 className="text-base font-semibold leading-none text-slate-900">素材库</h2>
             </div>
             <button
               type="button"
@@ -801,7 +785,7 @@ export default function SourcePanel() {
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white/80 text-slate-600 transition-all duration-200 hover:shadow-sm"
               aria-label="刷新素材"
             >
-              <Loader2 className={cn("h-4 w-4", loadingWorkspaceSources && "animate-spin")} />
+              <RefreshCw className={cn("h-4 w-4", loadingWorkspaceSources && "animate-spin")} />
             </button>
             <button
               onClick={() => router.push("/assets")}
@@ -810,31 +794,6 @@ export default function SourcePanel() {
               <FolderOpen className="h-4 w-4" />
               管理
             </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 border-b border-white/75 px-5 py-2.5">
-          <div className="rounded-xl border border-white/80 bg-white/72 p-2.5">
-            <input
-              value={workspaceQuery}
-              onChange={(e) => setWorkspaceQuery(e.target.value)}
-              placeholder="搜索素材名称..."
-              className="h-9 w-full rounded-lg border border-slate-300 bg-white/80 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-            />
-          </div>
-
-          <div className="rounded-2xl border border-white/80 bg-white/75 p-3">
-            <AddSourceArea
-              onFilesSelected={(files) => {
-                void handleUploadFiles(files);
-              }}
-              onUrlSubmit={(url) => {
-                void handleUrlSubmit(url);
-              }}
-              onTextSubmit={(name, content) => {
-                void handleTextSubmit(name, content);
-              }}
-            />
           </div>
         </div>
 
@@ -850,7 +809,42 @@ export default function SourcePanel() {
           <span className="text-sm text-slate-500">
             当前筛选已选 {filteredSelectedCount}/{visibleReadySourceIds.length || 0}
           </span>
-          <span className="ml-auto text-xs text-slate-400">列表中共 {visibleSources.length} 条</span>
+          <div className="ml-auto flex items-center gap-2">
+            <input
+              value={workspaceQuery}
+              onChange={(e) => setWorkspaceQuery(e.target.value)}
+              placeholder="搜索素材名称..."
+              className="h-9 w-[176px] rounded-lg border border-slate-300 bg-white/80 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            />
+            <div className="inline-flex items-center rounded-xl border border-slate-300 bg-white/80 p-1">
+              <button
+                type="button"
+                onClick={() => setSourceViewMode("single")}
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition-colors",
+                  sourceViewMode === "single"
+                    ? "bg-slate-900 text-white"
+                    : "hover:bg-slate-100 hover:text-slate-700"
+                )}
+                aria-label="单列显示素材"
+              >
+                <List className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSourceViewMode("double")}
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition-colors",
+                  sourceViewMode === "double"
+                    ? "bg-slate-900 text-white"
+                    : "hover:bg-slate-100 hover:text-slate-700"
+                )}
+                aria-label="双列显示素材"
+              >
+                <Grid2x2 className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -862,52 +856,56 @@ export default function SourcePanel() {
               <p className="mt-2 text-sm text-slate-500">{emptyStateMessage}</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div
+              className={cn(
+                "grid gap-3",
+                sourceViewMode === "double" ? "grid-cols-2" : "grid-cols-1"
+              )}
+            >
               {visibleSources.map((source) => {
                 const isSelected = effectiveSelectedSourceIds.includes(source.id);
-                const isReady = source.status === "ready";
                 const statusDetail =
                   source.status === "error" ? source.error || "导入失败，请稍后重试" : undefined;
 
                 return (
-                  <div
+                  <SourceItem
                     key={source.id}
-                    className="relative z-0 flex min-h-[96px] items-center gap-3 rounded-2xl border border-slate-200 bg-white/85 p-3 transition-all duration-200 hover:z-30 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-28px_rgba(15,23,42,0.35)] focus-within:z-30"
-                  >
-                    {isReady ? (
-                      <CircleCheckbox
-                        checked={isSelected}
-                        onChange={() => {
-                          void handleToggleSessionSource(source.id);
-                        }}
-                        aria-label={isSelected ? "取消选择素材" : "选择素材"}
-                      />
-                    ) : (
-                      <div className="h-5 w-5 shrink-0 rounded-full border border-dashed border-slate-300/80 bg-white/60" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <SourceItem
-                        source={source}
-                        isSelected={isSelected}
-                        onToggleSelect={() => {}}
-                        onPreview={setPreviewSource}
-                        showSelectionCheckbox={false}
-                        showRemove={false}
-                        hoverPreviewVariant="assets"
-                        hoverPreviewPlacement="right"
-                        statusDetail={statusDetail}
-                        extraMeta={
-                          typeof source.linked_session_count === "number"
-                            ? `已关联 ${source.linked_session_count} 个会话`
-                            : undefined
-                        }
-                      />
-                    </div>
-                  </div>
+                    source={source}
+                    isSelected={isSelected}
+                    onToggleSelect={() => {
+                      void handleToggleSessionSource(source.id);
+                    }}
+                    onPreview={setPreviewSource}
+                    clickBehavior="toggle-select"
+                    showSelectionCheckbox={false}
+                    showRemove={false}
+                    hoverPreviewVariant="assets"
+                    hoverPreviewPlacement="right"
+                    statusDetail={statusDetail}
+                    extraMeta={
+                      typeof source.linked_session_count === "number"
+                        ? `已关联 ${source.linked_session_count} 个会话`
+                        : undefined
+                    }
+                  />
                 );
               })}
             </div>
           )}
+        </div>
+
+        <div className="border-t border-white/75 px-5 py-3">
+          <AddSourceArea
+            onFilesSelected={(files) => {
+              void handleUploadFiles(files);
+            }}
+            onUrlSubmit={(url) => {
+              void handleUrlSubmit(url);
+            }}
+            onTextSubmit={(name, content) => {
+              void handleTextSubmit(name, content);
+            }}
+          />
         </div>
       </div>
 
