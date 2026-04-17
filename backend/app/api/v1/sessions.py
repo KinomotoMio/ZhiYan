@@ -47,7 +47,7 @@ from app.services.planning import (
     normalize_planning_outline,
 )
 from app.services.sessions import session_store
-from app.services.sessions.workspace import get_workspace_id_from_request
+from app.services.sessions.workspace import WORKSPACE_HEADER, get_workspace_id_from_request
 from app.services.slidev import build_slidev_spa, prepare_slidev_deck_artifact
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -198,6 +198,18 @@ async def _get_generation_job_for_session(
 async def _assert_session_access(workspace_id: str, session_id: str) -> None:
     try:
         await session_store.get_session(workspace_id, session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+async def _resolve_slidev_build_workspace_id(request: Request, session_id: str) -> str:
+    explicit_header = request.headers.get(WORKSPACE_HEADER) or request.headers.get(WORKSPACE_HEADER.lower())
+    if explicit_header:
+        workspace_id = get_workspace_id_from_request(request)
+        await _assert_session_access(workspace_id, session_id)
+        return workspace_id
+    try:
+        return await session_store.get_session_workspace_id(session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -1012,9 +1024,8 @@ async def get_latest_presentation_slidev_sidecar(session_id: str, request: Reque
 
 @router.get("/{session_id}/presentations/latest/slidev/build")
 async def get_latest_presentation_slidev_build(session_id: str, request: Request):
-    workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
+    workspace_id = await _resolve_slidev_build_workspace_id(request, sid)
     build = await session_store.get_latest_slidev_build(workspace_id, sid)
     if not build:
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")
@@ -1028,9 +1039,8 @@ async def get_latest_presentation_slidev_build_asset(
     asset_path: str,
     request: Request,
 ):
-    workspace_id = get_workspace_id_from_request(request)
     sid = _ensure_session_id(session_id)
-    await _assert_session_access(workspace_id, sid)
+    workspace_id = await _resolve_slidev_build_workspace_id(request, sid)
     build = await session_store.get_latest_slidev_build(workspace_id, sid)
     if not build:
         raise HTTPException(status_code=404, detail="当前会话暂无 Slidev 构建产物")

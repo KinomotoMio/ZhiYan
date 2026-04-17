@@ -395,6 +395,12 @@ class SessionStore:
             raise ValueError("会话不存在")
         return result
 
+    async def get_session_workspace_id(self, session_id: str) -> str:
+        result = await asyncio.to_thread(self._get_session_workspace_id_sync, session_id)
+        if result is None:
+            raise ValueError("会话不存在")
+        return result
+
     def _get_session_sync(self, workspace_id: str, session_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -411,6 +417,20 @@ class SessionStore:
         if not row:
             return None
         return self._row_to_session_summary(row)
+
+    def _get_session_workspace_id_sync(self, session_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT workspace_id
+                FROM sessions
+                WHERE id = ? AND archived_at IS NULL
+                """,
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["workspace_id"])
 
     async def touch_session(self, workspace_id: str, session_id: str) -> None:
         now = _now_iso()
