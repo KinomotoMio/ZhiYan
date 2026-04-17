@@ -186,6 +186,7 @@ export default function EditorWorkspace({
   const [applyingFix, setApplyingFix] = useState(false);
   const [skippingFix, setSkippingFix] = useState(false);
   const [acceptingOutline, setAcceptingOutline] = useState(false);
+  const [retryingHtmlRender, setRetryingHtmlRender] = useState(false);
   const [retryingSlidevRender, setRetryingSlidevRender] = useState(false);
   const [speakerNotesDrafts, setSpeakerNotesDrafts] = useState<Record<string, string>>({});
   const [savingSpeakerNotes, setSavingSpeakerNotes] = useState(false);
@@ -195,6 +196,26 @@ export default function EditorWorkspace({
   const isHtmlMode = presentationOutputMode === "html";
   const isSlidevMode = presentationOutputMode === "slidev";
   const prevPresentationRef = useRef(presentation);
+  const htmlPreviewAutoRefreshKeyRef = useRef<string | null>(null);
+  const htmlPreviewReady = Boolean(presentationHtmlRender?.documentHtml);
+  const htmlRenderFailed =
+    isHtmlMode && (jobStatus === "render_failed" || presentationRenderStatus === "failed");
+  const htmlRenderPending =
+    isHtmlMode &&
+    !htmlPreviewReady &&
+    (isGenerating ||
+      jobStatus === "running" ||
+      jobStatus === "artifact_ready" ||
+      presentationRenderStatus === "pending");
+  const htmlPreviewMissingAfterCompletion =
+    isHtmlMode &&
+    !htmlPreviewReady &&
+    !htmlRenderFailed &&
+    !htmlRenderPending &&
+    (jobStatus === "completed" || presentationRenderStatus === "ready");
+  const canRetryHtmlRender = Boolean(
+    isHtmlMode && currentSessionId && presentation && presentationHtmlManifest && !isGenerating
+  );
 
   const canResume = canResumeGenerationJob(jobId, jobStatus);
   const waitingOutlineReview = jobStatus === "waiting_outline_review";
@@ -243,7 +264,70 @@ export default function EditorWorkspace({
       latestRender ?? null,
       latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
     );
+    setPresentationRenderState({
+      artifactStatus: latestPresentation?.artifact_status ?? null,
+      renderStatus: latestPresentation?.render_status ?? null,
+      renderError: latestPresentation?.render_error ?? null,
+    });
   };
+
+  useEffect(() => {
+    if (!isHtmlMode || !currentSessionId || htmlPreviewReady) {
+      htmlPreviewAutoRefreshKeyRef.current = null;
+      return;
+    }
+    const shouldRefresh =
+      jobStatus === "completed" ||
+      jobStatus === "artifact_ready" ||
+      presentationRenderStatus === "ready";
+    if (!shouldRefresh) {
+      htmlPreviewAutoRefreshKeyRef.current = null;
+      return;
+    }
+    const refreshKey = [
+      currentSessionId,
+      jobStatus ?? "none",
+      presentationRenderStatus ?? "none",
+      presentationHtmlManifest ? "manifest" : "no-manifest",
+    ].join(":");
+    if (htmlPreviewAutoRefreshKeyRef.current === refreshKey) {
+      return;
+    }
+    htmlPreviewAutoRefreshKeyRef.current = refreshKey;
+    void (async () => {
+      try {
+        const [latestPresentation, latestManifest, latestRender] = await Promise.all([
+          getLatestSessionPresentation(currentSessionId),
+          getLatestSessionPresentationHtmlManifest(currentSessionId),
+          getLatestSessionPresentationHtmlRender(currentSessionId),
+        ]);
+        setPresentationHtmlState(
+          "html",
+          latestRender?.documentHtml ?? null,
+          latestManifest ?? null,
+          latestRender ?? null,
+          latestPresentation?.artifacts?.html_deck ?? presentationHtmlArtifact
+        );
+        setPresentationRenderState({
+          artifactStatus: latestPresentation?.artifact_status ?? null,
+          renderStatus: latestPresentation?.render_status ?? null,
+          renderError: latestPresentation?.render_error ?? null,
+        });
+      } catch {
+        htmlPreviewAutoRefreshKeyRef.current = null;
+      }
+    })();
+  }, [
+    currentSessionId,
+    htmlPreviewReady,
+    isHtmlMode,
+    jobStatus,
+    presentationHtmlArtifact,
+    presentationHtmlManifest,
+    presentationRenderStatus,
+    setPresentationHtmlState,
+    setPresentationRenderState,
+  ]);
 
   const refreshSlidevPreviewState = async () => {
     if (!currentSessionId) return;
@@ -340,6 +424,38 @@ export default function EditorWorkspace({
       toast.error(err instanceof Error ? err.message : "生成分享链接失败");
     } finally {
       setCreatingShareLink(false);
+    }
+  };
+
+  const handleRetryHtmlRender = async () => {
+    if (
+      retryingHtmlRender ||
+      !currentSessionId ||
+      !presentation ||
+      !presentationHtmlManifest ||
+      !isHtmlMode
+    ) {
+      return;
+    }
+    setRetryingHtmlRender(true);
+    try {
+      await saveLatestSessionHtmlPresentation(
+        currentSessionId,
+        presentation,
+        presentationHtmlManifest,
+        "editor"
+      );
+      await refreshHtmlPreviewState();
+      const nextRender = useAppStore.getState().presentationHtmlRender?.documentHtml;
+      if (nextRender) {
+        toast.success("已重新完成 HTML 预览构建");
+      } else {
+        toast.warning("已重新尝试构建，但 HTML 预览仍不可用");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "重新构建 HTML 预览失败");
+    } finally {
+      setRetryingHtmlRender(false);
     }
   };
 
@@ -1100,7 +1216,7 @@ export default function EditorWorkspace({
               <div className="flex min-h-full w-full items-center justify-center rounded-[28px] border border-white/70 bg-white/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] lg:p-6">
                 {currentSlide ? (
                   isHtmlMode ? (
-                    presentationHtmlRender?.documentHtml ? (
+                    htmlPreviewReady ? (
                       <HtmlPreviewSurface
                         renderPayload={presentationHtmlRender}
                         documentHtml={presentationHtml}
@@ -1110,8 +1226,45 @@ export default function EditorWorkspace({
                         frameClassName="border border-white/80 bg-white shadow-[0_28px_80px_-48px_rgba(15,23,42,0.55)]"
                       />
                     ) : (
-                      <div className="flex aspect-[16/9] w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white/70 px-6 text-center text-sm text-slate-500">
-                        HTML 演示稿还在生成中，完成后会自动切换到真实预览。
+                      <div
+                        className={`flex aspect-[16/9] w-full max-w-5xl flex-col items-center justify-center rounded-[20px] px-6 text-center ${
+                          htmlRenderFailed || htmlPreviewMissingAfterCompletion
+                            ? "border border-amber-200 bg-amber-50/90 text-amber-900"
+                            : "border border-dashed border-slate-200 bg-white/70 text-slate-500"
+                        }`}
+                      >
+                        <div className="font-medium">
+                          {htmlRenderFailed
+                            ? "HTML 预览构建失败，内容已生成但无法显示真实预览。"
+                            : htmlPreviewMissingAfterCompletion
+                              ? "内容已生成，但 HTML 预览文件暂未就绪。"
+                              : "HTML 演示稿还在生成中，完成后会自动切换到真实预览。"}
+                        </div>
+                        {(htmlRenderFailed ||
+                          htmlPreviewMissingAfterCompletion ||
+                          presentationRenderError) && (
+                          <div className="mt-2 max-w-2xl whitespace-pre-wrap text-xs leading-6 text-amber-800">
+                            {presentationRenderError ??
+                              (htmlPreviewMissingAfterCompletion
+                                ? "这通常表示预览产物缺失或未成功落盘，可以手动重试构建。"
+                                : "可以手动重试构建 HTML 预览。")}
+                          </div>
+                        )}
+                        {canRetryHtmlRender &&
+                          (htmlRenderFailed || htmlPreviewMissingAfterCompletion) && (
+                            <div className="mt-4">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRetryHtmlRender();
+                                }}
+                                disabled={retryingHtmlRender}
+                                className="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-white/90 px-3 py-2 text-sm font-medium text-amber-900 transition hover:bg-white disabled:opacity-50"
+                              >
+                                {retryingHtmlRender ? "重试中..." : "重试构建 HTML 预览"}
+                              </button>
+                            </div>
+                          )}
                       </div>
                     )
                   ) : isSlidevMode ? (

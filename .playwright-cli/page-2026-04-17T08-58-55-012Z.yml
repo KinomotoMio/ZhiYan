@@ -1,0 +1,61 @@
+- generic [active] [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - article [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - generic [ref=e8]:
+              - paragraph [ref=e9]: 欢迎回来
+              - heading "知演 ZhiYan" [level=1] [ref=e10]
+              - paragraph [ref=e11]: 知识变演示，更懂演示的 AI PPT 智能体
+            - button [ref=e12]:
+              - img [ref=e15]
+          - generic [ref=e18]:
+            - button "开始新建演示稿" [ref=e19]:
+              - img [ref=e20]
+              - text: 开始新建演示稿
+            - button "新建演示稿" [ref=e23]:
+              - img [ref=e24]
+              - text: 新建演示稿
+            - button "素材库管理" [ref=e27]:
+              - img [ref=e28]
+              - text: 素材库管理
+          - generic [ref=e30]:
+            - article [ref=e31]:
+              - generic [ref=e32]:
+                - img [ref=e33]
+                - text: 已生成文稿
+              - paragraph [ref=e36]: "0"
+            - article [ref=e37]:
+              - generic [ref=e38]:
+                - img [ref=e39]
+                - text: 待完善草稿
+              - paragraph [ref=e42]: "0"
+            - article [ref=e43]:
+              - generic [ref=e44]:
+                - img [ref=e45]
+                - text: 素材库条目
+              - paragraph [ref=e47]: "0"
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e50]:
+              - heading "最近生成文稿" [level=2] [ref=e51]
+              - button "查看全部" [ref=e52]
+            - paragraph [ref=e53]: 加载中...
+          - generic [ref=e54]:
+            - generic [ref=e55]:
+              - heading "继续中的草稿" [level=2] [ref=e56]
+              - button "去工作台" [ref=e57]
+            - paragraph [ref=e58]: 加载中...
+        - generic:
+          - generic:
+            - paragraph: 示例标题
+            - paragraph: 更新时间：00/00 00:00
+      - complementary [ref=e59]:
+        - generic [ref=e60]:
+          - img [ref=e61]
+          - text: 最近成果预览
+        - paragraph [ref=e64]: 加载最近成果...
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e70] [cursor=pointer]:
+    - img [ref=e71]

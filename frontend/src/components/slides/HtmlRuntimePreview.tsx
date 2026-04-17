@@ -20,15 +20,8 @@ export function buildHtmlRuntimePreviewSrc(
   blobUrl: string,
   options?: { startSlide?: number; thumbnailMode?: boolean; printMode?: boolean }
 ): string {
-  const safeStartSlide =
-    typeof options?.startSlide === "number" && Number.isFinite(options.startSlide)
-      ? Math.max(0, Math.trunc(options.startSlide))
-      : 0;
-  const search = new URLSearchParams({
-    slide: String(safeStartSlide),
-    mode: options?.printMode ? "print" : options?.thumbnailMode ? "thumbnail" : "interactive",
-  });
-  return `${blobUrl}?${search.toString()}`;
+  void options;
+  return blobUrl;
 }
 
 export function getHtmlRuntimeSlideIndex(data: unknown): number | null {
@@ -64,6 +57,41 @@ function focusFrame(frame: FocusableFrame | null): void {
   }
 }
 
+function injectHtmlRuntimePreviewConfig(
+  html: string,
+  options: { startSlide?: number; thumbnailMode?: boolean; printMode?: boolean }
+): string {
+  if (!html) return html;
+  const safeStartSlide =
+    typeof options.startSlide === "number" && Number.isFinite(options.startSlide)
+      ? Math.max(0, Math.trunc(options.startSlide))
+      : 0;
+  const mode = options.printMode ? "print" : options.thumbnailMode ? "thumbnail" : "interactive";
+  const configScript = `<script>window.__HTML_RUNTIME_PREVIEW_CONFIG=${JSON.stringify({
+    slide: safeStartSlide,
+    mode,
+  })};</script>`;
+  const paramsSnippet = `const previewConfig = window.__HTML_RUNTIME_PREVIEW_CONFIG || null;
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const params = {
+        get(key) {
+          const configuredValue = previewConfig && previewConfig[key];
+          if (configuredValue !== undefined && configuredValue !== null) {
+            return String(configuredValue);
+          }
+          return hashParams.get(key) ?? searchParams.get(key);
+        },
+      };`;
+
+  let nextHtml = html.includes("</head>") ? html.replace("</head>", `${configScript}</head>`) : `${configScript}${html}`;
+  nextHtml = nextHtml.replace(
+    "const params = new URLSearchParams(window.location.search);",
+    paramsSnippet
+  );
+  return nextHtml;
+}
+
 export default function HtmlRuntimePreview({
   renderPayload = null,
   documentHtml,
@@ -81,7 +109,11 @@ export default function HtmlRuntimePreview({
 
   useEffect(() => {
     if (!iframeRef.current) return;
-    const html = String(resolvedDocumentHtml || "");
+    const html = injectHtmlRuntimePreviewConfig(String(resolvedDocumentHtml || ""), {
+      startSlide,
+      thumbnailMode,
+      printMode,
+    });
     if (!html) {
       iframeRef.current.removeAttribute("src");
       return;
@@ -100,7 +132,7 @@ export default function HtmlRuntimePreview({
       }
       URL.revokeObjectURL(url);
     };
-  }, [printMode, resolvedDocumentHtml, thumbnailMode]);
+  }, [printMode, resolvedDocumentHtml, startSlide, thumbnailMode]);
 
   useEffect(() => {
     const frame = iframeRef.current;

@@ -1,0 +1,9 @@
+
+> frontend@0.1.0 predev E:\Inori_Code\Centitenka\ZhiYan\frontend
+> node ./scripts/sync-layout-metadata.mjs
+
+
+> frontend@0.1.0 dev E:\Inori_Code\Centitenka\ZhiYan\frontend
+> next dev "--" "--hostname" "127.0.0.1" "--port" "3000"
+
+ ELIFECYCLE  Command failed with exit code 1.
