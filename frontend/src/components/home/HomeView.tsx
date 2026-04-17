@@ -31,7 +31,7 @@ import { useAppStore } from "@/lib/store";
 import { getSessionEditorPath } from "@/lib/routes";
 import type { Presentation as PresentationModel } from "@/types/slide";
 
-const DESKTOP_BREAKPOINT = 1024;
+const DESKTOP_BREAKPOINT = 1280;
 const MOBILE_PREVIEW_COUNT = 2;
 const MIN_PREVIEW_COUNT = 1;
 const MAX_PREVIEW_COUNT = 3;
@@ -436,15 +436,15 @@ export default function HomeView() {
     `更新时间：${formatUpdatedAt(session.updated_at)}`;
 
   return (
-    <div className="zy-bg-home min-h-screen lg:h-screen lg:overflow-hidden">
-      <main className="relative mx-auto h-full w-full max-w-none px-4 py-8 md:px-6 lg:px-6 lg:py-5">
+    <div className="zy-bg-home min-h-screen xl:h-screen xl:overflow-hidden">
+      <main className="relative mx-auto h-full w-full max-w-none px-4 py-8 md:px-6 xl:px-6 xl:py-5">
         <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-[rgba(var(--zy-brand-blue),0.18)] blur-3xl" />
         <div className="pointer-events-none absolute top-24 -left-14 h-40 w-40 rounded-full bg-[rgba(var(--zy-brand-red),0.16)] blur-3xl" />
 
-        <section className="grid h-full gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 lg:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] lg:items-stretch">
+        <section className="grid h-full gap-6 animate-in fade-in slide-in-from-bottom-2 duration-200 xl:grid-cols-[minmax(320px,0.92fr)_minmax(0,1.38fr)] xl:items-stretch">
           <article
             ref={leftCardRef}
-            className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl lg:p-7"
+            className="relative flex h-full min-w-0 flex-col overflow-hidden rounded-3xl border border-white/60 bg-card/80 p-6 shadow-[0_20px_60px_-40px_rgba(15,23,42,0.5)] backdrop-blur-xl xl:p-7"
           >
             <div ref={fixedAreaRef} className="shrink-0">
               <div className="flex items-start justify-between gap-3">
@@ -628,7 +628,7 @@ export default function HomeView() {
             </div>
           </article>
 
-          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-[rgba(var(--zy-brand-blue),0.12)] bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(var(--zy-brand-red),0.045),rgba(var(--zy-brand-blue),0.10))] p-5 shadow-[0_20px_45px_-35px_rgba(0,75,132,0.35)] lg:min-h-0">
+          <aside className="flex h-full min-h-[460px] min-w-0 flex-col rounded-3xl border border-[rgba(var(--zy-brand-blue),0.12)] bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(var(--zy-brand-red),0.045),rgba(var(--zy-brand-blue),0.10))] p-5 shadow-[0_20px_45px_-35px_rgba(0,75,132,0.35)] xl:min-h-0">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <FileText className="h-4 w-4 text-blue-700" />
               最近成果预览
