@@ -371,6 +371,16 @@ export default function HomeView() {
     );
   }, [previewTotalSlides]);
 
+  // Auto-advance the preview every 4s. Re-depends on previewSlideIndex so a
+  // click on the thumbnail strip resets the timer from the chosen slide.
+  useEffect(() => {
+    if (previewTotalSlides <= 1) return;
+    const timer = window.setTimeout(() => {
+      setPreviewSlideIndex((current) => (current + 1) % previewTotalSlides);
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [previewTotalSlides, previewSlideIndex]);
+
   const handleNewPpt = async () => {
     const created = await createSession("未命名会话");
     setCurrentSessionId(created.id);
